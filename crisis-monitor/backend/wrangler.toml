@@ -8,7 +8,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "sentinel"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "c7214227-21e8-4223-9ea5-50e82f851556"
 
 [[durable_objects.bindings]]
 name = "LIVE_FEED"
