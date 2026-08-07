@@ -33,4 +33,4 @@ crons = ["*/5 * * * *"]
 
 [vars]
 MOCK_MODE = "true"
-GDELT_ENABLED = "false"
+GDELT_ENABLED = "true"
