@@ -1,0 +1,36 @@
+name = "sentinel-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Create with: wrangler d1 create sentinel
+# Then paste the returned database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "sentinel"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[[durable_objects.bindings]]
+name = "LIVE_FEED"
+class_name = "LiveFeedHub"
+
+[[durable_objects.bindings]]
+name = "INGESTION_ACTOR"
+class_name = "IngestionActor"
+
+[[durable_objects.bindings]]
+name = "ALERTING_ACTOR"
+class_name = "AlertingActor"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveFeedHub", "IngestionActor", "AlertingActor"]
+
+# Polls GDELT every 5 minutes when GDELT_ENABLED=true, and re-kicks the
+# ingestion/alerting Durable Object alarms as a safety net (see src/index.ts).
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+MOCK_MODE = "true"
+GDELT_ENABLED = "false"
