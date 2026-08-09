@@ -89,8 +89,11 @@ function parseGdeltDate(seendate: string): Date {
 
 /** Builds a GDELT-compatible OR-query from a flat list of terms pulled from active
  *  monitoring queries. GDELT treats bare space-separated words as AND, so we
- *  explicitly OR them and quote multi-word phrases. */
-export function buildQueryFromTerms(terms: string[], maxTerms = 20): string {
+ *  explicitly OR them and quote multi-word phrases. Kept fairly small (10, not
+ *  20) — GDELT's DOC API rejects overly long/complex queries (returning an
+ *  HTML error page instead of JSON) once a query grows too many OR clauses
+ *  or phrase terms, which happens fast with a real-world topic query. */
+export function buildQueryFromTerms(terms: string[], maxTerms = 10): string {
   const unique = Array.from(new Set(terms.map((t) => t.trim().toLowerCase()).filter(Boolean))).slice(0, maxTerms);
   if (unique.length === 0) return "crisis OR emergency OR disaster"; // sane fallback if no queries are active yet
   return unique.map((t) => (t.includes(" ") ? `"${t}"` : t)).join(" OR ");
@@ -106,14 +109,27 @@ export async function fetchGdeltArticles(searchTerms: string, maxRecords = 75): 
     timespan: "1h",
   });
 
-  const res = await fetch(`${GDELT_ENDPOINT}?${params.toString()}`);
+  const res = await fetch(`${GDELT_ENDPOINT}?${params.toString()}`, {
+    headers: { "User-Agent": "SentinelCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
+  });
   if (!res.ok) {
     throw new Error(`GDELT request failed: ${res.status} ${res.statusText}`);
   }
   const text = await res.text();
   if (!text.trim()) return []; // GDELT returns an empty body (not valid JSON) when nothing matches
-  const data = JSON.parse(text);
-  return Array.isArray(data.articles) ? data.articles : [];
+
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    // GDELT returns a non-JSON error page (HTML/plain text) when a query is
+    // malformed or too complex for it to parse — log enough of the raw
+    // response to diagnose which, instead of just "unexpected token".
+    console.error(`[gdelt] non-JSON response for query="${searchTerms}" (first 300 chars): ${text.slice(0, 300)}`);
+    throw err;
+  }
+  const articles = (data as { articles?: unknown })?.articles;
+  return Array.isArray(articles) ? (articles as GdeltArticle[]) : [];
 }
 
 async function getOrCreateGdeltSourceId(env: Env): Promise<string | null> {

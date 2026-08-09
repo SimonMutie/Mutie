@@ -75,9 +75,14 @@ export default {
     // newly-inserted article is matched against *every* active query (not
     // just the one whose search happened to surface it), same as before.
     const MAX_QUERIES_PER_TICK = 25;
+    const GDELT_REQUEST_STAGGER_MS = 1500;
     const compiled = await loadActiveCompiledQueries(env);
 
-    for (const q of compiled.slice(0, MAX_QUERIES_PER_TICK)) {
+    for (const [i, q] of compiled.slice(0, MAX_QUERIES_PER_TICK).entries()) {
+      // Be a good citizen of GDELT's free API — spread requests out within
+      // the tick instead of firing them back to back.
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, GDELT_REQUEST_STAGGER_MS));
+
       try {
         const searchTerms = buildQueryFromTerms(q.parsed.positiveTerms);
         const inserted = await pollGdelt(env, searchTerms);
