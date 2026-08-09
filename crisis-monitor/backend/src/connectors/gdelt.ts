@@ -89,14 +89,16 @@ function parseGdeltDate(seendate: string): Date {
 
 /** Builds a GDELT-compatible OR-query from a flat list of terms pulled from active
  *  monitoring queries. GDELT treats bare space-separated words as AND, so we
- *  explicitly OR them and quote multi-word phrases. Kept fairly small (10, not
- *  20) — GDELT's DOC API rejects overly long/complex queries (returning an
- *  HTML error page instead of JSON) once a query grows too many OR clauses
- *  or phrase terms, which happens fast with a real-world topic query. */
+ *  explicitly OR them and quote multi-word phrases — and GDELT's DOC API
+ *  requires any OR'd term list to be wrapped in parentheses, rejecting a bare
+ *  "a OR b OR c" with a plain-text error ("Queries containing OR'd terms must
+ *  be surrounded by ()") instead of JSON. Kept fairly small (10, not 20) to
+ *  stay well under whatever length/complexity limit GDELT enforces. */
 export function buildQueryFromTerms(terms: string[], maxTerms = 10): string {
   const unique = Array.from(new Set(terms.map((t) => t.trim().toLowerCase()).filter(Boolean))).slice(0, maxTerms);
-  if (unique.length === 0) return "crisis OR emergency OR disaster"; // sane fallback if no queries are active yet
-  return unique.map((t) => (t.includes(" ") ? `"${t}"` : t)).join(" OR ");
+  if (unique.length === 0) return "(crisis OR emergency OR disaster)"; // sane fallback if no queries are active yet
+  const quoted = unique.map((t) => (t.includes(" ") ? `"${t}"` : t));
+  return quoted.length > 1 ? `(${quoted.join(" OR ")})` : quoted[0];
 }
 
 export async function fetchGdeltArticles(searchTerms: string, maxRecords = 75): Promise<GdeltArticle[]> {
