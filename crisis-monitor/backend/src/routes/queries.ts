@@ -5,6 +5,7 @@ import { newId } from "../ids";
 import { validateBooleanQuery } from "../booleanQuery";
 import { rowToMonitoringQuery } from "../mappers";
 import { canAccessQuery } from "../ownership";
+import { backfillQueryMatches } from "../ingest";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
@@ -73,6 +74,15 @@ queriesRouter.post("/", async (c) => {
       now,
     ]
   );
+
+  // Backfill in the background so query creation itself stays fast — the
+  // client's next poll of the query list / dashboard picks up the matches.
+  c.executionCtx.waitUntil(
+    backfillQueryMatches(c.env, id, parsed.data.boolean_query).catch((err) =>
+      console.error(`[backfill] failed for query ${id}:`, err)
+    )
+  );
+
   return c.json(rowToMonitoringQuery(rows[0]), 201);
 });
 

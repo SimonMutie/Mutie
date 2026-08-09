@@ -2,17 +2,42 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 
 interface Props {
   data: { minute: string; count: number }[];
+  /** Overrides the "LAST 60 MIN" header — pass a description of the active range when browsing history. */
+  label?: string;
 }
 
-export default function VolumeChart({ data }: Props) {
+/**
+ * Bucket strings come from the backend as an ISO-8601 prefix of varying
+ * length depending on the requested range: "YYYY-MM-DD" (day), "...THH"
+ * (hour), or "...THH:MM" (minute) — none of which `new Date()` parses
+ * reliably on their own (a bare "...T12" isn't valid ISO 8601), so pad to a
+ * full timestamp first.
+ */
+function parseBucket(bucket: string): Date {
+  let iso = bucket;
+  if (iso.length === 10) iso += "T00:00:00Z";
+  else if (iso.length === 13) iso += ":00:00Z";
+  else if (iso.length === 16) iso += ":00Z";
+  else if (!iso.endsWith("Z")) iso += "Z";
+  return new Date(iso);
+}
+
+function formatBucket(bucket: string): string {
+  const date = parseBucket(bucket);
+  if (bucket.length === 10) return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (bucket.length === 13) return date.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit" });
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+export default function VolumeChart({ data, label }: Props) {
   const formatted = data.map((d) => ({
-    time: new Date(d.minute).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    time: formatBucket(d.minute),
     count: d.count,
   }));
 
   return (
     <div className="panel" style={{ padding: "14px 16px", height: "100%", display: "flex", flexDirection: "column" }}>
-      <div className="eyebrow" style={{ marginBottom: 10 }}>EVENT VOLUME · LAST 60 MIN</div>
+      <div className="eyebrow" style={{ marginBottom: 10 }}>EVENT VOLUME · {label ?? "LAST 60 MIN"}</div>
       <div style={{ flex: 1, minHeight: 0 }}>
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={formatted} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>

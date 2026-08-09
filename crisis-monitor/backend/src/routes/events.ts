@@ -13,6 +13,9 @@ eventsRouter.get("/", async (c) => {
   const limit = Math.min(Number(c.req.query("limit")) || 100, 500);
   const sourceType = c.req.query("source_type") ?? null;
   const queryId = c.req.query("query_id") ?? null;
+  // Optional ISO-8601 bounds for browsing history instead of "most recent N".
+  const from = c.req.query("from") ?? null;
+  const to = c.req.query("to") ?? null;
   const isAdmin = c.get("role") === "admin";
 
   // Non-admins only ever see events matched to a query they own — never the raw, unscoped firehose.
@@ -24,13 +27,27 @@ eventsRouter.get("/", async (c) => {
     if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role"), queryId))) {
       return c.json({ error: "Query not found" }, 404);
     }
+    const conditions = ["qm.query_id = ?"];
+    const params: unknown[] = [queryId];
+    if (from) {
+      conditions.push("e.published_at >= ?");
+      params.push(from);
+    }
+    if (to) {
+      conditions.push("e.published_at <= ?");
+      params.push(to);
+    }
+    // Browsing a specific range reads chronologically; "most recent" (no range) reads newest-first.
+    const order = from || to ? "ASC" : "DESC";
+    params.push(limit);
+
     const rows = await all<Record<string, unknown>>(
       c.env.DB,
       `SELECT e.* FROM events e
        JOIN query_matches qm ON qm.event_id = e.id
-       WHERE qm.query_id = ?
-       ORDER BY e.published_at DESC LIMIT ?`,
-      [queryId, limit]
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY e.published_at ${order} LIMIT ?`,
+      params
     );
     return c.json(rows.map(rowToEvent));
   }

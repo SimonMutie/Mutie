@@ -127,7 +127,7 @@ export const api = {
       body: JSON.stringify({ username, password, display_name, role }),
     }),
 
-  getEvents: (params: { limit?: number; source_type?: string; query_id?: string } = {}) => {
+  getEvents: (params: { limit?: number; source_type?: string; query_id?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
     return req<EventItem[]>(`/api/events${qs ? `?${qs}` : ""}`);
   },
@@ -152,7 +152,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ boolean_query }),
     }),
-  getSummary: (queryId?: string) => req<StatsSummary>(`/api/stats/summary${queryId ? `?query_id=${queryId}` : ""}`),
+  getSummary: (queryId?: string, range?: { from: string; to: string }) => {
+    const params = new URLSearchParams();
+    if (queryId) params.set("query_id", queryId);
+    if (range) {
+      params.set("from", range.from);
+      params.set("to", range.to);
+    }
+    const qs = params.toString();
+    return req<StatsSummary>(`/api/stats/summary${qs ? `?${qs}` : ""}`);
+  },
   getEscalationHistory: (queryId: string) =>
     req<{ window_end: string; escalation_score: number; volume: number }[]>(`/api/stats/escalation/${queryId}`),
 };

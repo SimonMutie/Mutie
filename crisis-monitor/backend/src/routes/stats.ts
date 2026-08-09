@@ -8,12 +8,31 @@ export const statsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables 
 
 statsRouter.use("*", requireAuth);
 
+/**
+ * Picks a volume-chart bucket size (substr length on the ISO timestamp) so a
+ * historical range doesn't return one row per minute over weeks of data —
+ * per-minute for short ranges, per-hour for multi-day, per-day beyond that.
+ */
+function bucketLengthForRange(rangeMs: number): number {
+  const HOUR = 60 * 60_000;
+  if (rangeMs <= 3 * HOUR) return 16; // "YYYY-MM-DDTHH:MM"
+  if (rangeMs <= 3 * 24 * HOUR) return 13; // "YYYY-MM-DDTHH"
+  return 10; // "YYYY-MM-DD"
+}
+
 statsRouter.get("/summary", async (c) => {
   const db = c.env.DB;
   const queryId = c.req.query("query_id") ?? null;
   const isAdmin = c.get("role") === "admin";
   const twoHoursAgo = isoMinutesAgo(120);
   const sixtyMinAgo = isoMinutesAgo(60);
+
+  // Optional historical range — defaults to the usual rolling windows when absent.
+  const from = c.req.query("from") ?? null;
+  const to = c.req.query("to") ?? null;
+  const rangeStart = from ?? twoHoursAgo;
+  const rangeEnd = to ?? new Date().toISOString();
+  const bucketLen = from || to ? bucketLengthForRange(new Date(rangeEnd).getTime() - new Date(rangeStart).getTime()) : 16;
 
   if (!queryId && !isAdmin) {
     return c.json({ error: "query_id is required" }, 400);
@@ -28,9 +47,9 @@ statsRouter.get("/summary", async (c) => {
         db,
         `SELECT e.source_type, COUNT(*) AS count
          FROM query_matches qm JOIN events e ON e.id = qm.event_id
-         WHERE qm.query_id = ? AND qm.matched_at > ?
+         WHERE qm.query_id = ? AND qm.matched_at > ? AND qm.matched_at <= ?
          GROUP BY e.source_type`,
-        [queryId, twoHoursAgo]
+        [queryId, rangeStart, rangeEnd]
       ),
       first<{ negative: number; neutral: number; positive: number }>(
         db,
@@ -39,16 +58,16 @@ statsRouter.get("/summary", async (c) => {
            SUM(CASE WHEN e.sentiment BETWEEN -0.2 AND 0.2 THEN 1 ELSE 0 END) AS neutral,
            SUM(CASE WHEN e.sentiment > 0.2 THEN 1 ELSE 0 END) AS positive
          FROM query_matches qm JOIN events e ON e.id = qm.event_id
-         WHERE qm.query_id = ? AND qm.matched_at > ?`,
-        [queryId, twoHoursAgo]
+         WHERE qm.query_id = ? AND qm.matched_at > ? AND qm.matched_at <= ?`,
+        [queryId, rangeStart, rangeEnd]
       ),
       all<{ minute: string; count: number }>(
         db,
-        `SELECT substr(e.published_at, 1, 16) AS minute, COUNT(*) AS count
+        `SELECT substr(e.published_at, 1, ${bucketLen}) AS minute, COUNT(*) AS count
          FROM query_matches qm JOIN events e ON e.id = qm.event_id
-         WHERE qm.query_id = ? AND qm.matched_at > ?
+         WHERE qm.query_id = ? AND qm.matched_at > ? AND qm.matched_at <= ?
          GROUP BY minute ORDER BY minute ASC`,
-        [queryId, sixtyMinAgo]
+        [queryId, from ? rangeStart : sixtyMinAgo, rangeEnd]
       ),
       first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM alerts WHERE query_id = ? AND resolved_at IS NULL`, [
         queryId,

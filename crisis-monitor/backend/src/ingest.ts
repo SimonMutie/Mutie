@@ -113,3 +113,45 @@ export async function tickMockIngestion(env: Env) {
   const event = await insertMockEvent(env, generated);
   await matchAndBroadcast(env, event);
 }
+
+const BACKFILL_LOOKBACK_HOURS = 24;
+const BACKFILL_MAX_EVENTS = 2000;
+
+/**
+ * Runs when a query is first created: scans recent existing events (bounded
+ * to keep this fast — 24h / 2000 rows, whichever is smaller) and inserts
+ * matches for anything that already qualifies, so a new query isn't limited
+ * to only what's ingested from this point forward. matched_at is set to the
+ * event's own published_at (not "now") so backfilled matches land at their
+ * real point in time on volume/history charts instead of all clustering at
+ * query-creation time.
+ */
+export async function backfillQueryMatches(env: Env, queryId: string, booleanQuery: string): Promise<number> {
+  let parsed: ParsedQuery;
+  try {
+    parsed = parseBooleanQuery(booleanQuery);
+  } catch {
+    return 0;
+  }
+
+  const cutoff = new Date(Date.now() - BACKFILL_LOOKBACK_HOURS * 60 * 60_000).toISOString();
+  const events = await all<{ id: string; content: string; published_at: string }>(
+    env.DB,
+    `SELECT id, content, published_at FROM events WHERE published_at > ? ORDER BY published_at DESC LIMIT ?`,
+    [cutoff, BACKFILL_MAX_EVENTS]
+  );
+
+  let matched = 0;
+  for (const ev of events) {
+    if (evaluate(parsed, ev.content)) {
+      await run(env.DB, `INSERT OR IGNORE INTO query_matches (id, query_id, event_id, matched_at) VALUES (?,?,?,?)`, [
+        newId(),
+        queryId,
+        ev.id,
+        ev.published_at,
+      ]);
+      matched++;
+    }
+  }
+  return matched;
+}

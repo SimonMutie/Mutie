@@ -67,17 +67,29 @@ export default {
 
     if ((env.GDELT_ENABLED ?? "false") !== "true") return;
 
-    try {
-      const compiled = await loadActiveCompiledQueries(env);
-      const terms = compiled.flatMap((q) => q.parsed.positiveTerms);
-      const searchTerms = buildQueryFromTerms(terms);
-      const inserted = await pollGdelt(env, searchTerms);
-      for (const event of inserted) {
-        await matchAndBroadcast(env, event);
+    // One GDELT search per active query (rather than one shared search across
+    // all of them) — a shared search caps out at a fixed number of terms, so
+    // a query with many terms (a real-world topic with lots of synonyms/place
+    // names) would get most of its terms silently dropped. Each query's own
+    // search still gets deduped against events already in the table, and any
+    // newly-inserted article is matched against *every* active query (not
+    // just the one whose search happened to surface it), same as before.
+    const MAX_QUERIES_PER_TICK = 25;
+    const compiled = await loadActiveCompiledQueries(env);
+
+    for (const q of compiled.slice(0, MAX_QUERIES_PER_TICK)) {
+      try {
+        const searchTerms = buildQueryFromTerms(q.parsed.positiveTerms);
+        const inserted = await pollGdelt(env, searchTerms);
+        for (const event of inserted) {
+          await matchAndBroadcast(env, event);
+        }
+        if (inserted.length > 0) {
+          console.log(`[gdelt] query=${q.id} terms="${searchTerms}" -> ${inserted.length} new articles`);
+        }
+      } catch (err) {
+        console.error(`[gdelt] poll failed for query ${q.id}:`, err);
       }
-      console.log(`[gdelt] query="${searchTerms}" -> ${inserted.length} new articles`);
-    } catch (err) {
-      console.error("[gdelt] poll failed:", err);
     }
   },
 };

@@ -10,14 +10,16 @@ const COLORS: Record<string, string> = {
 interface Props {
   bySource: { source_type: string; count: number }[];
   sentiment: { negative: number; neutral: number; positive: number };
+  /** Overrides the "LAST 2H" header — pass a description of the active range when browsing history. */
+  label?: string;
 }
 
-export default function SourceBreakdown({ bySource, sentiment }: Props) {
+export default function SourceBreakdown({ bySource, sentiment, label }: Props) {
   const total = sentiment.negative + sentiment.neutral + sentiment.positive || 1;
 
   return (
     <div className="panel" style={{ padding: "14px 16px", height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
-      <div className="eyebrow">SOURCE MIX · LAST 2H</div>
+      <div className="eyebrow">SOURCE MIX · {label ?? "LAST 2H"}</div>
       <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 12, minHeight: 0 }}>
         <div style={{ width: "55%", height: "100%" }}>
           <ResponsiveContainer width="100%" height="100%">
