@@ -47,6 +47,15 @@ CREATE INDEX idx_events_source_type ON events (source_type);
 -- article/post ID, without affecting mock events (external_id NULL).
 CREATE UNIQUE INDEX idx_events_external_id_unique ON events (source_type, external_id) WHERE external_id IS NOT NULL;
 
+CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    display_name TEXT,
+    role TEXT NOT NULL DEFAULT 'client' CHECK (role IN ('admin', 'client')),
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE monitoring_queries (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -56,9 +65,13 @@ CREATE TABLE monitoring_queries (
     baseline_window_minutes INTEGER NOT NULL DEFAULT 60,
     elevated_threshold REAL NOT NULL DEFAULT 2.5, -- z-score-ish trigger
     critical_threshold REAL NOT NULL DEFAULT 4.0,
+    -- NULL = "house" query not owned by any client, visible only to admins.
+    owner_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE INDEX idx_monitoring_queries_owner ON monitoring_queries (owner_id);
 
 CREATE TABLE query_matches (
     id TEXT PRIMARY KEY,

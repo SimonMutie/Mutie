@@ -4,9 +4,13 @@ import { all, nowIso } from "../db";
 import { newId } from "../ids";
 import { validateBooleanQuery } from "../booleanQuery";
 import { rowToMonitoringQuery } from "../mappers";
+import { canAccessQuery } from "../ownership";
+import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
-export const queriesRouter = new Hono<{ Bindings: Env }>();
+export const queriesRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
+
+queriesRouter.use("*", requireAuth);
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -17,9 +21,25 @@ const createSchema = z.object({
   critical_threshold: z.number().positive().default(4.0),
 });
 
+/** Admins see every query (including unowned "house" ones); clients see only their own. Includes a 2h match count for the query list UI. */
 queriesRouter.get("/", async (c) => {
-  const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM monitoring_queries ORDER BY created_at DESC");
-  return c.json(rows.map(rowToMonitoringQuery));
+  const isAdmin = c.get("role") === "admin";
+  const twoHoursAgo = new Date(Date.now() - 120 * 60_000).toISOString();
+
+  const baseSql = `
+    SELECT q.*, COUNT(qm.id) AS match_count
+    FROM monitoring_queries q
+    LEFT JOIN query_matches qm ON qm.query_id = q.id AND qm.matched_at > ?
+    ${isAdmin ? "" : "WHERE q.owner_id = ?"}
+    GROUP BY q.id
+    ORDER BY q.created_at DESC
+  `;
+  const rows = await all<Record<string, unknown>>(
+    c.env.DB,
+    baseSql,
+    isAdmin ? [twoHoursAgo] : [twoHoursAgo, c.get("userId")]
+  );
+  return c.json(rows.map((row) => ({ ...rowToMonitoringQuery(row), match_count: Number(row.match_count ?? 0) })));
 });
 
 queriesRouter.post("/", async (c) => {
@@ -38,8 +58,8 @@ queriesRouter.post("/", async (c) => {
   const rows = await all<Record<string, unknown>>(
     c.env.DB,
     `INSERT INTO monitoring_queries
-      (id, name, boolean_query, category, baseline_window_minutes, elevated_threshold, critical_threshold, created_at, updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?) RETURNING *`,
+      (id, name, boolean_query, category, baseline_window_minutes, elevated_threshold, critical_threshold, owner_id, created_at, updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING *`,
     [
       id,
       parsed.data.name,
@@ -48,6 +68,7 @@ queriesRouter.post("/", async (c) => {
       parsed.data.baseline_window_minutes,
       parsed.data.elevated_threshold,
       parsed.data.critical_threshold,
+      c.get("userId"),
       now,
       now,
     ]
@@ -77,6 +98,10 @@ const PATCHABLE_FIELDS = [
 
 queriesRouter.patch("/:id", async (c) => {
   const id = c.req.param("id");
+  if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role"), id))) {
+    return c.json({ error: "Query not found" }, 404);
+  }
+
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
 
   const updates: string[] = [];
@@ -108,6 +133,10 @@ queriesRouter.patch("/:id", async (c) => {
 });
 
 queriesRouter.delete("/:id", async (c) => {
-  await c.env.DB.prepare("DELETE FROM monitoring_queries WHERE id = ?").bind(c.req.param("id")).run();
+  const id = c.req.param("id");
+  if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role"), id))) {
+    return c.json({ error: "Query not found" }, 404);
+  }
+  await c.env.DB.prepare("DELETE FROM monitoring_queries WHERE id = ?").bind(id).run();
   return c.body(null, 204);
 });

@@ -1,5 +1,5 @@
 /** D1/SQLite rows use TEXT for JSON and INTEGER (0/1) for booleans — convert to the app's real types here. */
-import type { MonitoringQuery, EventRecord, AlertRecord } from "./types";
+import type { MonitoringQuery, EventRecord, AlertRecord, UserRecord } from "./types";
 
 export function rowToMonitoringQuery(row: Record<string, unknown>): MonitoringQuery {
   return {
@@ -11,8 +11,19 @@ export function rowToMonitoringQuery(row: Record<string, unknown>): MonitoringQu
     baseline_window_minutes: Number(row.baseline_window_minutes),
     elevated_threshold: Number(row.elevated_threshold),
     critical_threshold: Number(row.critical_threshold),
+    owner_id: row.owner_id != null ? String(row.owner_id) : null,
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
+  };
+}
+
+export function rowToUser(row: Record<string, unknown>): UserRecord {
+  return {
+    id: String(row.id),
+    username: String(row.username),
+    display_name: row.display_name != null ? String(row.display_name) : null,
+    role: row.role === "admin" ? "admin" : "client",
+    created_at: String(row.created_at),
   };
 }
 

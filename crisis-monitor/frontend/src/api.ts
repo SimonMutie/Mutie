@@ -1,6 +1,30 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:4000";
 
+const TOKEN_STORAGE_KEY = "sentinel_token";
+
+let authToken: string | null = localStorage.getItem(TOKEN_STORAGE_KEY);
+
+export function setToken(token: string | null) {
+  authToken = token;
+  if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  else localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+export function getToken(): string | null {
+  return authToken;
+}
+
+export type UserRole = "admin" | "client";
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string | null;
+  role: UserRole;
+  created_at?: string;
+}
+
 export interface EventItem {
   id: string;
   source_type: "social" | "news" | "darkweb" | "forum";
@@ -40,7 +64,10 @@ export interface MonitoringQueryItem {
   baseline_window_minutes: number;
   elevated_threshold: number;
   critical_threshold: number;
+  owner_id: string | null;
   created_at: string;
+  /** Matches in the last 2h — included by the queries list endpoint for the query list UI. */
+  match_count?: number;
 }
 
 export interface StatsSummary {
@@ -51,27 +78,67 @@ export interface StatsSummary {
   top_queries: { id: string; name: string; category: string; matches: number }[];
 }
 
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message);
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
   const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) },
     ...init,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`);
+    throw new ApiError(body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`, res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
 }
 
+export { ApiError };
+
 export const api = {
   health: () => req<{ status: string }>("/api/health"),
+
+  authStatus: () => req<{ bootstrapNeeded: boolean }>("/api/auth/status"),
+  bootstrap: (username: string, password: string, display_name?: string) =>
+    req<{ token: string; user: AuthUser }>("/api/auth/bootstrap", {
+      method: "POST",
+      body: JSON.stringify({ username, password, display_name }),
+    }),
+  login: (username: string, password: string) =>
+    req<{ token: string; user: AuthUser }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    }),
+  me: () => req<AuthUser>("/api/auth/me"),
+  listUsers: () => req<AuthUser[]>("/api/auth/users"),
+  createUser: (username: string, password: string, display_name?: string, role: UserRole = "client") =>
+    req<AuthUser>("/api/auth/users", {
+      method: "POST",
+      body: JSON.stringify({ username, password, display_name, role }),
+    }),
+
   getEvents: (params: { limit?: number; source_type?: string; query_id?: string } = {}) => {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
     return req<EventItem[]>(`/api/events${qs ? `?${qs}` : ""}`);
   },
-  getGeoEvents: (minutes = 120) => req<EventItem[]>(`/api/events/geo?minutes=${minutes}`),
-  getAlerts: (status: "open" | "resolved" | "all" = "open") => req<AlertItem[]>(`/api/alerts?status=${status}`),
+  getGeoEvents: (params: { minutes?: number; query_id?: string } = {}) => {
+    const qs = new URLSearchParams(params as unknown as Record<string, string>).toString();
+    return req<EventItem[]>(`/api/events/geo${qs ? `?${qs}` : ""}`);
+  },
+  getAlerts: (params: { status?: "open" | "resolved" | "all"; query_id?: string } = {}) => {
+    const qs = new URLSearchParams({ status: "open", ...params } as Record<string, string>).toString();
+    return req<AlertItem[]>(`/api/alerts?${qs}`);
+  },
   acknowledgeAlert: (id: string) => req<AlertItem>(`/api/alerts/${id}/acknowledge`, { method: "PATCH" }),
   resolveAlert: (id: string) => req<AlertItem>(`/api/alerts/${id}/resolve`, { method: "PATCH" }),
   getQueries: () => req<MonitoringQueryItem[]>("/api/queries"),
@@ -85,7 +152,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ boolean_query }),
     }),
-  getSummary: () => req<StatsSummary>("/api/stats/summary"),
+  getSummary: (queryId?: string) => req<StatsSummary>(`/api/stats/summary${queryId ? `?query_id=${queryId}` : ""}`),
   getEscalationHistory: (queryId: string) =>
     req<{ window_end: string; escalation_score: number; volume: number }[]>(`/api/stats/escalation/${queryId}`),
 };
@@ -96,7 +163,8 @@ export function connectLiveFeed(onMessage: (type: string, payload: unknown) => v
   let retryDelay = 1000;
 
   function connect() {
-    ws = new WebSocket(`${WS_URL}/ws`);
+    if (!authToken) return; // not logged in yet; App re-invokes once it is
+    ws = new WebSocket(`${WS_URL}/ws?token=${encodeURIComponent(authToken)}`);
     ws.onmessage = (evt) => {
       try {
         const { type, payload } = JSON.parse(evt.data);

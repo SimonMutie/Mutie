@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./bindings";
+import { authRouter } from "./routes/auth";
 import { queriesRouter } from "./routes/queries";
 import { eventsRouter } from "./routes/events";
 import { alertsRouter } from "./routes/alerts";
@@ -42,11 +43,14 @@ app.get("/api/health", async (c) => {
   }
 });
 
+app.route("/api/auth", authRouter);
 app.route("/api/queries", queriesRouter);
 app.route("/api/events", eventsRouter);
 app.route("/api/alerts", alertsRouter);
 app.route("/api/stats", statsRouter);
 
+// Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off
+// this same URL) — forwarding the raw request preserves that query string.
 app.get("/ws", async (c) => {
   const id = c.env.LIVE_FEED.idFromName("global");
   return c.env.LIVE_FEED.get(id).fetch(c.req.raw);

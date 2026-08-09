@@ -6,4 +6,6 @@ export interface Env {
   ALERTING_ACTOR: DurableObjectNamespace;
   MOCK_MODE: string;
   GDELT_ENABLED: string;
+  /** Set as an encrypted Worker secret (never in wrangler.toml [vars]) — signs session tokens. */
+  SESSION_SECRET: string;
 }

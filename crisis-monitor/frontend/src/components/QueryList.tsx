@@ -4,11 +4,11 @@ import { api } from "../api";
 
 interface Props {
   queries: MonitoringQueryItem[];
-  matchCounts: Record<string, number>;
   onChanged: () => void;
+  onOpen: (queryId: string) => void;
 }
 
-export default function QueryBuilder({ queries, matchCounts, onChanged }: Props) {
+export default function QueryList({ queries, onChanged, onOpen }: Props) {
   const [name, setName] = useState("");
   const [booleanQuery, setBooleanQuery] = useState("");
   const [category, setCategory] = useState("general");
@@ -41,20 +41,28 @@ export default function QueryBuilder({ queries, matchCounts, onChanged }: Props)
     }
   }
 
-  async function toggleActive(q: MonitoringQueryItem) {
+  async function toggleActive(e: React.MouseEvent, q: MonitoringQueryItem) {
+    e.stopPropagation();
     await api.updateQuery(q.id, { is_active: !q.is_active });
     onChanged();
   }
 
-  async function remove(q: MonitoringQueryItem) {
+  async function remove(e: React.MouseEvent, q: MonitoringQueryItem) {
+    e.stopPropagation();
     await api.deleteQuery(q.id);
     onChanged();
   }
 
   return (
-    <div className="panel" style={{ padding: "16px 18px", display: "flex", gap: 24, height: "100%" }}>
-      <form onSubmit={handleValidateAndSubmit} style={{ flex: "0 0 340px", display: "flex", flexDirection: "column", gap: 8 }}>
-        <div className="eyebrow" style={{ marginBottom: 4 }}>NEW MONITORING QUERY</div>
+    <div style={{ flex: 1, display: "flex", gap: 24, padding: 24, minHeight: 0 }}>
+      <form
+        onSubmit={handleValidateAndSubmit}
+        className="panel"
+        style={{ flex: "0 0 340px", padding: "18px 20px", display: "flex", flexDirection: "column", gap: 8, height: "fit-content" }}
+      >
+        <div className="eyebrow" style={{ marginBottom: 4 }}>
+          NEW MONITORING QUERY
+        </div>
         <input
           placeholder="Query name (e.g. Flooding — East Africa)"
           value={name}
@@ -97,51 +105,59 @@ export default function QueryBuilder({ queries, matchCounts, onChanged }: Props)
       </form>
 
       <div style={{ flex: 1, overflowY: "auto" }}>
-        <div className="eyebrow" style={{ marginBottom: 8 }}>ACTIVE MONITORING ({queries.length})</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="eyebrow" style={{ marginBottom: 10 }}>
+          YOUR MONITORING QUERIES ({queries.length})
+        </div>
+        {queries.length === 0 && (
+          <div style={{ color: "var(--text-faint)", fontSize: 13, padding: "12px 4px" }}>
+            No queries yet — create one on the left to start a live dashboard for it.
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {queries.map((q) => (
             <div
               key={q.id}
+              onClick={() => onOpen(q.id)}
+              className="panel"
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 10,
-                padding: "8px 10px",
-                background: "var(--panel-raised)",
-                borderRadius: 6,
-                border: "1px solid var(--border-soft)",
-                opacity: q.is_active ? 1 : 0.5,
+                gap: 14,
+                padding: "12px 16px",
+                cursor: "pointer",
+                opacity: q.is_active ? 1 : 0.55,
               }}
             >
               <span
                 style={{
-                  width: 7,
-                  height: 7,
+                  width: 8,
+                  height: 8,
                   borderRadius: "50%",
                   background: q.is_active ? "var(--signal)" : "var(--text-faint)",
                   flexShrink: 0,
                 }}
               />
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {q.name}
                 </div>
                 <div
                   className="mono"
-                  style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  style={{ fontSize: 11.5, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                 >
                   {q.boolean_query}
                 </div>
               </div>
-              <div className="mono" style={{ fontSize: 12, color: "var(--text-muted)", flexShrink: 0 }}>
-                {matchCounts[q.id] ?? 0} matches
+              <div className="mono" style={{ fontSize: 12.5, color: "var(--text-muted)", flexShrink: 0 }}>
+                {q.match_count ?? 0} matches · 2h
               </div>
-              <button onClick={() => toggleActive(q)} style={smallBtnStyle}>
+              <button onClick={(e) => toggleActive(e, q)} style={smallBtnStyle}>
                 {q.is_active ? "Pause" : "Resume"}
               </button>
-              <button onClick={() => remove(q)} style={{ ...smallBtnStyle, color: "var(--critical)" }}>
+              <button onClick={(e) => remove(e, q)} style={{ ...smallBtnStyle, color: "var(--critical)" }}>
                 Delete
               </button>
+              <span style={{ color: "var(--text-faint)", fontSize: 16 }}>→</span>
             </div>
           ))}
         </div>

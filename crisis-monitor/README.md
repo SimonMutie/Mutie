@@ -11,9 +11,15 @@ sources" below.
 
 Runs entirely on Cloudflare:
 
-- **Database:** Cloudflare D1 (SQLite) — events, monitoring queries, matches, alerts, escalation history
+- **Database:** Cloudflare D1 (SQLite) — users, events, monitoring queries, matches, alerts, escalation history
 - **Backend:** Cloudflare Worker (Hono) + Durable Objects — boolean query engine, REST API, WebSocket broadcast hub, and the two background loops (mock ingestion, escalation scoring), each driven by a Durable Object alarm
-- **Frontend:** React + TypeScript + Vite, deployed as static assets on Cloudflare Pages — live dashboard (map, charts, alert feed, query builder)
+- **Frontend:** React + TypeScript + Vite, deployed as static assets on Cloudflare Pages — per-client login, a query list, and a live dashboard (map, charts, alert feed) for each monitoring query
+
+**Multi-tenant:** every monitoring query belongs to the account that created it.
+Clients only ever see their own queries and the dashboards built from them —
+enforced on the REST API *and* the live WebSocket feed, not just hidden in
+the UI (see "Accounts & multi-tenancy" below). There's no public signup —
+an admin creates each client's login.
 
 > This was ported from an earlier Express + Postgres + `ws` prototype to run
 > natively on Cloudflare's edge platform. See "Why Durable Objects" below if
@@ -39,9 +45,20 @@ npx wrangler d1 create sentinel
 # Apply the schema (creates tables + seeds 4 starter monitoring queries)
 npm run db:migrate:remote
 
+# Set the session-signing secret (never put this in wrangler.toml — it's a real secret)
+npx wrangler secret put SESSION_SECRET
+#   -> paste any long random string when prompted, e.g. output of:
+#      node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
 # Deploy
 npm run deploy
 ```
+
+> **Upgrading an existing deployment** (created before accounts existed)?
+> Run `npx wrangler d1 execute sentinel --remote --file=../db/migration_002_auth.sql`
+> instead of the fresh-install schema above — it's additive (new `users`
+> table + an `owner_id` column on `monitoring_queries`) and safe to run
+> against a database that already has data in it.
 
 Wrangler prints your Worker's URL at the end, e.g.
 `https://sentinel-api.<your-subdomain>.workers.dev`. Sanity-check it:
@@ -55,6 +72,12 @@ Within a couple of minutes the mock ingestion loop (an alarm-driven Durable
 Object) will start writing simulated events and the escalation scorer will
 start evaluating them — no further action needed, the first hit to
 `/api/health` (or the 5-minute cron safety net) kicks both loops off.
+
+The `users` table starts empty, so the **first visit to the deployed
+frontend** shows a one-time "set up admin account" screen instead of a login
+screen — that's you. From there you're the admin: you create a login for
+each client from the "Clients" tab, and you're the only role that sees
+across every client's queries.
 
 ### 2. Deploy the frontend (Cloudflare Pages)
 
@@ -98,6 +121,7 @@ would run real geocoding/NLP on the article text instead).
 # terminal 1 — backend, via Miniflare (D1 + Durable Objects simulated locally)
 cd crisis-monitor/backend
 npm install
+echo 'SESSION_SECRET="local-dev-only"' > .dev.vars   # wrangler dev reads this automatically; never commit it
 npm run db:migrate:local     # seeds a local D1 instance under .wrangler/
 npm run dev                  # wrangler dev, http://localhost:8787
 
@@ -183,11 +207,31 @@ Thresholds, baseline window, and category are all per-query and editable via
 
 ### Dashboard
 
-- **World map** — live event markers by source type, with pulsing rings on open alerts, positioned at their reported location.
-- **Volume chart** — event throughput over the last hour.
-- **Source mix + sentiment** — breakdown by source type and rolling sentiment split.
-- **Alert feed** — live-updating, with acknowledge/resolve actions.
-- **Query builder** — add/pause/delete Boolean monitoring rules, see live match counts per query.
+- **Query list** — every query the logged-in account owns (admins see everyone's), with a live 2h match count. Create new queries here.
+- **Per-query dashboard** — clicking a query opens its own dedicated view, scoped to just that query's matches:
+  - **World map** — live event markers by source type, with pulsing rings on open alerts, positioned at their reported location. Hover any marker for the full event text/alert detail.
+  - **Volume chart** — match throughput over the last hour.
+  - **Source mix + sentiment** — breakdown by source type and rolling sentiment split.
+  - **Alert feed** — live-updating, with acknowledge/resolve actions.
+- **Admin panel** (admin role only) — create a login for each client, see every account.
+
+### Accounts & multi-tenancy
+
+There's no public signup. The first person to visit a freshly-deployed site
+sets up the one admin account; from then on, the admin creates a
+username/password for each client (Clients tab). Every monitoring query
+belongs to whichever account created it — clients only ever see and manage
+their own; admins see every query, including any created directly by the
+admin ("house" queries, not owned by any client).
+
+Implementation (`backend/src/auth.ts`, `middleware.ts`, `ownership.ts`):
+
+- **Passwords:** PBKDF2-SHA256 (100k iterations, random salt) via Web Crypto — no native bindings needed on Workers.
+- **Sessions:** stateless, HMAC-signed bearer tokens (`SESSION_SECRET`, 30-day expiry) — no sessions table, verified by recomputing the signature. Sent as `Authorization: Bearer <token>` on REST calls and `?token=` on the WebSocket URL (browsers can't set custom headers on a WS handshake).
+- **REST isolation:** every query/event/alert/stats route checks ownership before returning data — a client hitting another client's `query_id` gets a `404`, not a `403`, so existence isn't leaked either.
+- **Live feed isolation:** this is the one that's easy to get wrong — a naive implementation would broadcast every event to every connected socket and just *filter it in the UI*, meaning a client's browser would technically receive other clients' private data over the wire. Instead, `LiveFeedHub` (the Durable Object WebSocket hub) verifies the session token **at connect time** and tags each socket with its owner via the hibernatable WebSocket attachment API; every broadcast carries the owning `ownerIds`, and the DO only forwards a message to sockets whose owner matches (admins always receive everything). Verified locally by connecting two clients and confirming one receives zero bytes of the other's matched events.
+
+Known simplifications, worth knowing about before this handles anything sensitive: the bearer token lives in `localStorage` (accessible to any JS on the page — no `httpOnly` cookie), there's no password-reset flow (an admin just creates a new login), and there's no rate-limiting on login attempts.
 
 ## Going from mock data to real sources
 
@@ -200,7 +244,7 @@ real sources:
 2. **Social media** — most platforms (X/Twitter, Meta, TikTok, Reddit) require paid enterprise API tiers for full-firehose or historical search access. Write a connector that calls the platform API, following the same shape as `gdelt.ts`: `INSERT OR IGNORE` into `events` (the partial unique index on `(source_type, external_id)` dedupes for you), then call `matchAndBroadcast()`. It can live in a Worker route hit by an external scheduler, or its own Cron Trigger.
 3. **Dark web** — do **not** build a DIY Tor scraper. Use a licensed threat-intelligence feed (e.g. Flashpoint, Recorded Future, DarkOwl, SixgillOwl) that already handles the legal, safety, and operational-security side of dark-web collection, and normalize their API output into the `events` table the same way.
 4. Once you have enough real sources, set `MOCK_MODE = "false"` in `wrangler.toml` to stop the synthetic generator.
-5. For genuine production scale you'll also want: a queue (Cloudflare Queues) between ingestion and scoring instead of writing directly to D1 under load, deduplication/near-duplicate detection across sources reporting the same real-world story, real NLP for sentiment/entity/geo-extraction (GDELT gives you a country, not coordinates — the connector currently just centroids that), and role-based access control on the dashboard (there is currently none — see limitations below).
+5. For genuine production scale you'll also want: a queue (Cloudflare Queues) between ingestion and scoring instead of writing directly to D1 under load, deduplication/near-duplicate detection across sources reporting the same real-world story, and real NLP for sentiment/entity/geo-extraction (GDELT gives you a country, not coordinates — the connector currently just centroids that).
 
 ## Database schema
 
@@ -211,7 +255,7 @@ instead of enums, JSON stored as `TEXT`, timestamps stored as ISO-8601 text.
 
 ## Notable limitations of this prototype
 
-- Single-tenant, no authentication/authorization on the dashboard or API. Put it behind Cloudflare Access if you deploy it anywhere non-trivial.
+- No password-reset flow or login rate-limiting (see "Accounts & multi-tenancy" above) — fine for a small number of admin-provisioned clients, not for anything open to the public internet at scale.
 - Sentiment is randomly assigned per mock event, not computed from text — a real deployment needs an actual NLP sentiment/entity pipeline.
 - Geolocation is asserted per event rather than extracted from text/metadata.
 - No deduplication across sources for the same real-world story.

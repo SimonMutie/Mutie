@@ -1,10 +1,14 @@
+import type { AuthUser } from "../api";
+
 interface Props {
   connected: boolean;
-  eventsPerMinute: number;
-  openAlertCount: number;
+  user: AuthUser;
+  view: "list" | "dashboard" | "admin";
+  onNavigate: (view: "list" | "admin") => void;
+  onLogout: () => void;
 }
 
-export default function TopBar({ connected, eventsPerMinute, openAlertCount }: Props) {
+export default function TopBar({ connected, user, view, onNavigate, onLogout }: Props) {
   return (
     <header
       style={{
@@ -41,32 +45,28 @@ export default function TopBar({ connected, eventsPerMinute, openAlertCount }: P
         <span className="eyebrow">CRISIS MONITORING</span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        {user.role === "admin" && (
+          <nav style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => onNavigate("list")} style={navBtnStyle(view !== "admin")}>
+              Queries
+            </button>
+            <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
+              Clients
+            </button>
+          </nav>
+        )}
+
         <div style={{ textAlign: "right" }}>
-          <div className="eyebrow">EVENT RATE</div>
-          <div className="mono" style={{ fontSize: 15, color: "var(--text-primary)" }}>
-            {eventsPerMinute}/min
+          <div className="eyebrow">{user.role === "admin" ? "ADMIN" : "SIGNED IN"}</div>
+          <div className="mono" style={{ fontSize: 13, color: "var(--text-primary)" }}>
+            {user.display_name || user.username}
           </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div className="eyebrow">OPEN ALERTS</div>
-          <div
-            className="mono"
-            style={{
-              fontSize: 15,
-              color: openAlertCount > 0 ? "var(--critical)" : "var(--text-primary)",
-              fontWeight: 600,
-            }}
-          >
-            {openAlertCount}
-          </div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div className="eyebrow">LINK</div>
-          <div className="mono" style={{ fontSize: 15, color: connected ? "var(--signal)" : "var(--critical)" }}>
-            {connected ? "LIVE" : "RECONNECTING"}
-          </div>
-        </div>
+
+        <button onClick={onLogout} style={logoutBtnStyle}>
+          Log out
+        </button>
       </div>
 
       <style>{`
@@ -78,3 +78,26 @@ export default function TopBar({ connected, eventsPerMinute, openAlertCount }: P
     </header>
   );
 }
+
+function navBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    fontSize: 12.5,
+    padding: "6px 12px",
+    background: active ? "var(--signal-dim)" : "transparent",
+    border: `1px solid ${active ? "var(--signal)" : "var(--border)"}`,
+    borderRadius: 6,
+    color: active ? "var(--text-primary)" : "var(--text-muted)",
+    cursor: "pointer",
+    fontWeight: active ? 600 : 400,
+  };
+}
+
+const logoutBtnStyle: React.CSSProperties = {
+  fontSize: 12.5,
+  padding: "6px 12px",
+  background: "transparent",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  color: "var(--text-muted)",
+  cursor: "pointer",
+};

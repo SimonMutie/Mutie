@@ -1,122 +1,108 @@
-import { useEffect, useRef, useState, useCallback } from "react";
-import { api, connectLiveFeed, type EventItem, type AlertItem, type MonitoringQueryItem, type StatsSummary } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
 import TopBar from "./components/TopBar";
-import WorldMap from "./components/WorldMap";
-import AlertFeed from "./components/AlertFeed";
-import VolumeChart from "./components/VolumeChart";
-import SourceBreakdown from "./components/SourceBreakdown";
-import QueryBuilder from "./components/QueryBuilder";
+import AuthScreen from "./components/AuthScreen";
+import QueryList from "./components/QueryList";
+import QueryDashboard from "./components/QueryDashboard";
+import AdminPanel from "./components/AdminPanel";
+
+type BootState = "checking" | "bootstrap" | "login" | "authed";
+type View = "list" | { queryId: string } | "admin";
 
 export default function App() {
-  const [connected, setConnected] = useState(false);
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [bootState, setBootState] = useState<BootState>("checking");
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [view, setView] = useState<View>("list");
   const [queries, setQueries] = useState<MonitoringQueryItem[]>([]);
-  const [summary, setSummary] = useState<StatsSummary | null>(null);
-  const [matchCounts, setMatchCounts] = useState<Record<string, number>>({});
-  const recentTimestamps = useRef<number[]>([]);
-  const [eventsPerMinute, setEventsPerMinute] = useState(0);
+  const [connected, setConnected] = useState(false);
+  const [liveMessage, setLiveMessage] = useState<{ type: string; payload: unknown } | null>(null);
 
-  const loadAll = useCallback(async () => {
-    const [ev, al, q, s] = await Promise.all([
-      api.getEvents({ limit: 150 }),
-      api.getAlerts("open"),
-      api.getQueries(),
-      api.getSummary(),
-    ]);
-    setEvents(ev);
-    setAlerts(al);
-    setQueries(q);
-    setSummary(s);
-    const counts: Record<string, number> = {};
-    for (const tq of s.top_queries) counts[tq.id] = tq.matches;
-    setMatchCounts(counts);
+  // Resolve whether we need first-run setup, a login screen, or are already authenticated (existing token).
+  useEffect(() => {
+    (async () => {
+      const existingToken = getToken();
+      if (existingToken) {
+        try {
+          const me = await api.me();
+          setUser(me);
+          setBootState("authed");
+          return;
+        } catch {
+          setToken(null); // stale/expired token
+        }
+      }
+      const { bootstrapNeeded } = await api.authStatus();
+      setBootState(bootstrapNeeded ? "bootstrap" : "login");
+    })();
+  }, []);
+
+  const loadQueries = useCallback(async () => {
+    setQueries(await api.getQueries());
   }, []);
 
   useEffect(() => {
-    loadAll();
-    const summaryInterval = setInterval(() => {
-      api.getSummary().then(setSummary).catch(() => {});
-    }, 15000);
-    return () => clearInterval(summaryInterval);
-  }, [loadAll]);
+    if (bootState !== "authed") return;
+    loadQueries();
+    const interval = setInterval(loadQueries, 15000);
+    return () => clearInterval(interval);
+  }, [bootState, loadQueries]);
 
   useEffect(() => {
+    if (bootState !== "authed") return;
     const disconnect = connectLiveFeed((type, payload) => {
       setConnected(true);
-      if (type === "event") {
-        const ev = payload as EventItem;
-        setEvents((prev) => [ev, ...prev].slice(0, 200));
-        recentTimestamps.current.push(Date.now());
-      } else if (type === "alert") {
-        setAlerts((prev) => [payload as AlertItem, ...prev]);
-      }
+      setLiveMessage({ type, payload });
     });
+    return () => disconnect();
+  }, [bootState]);
 
-    const rateInterval = setInterval(() => {
-      const cutoff = Date.now() - 60_000;
-      recentTimestamps.current = recentTimestamps.current.filter((t) => t > cutoff);
-      setEventsPerMinute(recentTimestamps.current.length);
-    }, 2000);
-
-    const heartbeat = setInterval(() => setConnected((c) => c), 5000);
-
-    return () => {
-      disconnect();
-      clearInterval(rateInterval);
-      clearInterval(heartbeat);
-    };
-  }, []);
-
-  async function handleAcknowledge(id: string) {
-    await api.acknowledgeAlert(id);
-    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, acknowledged_at: new Date().toISOString() } : a)));
+  function handleAuthenticated(authedUser: AuthUser) {
+    setUser(authedUser);
+    setBootState("authed");
   }
 
-  async function handleResolve(id: string) {
-    await api.resolveAlert(id);
-    setAlerts((prev) => prev.filter((a) => a.id !== id));
+  function handleLogout() {
+    setToken(null);
+    setUser(null);
+    setQueries([]);
+    setView("list");
+    setConnected(false);
+    setBootState("login");
   }
+
+  if (bootState === "checking") {
+    return <div style={{ height: "100vh" }} />;
+  }
+
+  if (bootState === "bootstrap" || bootState === "login") {
+    return <AuthScreen mode={bootState} onAuthenticated={handleAuthenticated} />;
+  }
+
+  if (!user) return null; // unreachable once authed, keeps TS happy
+
+  const openQuery = typeof view === "object" ? queries.find((q) => q.id === view.queryId) : undefined;
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <TopBar
         connected={connected}
-        eventsPerMinute={eventsPerMinute}
-        openAlertCount={summary?.open_alert_count ?? alerts.length}
+        user={user}
+        view={view === "admin" ? "admin" : typeof view === "object" ? "dashboard" : "list"}
+        onNavigate={(v) => setView(v)}
+        onLogout={handleLogout}
       />
 
-      <div
-        style={{
-          flex: 1,
-          display: "grid",
-          gridTemplateColumns: "1fr 340px",
-          gridTemplateRows: "1.4fr 1fr 0.9fr",
-          gap: 12,
-          padding: 12,
-          minHeight: 0,
-        }}
-      >
-        <div className="panel" style={{ gridColumn: "1 / 2", gridRow: "1 / 2", overflow: "hidden" }}>
-          <WorldMap events={events} alerts={alerts} />
-        </div>
+      {view === "admin" && <AdminPanel onBack={() => setView("list")} />}
 
-        <div style={{ gridColumn: "2 / 3", gridRow: "1 / 3" }}>
-          <AlertFeed alerts={alerts} onAcknowledge={handleAcknowledge} onResolve={handleResolve} />
-        </div>
+      {view === "list" && <QueryList queries={queries} onChanged={loadQueries} onOpen={(queryId) => setView({ queryId })} />}
 
-        <div style={{ gridColumn: "1 / 2", gridRow: "2 / 3", display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 12, minHeight: 0 }}>
-          <VolumeChart data={summary?.volume_series ?? []} />
-          <SourceBreakdown
-            bySource={summary?.by_source ?? []}
-            sentiment={summary?.sentiment ?? { negative: 0, neutral: 0, positive: 0 }}
-          />
-        </div>
-
-        <div style={{ gridColumn: "1 / 3", gridRow: "3 / 4", minHeight: 0 }}>
-          <QueryBuilder queries={queries} matchCounts={matchCounts} onChanged={loadAll} />
-        </div>
-      </div>
+      {typeof view === "object" &&
+        (openQuery ? (
+          <QueryDashboard query={openQuery} liveMessage={liveMessage} onBack={() => setView("list")} />
+        ) : (
+          // query list hasn't loaded yet, or the query was deleted/no longer accessible
+          <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
+        ))}
     </div>
   );
 }

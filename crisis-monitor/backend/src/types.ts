@@ -28,8 +28,20 @@ export interface MonitoringQuery {
   baseline_window_minutes: number;
   elevated_threshold: number;
   critical_threshold: number;
+  /** NULL = "house" query not owned by any client, visible only to admins. */
+  owner_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type UserRole = "admin" | "client";
+
+export interface UserRecord {
+  id: string;
+  username: string;
+  display_name: string | null;
+  role: UserRole;
+  created_at: string;
 }
 
 export interface AlertRecord {

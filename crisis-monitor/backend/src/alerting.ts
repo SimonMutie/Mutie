@@ -6,11 +6,12 @@ import type { AlertLevel } from "./types";
 
 const WINDOW_MINUTES = 5; // how often we score, and the size of the "current" window
 
-async function broadcast(env: Env, type: string, payload: unknown) {
+/** ownerIds tells LiveFeedHub which clients' sockets should receive this broadcast (admins always do). */
+async function broadcast(env: Env, type: string, payload: unknown, ownerIds: string[]) {
   const id = env.LIVE_FEED.idFromName("global");
   await env.LIVE_FEED.get(id).fetch("http://live-feed/broadcast", {
     method: "POST",
-    body: JSON.stringify({ type, payload }),
+    body: JSON.stringify({ type, payload, ownerIds }),
   });
 }
 
@@ -79,15 +80,20 @@ export async function scoreEscalations(env: Env) {
       [newId(), q.id, currentWindowStart, nowIso(), currentVolume, baselineMeanPerWindow, avgSentiment, escalationScore, nowIso()]
     );
 
-    await broadcast(env, "escalation", {
-      query_id: q.id,
-      query_name: q.name,
-      volume: currentVolume,
-      baseline_volume: baselineMeanPerWindow,
-      avg_sentiment: avgSentiment,
-      escalation_score: escalationScore,
-      window_end: nowIso(),
-    });
+    await broadcast(
+      env,
+      "escalation",
+      {
+        query_id: q.id,
+        query_name: q.name,
+        volume: currentVolume,
+        baseline_volume: baselineMeanPerWindow,
+        avg_sentiment: avgSentiment,
+        escalation_score: escalationScore,
+        window_end: nowIso(),
+      },
+      q.owner_id ? [q.owner_id] : []
+    );
 
     let level: AlertLevel | null = null;
     if (escalationScore >= q.critical_threshold) level = "critical";
@@ -128,10 +134,15 @@ export async function scoreEscalations(env: Env) {
         );
 
         if (alertRows[0]) {
-          await broadcast(env, "alert", {
-            ...alertRows[0],
-            metric_snapshot: JSON.parse(String(alertRows[0].metric_snapshot ?? "{}")),
-          });
+          await broadcast(
+            env,
+            "alert",
+            {
+              ...alertRows[0],
+              metric_snapshot: JSON.parse(String(alertRows[0].metric_snapshot ?? "{}")),
+            },
+            q.owner_id ? [q.owner_id] : []
+          );
         }
       }
     }
