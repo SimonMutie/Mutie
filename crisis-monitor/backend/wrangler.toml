@@ -34,3 +34,7 @@ crons = ["*/5 * * * *"]
 [vars]
 MOCK_MODE = "true"
 GDELT_ENABLED = "true"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
