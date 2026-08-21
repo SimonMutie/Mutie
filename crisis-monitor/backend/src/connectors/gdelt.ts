@@ -258,7 +258,9 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
   for (const article of byUrl.values()) {
     if (!article.url || !article.title) continue;
 
-    let content = article.title;
+    // URL slugs often carry keywords too (e.g. .../2026/08/cholera-outbreak-nairobi.html),
+    // so it's included in the matched text alongside the title, not just used for dedup/linking.
+    let content = `${article.title} ${article.url}`;
     if (!fulltextCache.has(article.url)) {
       if (fulltextBudget > 0) {
         fulltextBudget--;
@@ -268,7 +270,7 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
       }
     }
     const bodyText = fulltextCache.get(article.url);
-    if (bodyText) content = `${article.title} ${bodyText}`;
+    if (bodyText) content = `${content} ${bodyText}`;
 
     const centroid = COUNTRY_CENTROIDS[article.sourcecountry] ?? null;
     const id = newId();
