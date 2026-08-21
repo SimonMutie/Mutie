@@ -45,6 +45,22 @@ interface Props {
 export default function WorldMap({ events, alerts }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Hover | null>(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function cancelHide() {
+    if (hideTimer.current) {
+      clearTimeout(hideTimer.current);
+      hideTimer.current = null;
+    }
+  }
+
+  // Small delay (rather than hiding instantly on mouse-leave) gives the user
+  // time to move from the marker into the tooltip itself to click the article
+  // link — without this, the tooltip disappears before the cursor gets there.
+  function scheduleHide() {
+    cancelHide();
+    hideTimer.current = setTimeout(() => setHover(null), 200);
+  }
 
   const geoEvents = useMemo(
     () => events.filter((e) => e.geo_lat != null && e.geo_lng != null).slice(0, 150),
@@ -59,11 +75,13 @@ export default function WorldMap({ events, alerts }: Props) {
   }
 
   function showEvent(evt: React.MouseEvent, item: EventItem) {
+    cancelHide();
     const { x, y } = pointerToLocal(evt.clientX, evt.clientY);
     setHover({ kind: "event", x, y, item });
   }
 
   function showAlert(evt: React.MouseEvent, item: AlertItem) {
+    cancelHide();
     const { x, y } = pointerToLocal(evt.clientX, evt.clientY);
     setHover({ kind: "alert", x, y, item });
   }
@@ -75,7 +93,7 @@ export default function WorldMap({ events, alerts }: Props) {
   }
 
   function hideHover() {
-    setHover(null);
+    scheduleHide();
   }
 
   const containerWidth = containerRef.current?.clientWidth ?? 1000;
@@ -110,10 +128,13 @@ export default function WorldMap({ events, alerts }: Props) {
         {geoEvents.map((e) => (
           <Marker key={e.id} coordinates={[e.geo_lng!, e.geo_lat!]}>
             <g
-              style={{ cursor: "pointer" }}
+              style={{ cursor: e.url ? "pointer" : "default" }}
               onMouseEnter={(evt) => showEvent(evt, e)}
               onMouseMove={moveHover}
               onMouseLeave={hideHover}
+              onClick={() => {
+                if (e.url) window.open(e.url, "_blank", "noopener,noreferrer");
+              }}
             >
               {/* generous invisible hit area — the visible dot is too small to hover precisely */}
               <circle r={9} fill="transparent" />
@@ -143,13 +164,14 @@ export default function WorldMap({ events, alerts }: Props) {
 
       {hover && (
         <div
+          onMouseEnter={cancelHide}
+          onMouseLeave={scheduleHide}
           style={{
             position: "absolute",
             left: flip ? undefined : hover.x + 16,
             right: flip ? containerWidth - hover.x + 16 : undefined,
             top: Math.max(8, hover.y - 8),
             width: tooltipWidth,
-            pointerEvents: "none",
             background: "var(--panel-raised)",
             border: "1px solid var(--border)",
             borderRadius: 8,
@@ -189,6 +211,23 @@ export default function WorldMap({ events, alerts }: Props) {
                 <span>{hover.item.geo_label ?? "Unknown location"}</span>
                 <span>sentiment: {sentimentLabel(hover.item.sentiment)}</span>
               </div>
+              {hover.item.url && (
+                <a
+                  href={hover.item.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-block",
+                    marginTop: 8,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    color: "var(--info)",
+                    textDecoration: "none",
+                  }}
+                >
+                  Open article ↗
+                </a>
+              )}
             </>
           ) : (
             <>
