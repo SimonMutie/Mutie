@@ -50,7 +50,7 @@ async function matchAgainstQueries(
   const matchedQueryIds: string[] = [];
   const ownerIds = new Set<string>();
   for (const { id: queryId, ownerId, parsed } of compiled) {
-    if (evaluate(parsed, event.content)) {
+    if (evaluate(parsed, { content: event.content, title: event.title, url: event.url, domain: event.author })) {
       matchedQueryIds.push(queryId);
       if (ownerId) ownerIds.add(ownerId);
       await run(env.DB, `INSERT OR IGNORE INTO query_matches (id, query_id, event_id, matched_at) VALUES (?,?,?,?)`, [
@@ -74,9 +74,25 @@ async function insertMockEvent(env: Env, ev: GeneratedEvent): Promise<EventRecor
   await run(
     env.DB,
     `INSERT INTO events
-      (id, source_id, source_type, author, content, url, lang, sentiment, published_at, ingested_at, geo_lat, geo_lng, geo_label, raw_metadata)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, sourceId, ev.source_type, ev.author, ev.content, ev.url, ev.lang, ev.sentiment, publishedAt, now, ev.geo_lat, ev.geo_lng, ev.geo_label, "{}"]
+      (id, source_id, source_type, author, title, content, url, lang, sentiment, published_at, ingested_at, geo_lat, geo_lng, geo_label, raw_metadata)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      id,
+      sourceId,
+      ev.source_type,
+      ev.author,
+      ev.content, // mock events don't distinguish a headline from body — title mirrors content so title:/titleCharCount: still work against something
+      ev.content,
+      ev.url,
+      ev.lang,
+      ev.sentiment,
+      publishedAt,
+      now,
+      ev.geo_lat,
+      ev.geo_lng,
+      ev.geo_label,
+      "{}",
+    ]
   );
 
   return {
@@ -85,6 +101,7 @@ async function insertMockEvent(env: Env, ev: GeneratedEvent): Promise<EventRecor
     source_type: ev.source_type,
     external_id: null,
     author: ev.author,
+    title: ev.content,
     content: ev.content,
     url: ev.url,
     lang: ev.lang,
@@ -135,15 +152,15 @@ export async function backfillQueryMatches(env: Env, queryId: string, booleanQue
   }
 
   const cutoff = new Date(Date.now() - BACKFILL_LOOKBACK_HOURS * 60 * 60_000).toISOString();
-  const events = await all<{ id: string; content: string; published_at: string }>(
+  const events = await all<{ id: string; content: string; title: string | null; url: string | null; author: string | null; published_at: string }>(
     env.DB,
-    `SELECT id, content, published_at FROM events WHERE published_at > ? ORDER BY published_at DESC LIMIT ?`,
+    `SELECT id, content, title, url, author, published_at FROM events WHERE published_at > ? ORDER BY published_at DESC LIMIT ?`,
     [cutoff, BACKFILL_MAX_EVENTS]
   );
 
   let matched = 0;
   for (const ev of events) {
-    if (evaluate(parsed, ev.content)) {
+    if (evaluate(parsed, { content: ev.content, title: ev.title, url: ev.url, domain: ev.author })) {
       await run(env.DB, `INSERT OR IGNORE INTO query_matches (id, query_id, event_id, matched_at) VALUES (?,?,?,?)`, [
         newId(),
         queryId,
