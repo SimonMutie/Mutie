@@ -7,6 +7,7 @@ export interface EventRecord {
   source_type: SourceType;
   external_id: string | null;
   author: string | null;
+  title: string | null;
   content: string;
   url: string | null;
   lang: string;
