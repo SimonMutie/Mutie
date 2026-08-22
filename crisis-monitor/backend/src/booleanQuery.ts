@@ -6,10 +6,18 @@
  *   word                      -> single-token match
  *   *                         -> wildcard suffix, e.g. flood*
  *   AND / OR / NOT            -> boolean operators (NOT binds tighter than AND, AND tighter than OR)
+ *   NEAR/n                    -> proximity: true if any matching term on the left occurs within n
+ *                                words of any matching term on the right, in either direction. Same
+ *                                precedence as AND (left-associative, mixed freely with AND/implicit-AND).
  *   ( ... )                   -> grouping
+ *
+ * Word splitting for matching (including NEAR/n) is whitespace/punctuation based using Unicode
+ * letter/number classes, not an ASCII a-z0-9 split — this matters for scripts like Arabic, where an
+ * ASCII-only split would treat an entire run of non-Latin text as one undivided "non-word" blob.
  *
  * Example:
  *   ("cholera" OR "outbreak") AND "Nairobi" NOT "drill"
+ *   (RSF OR SAF) NEAR/25 (attack OR clash*)
  *
  * The parser builds an AST once per query (cheap, queries are edited rarely) and
  * `evaluate()` is called per-event during ingestion, so evaluation is kept O(n) in
@@ -20,10 +28,12 @@ type Node =
   | { kind: "TERM"; text: string; wildcard: boolean }
   | { kind: "AND"; left: Node; right: Node }
   | { kind: "OR"; left: Node; right: Node }
-  | { kind: "NOT"; child: Node };
+  | { kind: "NOT"; child: Node }
+  | { kind: "NEAR"; left: Node; right: Node; distance: number };
 
 type Token =
   | { type: "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" }
+  | { type: "NEAR"; distance: number }
   | { type: "TERM"; text: string };
 
 function tokenize(query: string): Token[] {
@@ -71,8 +81,15 @@ function tokenize(query: string): Token[] {
       j++;
     }
     const upper = buf.toUpperCase();
+    const nearMatch = /^NEAR\/(\d+)$/i.exec(buf);
     if (upper === "AND" || upper === "OR" || upper === "NOT") {
       tokens.push({ type: upper as "AND" | "OR" | "NOT" });
+    } else if (nearMatch) {
+      // Previously fell through to the TERM branch below and was treated as a
+      // literal required search term "near/25" — which no real article text
+      // would ever contain, so any query using NEAR/n always returned zero
+      // matches regardless of its other terms. Recognized as an operator now.
+      tokens.push({ type: "NEAR", distance: Number(nearMatch[1]) });
     } else if (buf.length > 0) {
       tokens.push({ type: "TERM", text: buf });
     }
@@ -132,6 +149,10 @@ class Parser {
       if (t?.type === "AND") {
         this.next();
         left = { kind: "AND", left, right: this.parseNot() };
+      } else if (t?.type === "NEAR") {
+        const distance = t.distance;
+        this.next();
+        left = { kind: "NEAR", left, right: this.parseNot(), distance };
       } else if (t && (t.type === "TERM" || t.type === "LPAREN" || t.type === "NOT")) {
         // implicit AND between adjacent terms/groups
         left = { kind: "AND", left, right: this.parseNot() };
@@ -196,9 +217,68 @@ function collectPositiveTerms(node: Node, negated: boolean, out: string[]) {
       return;
     case "AND":
     case "OR":
+    case "NEAR":
       collectPositiveTerms(node.left, negated, out);
       collectPositiveTerms(node.right, negated, out);
       return;
+  }
+}
+
+/** Unicode-aware word split — splits on whitespace and trims punctuation from each
+ *  word using \p{L}/\p{N} (letter/number) classes, rather than an ASCII a-z0-9
+ *  split. An ASCII-only split would treat an entire run of Arabic (or any non-Latin
+ *  script) text as a single undivided "non-word" separator and destroy it. */
+function toWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean);
+}
+
+function wordMatchesAt(words: string[], i: number, termWords: string[], wildcard: boolean): boolean {
+  for (let k = 0; k < termWords.length; k++) {
+    const w = words[i + k];
+    if (w === undefined) return false;
+    const isLastWord = k === termWords.length - 1;
+    if (wildcard && isLastWord) {
+      if (!w.startsWith(termWords[k])) return false;
+    } else if (w !== termWords[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Word-index positions where `node` matches, for NEAR's proximity check.
+ *  Handles TERM/OR fully and correctly (the realistic shape of a NEAR operand —
+ *  a term or an OR-group of terms/phrases, as in `(RSF OR SAF) NEAR/25 (...)`).
+ *  AND/NOT inside a NEAR operand don't have a single well-defined "position" to
+ *  measure proximity from; these are rare in practice, so they fall back to a
+ *  conservative approximation noted inline rather than blocking NEAR support
+ *  entirely. */
+function collectMatchPositions(node: Node, words: string[]): number[] {
+  switch (node.kind) {
+    case "TERM": {
+      const termWords = node.text.split(/\s+/).filter(Boolean);
+      const positions: number[] = [];
+      for (let i = 0; i < words.length; i++) {
+        if (wordMatchesAt(words, i, termWords, node.wildcard)) positions.push(i);
+      }
+      return positions;
+    }
+    case "OR":
+    case "NEAR": // nested NEAR-in-NEAR: treat both sides' positions as candidates
+      return [...collectMatchPositions(node.left, words), ...collectMatchPositions(node.right, words)];
+    case "AND": {
+      // Approximation: only meaningful if both sides match *somewhere* in the
+      // text; if so, use the left side's positions as the candidate anchors.
+      const leftPositions = collectMatchPositions(node.left, words);
+      const rightPositions = collectMatchPositions(node.right, words);
+      return leftPositions.length > 0 && rightPositions.length > 0 ? leftPositions : [];
+    }
+    case "NOT":
+      return []; // a negated term has no meaningful "position" to be near something else
   }
 }
 
@@ -222,6 +302,19 @@ function evalNode(node: Node, haystack: string): boolean {
       return evalNode(node.left, haystack) || evalNode(node.right, haystack);
     case "NOT":
       return !evalNode(node.child, haystack);
+    case "NEAR": {
+      const words = toWords(haystack);
+      const leftPositions = collectMatchPositions(node.left, words);
+      if (leftPositions.length === 0) return false;
+      const rightPositions = collectMatchPositions(node.right, words);
+      if (rightPositions.length === 0) return false;
+      for (const lp of leftPositions) {
+        for (const rp of rightPositions) {
+          if (Math.abs(lp - rp) <= node.distance) return true;
+        }
+      }
+      return false;
+    }
   }
 }
 
