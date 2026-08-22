@@ -281,14 +281,15 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
     const rows = await all<Record<string, unknown>>(
       env.DB,
       `INSERT OR IGNORE INTO events
-        (id, source_id, source_type, external_id, author, content, url, lang, published_at, ingested_at, geo_lat, geo_lng, geo_label, raw_metadata)
-       VALUES (?, ?, 'news', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, source_id, source_type, external_id, author, title, content, url, lang, published_at, ingested_at, geo_lat, geo_lng, geo_label, raw_metadata)
+       VALUES (?, ?, 'news', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
       [
         id,
         sourceId,
         article.url,
         article.domain ?? null,
+        article.title,
         content,
         article.url,
         (article.language ?? "en").toLowerCase(),
