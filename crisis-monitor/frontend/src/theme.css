@@ -1,25 +1,26 @@
 :root {
-  --base: #0a0d12;
-  --panel: #12161d;
-  --panel-raised: #171c25;
-  --border: #232935;
-  --border-soft: #1a2028;
-  --text-primary: #e8ecf2;
-  --text-muted: #7c8798;
-  --text-faint: #4d5766;
+  --base: #f4f6f9;
+  --panel: #ffffff;
+  --panel-raised: #eef1f6;
+  --panel-hover: #e4e9f0;
+  --border: #dbe1ea;
+  --border-soft: #e6eaf1;
+  --text-primary: #131722;
+  --text-muted: #5b6577;
+  --text-faint: #8892a3;
 
-  --signal: #37e6c4;
-  --signal-dim: #1c7d6c;
-  --info: #4c8dff;
-  --elevated: #f0a93b;
-  --critical: #f0473f;
-  --positive: #35c97c;
+  --signal: #0d9488;
+  --signal-dim: #d3f3ef;
+  --info: #2f66f0;
+  --elevated: #b3690b;
+  --critical: #d1352b;
+  --positive: #17924f;
 
   --font-display: "Space Grotesk", "Inter", sans-serif;
   --font-body: "Inter", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 * {
@@ -36,8 +37,8 @@ body,
 body {
   background: var(--base);
   background-image:
-    radial-gradient(circle at 15% 0%, rgba(55, 230, 196, 0.05), transparent 40%),
-    radial-gradient(circle at 85% 100%, rgba(76, 141, 255, 0.05), transparent 45%);
+    radial-gradient(circle at 15% 0%, rgba(13, 148, 136, 0.06), transparent 40%),
+    radial-gradient(circle at 85% 100%, rgba(47, 102, 240, 0.05), transparent 45%);
   color: var(--text-primary);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
@@ -81,6 +82,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(19, 23, 34, 0.04);
 }
 
 .eyebrow {
