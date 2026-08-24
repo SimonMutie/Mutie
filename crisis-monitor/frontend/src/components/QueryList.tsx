@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { MonitoringQueryItem } from "../api";
 import { api } from "../api";
+import CategoryBadge, { categoryMeta } from "./CategoryBadge";
 
 interface Props {
   queries: MonitoringQueryItem[];
@@ -125,32 +126,43 @@ export default function QueryList({ queries, onChanged, onOpen }: Props) {
                 gap: 14,
                 padding: "12px 16px",
                 cursor: "pointer",
-                opacity: q.is_active ? 1 : 0.55,
+                opacity: q.is_active ? 1 : 0.6,
               }}
             >
-              <span
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: q.is_active ? "var(--signal)" : "var(--text-faint)",
-                  flexShrink: 0,
-                }}
-              />
+              <CategoryBadge category={q.category} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {q.name}
                 </div>
-                <div
-                  className="mono"
-                  style={{ fontSize: 11.5, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                >
-                  {q.boolean_query}
+                <div style={{ fontSize: 12, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {categoryMeta(q.category).label} · {q.match_count ?? 0} matches
                 </div>
               </div>
-              <div className="mono" style={{ fontSize: 12.5, color: "var(--text-muted)", flexShrink: 0 }}>
-                {q.match_count ?? 0} matches · 2h
-              </div>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  padding: "3px 9px",
+                  borderRadius: 999,
+                  flexShrink: 0,
+                  color: q.is_active ? "var(--signal)" : "var(--text-faint)",
+                  background: q.is_active ? "color-mix(in srgb, var(--signal) 14%, transparent)" : "transparent",
+                  border: `1px solid ${q.is_active ? "color-mix(in srgb, var(--signal) 40%, transparent)" : "var(--border)"}`,
+                }}
+              >
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: q.is_active ? "var(--signal)" : "var(--text-faint)",
+                  }}
+                />
+                {q.is_active ? "Live" : "Paused"}
+              </span>
               <button onClick={(e) => toggleActive(e, q)} style={smallBtnStyle}>
                 {q.is_active ? "Pause" : "Resume"}
               </button>
