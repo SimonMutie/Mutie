@@ -117,7 +117,7 @@ export default function WorldMap({ events, alerts }: Props) {
                 strokeWidth={0.5}
                 style={{
                   default: { outline: "none" },
-                  hover: { outline: "none", fill: "#1d2430" },
+                  hover: { outline: "none", fill: "var(--panel-hover)" },
                   pressed: { outline: "none" },
                 }}
               />
@@ -176,7 +176,7 @@ export default function WorldMap({ events, alerts }: Props) {
             border: "1px solid var(--border)",
             borderRadius: 8,
             padding: "10px 12px",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+            boxShadow: "0 8px 24px rgba(19, 23, 34, 0.14)",
             zIndex: 10,
           }}
         >
