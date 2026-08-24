@@ -11,9 +11,10 @@ interface Props {
   query: MonitoringQueryItem;
   liveMessage: { type: string; payload: unknown } | null;
   onBack: () => void;
+  onEdit: () => void;
 }
 
-export default function QueryDashboard({ query, liveMessage, onBack }: Props) {
+export default function QueryDashboard({ query, liveMessage, onBack, onEdit }: Props) {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [summary, setSummary] = useState<StatsSummary | null>(null);
@@ -93,6 +94,9 @@ export default function QueryDashboard({ query, liveMessage, onBack }: Props) {
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{categoryMeta(query.category).label}</div>
         </div>
+        <button onClick={onEdit} style={backBtnStyle}>
+          Edit
+        </button>
         <button onClick={() => setShowQuery((v) => !v)} style={backBtnStyle}>
           {showQuery ? "Hide query syntax ▴" : "View query syntax ▾"}
         </button>
