@@ -70,6 +70,22 @@ export interface MonitoringQueryItem {
   match_count?: number;
 }
 
+export interface PreviewMatch {
+  id: string;
+  source_type: string;
+  title: string | null;
+  content: string;
+  url: string | null;
+  published_at: string;
+  geo_label: string | null;
+}
+
+export interface PreviewResult {
+  matches: PreviewMatch[];
+  scanned: number;
+  lookback_hours: number;
+  truncated: boolean;
+}
 export interface StatsSummary {
   by_source: { source_type: string; count: number }[];
   sentiment: { negative: number; neutral: number; positive: number };
@@ -149,6 +165,11 @@ export const api = {
   deleteQuery: (id: string) => req<void>(`/api/queries/${id}`, { method: "DELETE" }),
   validateQuery: (boolean_query: string) =>
     req<{ valid: boolean; error: string | null }>("/api/queries/validate", {
+      method: "POST",
+      body: JSON.stringify({ boolean_query }),
+    }),
+  previewQuery: (boolean_query: string) =>
+    req<PreviewResult>("/api/queries/preview", {
       method: "POST",
       body: JSON.stringify({ boolean_query }),
     }),
