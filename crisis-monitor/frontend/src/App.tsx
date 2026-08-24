@@ -4,10 +4,11 @@ import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
 import QueryList from "./components/QueryList";
 import QueryDashboard from "./components/QueryDashboard";
+import QueryEditor from "./components/QueryEditor";
 import AdminPanel from "./components/AdminPanel";
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
-type View = "list" | { queryId: string } | "admin";
+type View = "list" | { queryId: string } | "admin" | "new-query" | { editQueryId: string };
 
 export default function App() {
   const [bootState, setBootState] = useState<BootState>("checking");
@@ -80,25 +81,60 @@ export default function App() {
 
   if (!user) return null; // unreachable once authed, keeps TS happy
 
-  const openQuery = typeof view === "object" ? queries.find((q) => q.id === view.queryId) : undefined;
+  const openQuery = typeof view === "object" && "queryId" in view ? queries.find((q) => q.id === view.queryId) : undefined;
+  const editingQuery = typeof view === "object" && "editQueryId" in view ? queries.find((q) => q.id === view.editQueryId) : undefined;
+
+  async function handleSaved(saved: MonitoringQueryItem) {
+    await loadQueries();
+    setView({ queryId: saved.id });
+  }
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <TopBar
         connected={connected}
         user={user}
-        view={view === "admin" ? "admin" : typeof view === "object" ? "dashboard" : "list"}
+        view={view === "admin" ? "admin" : view === "list" ? "list" : "dashboard"}
         onNavigate={(v) => setView(v)}
         onLogout={handleLogout}
       />
 
       {view === "admin" && <AdminPanel onBack={() => setView("list")} />}
 
-      {view === "list" && <QueryList queries={queries} onChanged={loadQueries} onOpen={(queryId) => setView({ queryId })} />}
+      {view === "list" && (
+        <QueryList
+          queries={queries}
+          onChanged={loadQueries}
+          onOpen={(queryId) => setView({ queryId })}
+          onNew={() => setView("new-query")}
+          onEdit={(queryId) => setView({ editQueryId: queryId })}
+        />
+      )}
+
+      {view === "new-query" && <QueryEditor mode="create" onCancel={() => setView("list")} onSaved={handleSaved} />}
 
       {typeof view === "object" &&
+        "editQueryId" in view &&
+        (editingQuery ? (
+          <QueryEditor
+            mode="edit"
+            existingQuery={editingQuery}
+            onCancel={() => setView({ queryId: editingQuery.id })}
+            onSaved={handleSaved}
+          />
+        ) : (
+          <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
+        ))}
+
+      {typeof view === "object" &&
+        "queryId" in view &&
         (openQuery ? (
-          <QueryDashboard query={openQuery} liveMessage={liveMessage} onBack={() => setView("list")} />
+          <QueryDashboard
+            query={openQuery}
+            liveMessage={liveMessage}
+            onBack={() => setView("list")}
+            onEdit={() => setView({ editQueryId: openQuery.id })}
+          />
         ) : (
           // query list hasn't loaded yet, or the query was deleted/no longer accessible
           <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
