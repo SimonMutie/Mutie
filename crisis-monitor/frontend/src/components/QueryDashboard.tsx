@@ -5,6 +5,7 @@ import AlertFeed from "./AlertFeed";
 import VolumeChart from "./VolumeChart";
 import SourceBreakdown from "./SourceBreakdown";
 import TimeRangeControl, { type TimeRange } from "./TimeRangeControl";
+import CategoryBadge, { categoryMeta } from "./CategoryBadge";
 
 interface Props {
   query: MonitoringQueryItem;
@@ -17,6 +18,7 @@ export default function QueryDashboard({ query, liveMessage, onBack }: Props) {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [summary, setSummary] = useState<StatsSummary | null>(null);
   const [range, setRange] = useState<TimeRange | null>(null); // null = live rolling window
+  const [showQuery, setShowQuery] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [ev, al, s] = await Promise.all([
@@ -84,17 +86,34 @@ export default function QueryDashboard({ query, liveMessage, onBack }: Props) {
         <button onClick={onBack} style={backBtnStyle}>
           ← All queries
         </button>
+        <CategoryBadge category={query.category} size={26} />
         <div style={{ flex: 1, minWidth: 160 }}>
           <div style={{ fontSize: 15, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {query.name}
           </div>
-          <div className="mono" style={{ fontSize: 11.5, color: "var(--text-faint)" }}>
-            {query.boolean_query}
-          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{categoryMeta(query.category).label}</div>
         </div>
+        <button onClick={() => setShowQuery((v) => !v)} style={backBtnStyle}>
+          {showQuery ? "Hide query syntax ▴" : "View query syntax ▾"}
+        </button>
         <TimeRangeControl value={range} onChange={setRange} />
-        <span className="eyebrow">{query.category.replace(/_/g, " ")}</span>
       </div>
+
+      {showQuery && (
+        <div
+          className="mono"
+          style={{
+            padding: "10px 24px",
+            fontSize: 12,
+            color: "var(--text-muted)",
+            background: "var(--panel-raised)",
+            borderBottom: "1px solid var(--border-soft)",
+            wordBreak: "break-word",
+          }}
+        >
+          {query.boolean_query}
+        </div>
+      )}
 
       {range && (
         <div
