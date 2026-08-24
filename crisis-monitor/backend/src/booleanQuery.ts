@@ -5,8 +5,8 @@
  *   "exact phrase"            -> literal phrase match (case-insensitive)
  *   word                      -> single-token match
  *   word*                     -> wildcard suffix, e.g. flood* matches flood, floods, flooding.
- *                                At least 4 characters must precede the '*', and only one '*'
- *                                wildcard term is allowed per query (both enforced at parse time).
+ *                                At least 4 characters must precede the '*' (enforced at parse time).
+ *                                Multiple '*' wildcard terms are allowed in one query.
  *   w?rd                      -> single-character wildcard, e.g. me?t matches meat/melt/meet.
  *                                No count/position limits, may combine with a trailing '*'.
  *   AND / OR / NOT            -> boolean operators (NOT binds tighter than AND, AND tighter than OR)
@@ -286,30 +286,9 @@ export interface ParsedQuery {
 export function parseBooleanQuery(raw: string): ParsedQuery {
   const tokens = tokenize(raw);
   const ast = new Parser(tokens).parse();
-
-  const wildcardCount = countWildcards(ast);
-  if (wildcardCount > 1) {
-    throw new Error("Only one '*' wildcard term is supported per query");
-  }
-
   const positiveTerms: string[] = [];
   collectPositiveTerms(ast, false, positiveTerms);
   return { ast, raw, positiveTerms };
-}
-
-function countWildcards(node: Node): number {
-  switch (node.kind) {
-    case "TERM":
-      return node.wildcard ? 1 : 0;
-    case "NOT":
-      return countWildcards(node.child);
-    case "AND":
-    case "OR":
-    case "NEAR":
-      return countWildcards(node.left) + countWildcards(node.right);
-    case "RANGE":
-      return 0;
-  }
 }
 
 function collectPositiveTerms(node: Node, negated: boolean, out: string[]) {
