@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { all, nowIso } from "../db";
 import { newId } from "../ids";
-import { validateBooleanQuery } from "../booleanQuery";
+import { validateBooleanQuery, parseBooleanQuery, evaluate } from "../booleanQuery";
 import { rowToMonitoringQuery } from "../mappers";
 import { canAccessQuery } from "../ownership";
 import { backfillQueryMatches } from "../ingest";
@@ -94,6 +94,68 @@ queriesRouter.post("/validate", async (c) => {
   }
   const error = validateBooleanQuery(booleanQuery);
   return c.json({ valid: error === null, error });
+});
+
+const PREVIEW_LOOKBACK_HOURS = 72;
+const PREVIEW_SCAN_LIMIT = 3000; // how many recent events to scan
+const PREVIEW_RESULT_LIMIT = 20; // how many matches to actually return
+
+/** Read-only: runs a boolean query against recent events without creating a
+ *  monitoring query or writing anything, so the editor's live-preview panel
+ *  can show sample matches as the person types — same evaluate() logic used
+ *  for real ingestion/backfill, just not persisted. */
+queriesRouter.post("/preview", async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const booleanQuery = (body as Record<string, unknown>)?.boolean_query;
+  if (typeof booleanQuery !== "string" || booleanQuery.trim().length === 0) {
+    return c.json({ error: "boolean_query must be a non-empty string" }, 400);
+  }
+
+  let parsed;
+  try {
+    parsed = parseBooleanQuery(booleanQuery);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Invalid boolean query" }, 400);
+  }
+
+  const cutoff = new Date(Date.now() - PREVIEW_LOOKBACK_HOURS * 60 * 60_000).toISOString();
+  const rows = await all<Record<string, unknown>>(
+    c.env.DB,
+    `SELECT id, source_type, title, content, url, author, published_at, geo_label
+     FROM events WHERE published_at > ? ORDER BY published_at DESC LIMIT ?`,
+    [cutoff, PREVIEW_SCAN_LIMIT]
+  );
+
+  const matches: Record<string, unknown>[] = [];
+  let scanned = 0;
+  for (const row of rows) {
+    scanned++;
+    const fields = {
+      content: String(row.content ?? ""),
+      title: (row.title as string | null) ?? null,
+      url: (row.url as string | null) ?? null,
+      domain: (row.author as string | null) ?? null,
+    };
+    if (evaluate(parsed, fields)) {
+      matches.push({
+        id: row.id,
+        source_type: row.source_type,
+        title: row.title,
+        content: row.content,
+        url: row.url,
+        published_at: row.published_at,
+        geo_label: row.geo_label,
+      });
+      if (matches.length >= PREVIEW_RESULT_LIMIT) break;
+    }
+  }
+
+  return c.json({
+    matches,
+    scanned,
+    lookback_hours: PREVIEW_LOOKBACK_HOURS,
+    truncated: matches.length >= PREVIEW_RESULT_LIMIT,
+  });
 });
 
 const PATCHABLE_FIELDS = [
