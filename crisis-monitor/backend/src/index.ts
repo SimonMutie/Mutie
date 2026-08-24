@@ -83,7 +83,7 @@ export default {
     // tick's time budget; raise it if you need to monitor genuinely huge
     // term lists.
     const MAX_QUERIES_PER_TICK = 25;
-    const MAX_CHUNKS_PER_QUERY = 20; // 20 chunks * 10 terms/chunk = up to 200 terms per query
+    const MAX_CHUNKS_PER_QUERY = 40; // 40 chunks * 10 terms/chunk = up to 400 terms per query
     const GDELT_REQUEST_STAGGER_MS = 1500;
     const compiled = await loadActiveCompiledQueries(env);
 
