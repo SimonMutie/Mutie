@@ -4,11 +4,12 @@ import { api, type IncidentFilters, type IncidentItem, type IncidentStats } from
 import IncidentsMap from "./IncidentsMap";
 import IncidentUpload from "./IncidentUpload";
 import IncidentManualEntry from "./IncidentManualEntry";
+import IncidentManageTable from "./IncidentManageTable";
 
 const CHART_COLOR = "#0d9488";
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 
-type Tab = "manual" | "overview" | "map" | "upload";
+type Tab = "manual" | "overview" | "map" | "upload" | "manage";
 
 export default function IncidentsDashboard() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -17,6 +18,7 @@ export default function IncidentsDashboard() {
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [filters, setFilters] = useState<{ country?: string; province?: string; sector?: string; actor?: string; severity?: string }>({});
   const [loading, setLoading] = useState(true);
+  const [manageRefreshKey, setManageRefreshKey] = useState(0);
 
   async function loadAll() {
     setLoading(true);
@@ -51,9 +53,9 @@ export default function IncidentsDashboard() {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
         <div style={{ fontSize: 15, fontWeight: 700, marginRight: 12 }}>Incidents</div>
-        {(["manual", "overview", "map", "upload"] as Tab[]).map((t) => (
+        {(["manual", "overview", "map", "manage", "upload"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={tabBtnStyle(tab === t)}>
-            {t === "manual" ? "Enter Manually" : t === "overview" ? "Overview" : t === "map" ? "Map" : "Upload"}
+            {t === "manual" ? "Enter Manually" : t === "overview" ? "Overview" : t === "map" ? "Map" : t === "manage" ? "Manage" : "Upload"}
           </button>
         ))}
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
@@ -61,13 +63,35 @@ export default function IncidentsDashboard() {
 
       {tab === "manual" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          <IncidentManualEntry onSaved={loadAll} />
+          <IncidentManualEntry
+            onSaved={() => {
+              loadAll();
+              setManageRefreshKey((k) => k + 1);
+            }}
+          />
+        </div>
+      )}
+
+      {tab === "manage" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          <IncidentManageTable
+            refreshKey={manageRefreshKey}
+            onChanged={() => {
+              loadAll();
+              setManageRefreshKey((k) => k + 1);
+            }}
+          />
         </div>
       )}
 
       {tab === "upload" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          <IncidentUpload onUploaded={loadAll} />
+          <IncidentUpload
+            onUploaded={() => {
+              loadAll();
+              setManageRefreshKey((k) => k + 1);
+            }}
+          />
         </div>
       )}
 
