@@ -1243,7 +1243,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
         {/* incident overlay filters */}
-        <details open>
+        <details>
           <summary className="eyebrow" style={{ cursor: "pointer" }}>OVERLAY INCIDENTS</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
           {(focusedRoute || focusedShape) && (
