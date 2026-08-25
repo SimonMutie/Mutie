@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet-draw";
@@ -42,12 +42,90 @@ const ROUTE_COLORS = [
   "#1d4ed8", "#c2410c", "#166534", "#9d174d",
 ]; // 20 distinct auto-assigned colors before cycling repeats — full custom colors are also always available via the color picker
 
-function severityColor(severity: string | null | undefined): string {
-  const s = (severity ?? "").toLowerCase();
-  if (/(critical|extreme|severe|high)/.test(s)) return "#d1352b";
-  if (/(elevated|moderate|medium|med\b)/.test(s)) return "#b3690b";
-  if (/(low|minor|minimal)/.test(s)) return "#17924f";
-  return "#2f66f0";
+/** Categorizes an incident by its Actor field into a color + distinct icon
+ *  shape — e.g. "AOG" reads red, "Criminal" reads blue, "Security Forces"
+ *  reads green. Pattern-matched (case-insensitive) against common real-world
+ *  labels rather than requiring an exact match, since source data is rarely
+ *  perfectly consistent. Order matters: first matching pattern wins. */
+type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "other";
+interface ActorCategory {
+  color: string;
+  label: string;
+  shape: ActorShape;
+}
+const ACTOR_CATEGORIES: { pattern: RegExp; color: string; label: string; shape: ActorShape }[] = [
+  { pattern: /\b(aog|armed opposition|non-?state armed|nsag)\b/i, color: "#d1352b", label: "Armed Opposition Group (AOG)", shape: "aog" },
+  { pattern: /\b(criminal|gang|organi[sz]ed crime)\b/i, color: "#2f66f0", label: "Criminal", shape: "criminal" },
+  { pattern: /\b(security forces?|police|military|army|state forces?|law enforcement)\b/i, color: "#17924f", label: "Security Forces", shape: "security" },
+  { pattern: /\b(terroris\w*|extremis\w*)\b/i, color: "#ea580c", label: "Terrorist / Extremist", shape: "terrorist" },
+  { pattern: /\b(militia|self-?defen[cs]e|community defense|vigilante)\b/i, color: "#7c3aed", label: "Militia", shape: "militia" },
+];
+const OTHER_CATEGORY: ActorCategory = { color: "#64748b", label: "Other / Unspecified", shape: "other" };
+
+function classifyActor(actor: string | null | undefined): ActorCategory {
+  const value = (actor ?? "").trim();
+  if (!value) return OTHER_CATEGORY;
+  for (const cat of ACTOR_CATEGORIES) {
+    if (cat.pattern.test(value)) return cat;
+  }
+  return OTHER_CATEGORY;
+}
+
+/** SVG path data per shape, in a shared 0-18 viewBox — kept as plain path/circle
+ *  data (not full elements) so color/opacity can be injected once, in one place. */
+function shapePathD(shape: ActorShape): string | null {
+  switch (shape) {
+    case "aog":
+      return "M12 6.5 L17 15.5 L7 15.5 Z"; // triangle
+    case "criminal":
+      return "M12 6 L17.5 11 L12 16 L6.5 11 Z"; // diamond
+    case "security":
+      return "M12 5.3 L16.5 7.3 V11.5 C16.5 15 14.2 16.9 12 17.8 C9.8 16.9 7.5 15 7.5 11.5 V7.3 Z"; // shield
+    case "terrorist":
+      return "M12 5.3 L13.3 9.8 L18 10.8 L13.3 11.8 L12 16.3 L10.7 11.8 L6 10.8 L10.7 9.8 Z"; // burst/star
+    case "militia":
+      return "M12 5.3 L16.3 7.7 V12.3 L12 16.7 L7.7 12.3 V7.7 Z"; // hexagon
+    default:
+      return null; // dot
+  }
+}
+
+// Classic teardrop map-pin outline — 24x32 viewBox, tip points at the exact
+// coordinate. Far more legible at a glance than a flat colored polygon, and
+// matches the convention most mapping tools (Google Maps, ArcGIS, ACLED) use
+// for custom category markers.
+const PIN_PATH_D = "M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z";
+
+function pinSvg(category: ActorCategory, size: number, opacity: number): string {
+  const glyphD = shapePathD(category.shape);
+  const glyph = glyphD ? `<path d="${glyphD}" fill="#fff" />` : `<circle cx="12" cy="11" r="4" fill="#fff" />`;
+  const height = Math.round((size * 32) / 24);
+  return `<svg width="${size}" height="${height}" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg" style="opacity:${opacity}">
+    <path d="${PIN_PATH_D}" fill="${category.color}" stroke="rgba(0,0,0,0.35)" stroke-width="1" />
+    ${glyph}
+  </svg>`;
+}
+
+// Only a handful of (shape × highlighted) combinations exist regardless of how
+// many incidents are on screen, so icons are built once and reused rather than
+// constructed fresh per marker per render.
+const iconCache = new Map<string, L.DivIcon>();
+function incidentIcon(category: ActorCategory, highlighted: boolean): L.DivIcon {
+  const cacheKey = `${category.shape}-${category.color}-${highlighted}`;
+  const cached = iconCache.get(cacheKey);
+  if (cached) return cached;
+
+  const width = highlighted ? 18 : 12;
+  const height = Math.round((width * 32) / 24);
+  const icon = L.divIcon({
+    html: pinSvg(category, width, highlighted ? 1 : 0.55),
+    className: "incident-marker-icon",
+    iconSize: [width, height],
+    iconAnchor: [width / 2, height], // the pin's tip, not its center, marks the exact location
+    popupAnchor: [0, -height * 0.85],
+  });
+  iconCache.set(cacheKey, icon);
+  return icon;
 }
 function totalCasualties(i: IncidentItem): number {
   return (
@@ -1206,31 +1284,25 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
 
         {((onlyNearOverlay || focusedOverlay) && nearOverlayIds ? geoIncidents.filter((i) => nearOverlayIds.has(i.id)) : geoIncidents).map((i) => {
           const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
+          const category = classifyActor(i.actor);
           return (
-            <CircleMarker
-              key={i.id}
-              center={[i.latitude!, i.longitude!]}
-              radius={highlighted ? 6 : 4}
-              pathOptions={{
-                color: severityColor(i.severity),
-                fillColor: severityColor(i.severity),
-                fillOpacity: highlighted ? 0.85 : 0.2,
-                opacity: highlighted ? 1 : 0.25,
-                weight: 1,
-              }}
-            >
+            <Marker key={i.id} position={[i.latitude!, i.longitude!]} icon={incidentIcon(category, highlighted)}>
               <Popup>
                 <div style={{ fontSize: 13, minWidth: 180 }}>
                   <div style={{ fontWeight: 700, marginBottom: 2 }}>
                     {[i.city, i.province].filter(Boolean).join(", ") || i.precise_location || "Unknown location"}
                   </div>
                   <div style={{ color: "#666", marginBottom: 4 }}>{i.occurred_date || ""}</div>
-                  <div style={{ marginBottom: 4 }}>{[i.sector, i.tactic, i.actor].filter(Boolean).join(" · ")}</div>
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ color: category.color, fontWeight: 600 }}>{category.label}</span>
+                    {[i.sector, i.tactic, i.actor].filter(Boolean).length > 0 && " · "}
+                    {[i.sector, i.tactic, i.actor].filter(Boolean).join(" · ")}
+                  </div>
                   {totalCasualties(i) > 0 && <div style={{ color: "#d1352b" }}>{totalCasualties(i)} civilian casualties</div>}
                   {i.details && <div style={{ marginTop: 4, color: "#444" }}>{i.details.slice(0, 200)}</div>}
                 </div>
               </Popup>
-            </CircleMarker>
+            </Marker>
           );
         })}
 
@@ -1270,6 +1342,39 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           ))
         )}
       </MapContainer>
+      <ActorLegend />
+    </div>
+  );
+}
+
+/** Bottom-left floating key for the shaped/colored incident icons — plain
+ *  positioned HTML, deliberately NOT a MapContainer child (map layer
+ *  components and arbitrary UI don't mix well as Leaflet-pane siblings). */
+function ActorLegend() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 12,
+        left: 12,
+        zIndex: 1000,
+        background: "var(--panel)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: "10px 12px",
+        boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+        fontSize: 11.5,
+      }}
+    >
+      <div className="eyebrow" style={{ marginBottom: 6 }}>INCIDENT ACTOR</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {[...ACTOR_CATEGORIES.map((c) => ({ color: c.color, label: c.label, shape: c.shape })), OTHER_CATEGORY].map((c) => (
+          <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 14, height: 19, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: pinSvg(c, 14, 1) }} />
+            <span style={{ color: "var(--text-muted)" }}>{c.label}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
