@@ -6,9 +6,10 @@ import QueryList from "./components/QueryList";
 import QueryDashboard from "./components/QueryDashboard";
 import QueryEditor from "./components/QueryEditor";
 import AdminPanel from "./components/AdminPanel";
+import IncidentsDashboard from "./components/IncidentsDashboard";
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
-type View = "list" | { queryId: string } | "admin" | "new-query" | { editQueryId: string };
+type View = "list" | { queryId: string } | "admin" | "new-query" | { editQueryId: string } | "incidents";
 
 export default function App() {
   const [bootState, setBootState] = useState<BootState>("checking");
@@ -94,12 +95,14 @@ export default function App() {
       <TopBar
         connected={connected}
         user={user}
-        view={view === "admin" ? "admin" : view === "list" ? "list" : "dashboard"}
+        view={view === "admin" ? "admin" : view === "list" ? "list" : view === "incidents" ? "incidents" : "dashboard"}
         onNavigate={(v) => setView(v)}
         onLogout={handleLogout}
       />
 
       {view === "admin" && <AdminPanel onBack={() => setView("list")} />}
+
+      {view === "incidents" && <IncidentsDashboard />}
 
       {view === "list" && (
         <QueryList
