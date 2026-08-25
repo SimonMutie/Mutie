@@ -148,6 +148,25 @@ export interface IncidentStats {
   casualties: Record<string, number>;
 }
 
+export interface ShapeStyle {
+  color?: string;
+  fillColor?: string;
+  fillOpacity?: number;
+  weight?: number;
+  dashArray?: string | null;
+}
+
+export interface SavedShape {
+  id: string;
+  owner_id: string | null;
+  name: string;
+  source: "drawn" | "shapefile" | "geojson";
+  geometry: GeoJSON.Feature | GeoJSON.FeatureCollection;
+  style: ShapeStyle;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SavedRoute {
   id: string;
   owner_id: string | null;
@@ -284,6 +303,13 @@ export const api = {
   updateMapRoute: (id: string, data: { name?: string; color?: string }) =>
     req<SavedRoute>(`/api/map-routes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteMapRoute: (id: string) => req<void>(`/api/map-routes/${id}`, { method: "DELETE" }),
+
+  getMapShapes: () => req<SavedShape[]>("/api/map-shapes"),
+  createMapShape: (data: Omit<SavedShape, "id" | "owner_id" | "created_at" | "updated_at">) =>
+    req<SavedShape>("/api/map-shapes", { method: "POST", body: JSON.stringify(data) }),
+  updateMapShape: (id: string, data: { name?: string; style?: ShapeStyle }) =>
+    req<SavedShape>(`/api/map-shapes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteMapShape: (id: string) => req<void>(`/api/map-shapes/${id}`, { method: "DELETE" }),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
