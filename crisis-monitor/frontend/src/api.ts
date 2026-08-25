@@ -86,6 +86,68 @@ export interface PreviewResult {
   lookback_hours: number;
   truncated: boolean;
 }
+export interface IncidentRow {
+  date?: string | null;
+  time?: string | null;
+  province?: string | null;
+  county?: string | null;
+  district?: string | null;
+  city?: string | null;
+  suburb?: string | null;
+  precise_location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  sector?: string | null;
+  actor?: string | null;
+  operation?: string | null;
+  tactic?: string | null;
+  severity?: string | null;
+  details?: string | null;
+  target?: string | null;
+  interest_group?: string | null;
+  actual_main_victim?: string | null;
+  intended_primary_target?: string | null;
+  civilian_death_child?: number | null;
+  civilian_death_female?: number | null;
+  civilian_death_male?: number | null;
+  civilian_death_unknown?: number | null;
+  civilian_injury_female?: number | null;
+  civilian_injury_male?: number | null;
+  civilian_injury_unknown?: number | null;
+  kidnappings_ngo?: number | null;
+  raw?: Record<string, unknown>;
+}
+
+export interface IncidentItem extends Omit<IncidentRow, "date" | "time" | "raw"> {
+  id: string;
+  owner_id: string | null;
+  occurred_date: string | null;
+  occurred_time: string | null;
+  occurred_at: string | null;
+  upload_batch_id: string | null;
+  created_at: string;
+  raw_row: Record<string, unknown>;
+}
+
+export interface IncidentFilters {
+  province: string[];
+  sector: string[];
+  actor: string[];
+  tactic: string[];
+  severity: string[];
+}
+
+export interface IncidentStats {
+  total: number;
+  by_sector: { value: string; count: number }[];
+  by_actor: { value: string; count: number }[];
+  by_tactic: { value: string; count: number }[];
+  by_severity: { value: string; count: number }[];
+  by_province: { value: string; count: number }[];
+  time_series: { bucket: string; count: number }[];
+  casualties: Record<string, number>;
+}
+
 export interface StatsSummary {
   by_source: { source_type: string; count: number }[];
   sentiment: { negative: number; neutral: number; positive: number };
@@ -185,6 +247,22 @@ export const api = {
   },
   getEscalationHistory: (queryId: string) =>
     req<{ window_end: string; escalation_score: number; volume: number }[]>(`/api/stats/escalation/${queryId}`),
+
+  uploadIncidentsBulk: (rows: IncidentRow[], batchLabel?: string) =>
+    req<{ inserted: number; batch_id: string; batch_label: string | null }>("/api/incidents/bulk", {
+      method: "POST",
+      body: JSON.stringify({ rows, batch_label: batchLabel }),
+    }),
+  getIncidents: (params: { province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))
+    ).toString();
+    return req<IncidentItem[]>(`/api/incidents${qs ? `?${qs}` : ""}`);
+  },
+  getIncidentFilters: () => req<IncidentFilters>("/api/incidents/filters"),
+  getIncidentStats: () => req<IncidentStats>("/api/incidents/stats"),
+  deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
+  deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
