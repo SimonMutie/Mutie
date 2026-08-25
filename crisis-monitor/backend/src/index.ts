@@ -6,6 +6,7 @@ import { queriesRouter } from "./routes/queries";
 import { eventsRouter } from "./routes/events";
 import { alertsRouter } from "./routes/alerts";
 import { statsRouter } from "./routes/stats";
+import { incidentsRouter } from "./routes/incidents";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 
@@ -48,6 +49,7 @@ app.route("/api/queries", queriesRouter);
 app.route("/api/events", eventsRouter);
 app.route("/api/alerts", alertsRouter);
 app.route("/api/stats", statsRouter);
+app.route("/api/incidents", incidentsRouter);
 
 // Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off
 // this same URL) — forwarding the raw request preserves that query string.
