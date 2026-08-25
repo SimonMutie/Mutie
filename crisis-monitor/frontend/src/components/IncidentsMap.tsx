@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, useMapEvents, useMap } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import buffer from "@turf/buffer";
 import { lineString } from "@turf/helpers";
@@ -186,6 +186,20 @@ function ClickCapture({ active, onClick }: { active: boolean; onClick: (lat: num
   return null;
 }
 
+/** Pans/zooms the map to fit a route's geometry when it's isolated via "Search
+ *  route for incidents" — without this the user would have to manually find
+ *  the route after everything else disappears from view. */
+function FitBounds({ positions }: { positions: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (positions.length > 0) {
+      map.fitBounds(positions, { padding: [40, 40] });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions]);
+  return null;
+}
+
 export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
 
@@ -207,6 +221,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [filters, setFilters] = useState<{ sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearRoute, setOnlyNearRoute] = useState(false);
+  const [focusedRouteId, setFocusedRouteId] = useState<string | null>(null);
 
   useEffect(() => {
     api.getIncidentFilters().then(setFilterOptions).catch(() => {});
@@ -244,7 +259,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     return [avgLat, avgLng];
   }, [geoIncidents]);
 
-  const visibleRoutes = routes.filter((r) => r.visible);
+  const focusedRoute = focusedRouteId ? routes.find((r) => r.id === focusedRouteId) ?? null : null;
+  const visibleRoutes = focusedRoute ? [focusedRoute] : routes.filter((r) => r.visible);
   const nearRouteIds = useMemo(() => {
     if (visibleRoutes.length === 0) return null;
     const ids = new Set<string>();
@@ -479,9 +495,20 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
               )}
             </div>
             {routes.map((r) => (
-              <div key={r.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+              <div
+                key={r.id}
+                style={{
+                  border: `1px solid ${focusedRouteId === r.id ? r.color : "var(--border-soft)"}`,
+                  borderRadius: 6,
+                  padding: 8,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  background: focusedRouteId === r.id ? "color-mix(in srgb, " + r.color + " 8%, transparent)" : "transparent",
+                }}
+              >
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={r.visible} onChange={() => toggleVisible(r.id)} />
+                  <input type="checkbox" checked={r.visible} onChange={() => toggleVisible(r.id)} disabled={focusedRouteId !== null} />
                   <input
                     type="color"
                     value={r.color}
@@ -501,6 +528,12 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                   {r.distanceKm != null ? ` · ${r.distanceKm.toFixed(1)} km` : ""}
                   {r.durationMin != null ? ` · ~${Math.round(r.durationMin)} min` : ""}
                 </div>
+                <button
+                  onClick={() => setFocusedRouteId(focusedRouteId === r.id ? null : r.id)}
+                  style={focusedRouteId === r.id ? primaryChipStyle : { ...primaryChipStyle, background: "var(--panel-raised)", borderColor: "var(--border)" }}
+                >
+                  {focusedRouteId === r.id ? "Showing this route only — click to exit" : "Search route for incidents"}
+                </button>
                 <div style={{ display: "flex", gap: 4 }}>
                   {r.backendId ? (
                     <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
@@ -526,6 +559,16 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         {/* incident overlay filters */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div className="eyebrow">OVERLAY INCIDENTS</div>
+          {focusedRoute && (
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+              <span>
+                Isolated to <strong style={{ color: focusedRoute.color }}>{focusedRoute.name}</strong>
+              </span>
+              <button onClick={() => setFocusedRouteId(null)} style={secondaryChipStyle}>
+                Show all
+              </button>
+            </div>
+          )}
           {filterOptions && (
             <>
               <FilterSelect label="Sector" value={filters.sector} options={filterOptions.sector} onChange={(v) => setFilters((f) => ({ ...f, sector: v }))} />
@@ -554,20 +597,26 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
             </button>
           )}
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-            {onlyNearRoute && nearRouteIds ? nearRouteIds.size : geoIncidents.length} incidents shown
+            {(onlyNearRoute || focusedRoute) && nearRouteIds ? nearRouteIds.size : geoIncidents.length} incidents shown
           </div>
 
           {visibleRoutes.length > 0 && (
             <>
               <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Buffer: incidents within {bufferKm} km of a visible route
+                Buffer: incidents within {bufferKm} km of {focusedRoute ? "this route" : "a visible route"}
                 <input type="range" min={1} max={50} value={bufferKm} onChange={(e) => setBufferKm(Number(e.target.value))} style={{ width: "100%" }} />
               </label>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
-                <input type="checkbox" checked={onlyNearRoute} onChange={(e) => setOnlyNearRoute(e.target.checked)} />
-                Only show incidents along the route
-              </label>
-              {nearRouteIds && <div style={{ fontSize: 12, fontWeight: 600 }}>{nearRouteIds.size} incidents near a visible route</div>}
+              {!focusedRoute && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
+                  <input type="checkbox" checked={onlyNearRoute} onChange={(e) => setOnlyNearRoute(e.target.checked)} />
+                  Only show incidents along the route
+                </label>
+              )}
+              {nearRouteIds && (
+                <div style={{ fontSize: 12, fontWeight: 600 }}>
+                  {nearRouteIds.size} incidents near {focusedRoute ? "this route" : "a visible route"}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -576,8 +625,9 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
       <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom>
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
+        {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
 
-        {(onlyNearRoute && nearRouteIds ? geoIncidents.filter((i) => nearRouteIds.has(i.id)) : geoIncidents).map((i) => {
+        {((onlyNearRoute || focusedRoute) && nearRouteIds ? geoIncidents.filter((i) => nearRouteIds.has(i.id)) : geoIncidents).map((i) => {
           const highlighted = !nearRouteIds || nearRouteIds.has(i.id);
           return (
             <CircleMarker
