@@ -307,7 +307,7 @@ export const api = {
   getMapShapes: () => req<SavedShape[]>("/api/map-shapes"),
   createMapShape: (data: Omit<SavedShape, "id" | "owner_id" | "created_at" | "updated_at">) =>
     req<SavedShape>("/api/map-shapes", { method: "POST", body: JSON.stringify(data) }),
-  updateMapShape: (id: string, data: { name?: string; style?: ShapeStyle }) =>
+  updateMapShape: (id: string, data: { name?: string; style?: ShapeStyle; geometry?: GeoJSON.Feature | GeoJSON.FeatureCollection }) =>
     req<SavedShape>(`/api/map-shapes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteMapShape: (id: string) => req<void>(`/api/map-shapes/${id}`, { method: "DELETE" }),
 };
