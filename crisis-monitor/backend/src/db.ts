@@ -36,6 +36,15 @@ export async function run(db: D1Database, sql: string, params: unknown[] = []): 
     .run();
 }
 
+/** Runs many prepared statements as a single D1 batch (one round trip) instead of
+ *  awaiting inserts one at a time — used for bulk incident uploads, which can be
+ *  hundreds of rows from one spreadsheet. D1 batches are wrapped in an implicit
+ *  transaction (all succeed or all roll back). */
+export async function batchRun(db: D1Database, statements: { sql: string; params: unknown[] }[]): Promise<void> {
+  if (statements.length === 0) return;
+  await db.batch(statements.map(({ sql, params }) => db.prepare(sql).bind(...sanitize(params))));
+}
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
