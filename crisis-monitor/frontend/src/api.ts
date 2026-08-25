@@ -89,6 +89,7 @@ export interface PreviewResult {
 export interface IncidentRow {
   date?: string | null;
   time?: string | null;
+  country?: string | null;
   province?: string | null;
   county?: string | null;
   district?: string | null;
@@ -130,6 +131,7 @@ export interface IncidentItem extends Omit<IncidentRow, "date" | "time" | "raw">
 }
 
 export interface IncidentFilters {
+  country: string[];
   province: string[];
   sector: string[];
   actor: string[];
@@ -144,6 +146,7 @@ export interface IncidentStats {
   by_tactic: { value: string; count: number }[];
   by_severity: { value: string; count: number }[];
   by_province: { value: string; count: number }[];
+  by_country: { value: string; count: number }[];
   time_series: { bucket: string; count: number }[];
   casualties: Record<string, number>;
 }
@@ -286,7 +289,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ rows, batch_label: batchLabel }),
     }),
-  getIncidents: (params: { province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string; limit?: number } = {}) => {
+  getIncidents: (params: { country?: string; province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string; limit?: number } = {}) => {
     const qs = new URLSearchParams(
       Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))
     ).toString();
