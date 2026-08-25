@@ -32,7 +32,11 @@ const BASEMAPS = {
 } as const;
 type BasemapKey = keyof typeof BASEMAPS;
 
-const ROUTE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
+const ROUTE_COLORS = [
+  "#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777",
+  "#ea580c", "#0369a1", "#a21caf", "#4d7c0f", "#be123c", "#0f766e", "#7e22ce", "#ca8a04",
+  "#1d4ed8", "#c2410c", "#166534", "#9d174d",
+]; // 20 distinct auto-assigned colors before cycling repeats — full custom colors are also always available via the color picker
 
 function severityColor(severity: string | null | undefined): string {
   const s = (severity ?? "").toLowerCase();
@@ -202,6 +206,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [filters, setFilters] = useState<{ sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
   const [bufferKm, setBufferKm] = useState(5);
+  const [onlyNearRoute, setOnlyNearRoute] = useState(false);
 
   useEffect(() => {
     api.getIncidentFilters().then(setFilterOptions).catch(() => {});
@@ -321,10 +326,15 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   async function saveRoute(id: string) {
     const sim = routes.find((r) => r.id === id);
     if (!sim) return;
-    setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, saving: true } : r)));
+
+    const name = window.prompt("Save this route as:", sim.name);
+    if (name === null) return; // cancelled
+    const trimmedName = name.trim() || sim.name;
+
+    setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, name: trimmedName, saving: true } : r)));
     try {
       const saved = await api.createMapRoute({
-        name: sim.name,
+        name: trimmedName,
         mode: sim.mode,
         waypoints: sim.waypoints,
         geometry: sim.geometry,
@@ -428,9 +438,15 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                   Straight line
                 </button>
               </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
-                Route color
-                <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={colorInputStyle} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "var(--text-muted)" }}>
+                <input
+                  type="color"
+                  value={draftColor}
+                  onChange={(e) => setDraftColor(e.target.value)}
+                  style={largeColorInputStyle}
+                  title="Pick any color"
+                />
+                Route color — click swatch for any color
               </label>
               <div style={hintStyle}>
                 Click the map to add waypoints ({draftWaypoints.length} added){draftMode === "freehand" ? " — connects directly, ignores roads" : ""}
@@ -470,8 +486,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                     type="color"
                     value={r.color}
                     onChange={(e) => setRouteColor(r.id, e.target.value)}
-                    title="Change route color"
-                    style={colorInputStyle}
+                    title="Change route color — click for any color"
+                    style={largeColorInputStyle}
                   />
                   <input
                     value={r.name}
@@ -537,13 +553,19 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
               Clear filters
             </button>
           )}
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{geoIncidents.length} incidents shown</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {onlyNearRoute && nearRouteIds ? nearRouteIds.size : geoIncidents.length} incidents shown
+          </div>
 
           {visibleRoutes.length > 0 && (
             <>
               <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Highlight incidents within {bufferKm} km of a visible route
+                Buffer: incidents within {bufferKm} km of a visible route
                 <input type="range" min={1} max={50} value={bufferKm} onChange={(e) => setBufferKm(Number(e.target.value))} style={{ width: "100%" }} />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
+                <input type="checkbox" checked={onlyNearRoute} onChange={(e) => setOnlyNearRoute(e.target.checked)} />
+                Only show incidents along the route
               </label>
               {nearRouteIds && <div style={{ fontSize: 12, fontWeight: 600 }}>{nearRouteIds.size} incidents near a visible route</div>}
             </>
@@ -555,7 +577,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
 
-        {geoIncidents.map((i) => {
+        {(onlyNearRoute && nearRouteIds ? geoIncidents.filter((i) => nearRouteIds.has(i.id)) : geoIncidents).map((i) => {
           const highlighted = !nearRouteIds || nearRouteIds.has(i.id);
           return (
             <CircleMarker
@@ -690,3 +712,4 @@ const colorInputStyle: React.CSSProperties = {
   cursor: "pointer",
   flexShrink: 0,
 };
+const largeColorInputStyle: React.CSSProperties = { ...colorInputStyle, width: 30, height: 26 };
