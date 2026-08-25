@@ -12,6 +12,7 @@ interface Props {
 const HEADER_MAP: Record<string, keyof IncidentRow> = {
   date: "date",
   time: "time",
+  country: "country",
   province: "province",
   county: "county",
   district: "district",
