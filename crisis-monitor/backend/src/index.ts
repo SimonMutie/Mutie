@@ -76,30 +76,43 @@ export default {
     // just the one whose search happened to surface it), same as before.
     //
     // Each query's terms are further split into GDELT-sized chunks
-    // (buildQueryChunks) rather than truncated to a fixed max, so a query can
-    // have any number of terms — it just costs one extra GDELT request per
-    // chunk beyond the first. MAX_CHUNKS_PER_QUERY is a safety ceiling (not a
-    // silent-drop cap) to keep one pathological query from eating the whole
-    // tick's time budget; raise it if you need to monitor genuinely huge
-    // term lists.
+    // (buildQueryChunks) — a query can have any number of terms, it just costs
+    // one extra GDELT request per chunk beyond the first. GDELT's free,
+    // unauthenticated API rate-limits aggressively (has been observed
+    // returning 429 under fairly light load), so total request *volume* is
+    // capped globally across the whole tick (GDELT_REQUEST_BUDGET_PER_TICK),
+    // not just per query — a handful of large queries could otherwise burn
+    // 100+ requests in five minutes on their own. The starting query rotates
+    // each tick so the budget doesn't always starve the same queries at the
+    // end of the list.
     const MAX_QUERIES_PER_TICK = 25;
-    const MAX_CHUNKS_PER_QUERY = 40; // 40 chunks * 10 terms/chunk = up to 400 terms per query
-    const GDELT_REQUEST_STAGGER_MS = 1500;
+    const MAX_CHUNKS_PER_QUERY = 15; // safety ceiling per query (150 terms) — the shared budget below is the real limiter
+    const GDELT_REQUEST_STAGGER_MS = 3000;
+    const GDELT_REQUEST_BUDGET_PER_TICK = 20; // total GDELT HTTP requests allowed across ALL queries this tick
     const compiled = await loadActiveCompiledQueries(env);
 
     // Shared across every query this tick: if several queries' broad recall
     // both surface the same trending article, we fetch its full text once,
     // not once per query.
     const fulltextCache = new Map<string, string | null>();
+    const requestBudget = { remaining: GDELT_REQUEST_BUDGET_PER_TICK };
 
-    for (const [i, q] of compiled.slice(0, MAX_QUERIES_PER_TICK).entries()) {
+    const queue = compiled.slice(0, MAX_QUERIES_PER_TICK);
+    const rotation = queue.length > 0 ? Math.floor(Date.now() / (5 * 60_000)) % queue.length : 0;
+    const rotated = [...queue.slice(rotation), ...queue.slice(0, rotation)];
+
+    for (const [i, q] of rotated.entries()) {
+      if (requestBudget.remaining <= 0) {
+        console.warn(`[gdelt] request budget exhausted for this tick — ${rotated.length - i} quer${rotated.length - i === 1 ? "y" : "ies"} deferred to next tick`);
+        break;
+      }
       // Be a good citizen of GDELT's free API — spread requests out within
       // the tick instead of firing them back to back.
       if (i > 0) await new Promise((resolve) => setTimeout(resolve, GDELT_REQUEST_STAGGER_MS));
 
       try {
         const chunks = buildQueryChunks(q.parsed.positiveTerms).slice(0, MAX_CHUNKS_PER_QUERY);
-        const inserted = await pollGdelt(env, chunks, { fulltextCache });
+        const inserted = await pollGdelt(env, chunks, { fulltextCache, requestBudget });
         for (const event of inserted) {
           await matchAndBroadcast(env, event);
         }
