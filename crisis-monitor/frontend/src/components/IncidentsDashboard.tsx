@@ -3,18 +3,19 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { api, type IncidentFilters, type IncidentItem, type IncidentStats } from "../api";
 import IncidentsMap from "./IncidentsMap";
 import IncidentUpload from "./IncidentUpload";
+import IncidentManualEntry from "./IncidentManualEntry";
 
 const CHART_COLOR = "#0d9488";
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 
-type Tab = "overview" | "map" | "upload";
+type Tab = "manual" | "overview" | "map" | "upload";
 
 export default function IncidentsDashboard() {
   const [tab, setTab] = useState<Tab>("overview");
   const [stats, setStats] = useState<IncidentStats | null>(null);
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
-  const [filters, setFilters] = useState<{ province?: string; sector?: string; actor?: string; severity?: string }>({});
+  const [filters, setFilters] = useState<{ country?: string; province?: string; sector?: string; actor?: string; severity?: string }>({});
   const [loading, setLoading] = useState(true);
 
   async function loadAll() {
@@ -50,13 +51,19 @@ export default function IncidentsDashboard() {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
         <div style={{ fontSize: 15, fontWeight: 700, marginRight: 12 }}>Incidents</div>
-        {(["overview", "map", "upload"] as Tab[]).map((t) => (
+        {(["manual", "overview", "map", "upload"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={tabBtnStyle(tab === t)}>
-            {t === "overview" ? "Overview" : t === "map" ? "Map" : "Upload"}
+            {t === "manual" ? "Enter Manually" : t === "overview" ? "Overview" : t === "map" ? "Map" : "Upload"}
           </button>
         ))}
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
+
+      {tab === "manual" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          <IncidentManualEntry onSaved={loadAll} />
+        </div>
+      )}
 
       {tab === "upload" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
@@ -74,6 +81,12 @@ export default function IncidentsDashboard() {
         <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
           {filterOptions && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <FilterSelect
+                label="Country"
+                value={filters.country}
+                options={filterOptions.country}
+                onChange={(v) => setFilters((f) => ({ ...f, country: v }))}
+              />
               <FilterSelect
                 label="Province"
                 value={filters.province}
@@ -155,6 +168,16 @@ export default function IncidentsDashboard() {
                     <YAxis type="category" dataKey="value" width={110} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
                     <Tooltip contentStyle={TOOLTIP_STYLE} />
                     <Bar dataKey="count" fill="#d1352b" radius={[0, 3, 3, 0]} />
+                  </BarChart>
+                </ChartPanel>
+
+                <ChartPanel title="INCIDENTS BY COUNTRY">
+                  <BarChart data={stats.by_country} layout="vertical" margin={{ left: 8, right: 8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+                    <YAxis type="category" dataKey="value" width={110} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+                    <Tooltip contentStyle={TOOLTIP_STYLE} />
+                    <Bar dataKey="count" fill="#7c3aed" radius={[0, 3, 3, 0]} />
                   </BarChart>
                 </ChartPanel>
               </div>
