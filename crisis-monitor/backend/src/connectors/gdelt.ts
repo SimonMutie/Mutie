@@ -139,7 +139,7 @@ export async function fetchGdeltArticles(
   });
 
   const res = await fetch(`${GDELT_ENDPOINT}?${params.toString()}`, {
-    headers: { "User-Agent": "SentinelCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
+    headers: { "User-Agent": "GlobaLensCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
   });
   if (res.status === 429 || res.status === 403) {
     // GDELT's anti-abuse layer appears to escalate from 429 (soft rate limit) to
@@ -209,7 +209,7 @@ async function fetchArticleText(url: string): Promise<string | null> {
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { "User-Agent": "SentinelCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
+      headers: { "User-Agent": "GlobaLensCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
     });
     if (!res.ok) return null;
     const html = await res.text();
