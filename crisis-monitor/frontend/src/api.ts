@@ -299,6 +299,10 @@ export const api = {
   getIncidentStats: () => req<IncidentStats>("/api/incidents/stats"),
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
+  updateIncident: (id: string, data: Partial<IncidentRow>) =>
+    req<IncidentItem>(`/api/incidents/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  bulkDeleteIncidents: (ids: string[]) =>
+    req<{ ok: boolean; deleted: number }>("/api/incidents/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }),
 
   getMapRoutes: () => req<SavedRoute[]>("/api/map-routes"),
   createMapRoute: (data: Omit<SavedRoute, "id" | "owner_id" | "created_at" | "updated_at">) =>
