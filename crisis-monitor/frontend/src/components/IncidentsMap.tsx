@@ -100,6 +100,56 @@ function distanceToLineKm(lat: number, lng: number, line: [number, number][]): n
   return min;
 }
 
+/** Standard ray-casting point-in-polygon test. `rings[0]` is the outer ring,
+ *  any further rings are holes to subtract — matches GeoJSON Polygon coordinate
+ *  structure. Coordinates are [lng, lat] pairs, GeoJSON's native order. */
+function pointInPolygonRings(lng: number, lat: number, rings: number[][][]): boolean {
+  const inRing = (ring: number[][]): boolean => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  };
+  if (!inRing(rings[0])) return false;
+  for (let h = 1; h < rings.length; h++) {
+    if (inRing(rings[h])) return false; // inside a hole = not inside the polygon
+  }
+  return true;
+}
+
+/** Whether a point falls inside/near a shape overlay — polygons and rectangles
+ *  use real point-in-polygon, circles use center+radius distance, lines use the
+ *  same buffer-distance test routes use (a line has no "inside"), and
+ *  FeatureCollections (multi-feature uploads) match if the point is in ANY of
+ *  their features. `lineBufferKm` is shared with the route buffer control for
+ *  one consistent "how close counts" setting across every overlay type. */
+function isPointNearShapeGeometry(lat: number, lng: number, geometry: GeoJSON.Feature | GeoJSON.FeatureCollection, lineBufferKm: number): boolean {
+  if (geometry.type === "FeatureCollection") {
+    return geometry.features.some((f) => isPointNearShapeGeometry(lat, lng, f, lineBufferKm));
+  }
+  const geom = geometry.geometry;
+  const radius = geometry.properties?.radius;
+  if (geom.type === "Point" && typeof radius === "number") {
+    return haversineKm(lat, lng, geom.coordinates[1], geom.coordinates[0]) * 1000 <= radius;
+  }
+  if (geom.type === "Polygon") {
+    return pointInPolygonRings(lng, lat, geom.coordinates);
+  }
+  if (geom.type === "MultiPolygon") {
+    return geom.coordinates.some((rings) => pointInPolygonRings(lng, lat, rings));
+  }
+  if (geom.type === "LineString") {
+    return distanceToLineKm(lat, lng, geom.coordinates.map(([clng, clat]) => [clat, clng])) <= lineBufferKm;
+  }
+  if (geom.type === "MultiLineString") {
+    return geom.coordinates.some((line) => distanceToLineKm(lat, lng, line.map(([clng, clat]) => [clat, clng])) <= lineBufferKm);
+  }
+  return false;
+}
+
 async function fetchRoadRoute(points: [number, number][]): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number }> {
   // OSRM's public demo server — free, no API key, but not meant for heavy/production
   // traffic. A production deployment would want a self-hosted OSRM instance or a
@@ -309,7 +359,7 @@ function featureToEditableLayer(feature: GeoJSON.Feature, style: L.PathOptions):
  *  React `shapes` state — additions, deletions, restyling, and visibility all
  *  flow one way (state -> imperative Leaflet layers) so leaflet-draw's edit
  *  toolbar always operates on the same objects React knows about. */
-function ShapeLayerGroup({ shapes, featureGroup }: { shapes: ShapeSim[]; featureGroup: L.FeatureGroup }) {
+function ShapeLayerGroup({ shapes, visibleIds, featureGroup }: { shapes: ShapeSim[]; visibleIds: Set<string>; featureGroup: L.FeatureGroup }) {
   const map = useMap();
   const layersRef = useRef<Map<string, L.Layer>>(new Map());
 
@@ -335,20 +385,21 @@ function ShapeLayerGroup({ shapes, featureGroup }: { shapes: ShapeSim[]; feature
 
     for (const s of editable) {
       const style = shapePathOptions(s);
+      const shouldShow = visibleIds.has(s.id);
       let layer = tracked.get(s.id);
       if (!layer) {
         layer = featureToEditableLayer(s.geometry as GeoJSON.Feature, style);
         (layer as L.Layer & { _shapeId?: string })._shapeId = s.id;
         tracked.set(s.id, layer);
-        if (s.visible) featureGroup.addLayer(layer);
+        if (shouldShow) featureGroup.addLayer(layer);
         continue;
       }
       if (layer instanceof L.Path) layer.setStyle(style);
       const isShown = featureGroup.hasLayer(layer);
-      if (s.visible && !isShown) featureGroup.addLayer(layer);
-      if (!s.visible && isShown) featureGroup.removeLayer(layer);
+      if (shouldShow && !isShown) featureGroup.addLayer(layer);
+      if (!shouldShow && isShown) featureGroup.removeLayer(layer);
     }
-  }, [shapes, featureGroup]);
+  }, [shapes, visibleIds, featureGroup]);
 
   return null;
 }
@@ -374,6 +425,35 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions]);
   return null;
+}
+
+/** Flattens any shape's geometry (Feature or FeatureCollection, any geometry
+ *  type, including a Point+radius circle) into [lat,lng] pairs suitable for
+ *  Leaflet's fitBounds — used to auto-zoom to a shape isolated via "Search
+ *  shape for incidents". */
+function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCollection): [number, number][] {
+  const features = geometry.type === "FeatureCollection" ? geometry.features : [geometry];
+  const positions: [number, number][] = [];
+  for (const f of features) {
+    const radius = f.properties?.radius;
+    if (f.geometry.type === "Point" && typeof radius === "number") {
+      const [lng, lat] = f.geometry.coordinates;
+      const dLat = radius / 111320; // meters -> degrees, close enough for a bounding box
+      const dLng = dLat / Math.max(0.1, Math.cos((lat * Math.PI) / 180));
+      positions.push([lat - dLat, lng - dLng], [lat + dLat, lng + dLng]);
+      continue;
+    }
+    const walk = (coords: unknown): void => {
+      if (Array.isArray(coords) && typeof coords[0] === "number") {
+        const [lng, lat] = coords as [number, number];
+        positions.push([lat, lng]);
+      } else if (Array.isArray(coords)) {
+        coords.forEach(walk);
+      }
+    };
+    if ("coordinates" in f.geometry) walk(f.geometry.coordinates);
+  }
+  return positions;
 }
 
 export default function IncidentsMap({ incidents: initialIncidents }: Props) {
@@ -407,8 +487,11 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [filters, setFilters] = useState<{ sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
   const [bufferKm, setBufferKm] = useState(5);
-  const [onlyNearRoute, setOnlyNearRoute] = useState(false);
-  const [focusedRouteId, setFocusedRouteId] = useState<string | null>(null);
+  const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
+  // Isolating one route OR one shape hides every other overlay and filters
+  // incidents to just that one — "search route/shape for incidents, nothing
+  // else on the map". Only one focus at a time, across both overlay types.
+  const [focusedOverlay, setFocusedOverlay] = useState<{ type: "route" | "shape"; id: string } | null>(null);
 
   useEffect(() => {
     api.getIncidentFilters().then(setFilterOptions).catch(() => {});
@@ -462,22 +545,35 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     return [avgLat, avgLng];
   }, [geoIncidents]);
 
-  const focusedRoute = focusedRouteId ? routes.find((r) => r.id === focusedRouteId) ?? null : null;
-  const visibleRoutes = focusedRoute ? [focusedRoute] : routes.filter((r) => r.visible);
-  const nearRouteIds = useMemo(() => {
-    if (visibleRoutes.length === 0) return null;
+  const focusedRoute = focusedOverlay?.type === "route" ? routes.find((r) => r.id === focusedOverlay.id) ?? null : null;
+  const focusedShape = focusedOverlay?.type === "shape" ? shapes.find((s) => s.id === focusedOverlay.id) ?? null : null;
+  const visibleRoutes = focusedOverlay ? (focusedRoute ? [focusedRoute] : []) : routes.filter((r) => r.visible);
+  const visibleShapes = focusedOverlay ? (focusedShape ? [focusedShape] : []) : shapes.filter((s) => s.visible);
+
+  const nearOverlayIds = useMemo(() => {
+    if (visibleRoutes.length === 0 && visibleShapes.length === 0) return null;
     const ids = new Set<string>();
     for (const i of geoIncidents) {
+      let near = false;
       for (const r of visibleRoutes) {
         if (distanceToLineKm(i.latitude!, i.longitude!, r.geometry) <= bufferKm) {
-          ids.add(i.id);
+          near = true;
           break;
         }
       }
+      if (!near) {
+        for (const s of visibleShapes) {
+          if (isPointNearShapeGeometry(i.latitude!, i.longitude!, s.geometry, bufferKm)) {
+            near = true;
+            break;
+          }
+        }
+      }
+      if (near) ids.add(i.id);
     }
     return ids;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleRoutes, bufferKm, geoIncidents]);
+  }, [visibleRoutes, visibleShapes, bufferKm, geoIncidents]);
 
   function startDrafting() {
     setDrafting(true);
@@ -773,8 +869,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
         {/* route builder */}
-        <div>
-          <div className="eyebrow" style={{ marginBottom: 6 }}>ROUTE SIMULATION</div>
+        <details open>
+          <summary className="eyebrow" style={{ marginBottom: 6, cursor: "pointer" }}>ROUTE SIMULATION</summary>
           {!drafting ? (
             <button onClick={startDrafting} style={primaryChipStyle}>
               + New route
@@ -816,7 +912,6 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
               {draftError && <div style={{ ...hintStyle, color: "var(--critical)" }}>{draftError}</div>}
             </div>
           )}
-        </div>
 
         {/* saved/unsaved route list */}
         {routes.length > 0 && (
@@ -829,49 +924,51 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                 </button>
               )}
             </div>
-            {routes.map((r) => (
-              <div
-                key={r.id}
-                style={{
-                  border: `1px solid ${focusedRouteId === r.id ? r.color : "var(--border-soft)"}`,
-                  borderRadius: 6,
-                  padding: 8,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 4,
-                  background: focusedRouteId === r.id ? "color-mix(in srgb, " + r.color + " 8%, transparent)" : "transparent",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <input type="checkbox" checked={r.visible} onChange={() => toggleVisible(r.id)} disabled={focusedRouteId !== null} />
-                  <input
-                    type="color"
-                    value={r.color}
-                    onChange={(e) => setRouteColor(r.id, e.target.value)}
-                    title="Change route color — click for any color"
-                    style={largeColorInputStyle}
-                  />
-                  <input
-                    value={r.name}
-                    onChange={(e) => renameRoute(r.id, e.target.value)}
-                    onBlur={() => commitRename(r.id)}
-                    style={{ flex: 1, fontSize: 12, border: "none", background: "transparent", color: "var(--text-primary)", minWidth: 0 }}
-                  />
-                </div>
-                <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-                  {r.mode === "road" ? "Road-following" : "Straight line"} · {r.waypoints.length} waypoints
-                  {r.distanceKm != null ? ` · ${r.distanceKm.toFixed(1)} km` : ""}
-                  {r.durationMin != null ? ` · ~${Math.round(r.durationMin)} min` : ""}
-                </div>
-                <button
-                  onClick={() => setFocusedRouteId(focusedRouteId === r.id ? null : r.id)}
-                  style={focusedRouteId === r.id ? primaryChipStyle : { ...primaryChipStyle, background: "var(--panel-raised)", borderColor: "var(--border)" }}
+            {routes.map((r) => {
+              const isFocused = focusedOverlay?.type === "route" && focusedOverlay.id === r.id;
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    border: `1px solid ${isFocused ? r.color : "var(--border-soft)"}`,
+                    borderRadius: 6,
+                    padding: 8,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    background: isFocused ? "color-mix(in srgb, " + r.color + " 8%, transparent)" : "transparent",
+                  }}
                 >
-                  {focusedRouteId === r.id ? "Showing this route only — click to exit" : "Search route for incidents"}
-                </button>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {r.backendId ? (
-                    <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" checked={r.visible} onChange={() => toggleVisible(r.id)} disabled={focusedOverlay !== null} />
+                    <input
+                      type="color"
+                      value={r.color}
+                      onChange={(e) => setRouteColor(r.id, e.target.value)}
+                      title="Change route color — click for any color"
+                      style={largeColorInputStyle}
+                    />
+                    <input
+                      value={r.name}
+                      onChange={(e) => renameRoute(r.id, e.target.value)}
+                      onBlur={() => commitRename(r.id)}
+                      style={{ flex: 1, fontSize: 12, border: "none", background: "transparent", color: "var(--text-primary)", minWidth: 0 }}
+                    />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                    {r.mode === "road" ? "Road-following" : "Straight line"} · {r.waypoints.length} waypoints
+                    {r.distanceKm != null ? ` · ${r.distanceKm.toFixed(1)} km` : ""}
+                    {r.durationMin != null ? ` · ~${Math.round(r.durationMin)} min` : ""}
+                  </div>
+                  <button
+                    onClick={() => setFocusedOverlay(isFocused ? null : { type: "route", id: r.id })}
+                    style={isFocused ? primaryChipStyle : { ...primaryChipStyle, background: "var(--panel-raised)", borderColor: "var(--border)" }}
+                  >
+                    {isFocused ? "Showing this route only — click to exit" : "Search route for incidents"}
+                  </button>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {r.backendId ? (
+                      <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
                   ) : (
                     <button onClick={() => saveRoute(r.id)} disabled={r.saving} style={secondaryChipStyle}>
                       {r.saving ? "Saving…" : "Save"}
@@ -885,15 +982,17 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
+        </details>
 
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
         {/* shape overlays: draw or upload */}
-        <div>
-          <div className="eyebrow" style={{ marginBottom: 6 }}>SHAPE OVERLAYS</div>
+        <details open>
+          <summary className="eyebrow" style={{ marginBottom: 6, cursor: "pointer" }}>SHAPE OVERLAYS</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
@@ -927,70 +1026,92 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           {shapes.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
               <div className="eyebrow">OVERLAYS ({shapes.length})</div>
-              {shapes.map((s) => (
-                <div key={s.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <input type="checkbox" checked={s.visible} onChange={() => toggleShapeVisible(s.id)} />
-                    <input
-                      type="color"
-                      value={s.color}
-                      onChange={(e) => setShapeColor(s.id, e.target.value)}
-                      title="Change color — click for any color"
-                      style={largeColorInputStyle}
-                    />
-                    <input
-                      value={s.name}
-                      onChange={(e) => renameShape(s.id, e.target.value)}
-                      onBlur={() => commitShapeRename(s.id)}
-                      style={{ flex: 1, fontSize: 12, border: "none", background: "transparent", color: "var(--text-primary)", minWidth: 0 }}
-                    />
-                  </div>
-                  <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-                    {s.source === "drawn" ? "Hand-drawn" : s.source === "shapefile" ? "Uploaded shapefile" : "Uploaded GeoJSON"}
-                  </div>
-                  <label style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-                    Shading: {Math.round(s.fillOpacity * 100)}%
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={Math.round(s.fillOpacity * 100)}
-                      onChange={(e) => setShapeOpacity(s.id, Number(e.target.value) / 100)}
-                      style={{ width: "100%" }}
-                    />
-                  </label>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {s.backendId ? (
-                      <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
-                    ) : (
-                      <button onClick={() => saveShape(s.id)} disabled={s.saving} style={secondaryChipStyle}>
-                        {s.saving ? "Saving…" : "Save"}
+              {shapes.map((s) => {
+                const isFocused = focusedOverlay?.type === "shape" && focusedOverlay.id === s.id;
+                return (
+                  <div
+                    key={s.id}
+                    style={{
+                      border: `1px solid ${isFocused ? s.color : "var(--border-soft)"}`,
+                      borderRadius: 6,
+                      padding: 8,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                      background: isFocused ? "color-mix(in srgb, " + s.color + " 8%, transparent)" : "transparent",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <input type="checkbox" checked={s.visible} onChange={() => toggleShapeVisible(s.id)} disabled={focusedOverlay !== null} />
+                      <input
+                        type="color"
+                        value={s.color}
+                        onChange={(e) => setShapeColor(s.id, e.target.value)}
+                        title="Change color — click for any color"
+                        style={largeColorInputStyle}
+                      />
+                      <input
+                        value={s.name}
+                        onChange={(e) => renameShape(s.id, e.target.value)}
+                        onBlur={() => commitShapeRename(s.id)}
+                        style={{ flex: 1, fontSize: 12, border: "none", background: "transparent", color: "var(--text-primary)", minWidth: 0 }}
+                      />
+                    </div>
+                    <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                      {s.source === "drawn" ? "Hand-drawn" : s.source === "shapefile" ? "Uploaded shapefile" : "Uploaded GeoJSON"}
+                    </div>
+                    <label style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                      Shading: {Math.round(s.fillOpacity * 100)}%
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round(s.fillOpacity * 100)}
+                        onChange={(e) => setShapeOpacity(s.id, Number(e.target.value) / 100)}
+                        style={{ width: "100%" }}
+                      />
+                    </label>
+                    <button
+                      onClick={() => setFocusedOverlay(isFocused ? null : { type: "shape", id: s.id })}
+                      style={isFocused ? primaryChipStyle : { ...primaryChipStyle, background: "var(--panel-raised)", borderColor: "var(--border)" }}
+                    >
+                      {isFocused ? "Showing this shape only — click to exit" : "Search shape for incidents"}
+                    </button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {s.backendId ? (
+                        <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
+                      ) : (
+                        <button onClick={() => saveShape(s.id)} disabled={s.saving} style={secondaryChipStyle}>
+                          {s.saving ? "Saving…" : "Save"}
+                        </button>
+                      )}
+                      <button onClick={() => downloadShape(s)} style={secondaryChipStyle}>
+                        Download
                       </button>
-                    )}
-                    <button onClick={() => downloadShape(s)} style={secondaryChipStyle}>
-                      Download
-                    </button>
-                    <button onClick={() => deleteShape(s.id)} style={{ ...secondaryChipStyle, color: "var(--critical)" }}>
-                      Delete
-                    </button>
+                      <button onClick={() => deleteShape(s.id)} style={{ ...secondaryChipStyle, color: "var(--critical)" }}>
+                        Delete
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-        </div>
+        </details>
 
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
         {/* incident overlay filters */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div className="eyebrow">OVERLAY INCIDENTS</div>
-          {focusedRoute && (
+        <details open>
+          <summary className="eyebrow" style={{ cursor: "pointer" }}>OVERLAY INCIDENTS</summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+          {(focusedRoute || focusedShape) && (
             <div style={{ fontSize: 11.5, color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
               <span>
-                Isolated to <strong style={{ color: focusedRoute.color }}>{focusedRoute.name}</strong>
+                Isolated to{" "}
+                <strong style={{ color: (focusedRoute ?? focusedShape)?.color }}>{(focusedRoute ?? focusedShape)?.name}</strong>
               </span>
-              <button onClick={() => setFocusedRouteId(null)} style={secondaryChipStyle}>
+              <button onClick={() => setFocusedOverlay(null)} style={secondaryChipStyle}>
                 Show all
               </button>
             </div>
@@ -1023,35 +1144,38 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
             </button>
           )}
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-            {(onlyNearRoute || focusedRoute) && nearRouteIds ? nearRouteIds.size : geoIncidents.length} incidents shown
+            {(onlyNearOverlay || focusedOverlay) && nearOverlayIds ? nearOverlayIds.size : geoIncidents.length} incidents shown
           </div>
 
-          {visibleRoutes.length > 0 && (
+          {(visibleRoutes.length > 0 || visibleShapes.length > 0) && (
             <>
               <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Buffer: incidents within {bufferKm} km of {focusedRoute ? "this route" : "a visible route"}
+                Buffer: incidents within {bufferKm} km of {focusedOverlay ? "this overlay" : "a visible route or shape line"} (polygons/circles use their real
+                boundary, not this buffer)
                 <input type="range" min={1} max={50} value={bufferKm} onChange={(e) => setBufferKm(Number(e.target.value))} style={{ width: "100%" }} />
               </label>
-              {!focusedRoute && (
+              {!focusedOverlay && (
                 <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5 }}>
-                  <input type="checkbox" checked={onlyNearRoute} onChange={(e) => setOnlyNearRoute(e.target.checked)} />
-                  Only show incidents along the route
+                  <input type="checkbox" checked={onlyNearOverlay} onChange={(e) => setOnlyNearOverlay(e.target.checked)} />
+                  Only show incidents in/near overlays
                 </label>
               )}
-              {nearRouteIds && (
+              {nearOverlayIds && (
                 <div style={{ fontSize: 12, fontWeight: 600 }}>
-                  {nearRouteIds.size} incidents near {focusedRoute ? "this route" : "a visible route"}
+                  {nearOverlayIds.size} incidents {focusedOverlay ? "in/near this overlay" : "in/near a visible overlay"}
                 </div>
               )}
             </>
           )}
         </div>
+        </details>
       </div>
 
       <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom>
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
+        {focusedShape && <FitBounds positions={shapeGeometryToPositions(focusedShape.geometry)} />}
 
         {/* Editable shapes (hand-drawn, or single-feature GeoJSON uploads) live as
             real, persistent Leaflet layers so the edit toolbar can drag their
@@ -1060,7 +1184,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
             one editable Leaflet layer, so those render read-only below instead;
             they're still stylable/deletable/downloadable via the panel, just not
             vertex-editable on the map. */}
-        <ShapeLayerGroup shapes={shapes} featureGroup={editFeatureGroupRef.current} />
+        <ShapeLayerGroup shapes={shapes} visibleIds={new Set(visibleShapes.map((s) => s.id))} featureGroup={editFeatureGroupRef.current} />
         <DrawControl
           color={drawColor}
           editFeatureGroup={editFeatureGroupRef.current}
@@ -1070,8 +1194,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         />
 
         {/* read-only multi-feature shape overlays (uploaded shapefiles/FeatureCollections) */}
-        {shapes
-          .filter((s) => s.visible && !isEditableGeometry(s.geometry))
+        {visibleShapes
+          .filter((s) => !isEditableGeometry(s.geometry))
           .map((s) => (
             <GeoJSONLayer
               key={`${s.id}-${s.color}-${s.fillOpacity}`}
@@ -1080,8 +1204,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
             />
           ))}
 
-        {((onlyNearRoute || focusedRoute) && nearRouteIds ? geoIncidents.filter((i) => nearRouteIds.has(i.id)) : geoIncidents).map((i) => {
-          const highlighted = !nearRouteIds || nearRouteIds.has(i.id);
+        {((onlyNearOverlay || focusedOverlay) && nearOverlayIds ? geoIncidents.filter((i) => nearOverlayIds.has(i.id)) : geoIncidents).map((i) => {
+          const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
           return (
             <CircleMarker
               key={i.id}
