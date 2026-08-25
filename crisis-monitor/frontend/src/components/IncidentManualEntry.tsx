@@ -1,8 +1,11 @@
 import { useState } from "react";
-import { api, type IncidentRow } from "../api";
+import { api, type IncidentItem, type IncidentRow } from "../api";
 
 interface Props {
   onSaved: () => void;
+  /** Edit an existing incident instead of creating a new one. */
+  existingIncident?: IncidentItem;
+  onCancel?: () => void;
 }
 
 const NUMERIC_KEYS = [
@@ -48,10 +51,49 @@ const EMPTY_FORM: IncidentRow = {
   kidnappings_ngo: null,
 };
 
+/** IncidentItem (what the API returns) uses occurred_date/occurred_time as its
+ *  column names, while IncidentRow (what forms/uploads use) uses date/time —
+ *  see the note on this mismatch in api.ts. Converts one to the other so the
+ *  edit form can be pre-filled from a real incident record. */
+function incidentToFormValues(incident: IncidentItem): IncidentRow {
+  return {
+    date: incident.occurred_date ?? "",
+    time: incident.occurred_time ?? "",
+    country: incident.country ?? "",
+    province: incident.province ?? "",
+    county: incident.county ?? "",
+    district: incident.district ?? "",
+    city: incident.city ?? "",
+    suburb: incident.suburb ?? "",
+    precise_location: incident.precise_location ?? "",
+    latitude: incident.latitude ?? null,
+    longitude: incident.longitude ?? null,
+    sector: incident.sector ?? "",
+    actor: incident.actor ?? "",
+    operation: incident.operation ?? "",
+    tactic: incident.tactic ?? "",
+    severity: incident.severity ?? "",
+    details: incident.details ?? "",
+    target: incident.target ?? "",
+    interest_group: incident.interest_group ?? "",
+    actual_main_victim: incident.actual_main_victim ?? "",
+    intended_primary_target: incident.intended_primary_target ?? "",
+    civilian_death_child: incident.civilian_death_child ?? null,
+    civilian_death_female: incident.civilian_death_female ?? null,
+    civilian_death_male: incident.civilian_death_male ?? null,
+    civilian_death_unknown: incident.civilian_death_unknown ?? null,
+    civilian_injury_female: incident.civilian_injury_female ?? null,
+    civilian_injury_male: incident.civilian_injury_male ?? null,
+    civilian_injury_unknown: incident.civilian_injury_unknown ?? null,
+    kidnappings_ngo: incident.kidnappings_ngo ?? null,
+  };
+}
+
 type Stage = "idle" | "saving" | "error";
 
-export default function IncidentManualEntry({ onSaved }: Props) {
-  const [form, setForm] = useState<IncidentRow>(EMPTY_FORM);
+export default function IncidentManualEntry({ onSaved, existingIncident, onCancel }: Props) {
+  const isEdit = !!existingIncident;
+  const [form, setForm] = useState<IncidentRow>(existingIncident ? incidentToFormValues(existingIncident) : EMPTY_FORM);
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
   const [savedCount, setSavedCount] = useState(0);
@@ -108,6 +150,12 @@ export default function IncidentManualEntry({ onSaved }: Props) {
     setStage("saving");
     setError(null);
     try {
+      if (isEdit && existingIncident) {
+        await api.updateIncident(existingIncident.id, form);
+        setStage("idle");
+        onSaved();
+        return;
+      }
       // Everything in the form is already a plain, JSON-serializable value that
       // matches the same row shape the Excel upload uses, so this reuses the
       // exact same bulk endpoint and validation — one incident, one-row array.
@@ -126,7 +174,7 @@ export default function IncidentManualEntry({ onSaved }: Props) {
 
   return (
     <form onSubmit={handleSubmit} style={{ maxWidth: 760, display: "flex", flexDirection: "column", gap: 24 }}>
-      {savedCount > 0 && (
+      {!isEdit && savedCount > 0 && (
         <div style={{ fontSize: 12.5, color: "var(--signal)", background: "color-mix(in srgb, var(--signal) 10%, transparent)", padding: "8px 12px", borderRadius: 6 }}>
           {savedCount} incident{savedCount === 1 ? "" : "s"} added this session.
         </div>
@@ -192,11 +240,17 @@ export default function IncidentManualEntry({ onSaved }: Props) {
 
       <div style={{ display: "flex", gap: 8 }}>
         <button type="submit" disabled={stage === "saving"} style={primaryBtnStyle}>
-          {stage === "saving" ? "Saving…" : "Add incident"}
+          {stage === "saving" ? "Saving…" : isEdit ? "Save changes" : "Add incident"}
         </button>
-        <button type="button" onClick={() => setForm(EMPTY_FORM)} style={secondaryBtnStyle}>
-          Clear form
-        </button>
+        {isEdit ? (
+          <button type="button" onClick={onCancel} style={secondaryBtnStyle}>
+            Cancel
+          </button>
+        ) : (
+          <button type="button" onClick={() => setForm(EMPTY_FORM)} style={secondaryBtnStyle}>
+            Clear form
+          </button>
+        )}
       </div>
     </form>
   );
