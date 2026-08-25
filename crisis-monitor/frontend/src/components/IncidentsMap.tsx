@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, useMapEvents } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
-import type { IncidentItem } from "../api";
+import { api, type IncidentFilters, type IncidentItem, type SavedRoute } from "../api";
 
 interface Props {
+  /** Used as the initial dataset before the map's own category filters take
+   *  over — keeps this component self-sufficient without needing the parent
+   *  dashboard to change how it fetches/passes incidents. */
   incidents: IncidentItem[];
 }
 
@@ -25,8 +28,9 @@ const BASEMAPS = {
     attribution: "Tiles &copy; Esri",
   },
 } as const;
-
 type BasemapKey = keyof typeof BASEMAPS;
+
+const ROUTE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
 
 function severityColor(severity: string | null | undefined): string {
   const s = (severity ?? "").toLowerCase();
@@ -35,7 +39,6 @@ function severityColor(severity: string | null | undefined): string {
   if (/(low|minor|minimal)/.test(s)) return "#17924f";
   return "#2f66f0";
 }
-
 function totalCasualties(i: IncidentItem): number {
   return (
     (i.civilian_death_child ?? 0) +
@@ -48,14 +51,20 @@ function totalCasualties(i: IncidentItem): number {
   );
 }
 
-// --- distance helpers: flat-km approximation via a local reference latitude,
-// accurate enough for the city/regional scale a "near this route" filter needs ---
-const KM_PER_DEG_LAT = 111.32;
+// --- geometry helpers ---
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 function kmPerDegLng(lat: number) {
   return 111.32 * Math.cos((lat * Math.PI) / 180);
 }
 function toXY(lat: number, lng: number, refLat: number) {
-  return { x: lng * kmPerDegLng(refLat), y: lat * KM_PER_DEG_LAT };
+  return { x: lng * kmPerDegLng(refLat), y: lat * 111.32 };
 }
 function pointToSegmentDistKm(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
   const abx = b.x - a.x;
@@ -63,73 +72,113 @@ function pointToSegmentDistKm(p: { x: number; y: number }, a: { x: number; y: nu
   const lenSq = abx * abx + aby * aby;
   let t = lenSq === 0 ? 0 : ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
   t = Math.max(0, Math.min(1, t));
-  const cx = a.x + t * abx;
-  const cy = a.y + t * aby;
-  return Math.hypot(p.x - cx, p.y - cy);
+  return Math.hypot(p.x - (a.x + t * abx), p.y - (a.y + t * aby));
 }
-
-/** Distance in km from a point to the nearest segment of a route polyline.
- *  Downsamples very dense route geometries so this stays cheap even with
- *  hundreds/thousands of incidents against a long route. */
-function distanceToRouteKm(lat: number, lng: number, routeLatLngs: [number, number][]): number {
-  if (routeLatLngs.length === 0) return Infinity;
-  const refLat = routeLatLngs[Math.floor(routeLatLngs.length / 2)][0];
+function distanceToLineKm(lat: number, lng: number, line: [number, number][]): number {
+  if (line.length === 0) return Infinity;
+  const refLat = line[Math.floor(line.length / 2)][0];
   const p = toXY(lat, lng, refLat);
-
   const MAX_SEGMENTS = 400;
-  const step = Math.max(1, Math.floor(routeLatLngs.length / MAX_SEGMENTS));
+  const step = Math.max(1, Math.floor(line.length / MAX_SEGMENTS));
   let min = Infinity;
-  for (let i = 0; i + step < routeLatLngs.length; i += step) {
-    const a = toXY(routeLatLngs[i][0], routeLatLngs[i][1], refLat);
-    const b = toXY(routeLatLngs[i + step][0], routeLatLngs[i + step][1], refLat);
+  for (let i = 0; i + step < line.length; i += step) {
+    const a = toXY(line[i][0], line[i][1], refLat);
+    const b = toXY(line[i + step][0], line[i + step][1], refLat);
     const d = pointToSegmentDistKm(p, a, b);
     if (d < min) min = d;
   }
   return min;
 }
 
-type RoutePick = "idle" | "picking-a" | "picking-b";
-
-interface RouteState {
-  a: [number, number] | null;
-  b: [number, number] | null;
-  geometry: [number, number][] | null;
-  distanceKm: number | null;
-  durationMin: number | null;
-  loading: boolean;
-  error: string | null;
-}
-
-function ClickCapture({ onClick }: { onClick: (lat: number, lng: number) => void }) {
-  useMapEvents({
-    click(e) {
-      onClick(e.latlng.lat, e.latlng.lng);
-    },
-  });
-  return null;
-}
-
-async function fetchRoute(a: [number, number], b: [number, number]): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number }> {
-  // OSRM's public demo server — free, no API key, but explicitly not meant for
-  // heavy/production traffic. Fine for occasional route lookups here; a
-  // production deployment would want a self-hosted OSRM instance or a paid
-  // routing API (Mapbox/ORS/Google) instead.
-  const url = `https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`;
-  const res = await fetch(url);
+async function fetchRoadRoute(points: [number, number][]): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number }> {
+  // OSRM's public demo server — free, no API key, but not meant for heavy/production
+  // traffic. A production deployment would want a self-hosted OSRM instance or a
+  // paid routing API (Mapbox/ORS/Google) instead.
+  const coordStr = points.map(([lat, lng]) => `${lng},${lat}`).join(";");
+  const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
   if (!res.ok) throw new Error(`Routing service returned ${res.status}`);
   const data = await res.json();
-  if (data.code !== "Ok" || !data.routes?.[0]) throw new Error("No route found between those two points");
+  if (data.code !== "Ok" || !data.routes?.[0]) throw new Error("No road route could be found through those points");
   const route = data.routes[0];
   const geometry: [number, number][] = route.geometry.coordinates.map(([lng, lat]: [number, number]) => [lat, lng]);
   return { geometry, distanceKm: route.distance / 1000, durationMin: route.duration / 60 };
 }
 
-export default function IncidentsRouteMap({ incidents }: Props) {
+function freehandRoute(points: [number, number][]): { geometry: [number, number][]; distanceKm: number } {
+  let distanceKm = 0;
+  for (let i = 0; i + 1 < points.length; i++) distanceKm += haversineKm(points[i][0], points[i][1], points[i + 1][0], points[i + 1][1]);
+  return { geometry: points, distanceKm };
+}
+
+interface RouteSim {
+  id: string;
+  backendId: string | null; // null until saved
+  name: string;
+  mode: "road" | "freehand";
+  waypoints: [number, number][];
+  geometry: [number, number][];
+  distanceKm: number | null;
+  durationMin: number | null;
+  color: string;
+  visible: boolean;
+  saving: boolean;
+}
+
+function ClickCapture({ active, onClick }: { active: boolean; onClick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      if (active) onClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
+export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
-  const [routePick, setRoutePick] = useState<RoutePick>("idle");
-  const [route, setRoute] = useState<RouteState>({ a: null, b: null, geometry: null, distanceKm: null, durationMin: null, loading: false, error: null });
+
+  // --- route drafting ---
+  const [draftMode, setDraftMode] = useState<"road" | "freehand">("road");
+  const [drafting, setDrafting] = useState(false);
+  const [draftWaypoints, setDraftWaypoints] = useState<[number, number][]>([]);
+  const [finishing, setFinishing] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  // --- saved/unsaved route simulations, all can coexist ---
+  const [routes, setRoutes] = useState<RouteSim[]>([]);
+  const colorIndex = useRef(0);
+
+  // --- incident overlay filters ---
+  const [incidents, setIncidents] = useState<IncidentItem[]>(initialIncidents);
+  const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
+  const [filters, setFilters] = useState<{ sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
   const [bufferKm, setBufferKm] = useState(5);
-  const requestSeq = useRef(0);
+
+  useEffect(() => {
+    api.getIncidentFilters().then(setFilterOptions).catch(() => {});
+    api.getMapRoutes().then((saved) => {
+      setRoutes(
+        saved.map((r) => ({
+          id: r.id,
+          backendId: r.id,
+          name: r.name,
+          mode: r.mode,
+          waypoints: r.waypoints,
+          geometry: r.geometry,
+          distanceKm: r.distance_km,
+          durationMin: r.duration_min,
+          color: r.color ?? ROUTE_COLORS[colorIndex.current++ % ROUTE_COLORS.length],
+          visible: true,
+          saving: false,
+        }))
+      );
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    api.getIncidents(filters).then(setIncidents).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
 
   const geoIncidents = useMemo(() => incidents.filter((i) => i.latitude != null && i.longitude != null), [incidents]);
 
@@ -140,49 +189,124 @@ export default function IncidentsRouteMap({ incidents }: Props) {
     return [avgLat, avgLng];
   }, [geoIncidents]);
 
-  useEffect(() => {
-    if (!route.a || !route.b) return;
-    const seq = ++requestSeq.current;
-    setRoute((r) => ({ ...r, loading: true, error: null }));
-    fetchRoute(route.a, route.b)
-      .then(({ geometry, distanceKm, durationMin }) => {
-        if (seq !== requestSeq.current) return;
-        setRoute((r) => ({ ...r, geometry, distanceKm, durationMin, loading: false }));
-      })
-      .catch((err) => {
-        if (seq !== requestSeq.current) return;
-        setRoute((r) => ({ ...r, loading: false, error: err instanceof Error ? err.message : "Couldn't fetch a route" }));
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.a, route.b]);
-
+  const visibleRoutes = routes.filter((r) => r.visible);
   const nearRouteIds = useMemo(() => {
-    if (!route.geometry) return null;
+    if (visibleRoutes.length === 0) return null;
     const ids = new Set<string>();
     for (const i of geoIncidents) {
-      if (distanceToRouteKm(i.latitude!, i.longitude!, route.geometry) <= bufferKm) ids.add(i.id);
+      for (const r of visibleRoutes) {
+        if (distanceToLineKm(i.latitude!, i.longitude!, r.geometry) <= bufferKm) {
+          ids.add(i.id);
+          break;
+        }
+      }
     }
     return ids;
-  }, [route.geometry, bufferKm, geoIncidents]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleRoutes, bufferKm, geoIncidents]);
 
-  function handleMapClick(lat: number, lng: number) {
-    if (routePick === "picking-a") {
-      setRoute({ a: [lat, lng], b: null, geometry: null, distanceKm: null, durationMin: null, loading: false, error: null });
-      setRoutePick("picking-b");
-    } else if (routePick === "picking-b") {
-      setRoute((r) => ({ ...r, b: [lat, lng] }));
-      setRoutePick("idle");
+  function startDrafting() {
+    setDrafting(true);
+    setDraftWaypoints([]);
+    setDraftError(null);
+  }
+  function cancelDrafting() {
+    setDrafting(false);
+    setDraftWaypoints([]);
+    setDraftError(null);
+  }
+  function addDraftPoint(lat: number, lng: number) {
+    setDraftWaypoints((pts) => [...pts, [lat, lng]]);
+  }
+  function undoDraftPoint() {
+    setDraftWaypoints((pts) => pts.slice(0, -1));
+  }
+
+  async function finishRoute() {
+    if (draftWaypoints.length < 2) return;
+    setFinishing(true);
+    setDraftError(null);
+    try {
+      const color = ROUTE_COLORS[colorIndex.current++ % ROUTE_COLORS.length];
+      let geometry: [number, number][];
+      let distanceKm: number | null;
+      let durationMin: number | null = null;
+
+      if (draftMode === "road") {
+        const result = await fetchRoadRoute(draftWaypoints);
+        geometry = result.geometry;
+        distanceKm = result.distanceKm;
+        durationMin = result.durationMin;
+      } else {
+        const result = freehandRoute(draftWaypoints);
+        geometry = result.geometry;
+        distanceKm = result.distanceKm;
+      }
+
+      const sim: RouteSim = {
+        id: crypto.randomUUID(),
+        backendId: null,
+        name: `Route ${routes.length + 1}`,
+        mode: draftMode,
+        waypoints: draftWaypoints,
+        geometry,
+        distanceKm,
+        durationMin,
+        color,
+        visible: true,
+        saving: false,
+      };
+      setRoutes((r) => [...r, sim]);
+      setDrafting(false);
+      setDraftWaypoints([]);
+    } catch (err) {
+      setDraftError(err instanceof Error ? err.message : "Couldn't build that route");
+    } finally {
+      setFinishing(false);
     }
   }
 
-  function clearRoute() {
-    setRoute({ a: null, b: null, geometry: null, distanceKm: null, durationMin: null, loading: false, error: null });
-    setRoutePick("idle");
+  async function saveRoute(id: string) {
+    const sim = routes.find((r) => r.id === id);
+    if (!sim) return;
+    setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, saving: true } : r)));
+    try {
+      const saved = await api.createMapRoute({
+        name: sim.name,
+        mode: sim.mode,
+        waypoints: sim.waypoints,
+        geometry: sim.geometry,
+        distance_km: sim.distanceKm,
+        duration_min: sim.durationMin,
+        color: sim.color,
+      });
+      setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, backendId: saved.id, saving: false } : r)));
+    } catch {
+      setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, saving: false } : r)));
+    }
+  }
+
+  async function deleteRoute(id: string) {
+    const sim = routes.find((r) => r.id === id);
+    setRoutes((rs) => rs.filter((r) => r.id !== id));
+    if (sim?.backendId) {
+      await api.deleteMapRoute(sim.backendId).catch(() => {});
+    }
+  }
+
+  function renameRoute(id: string, name: string) {
+    setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, name } : r)));
+  }
+  async function commitRename(id: string) {
+    const sim = routes.find((r) => r.id === id);
+    if (sim?.backendId) api.updateMapRoute(sim.backendId, { name: sim.name }).catch(() => {});
+  }
+  function toggleVisible(id: string) {
+    setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, visible: !r.visible } : r)));
   }
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      {/* controls */}
       <div
         style={{
           position: "absolute",
@@ -191,15 +315,18 @@ export default function IncidentsRouteMap({ incidents }: Props) {
           zIndex: 1000,
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: 10,
           background: "var(--panel)",
           border: "1px solid var(--border)",
           borderRadius: 8,
-          padding: 10,
+          padding: 12,
           boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
-          maxWidth: 260,
+          width: 300,
+          maxHeight: "calc(100% - 24px)",
+          overflowY: "auto",
         }}
       >
+        {/* basemap */}
         <div style={{ display: "flex", gap: 4 }}>
           {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
             <button key={k} onClick={() => setBasemap(k)} style={chipStyle(basemap === k)}>
@@ -210,49 +337,129 @@ export default function IncidentsRouteMap({ incidents }: Props) {
 
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
-        {routePick === "idle" && !route.a && (
-          <button onClick={() => setRoutePick("picking-a")} style={primaryChipStyle}>
-            Plan a route
-          </button>
-        )}
-        {routePick === "picking-a" && <div style={hintStyle}>Click the map to set the start point (A)</div>}
-        {routePick === "picking-b" && <div style={hintStyle}>Click the map to set the end point (B)</div>}
+        {/* route builder */}
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>ROUTE SIMULATION</div>
+          {!drafting ? (
+            <button onClick={startDrafting} style={primaryChipStyle}>
+              + New route
+            </button>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setDraftMode("road")} style={chipStyle(draftMode === "road")}>
+                  Follow roads
+                </button>
+                <button onClick={() => setDraftMode("freehand")} style={chipStyle(draftMode === "freehand")}>
+                  Straight line
+                </button>
+              </div>
+              <div style={hintStyle}>
+                Click the map to add waypoints ({draftWaypoints.length} added){draftMode === "freehand" ? " — connects directly, ignores roads" : ""}
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={undoDraftPoint} disabled={draftWaypoints.length === 0} style={secondaryChipStyle}>
+                  Undo point
+                </button>
+                <button onClick={cancelDrafting} style={secondaryChipStyle}>
+                  Cancel
+                </button>
+              </div>
+              <button onClick={finishRoute} disabled={draftWaypoints.length < 2 || finishing} style={primaryChipStyle}>
+                {finishing ? "Building route…" : `Finish route (${draftWaypoints.length} pts)`}
+              </button>
+              {draftError && <div style={{ ...hintStyle, color: "var(--critical)" }}>{draftError}</div>}
+            </div>
+          )}
+        </div>
 
-        {route.loading && <div style={hintStyle}>Fetching route…</div>}
-        {route.error && <div style={{ ...hintStyle, color: "var(--critical)" }}>{route.error}</div>}
-        {route.distanceKm != null && route.durationMin != null && (
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {route.distanceKm.toFixed(1)} km · ~{Math.round(route.durationMin)} min drive
+        {/* saved/unsaved route list */}
+        {routes.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div className="eyebrow">SIMULATIONS ({routes.length})</div>
+            {routes.map((r) => (
+              <div key={r.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={r.visible} onChange={() => toggleVisible(r.id)} />
+                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: r.color, flexShrink: 0 }} />
+                  <input
+                    value={r.name}
+                    onChange={(e) => renameRoute(r.id, e.target.value)}
+                    onBlur={() => commitRename(r.id)}
+                    style={{ flex: 1, fontSize: 12, border: "none", background: "transparent", color: "var(--text-primary)", minWidth: 0 }}
+                  />
+                </div>
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                  {r.mode === "road" ? "Road-following" : "Straight line"} · {r.waypoints.length} waypoints
+                  {r.distanceKm != null ? ` · ${r.distanceKm.toFixed(1)} km` : ""}
+                  {r.durationMin != null ? ` · ~${Math.round(r.durationMin)} min` : ""}
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {r.backendId ? (
+                    <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
+                  ) : (
+                    <button onClick={() => saveRoute(r.id)} disabled={r.saving} style={secondaryChipStyle}>
+                      {r.saving ? "Saving…" : "Save"}
+                    </button>
+                  )}
+                  <button onClick={() => deleteRoute(r.id)} style={{ ...secondaryChipStyle, color: "var(--critical)" }}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
-        {route.geometry && (
-          <>
-            <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
-              Show incidents within {bufferKm} km of route
-              <input
-                type="range"
-                min={1}
-                max={50}
-                value={bufferKm}
-                onChange={(e) => setBufferKm(Number(e.target.value))}
-                style={{ width: "100%" }}
-              />
-            </label>
-            {nearRouteIds && <div style={{ fontSize: 12, fontWeight: 600 }}>{nearRouteIds.size} incidents near this route</div>}
-          </>
-        )}
+        <div style={{ height: 1, background: "var(--border-soft)" }} />
 
-        {(route.a || routePick !== "idle") && (
-          <button onClick={clearRoute} style={secondaryChipStyle}>
-            Clear route
-          </button>
-        )}
+        {/* incident overlay filters */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="eyebrow">OVERLAY INCIDENTS</div>
+          {filterOptions && (
+            <>
+              <FilterSelect label="Sector" value={filters.sector} options={filterOptions.sector} onChange={(v) => setFilters((f) => ({ ...f, sector: v }))} />
+              <FilterSelect label="Actor" value={filters.actor} options={filterOptions.actor} onChange={(v) => setFilters((f) => ({ ...f, actor: v }))} />
+              <FilterSelect label="Tactic" value={filters.tactic} options={filterOptions.tactic} onChange={(v) => setFilters((f) => ({ ...f, tactic: v }))} />
+              <FilterSelect label="Severity" value={filters.severity} options={filterOptions.severity} onChange={(v) => setFilters((f) => ({ ...f, severity: v }))} />
+            </>
+          )}
+          <div style={{ display: "flex", gap: 4 }}>
+            <input
+              type="date"
+              value={filters.from ?? ""}
+              onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))}
+              style={dateInputStyle}
+            />
+            <input
+              type="date"
+              value={filters.to ?? ""}
+              onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))}
+              style={dateInputStyle}
+            />
+          </div>
+          {Object.values(filters).some(Boolean) && (
+            <button onClick={() => setFilters({})} style={secondaryChipStyle}>
+              Clear filters
+            </button>
+          )}
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{geoIncidents.length} incidents shown</div>
+
+          {visibleRoutes.length > 0 && (
+            <>
+              <label style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                Highlight incidents within {bufferKm} km of a visible route
+                <input type="range" min={1} max={50} value={bufferKm} onChange={(e) => setBufferKm(Number(e.target.value))} style={{ width: "100%" }} />
+              </label>
+              {nearRouteIds && <div style={{ fontSize: 12, fontWeight: 600 }}>{nearRouteIds.size} incidents near a visible route</div>}
+            </>
+          )}
+        </div>
       </div>
 
       <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom>
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
-        <ClickCapture onClick={handleMapClick} />
+        <ClickCapture active={drafting} onClick={addDraftPoint} />
 
         {geoIncidents.map((i) => {
           const highlighted = !nearRouteIds || nearRouteIds.has(i.id);
@@ -264,8 +471,8 @@ export default function IncidentsRouteMap({ incidents }: Props) {
               pathOptions={{
                 color: severityColor(i.severity),
                 fillColor: severityColor(i.severity),
-                fillOpacity: highlighted ? 0.85 : 0.25,
-                opacity: highlighted ? 1 : 0.3,
+                fillOpacity: highlighted ? 0.85 : 0.2,
+                opacity: highlighted ? 1 : 0.25,
                 weight: 1,
               }}
             >
@@ -284,19 +491,45 @@ export default function IncidentsRouteMap({ incidents }: Props) {
           );
         })}
 
-        {route.a && (
-          <CircleMarker center={route.a} radius={8} pathOptions={{ color: "#0d9488", fillColor: "#0d9488", fillOpacity: 1, weight: 2 }}>
-            <Popup>Start (A)</Popup>
-          </CircleMarker>
+        {/* draft-in-progress waypoints + connecting line */}
+        {drafting &&
+          draftWaypoints.map((pt, idx) => (
+            <CircleMarker key={idx} center={pt} radius={7} pathOptions={{ color: "#111", fillColor: "#fff", fillOpacity: 1, weight: 2 }}>
+              <Popup>Point {idx + 1}</Popup>
+            </CircleMarker>
+          ))}
+        {drafting && draftWaypoints.length > 1 && (
+          <Polyline positions={draftWaypoints} pathOptions={{ color: "#111", weight: 2, opacity: 0.5, dashArray: "4 4" }} />
         )}
-        {route.b && (
-          <CircleMarker center={route.b} radius={8} pathOptions={{ color: "#2f66f0", fillColor: "#2f66f0", fillOpacity: 1, weight: 2 }}>
-            <Popup>End (B)</Popup>
-          </CircleMarker>
+
+        {/* finished route simulations */}
+        {visibleRoutes.map((r) => (
+          <Polyline key={r.id} positions={r.geometry} pathOptions={{ color: r.color, weight: 4, opacity: 0.75 }} />
+        ))}
+        {visibleRoutes.map((r) =>
+          r.waypoints.map((pt, idx) => (
+            <CircleMarker key={`${r.id}-${idx}`} center={pt} radius={5} pathOptions={{ color: r.color, fillColor: "#fff", fillOpacity: 1, weight: 2 }}>
+              <Popup>
+                {r.name} — point {idx + 1}
+              </Popup>
+            </CircleMarker>
+          ))
         )}
-        {route.geometry && <Polyline positions={route.geometry} pathOptions={{ color: "#0d9488", weight: 4, opacity: 0.75 }} />}
       </MapContainer>
     </div>
+  );
+}
+
+function FilterSelect({ label, value, options, onChange }: { label: string; value?: string; options: string[]; onChange: (v: string | undefined) => void }) {
+  return (
+    <select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)} style={selectStyle}>
+      <option value="">{label}: All</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -312,7 +545,6 @@ function chipStyle(active: boolean): React.CSSProperties {
     flex: 1,
   };
 }
-
 const primaryChipStyle: React.CSSProperties = {
   fontSize: 12,
   padding: "6px 10px",
@@ -323,18 +555,24 @@ const primaryChipStyle: React.CSSProperties = {
   cursor: "pointer",
   fontWeight: 600,
 };
-
 const secondaryChipStyle: React.CSSProperties = {
-  fontSize: 11.5,
-  padding: "5px 10px",
-  borderRadius: 6,
+  fontSize: 11,
+  padding: "4px 8px",
+  borderRadius: 5,
   border: "1px solid var(--border)",
   background: "transparent",
   color: "var(--text-muted)",
   cursor: "pointer",
+  flex: 1,
 };
-
-const hintStyle: React.CSSProperties = {
+const hintStyle: React.CSSProperties = { fontSize: 11, color: "var(--text-muted)" };
+const selectStyle: React.CSSProperties = {
   fontSize: 11.5,
-  color: "var(--text-muted)",
+  padding: "5px 8px",
+  borderRadius: 5,
+  border: "1px solid var(--border)",
+  background: "var(--panel)",
+  color: "var(--text-primary)",
+  width: "100%",
 };
+const dateInputStyle: React.CSSProperties = { ...selectStyle, flex: 1 };
