@@ -4,8 +4,8 @@ import Logo from "./Logo";
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "list" | "dashboard" | "admin";
-  onNavigate: (view: "list" | "admin") => void;
+  view: "list" | "dashboard" | "admin" | "incidents";
+  onNavigate: (view: "list" | "admin" | "incidents") => void;
   onLogout: () => void;
 }
 
@@ -55,16 +55,19 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-        {user.role === "admin" && (
-          <nav style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => onNavigate("list")} style={navBtnStyle(view !== "admin")}>
-              Queries
-            </button>
+        <nav style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => onNavigate("list")} style={navBtnStyle(view === "list" || view === "dashboard")}>
+            Queries
+          </button>
+          <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
+            Incidents
+          </button>
+          {user.role === "admin" && (
             <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
               Clients
             </button>
-          </nav>
-        )}
+          )}
+        </nav>
 
         <div style={{ textAlign: "right" }}>
           <div className="eyebrow">{user.role === "admin" ? "ADMIN" : "SIGNED IN"}</div>
