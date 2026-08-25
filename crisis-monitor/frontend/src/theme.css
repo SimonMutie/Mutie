@@ -114,6 +114,18 @@ details[open] > summary::before {
   transform: rotate(90deg);
 }
 
+/* Custom shaped incident markers (IncidentsMap) — Leaflet's default div-icon
+   adds a white box + border + shadow, which we don't want since these are
+   custom SVG shapes drawn edge-to-edge. */
+.incident-marker-icon {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.incident-marker-icon svg {
+  filter: drop-shadow(0 1px 3px rgba(19, 23, 34, 0.4));
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
