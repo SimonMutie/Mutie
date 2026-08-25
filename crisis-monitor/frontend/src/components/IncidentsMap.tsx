@@ -869,7 +869,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
         {/* route builder */}
-        <details open>
+        <details>
           <summary className="eyebrow" style={{ marginBottom: 6, cursor: "pointer" }}>ROUTE SIMULATION</summary>
           {!drafting ? (
             <button onClick={startDrafting} style={primaryChipStyle}>
@@ -991,7 +991,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
         {/* shape overlays: draw or upload */}
-        <details open>
+        <details>
           <summary className="eyebrow" style={{ marginBottom: 6, cursor: "pointer" }}>SHAPE OVERLAYS</summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
