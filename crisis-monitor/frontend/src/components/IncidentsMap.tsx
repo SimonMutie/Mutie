@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, Circle, GeoJSON as GeoJSONLayer, useMapEvents, useMap } from "react-leaflet";
+import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
+import "leaflet-draw";
+import "leaflet-draw/dist/leaflet.draw.css";
+import shp from "shpjs";
 import buffer from "@turf/buffer";
 import { lineString } from "@turf/helpers";
 import "leaflet/dist/leaflet.css";
-import { api, type IncidentFilters, type IncidentItem, type SavedRoute } from "../api";
+import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 
 interface Props {
   /** Used as the initial dataset before the map's own category filters take
@@ -177,6 +181,82 @@ interface RouteSim {
   saving: boolean;
 }
 
+interface ShapeSim {
+  id: string;
+  backendId: string | null;
+  name: string;
+  source: "drawn" | "shapefile" | "geojson";
+  geometry: GeoJSON.Feature | GeoJSON.FeatureCollection;
+  color: string;
+  fillOpacity: number;
+  weight: number;
+  visible: boolean;
+  saving: boolean;
+}
+
+/** Wraps leaflet-draw's native drawing toolbar (polygon/rectangle/circle/polyline
+ *  tools). Only mounted while shape-drawing is active. Each finished shape is
+ *  captured as GeoJSON and handed off to React state — the raw Leaflet layer is
+ *  then removed, since the shape gets rendered by our own state-driven layer
+ *  below instead (keeps one source of truth for styling/visibility). This means
+ *  there's no native re-editing of a shape's vertices after it's drawn — delete
+ *  and redraw is the way to change one, which keeps things simple for now. */
+function DrawControl({ active, color, onCreated }: { active: boolean; color: string; onCreated: (feature: GeoJSON.Feature) => void }) {
+  const map = useMap();
+  const controlRef = useRef<L.Control.Draw | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+
+    const shapeOptions = { color, fillColor: color, fillOpacity: 0.3 };
+    const control = new L.Control.Draw({
+      position: "topright",
+      draw: {
+        polygon: { shapeOptions, showArea: true } as L.DrawOptions.PolygonOptions,
+        rectangle: { shapeOptions } as L.DrawOptions.RectangleOptions,
+        circle: { shapeOptions } as L.DrawOptions.CircleOptions,
+        polyline: { shapeOptions: { color } } as L.DrawOptions.PolylineOptions,
+        marker: false,
+        circlemarker: false,
+      },
+    });
+    map.addControl(control);
+    controlRef.current = control;
+
+    function handleCreated(e: L.DrawEvents.Created) {
+      const layer = e.layer;
+      let geojson: GeoJSON.Feature;
+      if (layer instanceof L.Circle) {
+        // Leaflet's Circle.toGeoJSON() only returns a bare Point — it does NOT
+        // include the radius (verified directly against Leaflet's source; this
+        // is a common wrong assumption). Build the Feature manually so the
+        // radius survives, or every drawn circle would silently collapse to a
+        // zero-size point.
+        const center = layer.getLatLng();
+        geojson = {
+          type: "Feature",
+          properties: { radius: layer.getRadius() },
+          geometry: { type: "Point", coordinates: [center.lng, center.lat] },
+        };
+      } else {
+        geojson = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
+      }
+      onCreated(geojson);
+      map.removeLayer(layer); // rendered via React state instead, see comment above
+    }
+    map.on(L.Draw.Event.CREATED, handleCreated as L.LeafletEventHandlerFn);
+
+    return () => {
+      map.off(L.Draw.Event.CREATED, handleCreated as L.LeafletEventHandlerFn);
+      map.removeControl(control);
+      controlRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, color, map]);
+
+  return null;
+}
+
 function ClickCapture({ active, onClick }: { active: boolean; onClick: (lat: number, lng: number) => void }) {
   useMapEvents({
     click(e) {
@@ -215,6 +295,14 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [routes, setRoutes] = useState<RouteSim[]>([]);
   const colorIndex = useRef(0);
 
+  // --- shape overlays: drawn or uploaded, all can coexist ---
+  const [shapes, setShapes] = useState<ShapeSim[]>([]);
+  const shapeColorIndex = useRef(0);
+  const [drawingShape, setDrawingShape] = useState(false);
+  const [drawColor, setDrawColor] = useState(ROUTE_COLORS[0]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
   // --- incident overlay filters ---
   const [incidents, setIncidents] = useState<IncidentItem[]>(initialIncidents);
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
@@ -237,6 +325,22 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           distanceKm: r.distance_km,
           durationMin: r.duration_min,
           color: r.color ?? ROUTE_COLORS[colorIndex.current++ % ROUTE_COLORS.length],
+          visible: true,
+          saving: false,
+        }))
+      );
+    }).catch(() => {});
+    api.getMapShapes().then((saved) => {
+      setShapes(
+        saved.map((s) => ({
+          id: s.id,
+          backendId: s.id,
+          name: s.name,
+          source: s.source,
+          geometry: s.geometry,
+          color: s.style.color ?? ROUTE_COLORS[shapeColorIndex.current++ % ROUTE_COLORS.length],
+          fillOpacity: s.style.fillOpacity ?? 0.25,
+          weight: s.style.weight ?? 2,
           visible: true,
           saving: false,
         }))
@@ -405,6 +509,123 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  function addDrawnShape(feature: GeoJSON.Feature) {
+    const color = drawColor;
+    shapeColorIndex.current++;
+    const sim: ShapeSim = {
+      id: crypto.randomUUID(),
+      backendId: null,
+      name: `Shape ${shapes.length + 1}`,
+      source: "drawn",
+      geometry: feature,
+      color,
+      fillOpacity: 0.25,
+      weight: 2,
+      visible: true,
+      saving: false,
+    };
+    setShapes((s) => [...s, sim]);
+  }
+
+  async function handleShapeFileUpload(file: File) {
+    setUploadError(null);
+    setUploading(true);
+    try {
+      let geometry: GeoJSON.Feature | GeoJSON.FeatureCollection;
+      let source: "shapefile" | "geojson";
+
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        const buf = await file.arrayBuffer();
+        const result = await shp(buf);
+        geometry = Array.isArray(result) ? { type: "FeatureCollection", features: result.flatMap((fc) => fc.features) } : result;
+        source = "shapefile";
+      } else if (file.name.toLowerCase().endsWith(".geojson") || file.name.toLowerCase().endsWith(".json")) {
+        const text = await file.text();
+        geometry = JSON.parse(text);
+        source = "geojson";
+      } else {
+        throw new Error("Unsupported file type — use a zipped shapefile (.zip) or a GeoJSON file (.geojson/.json)");
+      }
+
+      const color = ROUTE_COLORS[shapeColorIndex.current++ % ROUTE_COLORS.length];
+      const sim: ShapeSim = {
+        id: crypto.randomUUID(),
+        backendId: null,
+        name: file.name.replace(/\.(zip|geojson|json)$/i, ""),
+        source,
+        geometry,
+        color,
+        fillOpacity: 0.25,
+        weight: 2,
+        visible: true,
+        saving: false,
+      };
+      setShapes((s) => [...s, sim]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Couldn't read that file");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function toggleShapeVisible(id: string) {
+    setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, visible: !s.visible } : s)));
+  }
+  function renameShape(id: string, name: string) {
+    setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, name } : s)));
+  }
+  async function commitShapeRename(id: string) {
+    const sim = shapes.find((s) => s.id === id);
+    if (sim?.backendId) api.updateMapShape(sim.backendId, { name: sim.name }).catch(() => {});
+  }
+  function setShapeColor(id: string, color: string) {
+    setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, color } : s)));
+    const sim = shapes.find((s) => s.id === id);
+    if (sim?.backendId) api.updateMapShape(sim.backendId, { style: { color, fillColor: color } }).catch(() => {});
+  }
+  function setShapeOpacity(id: string, fillOpacity: number) {
+    setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, fillOpacity } : s)));
+    const sim = shapes.find((s) => s.id === id);
+    if (sim?.backendId) api.updateMapShape(sim.backendId, { style: { fillOpacity } }).catch(() => {});
+  }
+
+  async function saveShape(id: string) {
+    const sim = shapes.find((s) => s.id === id);
+    if (!sim) return;
+    const name = window.prompt("Save this shape as:", sim.name);
+    if (name === null) return;
+    const trimmedName = name.trim() || sim.name;
+
+    setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, name: trimmedName, saving: true } : s)));
+    try {
+      const saved = await api.createMapShape({
+        name: trimmedName,
+        source: sim.source,
+        geometry: sim.geometry,
+        style: { color: sim.color, fillColor: sim.color, fillOpacity: sim.fillOpacity, weight: sim.weight },
+      });
+      setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, backendId: saved.id, saving: false } : s)));
+    } catch {
+      setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, saving: false } : s)));
+    }
+  }
+
+  async function deleteShape(id: string) {
+    const sim = shapes.find((s) => s.id === id);
+    setShapes((ss) => ss.filter((s) => s.id !== id));
+    if (sim?.backendId) await api.deleteMapShape(sim.backendId).catch(() => {});
+  }
+
+  function downloadShape(s: ShapeSim) {
+    const blob = new Blob([JSON.stringify(s.geometry, null, 2)], { type: "application/geo+json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${s.name.replace(/[^a-z0-9]+/gi, "_") || "shape"}.geojson`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div
@@ -556,6 +777,102 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
 
         <div style={{ height: 1, background: "var(--border-soft)" }} />
 
+        {/* shape overlays: draw or upload */}
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>SHAPE OVERLAYS</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <button onClick={() => setDrawingShape((v) => !v)} style={drawingShape ? primaryChipStyle : { ...primaryChipStyle, background: "var(--panel-raised)", borderColor: "var(--border)" }}>
+                {drawingShape ? "Drawing — click a tool top-right" : "Draw a shape"}
+              </button>
+              <input
+                type="color"
+                value={drawColor}
+                onChange={(e) => setDrawColor(e.target.value)}
+                title="Shape color — click for any color"
+                style={largeColorInputStyle}
+              />
+            </div>
+            {drawingShape && (
+              <div style={hintStyle}>
+                Use the polygon/rectangle/circle/line tools that appeared in the map's top-right corner. Toggle this off when you're done drawing.
+              </div>
+            )}
+
+            <label style={secondaryChipStyle}>
+              {uploading ? "Reading file…" : "Upload shapefile (.zip) or GeoJSON"}
+              <input
+                type="file"
+                accept=".zip,.geojson,.json"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleShapeFileUpload(file);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {uploadError && <div style={{ ...hintStyle, color: "var(--critical)" }}>{uploadError}</div>}
+          </div>
+
+          {shapes.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              <div className="eyebrow">OVERLAYS ({shapes.length})</div>
+              {shapes.map((s) => (
+                <div key={s.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <input type="checkbox" checked={s.visible} onChange={() => toggleShapeVisible(s.id)} />
+                    <input
+                      type="color"
+                      value={s.color}
+                      onChange={(e) => setShapeColor(s.id, e.target.value)}
+                      title="Change color — click for any color"
+                      style={largeColorInputStyle}
+                    />
+                    <input
+                      value={s.name}
+                      onChange={(e) => renameShape(s.id, e.target.value)}
+                      onBlur={() => commitShapeRename(s.id)}
+                      style={{ flex: 1, fontSize: 12, border: "none", background: "transparent", color: "var(--text-primary)", minWidth: 0 }}
+                    />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                    {s.source === "drawn" ? "Hand-drawn" : s.source === "shapefile" ? "Uploaded shapefile" : "Uploaded GeoJSON"}
+                  </div>
+                  <label style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                    Shading: {Math.round(s.fillOpacity * 100)}%
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round(s.fillOpacity * 100)}
+                      onChange={(e) => setShapeOpacity(s.id, Number(e.target.value) / 100)}
+                      style={{ width: "100%" }}
+                    />
+                  </label>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {s.backendId ? (
+                      <span style={{ fontSize: 10.5, color: "var(--signal)" }}>Saved</span>
+                    ) : (
+                      <button onClick={() => saveShape(s.id)} disabled={s.saving} style={secondaryChipStyle}>
+                        {s.saving ? "Saving…" : "Save"}
+                      </button>
+                    )}
+                    <button onClick={() => downloadShape(s)} style={secondaryChipStyle}>
+                      Download
+                    </button>
+                    <button onClick={() => deleteShape(s.id)} style={{ ...secondaryChipStyle, color: "var(--critical)" }}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ height: 1, background: "var(--border-soft)" }} />
+
         {/* incident overlay filters */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div className="eyebrow">OVERLAY INCIDENTS</div>
@@ -626,6 +943,39 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
+        <DrawControl active={drawingShape} color={drawColor} onCreated={addDrawnShape} />
+
+        {/* shape overlays — Leaflet circles export as a Point + a radius property
+            (GeoJSON has no native circle type), so those render via <Circle>
+            with the real radius; everything else goes through the generic
+            GeoJSON renderer. Keying on color/opacity forces a remount when
+            restyled, since react-leaflet's GeoJSON layer doesn't otherwise
+            pick up style prop changes after first render. */}
+        {shapes
+          .filter((s) => s.visible)
+          .map((s) => {
+            const feature = s.geometry.type === "Feature" ? s.geometry : null;
+            const radius = feature?.properties?.radius;
+            const isCircle = feature && feature.geometry.type === "Point" && typeof radius === "number";
+            if (isCircle && feature) {
+              const [lng, lat] = (feature.geometry as GeoJSON.Point).coordinates;
+              return (
+                <Circle
+                  key={`${s.id}-${s.color}-${s.fillOpacity}`}
+                  center={[lat, lng]}
+                  radius={radius as number}
+                  pathOptions={{ color: s.color, fillColor: s.color, fillOpacity: s.fillOpacity, weight: s.weight }}
+                />
+              );
+            }
+            return (
+              <GeoJSONLayer
+                key={`${s.id}-${s.color}-${s.fillOpacity}`}
+                data={s.geometry}
+                style={() => ({ color: s.color, fillColor: s.color, fillOpacity: s.fillOpacity, weight: s.weight })}
+              />
+            );
+          })}
 
         {((onlyNearRoute || focusedRoute) && nearRouteIds ? geoIncidents.filter((i) => nearRouteIds.has(i.id)) : geoIncidents).map((i) => {
           const highlighted = !nearRouteIds || nearRouteIds.has(i.id);
