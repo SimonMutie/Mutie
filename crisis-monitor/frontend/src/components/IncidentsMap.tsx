@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, Circle, GeoJSON as GeoJSONLayer, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet-draw";
@@ -194,20 +194,29 @@ interface ShapeSim {
   saving: boolean;
 }
 
-/** Wraps leaflet-draw's native drawing toolbar (polygon/rectangle/circle/polyline
- *  tools). Only mounted while shape-drawing is active. Each finished shape is
- *  captured as GeoJSON and handed off to React state — the raw Leaflet layer is
- *  then removed, since the shape gets rendered by our own state-driven layer
- *  below instead (keeps one source of truth for styling/visibility). This means
- *  there's no native re-editing of a shape's vertices after it's drawn — delete
- *  and redraw is the way to change one, which keeps things simple for now. */
-function DrawControl({ active, color, onCreated }: { active: boolean; color: string; onCreated: (feature: GeoJSON.Feature) => void }) {
+/** Wraps leaflet-draw's native toolbar: drawing tools plus, once an edit
+ *  featureGroup is available, edit (drag vertices/move/resize) and remove
+ *  tools operating on real shapes tracked in that group (see ShapeLayerGroup).
+ *  Newly drawn shapes are still captured as GeoJSON and handed to React state
+ *  — ShapeLayerGroup is what actually adds them as persistent, editable
+ *  layers; the temporary layer leaflet-draw creates during drawing is removed
+ *  once captured, to avoid a duplicate. */
+function DrawControl({
+  color,
+  editFeatureGroup,
+  onCreated,
+  onEdited,
+  onDeleted,
+}: {
+  color: string;
+  editFeatureGroup: L.FeatureGroup;
+  onCreated: (feature: GeoJSON.Feature) => void;
+  onEdited: (id: string, feature: GeoJSON.Feature) => void;
+  onDeleted: (ids: string[]) => void;
+}) {
   const map = useMap();
-  const controlRef = useRef<L.Control.Draw | null>(null);
 
   useEffect(() => {
-    if (!active) return;
-
     const shapeOptions = { color, fillColor: color, fillOpacity: 0.3 };
     const control = new L.Control.Draw({
       position: "topright",
@@ -219,40 +228,127 @@ function DrawControl({ active, color, onCreated }: { active: boolean; color: str
         marker: false,
         circlemarker: false,
       },
+      edit: { featureGroup: editFeatureGroup, remove: true },
     });
     map.addControl(control);
-    controlRef.current = control;
 
     function handleCreated(e: L.DrawEvents.Created) {
-      const layer = e.layer;
-      let geojson: GeoJSON.Feature;
-      if (layer instanceof L.Circle) {
-        // Leaflet's Circle.toGeoJSON() only returns a bare Point — it does NOT
-        // include the radius (verified directly against Leaflet's source; this
-        // is a common wrong assumption). Build the Feature manually so the
-        // radius survives, or every drawn circle would silently collapse to a
-        // zero-size point.
-        const center = layer.getLatLng();
-        geojson = {
-          type: "Feature",
-          properties: { radius: layer.getRadius() },
-          geometry: { type: "Point", coordinates: [center.lng, center.lat] },
-        };
-      } else {
-        geojson = (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
-      }
-      onCreated(geojson);
-      map.removeLayer(layer); // rendered via React state instead, see comment above
+      onCreated(layerToFeature(e.layer));
+      map.removeLayer(e.layer); // ShapeLayerGroup adds the real, tracked/editable layer instead
+    }
+    function handleEdited(e: L.DrawEvents.Edited) {
+      e.layers.eachLayer((layer) => {
+        const id = (layer as L.Layer & { _shapeId?: string })._shapeId;
+        if (id) onEdited(id, layerToFeature(layer));
+      });
+    }
+    function handleDeleted(e: L.DrawEvents.Deleted) {
+      const ids: string[] = [];
+      e.layers.eachLayer((layer) => {
+        const id = (layer as L.Layer & { _shapeId?: string })._shapeId;
+        if (id) ids.push(id);
+      });
+      if (ids.length) onDeleted(ids);
     }
     map.on(L.Draw.Event.CREATED, handleCreated as L.LeafletEventHandlerFn);
+    map.on(L.Draw.Event.EDITED, handleEdited as L.LeafletEventHandlerFn);
+    map.on(L.Draw.Event.DELETED, handleDeleted as L.LeafletEventHandlerFn);
 
     return () => {
       map.off(L.Draw.Event.CREATED, handleCreated as L.LeafletEventHandlerFn);
+      map.off(L.Draw.Event.EDITED, handleEdited as L.LeafletEventHandlerFn);
+      map.off(L.Draw.Event.DELETED, handleDeleted as L.LeafletEventHandlerFn);
       map.removeControl(control);
-      controlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, color, map]);
+  }, [color, editFeatureGroup, map]);
+
+  return null;
+}
+
+/** Leaflet's Circle.toGeoJSON() only returns a bare Point — it does NOT include
+ *  the radius (verified directly against Leaflet's source; a common wrong
+ *  assumption). Build the Feature manually for circles so the radius survives,
+ *  or every drawn/edited circle would silently collapse to a zero-size point. */
+function layerToFeature(layer: L.Layer): GeoJSON.Feature {
+  if (layer instanceof L.Circle) {
+    const center = layer.getLatLng();
+    return { type: "Feature", properties: { radius: layer.getRadius() }, geometry: { type: "Point", coordinates: [center.lng, center.lat] } };
+  }
+  return (layer as L.Layer & { toGeoJSON: () => GeoJSON.Feature }).toGeoJSON();
+}
+
+/** True for shapes Leaflet can represent as one real, editable layer (a single
+ *  Feature — hand-drawn polygon/rectangle/circle/polyline, or a single-feature
+ *  GeoJSON upload). FeatureCollections (typical for uploaded shapefiles with
+ *  many polygons) render read-only instead — see the module-level note in
+ *  IncidentsMap for why, in the shape-rendering JSX. */
+function isEditableGeometry(geometry: GeoJSON.Feature | GeoJSON.FeatureCollection): geometry is GeoJSON.Feature {
+  return geometry.type === "Feature";
+}
+
+function shapePathOptions(s: ShapeSim): L.PathOptions {
+  return { color: s.color, fillColor: s.color, fillOpacity: s.fillOpacity, weight: s.weight };
+}
+
+function featureToEditableLayer(feature: GeoJSON.Feature, style: L.PathOptions): L.Layer {
+  const radius = feature.properties?.radius;
+  if (feature.geometry.type === "Point" && typeof radius === "number") {
+    const [lng, lat] = feature.geometry.coordinates;
+    return L.circle([lat, lng], { radius, ...style });
+  }
+  // geometryToLayer returns the bare Polygon/Polyline/Marker directly (not
+  // wrapped in a group), which is what leaflet-draw's edit handlers need to
+  // find `.editing` on — an L.geoJSON() wrapper group would NOT expose that.
+  const layer = L.GeoJSON.geometryToLayer(feature);
+  if (layer instanceof L.Path) layer.setStyle(style);
+  return layer;
+}
+
+/** Keeps a persistent Leaflet FeatureGroup of real, editable layers in sync with
+ *  React `shapes` state — additions, deletions, restyling, and visibility all
+ *  flow one way (state -> imperative Leaflet layers) so leaflet-draw's edit
+ *  toolbar always operates on the same objects React knows about. */
+function ShapeLayerGroup({ shapes, featureGroup }: { shapes: ShapeSim[]; featureGroup: L.FeatureGroup }) {
+  const map = useMap();
+  const layersRef = useRef<Map<string, L.Layer>>(new Map());
+
+  useEffect(() => {
+    featureGroup.addTo(map);
+    return () => {
+      map.removeLayer(featureGroup);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, featureGroup]);
+
+  useEffect(() => {
+    const tracked = layersRef.current;
+    const editable = shapes.filter((s) => isEditableGeometry(s.geometry));
+    const currentIds = new Set(editable.map((s) => s.id));
+
+    for (const [id, layer] of tracked) {
+      if (!currentIds.has(id)) {
+        featureGroup.removeLayer(layer);
+        tracked.delete(id);
+      }
+    }
+
+    for (const s of editable) {
+      const style = shapePathOptions(s);
+      let layer = tracked.get(s.id);
+      if (!layer) {
+        layer = featureToEditableLayer(s.geometry as GeoJSON.Feature, style);
+        (layer as L.Layer & { _shapeId?: string })._shapeId = s.id;
+        tracked.set(s.id, layer);
+        if (s.visible) featureGroup.addLayer(layer);
+        continue;
+      }
+      if (layer instanceof L.Path) layer.setStyle(style);
+      const isShown = featureGroup.hasLayer(layer);
+      if (s.visible && !isShown) featureGroup.addLayer(layer);
+      if (!s.visible && isShown) featureGroup.removeLayer(layer);
+    }
+  }, [shapes, featureGroup]);
 
   return null;
 }
@@ -298,10 +394,13 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   // --- shape overlays: drawn or uploaded, all can coexist ---
   const [shapes, setShapes] = useState<ShapeSim[]>([]);
   const shapeColorIndex = useRef(0);
-  const [drawingShape, setDrawingShape] = useState(false);
   const [drawColor, setDrawColor] = useState(ROUTE_COLORS[0]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Created once and reused for the component's lifetime — DrawControl's edit
+  // toolbar and ShapeLayerGroup both need the exact same FeatureGroup instance.
+  const editFeatureGroupRef = useRef<L.FeatureGroup | null>(null);
+  if (!editFeatureGroupRef.current) editFeatureGroupRef.current = new L.FeatureGroup();
 
   // --- incident overlay filters ---
   const [incidents, setIncidents] = useState<IncidentItem[]>(initialIncidents);
@@ -616,6 +715,21 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     if (sim?.backendId) await api.deleteMapShape(sim.backendId).catch(() => {});
   }
 
+  function deleteShapesByIds(ids: string[]) {
+    const idSet = new Set(ids);
+    const toDelete = shapes.filter((s) => idSet.has(s.id));
+    setShapes((ss) => ss.filter((s) => !idSet.has(s.id)));
+    for (const sim of toDelete) {
+      if (sim.backendId) api.deleteMapShape(sim.backendId).catch(() => {});
+    }
+  }
+
+  function handleShapeEdited(id: string, geometry: GeoJSON.Feature) {
+    setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, geometry } : s)));
+    const sim = shapes.find((s) => s.id === id);
+    if (sim?.backendId) api.updateMapShape(sim.backendId, { geometry }).catch(() => {});
+  }
+
   function downloadShape(s: ShapeSim) {
     const blob = new Blob([JSON.stringify(s.geometry, null, 2)], { type: "application/geo+json" });
     const url = URL.createObjectURL(blob);
@@ -781,10 +895,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <div>
           <div className="eyebrow" style={{ marginBottom: 6 }}>SHAPE OVERLAYS</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <button onClick={() => setDrawingShape((v) => !v)} style={drawingShape ? primaryChipStyle : { ...primaryChipStyle, background: "var(--panel-raised)", borderColor: "var(--border)" }}>
-                {drawingShape ? "Drawing — click a tool top-right" : "Draw a shape"}
-              </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 type="color"
                 value={drawColor}
@@ -792,12 +903,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                 title="Shape color — click for any color"
                 style={largeColorInputStyle}
               />
-            </div>
-            {drawingShape && (
               <div style={hintStyle}>
-                Use the polygon/rectangle/circle/line tools that appeared in the map's top-right corner. Toggle this off when you're done drawing.
+                Draw, edit, and delete shapes using the tools in the map's top-right corner. New shapes use this color.
               </div>
-            )}
+            </div>
 
             <label style={secondaryChipStyle}>
               {uploading ? "Reading file…" : "Upload shapefile (.zip) or GeoJSON"}
@@ -943,39 +1052,33 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
-        <DrawControl active={drawingShape} color={drawColor} onCreated={addDrawnShape} />
 
-        {/* shape overlays — Leaflet circles export as a Point + a radius property
-            (GeoJSON has no native circle type), so those render via <Circle>
-            with the real radius; everything else goes through the generic
-            GeoJSON renderer. Keying on color/opacity forces a remount when
-            restyled, since react-leaflet's GeoJSON layer doesn't otherwise
-            pick up style prop changes after first render. */}
+        {/* Editable shapes (hand-drawn, or single-feature GeoJSON uploads) live as
+            real, persistent Leaflet layers so the edit toolbar can drag their
+            vertices/move/resize them directly — see ShapeLayerGroup. Multi-feature
+            uploads (e.g. a shapefile with many polygons) can't be represented as
+            one editable Leaflet layer, so those render read-only below instead;
+            they're still stylable/deletable/downloadable via the panel, just not
+            vertex-editable on the map. */}
+        <ShapeLayerGroup shapes={shapes} featureGroup={editFeatureGroupRef.current} />
+        <DrawControl
+          color={drawColor}
+          editFeatureGroup={editFeatureGroupRef.current}
+          onCreated={addDrawnShape}
+          onEdited={handleShapeEdited}
+          onDeleted={deleteShapesByIds}
+        />
+
+        {/* read-only multi-feature shape overlays (uploaded shapefiles/FeatureCollections) */}
         {shapes
-          .filter((s) => s.visible)
-          .map((s) => {
-            const feature = s.geometry.type === "Feature" ? s.geometry : null;
-            const radius = feature?.properties?.radius;
-            const isCircle = feature && feature.geometry.type === "Point" && typeof radius === "number";
-            if (isCircle && feature) {
-              const [lng, lat] = (feature.geometry as GeoJSON.Point).coordinates;
-              return (
-                <Circle
-                  key={`${s.id}-${s.color}-${s.fillOpacity}`}
-                  center={[lat, lng]}
-                  radius={radius as number}
-                  pathOptions={{ color: s.color, fillColor: s.color, fillOpacity: s.fillOpacity, weight: s.weight }}
-                />
-              );
-            }
-            return (
-              <GeoJSONLayer
-                key={`${s.id}-${s.color}-${s.fillOpacity}`}
-                data={s.geometry}
-                style={() => ({ color: s.color, fillColor: s.color, fillOpacity: s.fillOpacity, weight: s.weight })}
-              />
-            );
-          })}
+          .filter((s) => s.visible && !isEditableGeometry(s.geometry))
+          .map((s) => (
+            <GeoJSONLayer
+              key={`${s.id}-${s.color}-${s.fillOpacity}`}
+              data={s.geometry}
+              style={() => ({ color: s.color, fillColor: s.color, fillOpacity: s.fillOpacity, weight: s.weight })}
+            />
+          ))}
 
         {((onlyNearRoute || focusedRoute) && nearRouteIds ? geoIncidents.filter((i) => nearRouteIds.has(i.id)) : geoIncidents).map((i) => {
           const highlighted = !nearRouteIds || nearRouteIds.has(i.id);
