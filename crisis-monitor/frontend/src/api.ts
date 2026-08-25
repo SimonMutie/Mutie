@@ -148,6 +148,20 @@ export interface IncidentStats {
   casualties: Record<string, number>;
 }
 
+export interface SavedRoute {
+  id: string;
+  owner_id: string | null;
+  name: string;
+  mode: "road" | "freehand";
+  waypoints: [number, number][];
+  geometry: [number, number][];
+  distance_km: number | null;
+  duration_min: number | null;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StatsSummary {
   by_source: { source_type: string; count: number }[];
   sentiment: { negative: number; neutral: number; positive: number };
@@ -263,6 +277,13 @@ export const api = {
   getIncidentStats: () => req<IncidentStats>("/api/incidents/stats"),
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
+
+  getMapRoutes: () => req<SavedRoute[]>("/api/map-routes"),
+  createMapRoute: (data: Omit<SavedRoute, "id" | "owner_id" | "created_at" | "updated_at">) =>
+    req<SavedRoute>("/api/map-routes", { method: "POST", body: JSON.stringify(data) }),
+  updateMapRoute: (id: string, data: { name?: string; color?: string }) =>
+    req<SavedRoute>(`/api/map-routes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteMapRoute: (id: string) => req<void>(`/api/map-routes/${id}`, { method: "DELETE" }),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
