@@ -88,7 +88,7 @@ function parseGdeltDate(seendate: string): Date {
 }
 
 const GDELT_CHUNK_SIZE = 10; // terms per OR-group — stays well under GDELT's per-request length/complexity limit
-const GDELT_CHUNK_STAGGER_MS = 1000; // pause between a query's own chunk requests — be a good citizen of GDELT's free API
+const GDELT_CHUNK_STAGGER_MS = 2500; // pause between a query's own chunk requests — GDELT's free API rate-limits aggressively; wide spacing avoids tripping it
 
 /** Splits a flat list of terms pulled from an active monitoring query into one
  *  or more GDELT-compatible OR-queries. GDELT treats bare space-separated words
@@ -115,6 +115,15 @@ export function buildQueryChunks(terms: string[], chunkSize = GDELT_CHUNK_SIZE):
   return chunks;
 }
 
+/** Thrown specifically for HTTP 429 so callers can back off instead of just
+ *  logging-and-continuing like any other failed request — retrying immediately
+ *  into a rate limit just deepens it. */
+export class GdeltRateLimitError extends Error {
+  constructor(public retryAfterMs: number) {
+    super(`GDELT rate limited (429)`);
+  }
+}
+
 export async function fetchGdeltArticles(
   searchTerms: string,
   maxRecords = 250, // GDELT's documented max per request — was 75, starving niche/narrow topics of candidates
@@ -132,6 +141,16 @@ export async function fetchGdeltArticles(
   const res = await fetch(`${GDELT_ENDPOINT}?${params.toString()}`, {
     headers: { "User-Agent": "SentinelCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
   });
+  if (res.status === 429 || res.status === 403) {
+    // GDELT's anti-abuse layer appears to escalate from 429 (soft rate limit) to
+    // 403 (harder block) under continued request volume from the same source —
+    // observed directly while diagnosing this. Treat both as "back off", not as
+    // a real permissions failure (this is an unauthenticated public API; there's
+    // nothing to be legitimately forbidden from).
+    const retryAfterHeader = res.headers.get("retry-after");
+    const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 15_000;
+    throw new GdeltRateLimitError(Number.isFinite(retryAfterMs) ? retryAfterMs : 15_000);
+  }
   if (!res.ok) {
     throw new Error(`GDELT request failed: ${res.status} ${res.statusText}`);
   }
@@ -228,6 +247,16 @@ export interface PollGdeltOptions {
    *  we fetch that article's body at most once per tick instead of once per
    *  query that happened to also recall it. */
   fulltextCache?: Map<string, string | null>;
+  /** Shared across every pollGdelt() call within one cron tick: a mutable counter
+   *  of how many more GDELT HTTP requests are allowed this tick, across ALL
+   *  queries combined — not per query. Without a *global* cap, a handful of
+   *  queries with many terms (chunked into many GDELT requests each) can rack up
+   *  100+ requests in a single 5-minute tick against a free, unauthenticated API
+   *  that has no documented rate limit but very much has a real one. Once
+   *  exhausted, remaining chunks for remaining queries are simply skipped this
+   *  tick and picked up on a later one — this trades completeness-per-tick for
+   *  not getting the whole polling loop rate-limited. */
+  requestBudget?: { remaining: number };
 }
 
 /** Fetches every chunk of a (possibly multi-chunk, "any size") query, merges
@@ -238,14 +267,26 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
   const sourceId = await getOrCreateGdeltSourceId(env);
 
   const byUrl = new Map<string, GdeltArticle>();
+  let rateLimited = false;
   for (const [i, chunk] of searchTermChunks.entries()) {
+    if (opts.requestBudget && opts.requestBudget.remaining <= 0) {
+      console.warn(`[gdelt] request budget exhausted for this tick — skipping remaining chunks`);
+      break;
+    }
     if (i > 0) await new Promise((resolve) => setTimeout(resolve, GDELT_CHUNK_STAGGER_MS));
     try {
+      if (opts.requestBudget) opts.requestBudget.remaining--;
       const articles = await fetchGdeltArticles(chunk, opts.maxRecords, opts.timespan);
       for (const article of articles) {
         if (article.url) byUrl.set(article.url, article);
       }
     } catch (err) {
+      if (err instanceof GdeltRateLimitError) {
+        console.error(`[gdelt] rate limited (429) — stopping all GDELT polling for this tick`);
+        if (opts.requestBudget) opts.requestBudget.remaining = 0; // stop every other query too, not just this one
+        rateLimited = true;
+        break; // keep whatever this query already found instead of discarding it
+      }
       console.error(`[gdelt] chunk query failed (query="${chunk}"):`, err);
       // keep going — one bad/oversized chunk shouldn't sink the other chunks of this query
     }
@@ -308,6 +349,10 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
         raw_metadata: JSON.parse(String(rows[0].raw_metadata ?? "{}")),
       });
     }
+  }
+
+  if (rateLimited) {
+    console.warn(`[gdelt] returning ${inserted.length} article(s) found before hitting the rate limit`);
   }
 
   return inserted;
