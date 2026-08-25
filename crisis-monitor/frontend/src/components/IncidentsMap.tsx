@@ -4,6 +4,7 @@ import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet-draw";
 import "leaflet-draw/dist/leaflet.draw.css";
+import "leaflet.heat";
 import shp from "shpjs";
 import buffer from "@turf/buffer";
 import { lineString } from "@turf/helpers";
@@ -437,6 +438,33 @@ function featureToEditableLayer(feature: GeoJSON.Feature, style: L.PathOptions):
  *  React `shapes` state — additions, deletions, restyling, and visibility all
  *  flow one way (state -> imperative Leaflet layers) so leaflet-draw's edit
  *  toolbar always operates on the same objects React knows about. */
+/** Canvas-based heat-density layer, an alternative to plotting individual pins
+ *  — useful once there are enough incidents that markers start overlapping and
+ *  density becomes the more readable signal. `weighted` uses each incident's
+ *  total casualties as intensity (so severe clusters stand out more); off,
+ *  every incident counts equally (pure geographic density). */
+function HeatmapLayer({ points }: { points: [number, number, number][] }) {
+  const map = useMap();
+  const layerRef = useRef<L.HeatLayer | null>(null);
+
+  useEffect(() => {
+    const layer = L.heatLayer(points, { radius: 22, blur: 18, maxZoom: 12, minOpacity: 0.35 });
+    layer.addTo(map);
+    layerRef.current = layer;
+    return () => {
+      map.removeLayer(layer);
+      layerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+
+  useEffect(() => {
+    layerRef.current?.setLatLngs(points);
+  }, [points]);
+
+  return null;
+}
+
 function ShapeLayerGroup({ shapes, visibleIds, featureGroup }: { shapes: ShapeSim[]; visibleIds: Set<string>; featureGroup: L.FeatureGroup }) {
   const map = useMap();
   const layersRef = useRef<Map<string, L.Layer>>(new Map());
@@ -536,6 +564,8 @@ function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCol
 
 export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
+  const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
+  const [heatWeighted, setHeatWeighted] = useState(false);
 
   // --- route drafting ---
   const [draftMode, setDraftMode] = useState<"road" | "freehand">("road");
@@ -652,6 +682,20 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     return ids;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleRoutes, visibleShapes, bufferKm, geoIncidents]);
+
+  // Shared by both marker and heatmap rendering — the same "what's currently
+  // visible" set, whichever view mode is active.
+  const displayIncidents = useMemo(
+    () => ((onlyNearOverlay || focusedOverlay) && nearOverlayIds ? geoIncidents.filter((i) => nearOverlayIds.has(i.id)) : geoIncidents),
+    [onlyNearOverlay, focusedOverlay, nearOverlayIds, geoIncidents]
+  );
+
+  const heatmapPoints = useMemo((): [number, number, number][] => {
+    return displayIncidents.map((i) => {
+      const intensity = heatWeighted ? Math.max(1, totalCasualties(i)) : 1;
+      return [i.latitude!, i.longitude!, intensity];
+    });
+  }, [displayIncidents, heatWeighted]);
 
   function startDrafting() {
     setDrafting(true);
@@ -942,6 +986,25 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
               {BASEMAPS[k].label}
             </button>
           ))}
+        </div>
+
+        {/* incident view mode */}
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>VIEW</div>
+          <div style={{ display: "flex", gap: 4 }}>
+            <button onClick={() => setViewMode("markers")} style={chipStyle(viewMode === "markers")}>
+              Incidents
+            </button>
+            <button onClick={() => setViewMode("heatmap")} style={chipStyle(viewMode === "heatmap")}>
+              Heatmap
+            </button>
+          </div>
+          {viewMode === "heatmap" && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+              <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
+              Weight by casualties, not just count
+            </label>
+          )}
         </div>
 
         <div style={{ height: 1, background: "var(--border-soft)" }} />
@@ -1282,7 +1345,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
             />
           ))}
 
-        {((onlyNearOverlay || focusedOverlay) && nearOverlayIds ? geoIncidents.filter((i) => nearOverlayIds.has(i.id)) : geoIncidents).map((i) => {
+        {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
+
+        {viewMode === "markers" &&
+          displayIncidents.map((i) => {
           const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
           const category = classifyActor(i.actor);
           return (
