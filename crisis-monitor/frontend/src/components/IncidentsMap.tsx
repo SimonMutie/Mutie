@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Popup, Polyline, Polygon, useMapEvents } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
+import buffer from "@turf/buffer";
+import { lineString } from "@turf/helpers";
 import "leaflet/dist/leaflet.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute } from "../api";
 
@@ -110,6 +112,53 @@ function freehandRoute(points: [number, number][]): { geometry: [number, number]
   return { geometry: points, distanceKm };
 }
 
+/** Real geodesic buffer polygon around a route line (a "corridor" of the given
+ *  radius following every bend), for the faded radius overlay — not just a
+ *  bounding shape, an actual buffered LineString via turf. Returns Leaflet-ready
+ *  [lat,lng] ring(s); a route can produce multiple disjoint polygon rings if it
+ *  self-intersects tightly, so this returns an array of rings. */
+function routeBufferRings(geometry: [number, number][], radiusKm: number): [number, number][][] {
+  if (geometry.length < 2 || radiusKm <= 0) return [];
+  try {
+    const line = lineString(geometry.map(([lat, lng]) => [lng, lat])); // turf wants [lng,lat]
+    const buffered = buffer(line, radiusKm, { units: "kilometers" });
+    if (!buffered) return [];
+    const geom = buffered.geometry;
+    if (geom.type === "Polygon") {
+      return geom.coordinates.map((ring) => ring.map(([lng, lat]) => [lat, lng] as [number, number]));
+    }
+    if (geom.type === "MultiPolygon") {
+      return geom.coordinates.flatMap((poly) => poly.map((ring) => ring.map(([lng, lat]) => [lat, lng] as [number, number])));
+    }
+    return [];
+  } catch {
+    return []; // fails soft — buffer overlay just doesn't render rather than crashing the map
+  }
+}
+
+function downloadRouteGeoJson(r: RouteSim) {
+  const feature = {
+    type: "Feature",
+    properties: {
+      name: r.name,
+      mode: r.mode,
+      distance_km: r.distanceKm,
+      duration_min: r.durationMin,
+    },
+    geometry: {
+      type: "LineString",
+      coordinates: r.geometry.map(([lat, lng]) => [lng, lat]), // GeoJSON is [lng,lat]
+    },
+  };
+  const blob = new Blob([JSON.stringify(feature, null, 2)], { type: "application/geo+json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${r.name.replace(/[^a-z0-9]+/gi, "_") || "route"}.geojson`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 interface RouteSim {
   id: string;
   backendId: string | null; // null until saved
@@ -140,6 +189,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [draftMode, setDraftMode] = useState<"road" | "freehand">("road");
   const [drafting, setDrafting] = useState(false);
   const [draftWaypoints, setDraftWaypoints] = useState<[number, number][]>([]);
+  const [draftColor, setDraftColor] = useState(ROUTE_COLORS[0]);
   const [finishing, setFinishing] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
@@ -209,6 +259,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     setDrafting(true);
     setDraftWaypoints([]);
     setDraftError(null);
+    setDraftColor(ROUTE_COLORS[colorIndex.current % ROUTE_COLORS.length]);
   }
   function cancelDrafting() {
     setDrafting(false);
@@ -227,7 +278,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     setFinishing(true);
     setDraftError(null);
     try {
-      const color = ROUTE_COLORS[colorIndex.current++ % ROUTE_COLORS.length];
+      const color = draftColor;
+      colorIndex.current++; // still advance so the *next* new route's default differs
       let geometry: [number, number][];
       let distanceKm: number | null;
       let durationMin: number | null = null;
@@ -304,6 +356,28 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   function toggleVisible(id: string) {
     setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, visible: !r.visible } : r)));
   }
+  function setRouteColor(id: string, color: string) {
+    setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, color } : r)));
+    const sim = routes.find((r) => r.id === id);
+    if (sim?.backendId) api.updateMapRoute(sim.backendId, { color }).catch(() => {});
+  }
+  function downloadAllRoutes() {
+    const collection = {
+      type: "FeatureCollection",
+      features: routes.map((r) => ({
+        type: "Feature",
+        properties: { name: r.name, mode: r.mode, distance_km: r.distanceKm, duration_min: r.durationMin },
+        geometry: { type: "LineString", coordinates: r.geometry.map(([lat, lng]) => [lng, lat]) },
+      })),
+    };
+    const blob = new Blob([JSON.stringify(collection, null, 2)], { type: "application/geo+json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "route_simulations.geojson";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
@@ -354,6 +428,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                   Straight line
                 </button>
               </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                Route color
+                <input type="color" value={draftColor} onChange={(e) => setDraftColor(e.target.value)} style={colorInputStyle} />
+              </label>
               <div style={hintStyle}>
                 Click the map to add waypoints ({draftWaypoints.length} added){draftMode === "freehand" ? " — connects directly, ignores roads" : ""}
               </div>
@@ -376,12 +454,25 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         {/* saved/unsaved route list */}
         {routes.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div className="eyebrow">SIMULATIONS ({routes.length})</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div className="eyebrow">SIMULATIONS ({routes.length})</div>
+              {routes.length > 1 && (
+                <button onClick={downloadAllRoutes} style={{ ...secondaryChipStyle, flex: "none" }}>
+                  Download all
+                </button>
+              )}
+            </div>
             {routes.map((r) => (
               <div key={r.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <input type="checkbox" checked={r.visible} onChange={() => toggleVisible(r.id)} />
-                  <span style={{ width: 10, height: 10, borderRadius: "50%", background: r.color, flexShrink: 0 }} />
+                  <input
+                    type="color"
+                    value={r.color}
+                    onChange={(e) => setRouteColor(r.id, e.target.value)}
+                    title="Change route color"
+                    style={colorInputStyle}
+                  />
                   <input
                     value={r.name}
                     onChange={(e) => renameRoute(r.id, e.target.value)}
@@ -402,6 +493,9 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                       {r.saving ? "Saving…" : "Save"}
                     </button>
                   )}
+                  <button onClick={() => downloadRouteGeoJson(r)} style={secondaryChipStyle}>
+                    Download
+                  </button>
                   <button onClick={() => deleteRoute(r.id)} style={{ ...secondaryChipStyle, color: "var(--critical)" }}>
                     Delete
                   </button>
@@ -502,6 +596,17 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           <Polyline positions={draftWaypoints} pathOptions={{ color: "#111", weight: 2, opacity: 0.5, dashArray: "4 4" }} />
         )}
 
+        {/* faded radius overlay — the actual "within X km of the route" corridor, not just marker dimming */}
+        {visibleRoutes.map((r) =>
+          routeBufferRings(r.geometry, bufferKm).map((ring, idx) => (
+            <Polygon
+              key={`${r.id}-buffer-${idx}`}
+              positions={ring}
+              pathOptions={{ color: r.color, weight: 0, fillColor: r.color, fillOpacity: 0.12 }}
+            />
+          ))
+        )}
+
         {/* finished route simulations */}
         {visibleRoutes.map((r) => (
           <Polyline key={r.id} positions={r.geometry} pathOptions={{ color: r.color, weight: 4, opacity: 0.75 }} />
@@ -576,3 +681,12 @@ const selectStyle: React.CSSProperties = {
   width: "100%",
 };
 const dateInputStyle: React.CSSProperties = { ...selectStyle, flex: 1 };
+const colorInputStyle: React.CSSProperties = {
+  width: 22,
+  height: 22,
+  padding: 0,
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  cursor: "pointer",
+  flexShrink: 0,
+};
