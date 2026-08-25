@@ -15,6 +15,7 @@ incidentsRouter.use("*", requireAuth);
 const incidentRowSchema = z.object({
   date: z.string().nullish(),
   time: z.string().nullish(),
+  country: z.string().nullish(),
   province: z.string().nullish(),
   county: z.string().nullish(),
   district: z.string().nullish(),
@@ -82,19 +83,20 @@ incidentsRouter.post("/bulk", async (c) => {
     return {
       sql: `INSERT INTO incidents (
         id, owner_id, occurred_date, occurred_time, occurred_at,
-        province, county, district, city, suburb, precise_location, latitude, longitude,
+        country, province, county, district, city, suburb, precise_location, latitude, longitude,
         sector, actor, operation, tactic, severity, details, target, interest_group,
         actual_main_victim, intended_primary_target,
         civilian_death_child, civilian_death_female, civilian_death_male, civilian_death_unknown,
         civilian_injury_female, civilian_injury_male, civilian_injury_unknown, kidnappings_ngo,
         raw_row, upload_batch_id, created_at
-      ) VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`,
+      ) VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`,
       params: [
         newId(),
         ownerId,
         row.date ?? null,
         row.time ?? null,
         occurredAt,
+        row.country ?? null,
         row.province ?? null,
         row.county ?? null,
         row.district ?? null,
@@ -144,6 +146,7 @@ incidentsRouter.get("/", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
 
+  const country = c.req.query("country");
   const province = c.req.query("province");
   const sector = c.req.query("sector");
   const actor = c.req.query("actor");
@@ -158,6 +161,10 @@ incidentsRouter.get("/", async (c) => {
   if (!isAdmin) {
     conditions.push("owner_id = ?");
     params.push(ownerId);
+  }
+  if (country) {
+    conditions.push("country = ?");
+    params.push(country);
   }
   if (province) {
     conditions.push("province = ?");
@@ -207,7 +214,7 @@ incidentsRouter.get("/filters", async (c) => {
   const ownerClause = isAdmin ? "" : "WHERE owner_id = ?";
   const ownerParams = isAdmin ? [] : [ownerId];
 
-  const fields = ["province", "sector", "actor", "tactic", "severity"] as const;
+  const fields = ["country", "province", "sector", "actor", "tactic", "severity"] as const;
   const results: Record<string, string[]> = {};
   for (const field of fields) {
     const rows = await all<{ value: string }>(
@@ -227,7 +234,7 @@ incidentsRouter.get("/stats", async (c) => {
   const ownerParams = isAdmin ? [] : [ownerId];
   const andOwner = isAdmin ? "" : "AND owner_id = ?";
 
-  const [total, bySector, byActor, byTactic, bySeverity, byProvince, timeSeries, casualties] = await Promise.all([
+  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, casualties] = await Promise.all([
     first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
     all<{ value: string; count: number }>(
       c.env.DB,
@@ -252,6 +259,11 @@ incidentsRouter.get("/stats", async (c) => {
     all<{ value: string; count: number }>(
       c.env.DB,
       `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andOwner} GROUP BY province ORDER BY count DESC LIMIT 20`,
+      ownerParams
+    ),
+    all<{ value: string; count: number }>(
+      c.env.DB,
+      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andOwner} GROUP BY country ORDER BY count DESC LIMIT 20`,
       ownerParams
     ),
     all<{ bucket: string; count: number }>(
@@ -282,6 +294,7 @@ incidentsRouter.get("/stats", async (c) => {
     by_tactic: byTactic,
     by_severity: bySeverity,
     by_province: byProvince,
+    by_country: byCountry,
     time_series: timeSeries,
     casualties: casualties ?? {},
   });
