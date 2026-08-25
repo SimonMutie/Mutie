@@ -64,6 +64,7 @@ mapShapesRouter.post("/", async (c) => {
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   style: styleSchema.optional(),
+  geometry: z.object({ type: z.string() }).passthrough().optional(),
 });
 
 mapShapesRouter.patch("/:id", async (c) => {
@@ -88,6 +89,10 @@ mapShapesRouter.patch("/:id", async (c) => {
     const mergedStyle = { ...JSON.parse(existing.style || "{}"), ...parsed.data.style };
     updates.push("style = ?");
     params.push(JSON.stringify(mergedStyle));
+  }
+  if (parsed.data.geometry !== undefined) {
+    updates.push("geometry = ?");
+    params.push(JSON.stringify(parsed.data.geometry));
   }
   updates.push("updated_at = ?");
   params.push(nowIso());
