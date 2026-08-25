@@ -93,6 +93,27 @@ button {
   color: var(--text-faint);
 }
 
+/* Custom disclosure triangle for collapsible <details> sections (used on the
+   incidents map's route/shape/filter panels) — native markers vary too much
+   in size/color across browsers to just leave as default. */
+summary {
+  list-style: none;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  margin-right: 4px;
+  color: var(--text-faint);
+  transition: transform 0.15s ease;
+}
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
