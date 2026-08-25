@@ -300,6 +300,150 @@ incidentsRouter.get("/stats", async (c) => {
   });
 });
 
+const bulkDeleteSchema = z.object({ ids: z.array(z.string()).min(1).max(2000) });
+
+/** POST, not DELETE-with-body — sending a body on a DELETE request is
+ *  inconsistently supported across HTTP clients/proxies, so a dedicated bulk
+ *  action route is more reliable than fighting that. */
+incidentsRouter.post("/bulk-delete", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const body = await c.req.json().catch(() => null);
+  const parsed = bulkDeleteSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  // Chunked (rather than one giant IN clause) to stay safely under D1's bound
+  // parameter limit per statement even for a large selection.
+  const CHUNK = 100;
+  const statements: { sql: string; params: unknown[] }[] = [];
+  for (let i = 0; i < parsed.data.ids.length; i += CHUNK) {
+    const chunk = parsed.data.ids.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    statements.push(
+      isAdmin
+        ? { sql: `DELETE FROM incidents WHERE id IN (${placeholders})`, params: chunk }
+        : { sql: `DELETE FROM incidents WHERE id IN (${placeholders}) AND owner_id = ?`, params: [...chunk, ownerId] }
+    );
+  }
+  await batchRun(c.env.DB, statements);
+  return c.json({ ok: true, deleted: parsed.data.ids.length });
+});
+
+const SIMPLE_INCIDENT_FIELDS = [
+  "country",
+  "province",
+  "county",
+  "district",
+  "city",
+  "suburb",
+  "precise_location",
+  "latitude",
+  "longitude",
+  "sector",
+  "actor",
+  "operation",
+  "tactic",
+  "severity",
+  "details",
+  "target",
+  "interest_group",
+  "actual_main_victim",
+  "intended_primary_target",
+  "civilian_death_child",
+  "civilian_death_female",
+  "civilian_death_male",
+  "civilian_death_unknown",
+  "civilian_injury_female",
+  "civilian_injury_male",
+  "civilian_injury_unknown",
+  "kidnappings_ngo",
+] as const;
+
+const updateIncidentSchema = z.object({
+  date: z.string().nullish(),
+  time: z.string().nullish(),
+  country: z.string().nullish(),
+  province: z.string().nullish(),
+  county: z.string().nullish(),
+  district: z.string().nullish(),
+  city: z.string().nullish(),
+  suburb: z.string().nullish(),
+  precise_location: z.string().nullish(),
+  latitude: z.number().nullish(),
+  longitude: z.number().nullish(),
+  sector: z.string().nullish(),
+  actor: z.string().nullish(),
+  operation: z.string().nullish(),
+  tactic: z.string().nullish(),
+  severity: z.string().nullish(),
+  details: z.string().nullish(),
+  target: z.string().nullish(),
+  interest_group: z.string().nullish(),
+  actual_main_victim: z.string().nullish(),
+  intended_primary_target: z.string().nullish(),
+  civilian_death_child: z.number().nullish(),
+  civilian_death_female: z.number().nullish(),
+  civilian_death_male: z.number().nullish(),
+  civilian_death_unknown: z.number().nullish(),
+  civilian_injury_female: z.number().nullish(),
+  civilian_injury_male: z.number().nullish(),
+  civilian_injury_unknown: z.number().nullish(),
+  kidnappings_ngo: z.number().nullish(),
+});
+
+incidentsRouter.patch("/:id", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const id = c.req.param("id");
+  const existing = await first<{ owner_id: string | null; occurred_date: string | null; occurred_time: string | null }>(
+    c.env.DB,
+    `SELECT owner_id, occurred_date, occurred_time FROM incidents WHERE id = ?`,
+    [id]
+  );
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && existing.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = updateIncidentSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  const data = parsed.data as Record<string, unknown>;
+
+  for (const field of SIMPLE_INCIDENT_FIELDS) {
+    if (data[field] !== undefined) {
+      updates.push(`${field} = ?`);
+      params.push(data[field]);
+    }
+  }
+
+  // date/time map to differently-named columns and jointly recompute
+  // occurred_at, so they're handled separately from the simple 1:1 fields above.
+  if (parsed.data.date !== undefined || parsed.data.time !== undefined) {
+    const newDate = parsed.data.date !== undefined ? parsed.data.date : existing.occurred_date;
+    const newTime = parsed.data.time !== undefined ? parsed.data.time : existing.occurred_time;
+    if (parsed.data.date !== undefined) {
+      updates.push("occurred_date = ?");
+      params.push(parsed.data.date);
+    }
+    if (parsed.data.time !== undefined) {
+      updates.push("occurred_time = ?");
+      params.push(parsed.data.time);
+    }
+    updates.push("occurred_at = ?");
+    params.push(combineDateTime(newDate, newTime));
+  }
+
+  if (updates.length > 0) {
+    params.push(id);
+    await c.env.DB.prepare(`UPDATE incidents SET ${updates.join(", ")} WHERE id = ?`).bind(...params).run();
+  }
+
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM incidents WHERE id = ?`, [id]);
+  return c.json({ ...row, raw_row: JSON.parse(String(row?.raw_row ?? "{}")) });
+});
+
 incidentsRouter.delete("/batch/:batchId", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
