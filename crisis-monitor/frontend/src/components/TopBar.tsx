@@ -1,4 +1,5 @@
 import type { AuthUser } from "../api";
+import Logo from "./Logo";
 
 interface Props {
   connected: boolean;
@@ -20,27 +21,35 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
         background: "var(--panel)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <div
-          style={{
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            background: connected ? "var(--signal)" : "var(--text-faint)",
-            boxShadow: connected ? "0 0 10px var(--signal)" : "none",
-            animation: connected ? "pulse 2s ease-in-out infinite" : "none",
-          }}
-        />
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ position: "relative" }}>
+          <Logo size={30} />
+          <span
+            title={connected ? "Live" : "Disconnected"}
+            style={{
+              position: "absolute",
+              bottom: -1,
+              right: -1,
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: connected ? "var(--signal)" : "var(--text-faint)",
+              border: "1.5px solid var(--panel)",
+              boxShadow: connected ? "0 0 6px var(--signal)" : "none",
+              animation: connected ? "pulse 2s ease-in-out infinite" : "none",
+            }}
+          />
+        </div>
         <h1
           style={{
             margin: 0,
             fontFamily: "var(--font-display)",
             fontSize: 20,
             fontWeight: 700,
-            letterSpacing: "0.02em",
+            letterSpacing: "0.01em",
           }}
         >
-          SENTINEL
+          Globa<span style={{ color: "var(--signal)" }}>Lens</span>
         </h1>
         <span className="eyebrow">CRISIS MONITORING</span>
       </div>
