@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { api, type IncidentFilters, type IncidentItem, type IncidentStats } from "../api";
 import IncidentsMap from "./IncidentsMap";
@@ -19,6 +19,21 @@ export default function IncidentsDashboard() {
   const [filters, setFilters] = useState<{ country?: string; province?: string; sector?: string; actor?: string; severity?: string }>({});
   const [loading, setLoading] = useState(true);
   const [manageRefreshKey, setManageRefreshKey] = useState(0);
+  const [logMenuOpen, setLogMenuOpen] = useState(false);
+  const logMenuRef = useRef<HTMLDivElement>(null);
+
+  const LOG_TABS: Tab[] = ["manual", "upload", "manage"];
+  const isLogTabActive = LOG_TABS.includes(tab);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (logMenuRef.current && !logMenuRef.current.contains(e.target as Node)) {
+        setLogMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   async function loadAll() {
     setLoading(true);
@@ -53,11 +68,66 @@ export default function IncidentsDashboard() {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
         <div style={{ fontSize: 15, fontWeight: 700, marginRight: 12 }}>Incidents</div>
-        {(["manual", "overview", "map", "manage", "upload"] as Tab[]).map((t) => (
-          <button key={t} onClick={() => setTab(t)} style={tabBtnStyle(tab === t)}>
-            {t === "manual" ? "Enter Manually" : t === "overview" ? "Overview" : t === "map" ? "Map" : t === "manage" ? "Manage" : "Upload"}
+
+        <div ref={logMenuRef} style={{ position: "relative" }}>
+          <button onClick={() => setLogMenuOpen((v) => !v)} style={tabBtnStyle(isLogTabActive)}>
+            Incident Log ▾
           </button>
-        ))}
+          {logMenuOpen && (
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 4px)",
+                left: 0,
+                zIndex: 20,
+                background: "var(--panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(19,23,34,0.14)",
+                minWidth: 180,
+                overflow: "hidden",
+              }}
+            >
+              {(
+                [
+                  { value: "manual", label: "Enter Manually" },
+                  { value: "upload", label: "Upload Bulk" },
+                  { value: "manage", label: "Manage (Edit/Delete)" },
+                ] as { value: Tab; label: string }[]
+              ).map((item) => (
+                <button
+                  key={item.value}
+                  onClick={() => {
+                    setTab(item.value);
+                    setLogMenuOpen(false);
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "9px 14px",
+                    fontSize: 12.5,
+                    background: tab === item.value ? "var(--signal-dim)" : "transparent",
+                    border: "none",
+                    color: "var(--text-primary)",
+                    cursor: "pointer",
+                    fontWeight: tab === item.value ? 600 : 400,
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button onClick={() => setTab("overview")} style={tabBtnStyle(tab === "overview")}>
+          Overview
+        </button>
+        <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
+          Map
+        </button>
+
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
 
