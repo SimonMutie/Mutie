@@ -7,11 +7,24 @@ import QueryDashboard from "./components/QueryDashboard";
 import QueryEditor from "./components/QueryEditor";
 import AdminPanel from "./components/AdminPanel";
 import IncidentsDashboard from "./components/IncidentsDashboard";
+import PublicDashboardView from "./components/PublicDashboardView";
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
 type View = "list" | { queryId: string } | "admin" | "new-query" | { editQueryId: string } | "incidents";
 
+/** Minimal, single-purpose routing: this app is otherwise entirely
+ *  state-driven (no URLs for any authenticated view), but a "share for live
+ *  viewing" link has to work for people who aren't logged in at all — so this
+ *  one path is checked before anything else, completely bypassing the normal
+ *  auth-gated app shell below. */
+function usePublicShareToken(): string | null {
+  const path = window.location.pathname;
+  const match = /^\/shared\/([A-Za-z0-9_-]+)\/?$/.exec(path);
+  return match ? match[1] : null;
+}
+
 export default function App() {
+  const shareToken = usePublicShareToken();
   const [bootState, setBootState] = useState<BootState>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [view, setView] = useState<View>("list");
@@ -21,6 +34,7 @@ export default function App() {
 
   // Resolve whether we need first-run setup, a login screen, or are already authenticated (existing token).
   useEffect(() => {
+    if (shareToken) return; // public share link — no auth flow needed at all
     (async () => {
       const existingToken = getToken();
       if (existingToken) {
@@ -43,20 +57,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (bootState !== "authed") return;
+    if (shareToken || bootState !== "authed") return;
     loadQueries();
     const interval = setInterval(loadQueries, 15000);
     return () => clearInterval(interval);
-  }, [bootState, loadQueries]);
+  }, [shareToken, bootState, loadQueries]);
 
   useEffect(() => {
-    if (bootState !== "authed") return;
+    if (shareToken || bootState !== "authed") return;
     const disconnect = connectLiveFeed((type, payload) => {
       setConnected(true);
       setLiveMessage({ type, payload });
     });
     return () => disconnect();
-  }, [bootState]);
+  }, [shareToken, bootState]);
 
   function handleAuthenticated(authedUser: AuthUser) {
     setUser(authedUser);
@@ -70,6 +84,10 @@ export default function App() {
     setView("list");
     setConnected(false);
     setBootState("login");
+  }
+
+  if (shareToken) {
+    return <PublicDashboardView token={shareToken} />;
   }
 
   if (bootState === "checking") {
