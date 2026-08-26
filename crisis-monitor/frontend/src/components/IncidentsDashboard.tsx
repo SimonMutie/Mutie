@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
 import { api, type IncidentFilters, type IncidentItem, type IncidentStats } from "../api";
 import IncidentsMap from "./IncidentsMap";
+import IncidentSearch from "./IncidentSearch";
 import IncidentUpload from "./IncidentUpload";
 import IncidentManualEntry from "./IncidentManualEntry";
 import IncidentManageTable from "./IncidentManageTable";
@@ -9,7 +10,7 @@ import IncidentManageTable from "./IncidentManageTable";
 const CHART_COLOR = "#0d9488";
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 
-type Tab = "manual" | "overview" | "map" | "upload" | "manage";
+type Tab = "search" | "manual" | "overview" | "map" | "upload" | "manage";
 
 export default function IncidentsDashboard() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -22,7 +23,7 @@ export default function IncidentsDashboard() {
   const [logMenuOpen, setLogMenuOpen] = useState(false);
   const logMenuRef = useRef<HTMLDivElement>(null);
 
-  const LOG_TABS: Tab[] = ["manual", "upload", "manage"];
+  const LOG_TABS: Tab[] = ["search", "manual", "upload", "manage"];
   const isLogTabActive = LOG_TABS.includes(tab);
 
   useEffect(() => {
@@ -90,6 +91,7 @@ export default function IncidentsDashboard() {
             >
               {(
                 [
+                  { value: "search", label: "Search Incidents" },
                   { value: "manual", label: "Enter Manually" },
                   { value: "upload", label: "Upload Bulk" },
                   { value: "manage", label: "Manage (Edit/Delete)" },
@@ -130,6 +132,8 @@ export default function IncidentsDashboard() {
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
+
+      {tab === "search" && <IncidentSearch />}
 
       {tab === "manual" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
