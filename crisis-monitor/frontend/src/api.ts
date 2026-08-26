@@ -192,6 +192,60 @@ export interface SavedRoute {
   updated_at: string;
 }
 
+export type WidgetType = "stat" | "bar" | "line" | "pie" | "map";
+export type WidgetDataField =
+  | "total"
+  | "by_sector"
+  | "by_actor"
+  | "by_tactic"
+  | "by_province"
+  | "by_country"
+  | "time_series"
+  | "deaths"
+  | "injuries"
+  | "kidnappings_ngo";
+
+export interface DashboardWidget {
+  id: string;
+  type: WidgetType;
+  title: string;
+  dataField?: WidgetDataField;
+  size: "small" | "medium" | "large";
+}
+
+export interface CustomDashboard {
+  id: string;
+  owner_id: string | null;
+  name: string;
+  widgets: DashboardWidget[];
+  is_public: boolean;
+  share_token: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NormalizedDashboardStats {
+  total: number;
+  by_sector: { value: string; count: number }[];
+  by_actor: { value: string; count: number }[];
+  by_tactic: { value: string; count: number }[];
+  by_severity: { value: string; count: number }[];
+  by_province: { value: string; count: number }[];
+  by_country: { value: string; count: number }[];
+  time_series: { bucket: string; count: number }[];
+  deaths: number;
+  injuries: number;
+  kidnappings_ngo: number;
+}
+
+export interface PublicDashboardData {
+  name: string;
+  widgets: DashboardWidget[];
+  stats: NormalizedDashboardStats;
+  incidents: { id: string; latitude: number; longitude: number; severity: string | null; actor: string | null; sector: string | null; occurred_date: string | null; city: string | null; province: string | null }[];
+  updated_at: string;
+}
+
 export interface StatsSummary {
   by_source: { source_type: string; count: number }[];
   sentiment: { negative: number; neutral: number; positive: number };
@@ -326,6 +380,16 @@ export const api = {
   updateMapShape: (id: string, data: { name?: string; style?: ShapeStyle; geometry?: GeoJSON.Feature | GeoJSON.FeatureCollection }) =>
     req<SavedShape>(`/api/map-shapes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteMapShape: (id: string) => req<void>(`/api/map-shapes/${id}`, { method: "DELETE" }),
+
+  getCustomDashboards: () => req<CustomDashboard[]>("/api/custom-dashboards"),
+  createCustomDashboard: (name: string, widgets: DashboardWidget[]) =>
+    req<CustomDashboard>("/api/custom-dashboards", { method: "POST", body: JSON.stringify({ name, widgets }) }),
+  getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
+  updateCustomDashboard: (id: string, data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean }) =>
+    req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
+  // Public — no auth token needed, works for anyone with the share link.
+  getPublicDashboard: (token: string) => req<PublicDashboardData>(`/api/public/dashboards/${token}`),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
