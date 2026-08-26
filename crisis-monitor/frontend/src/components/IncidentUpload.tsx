@@ -148,10 +148,15 @@ export default function IncidentUpload({ onUploaded }: Props) {
     const CHUNK = 500;
     let done = 0;
     setProgress({ done: 0, total: parsed.rows.length });
+    // One batch ID for the whole file, reused across every chunk call — without
+    // this, each chunk got its own random batch server-side, so a >500-row file
+    // ended up split into disconnected batches with no shared identity, making
+    // "delete this whole upload" impossible for anything but the smallest files.
+    const batchId = crypto.randomUUID();
     try {
       for (let i = 0; i < parsed.rows.length; i += CHUNK) {
         const chunk = parsed.rows.slice(i, i + CHUNK);
-        const result = await api.uploadIncidentsBulk(chunk, fileName ?? undefined);
+        const result = await api.uploadIncidentsBulk(chunk, fileName ?? undefined, batchId);
         done += result.inserted;
         setProgress({ done, total: parsed.rows.length });
       }
