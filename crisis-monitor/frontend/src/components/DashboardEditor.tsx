@@ -11,7 +11,7 @@ import {
   type WidgetDataField,
   type WidgetType,
 } from "../api";
-import DashboardWidgetCard, { fieldLabel } from "./DashboardWidgetCard";
+import DashboardWidgetCard, { fieldLabel, PRESET_THEMES } from "./DashboardWidgetCard";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 
@@ -115,6 +115,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [draftLabel, setDraftLabel] = useState("");
   const [draftDataLabels, setDraftDataLabels] = useState(false);
   const [draftColor, setDraftColor] = useState<string | undefined>(undefined);
+  const [draftPalette, setDraftPalette] = useState<string[]>([]);
   const [draftLegend, setDraftLegend] = useState(false);
   const [draftTopN, setDraftTopN] = useState<number | undefined>(undefined);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -168,6 +169,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       size: draftSize,
       showDataLabels: draftDataLabels,
       color: draftColor,
+      palette: draftPalette.length > 0 ? draftPalette : undefined,
       showLegend: draftLegend,
       topN: draftTopN,
       layout: { x: 0, y: maxY, w: itemW, h: itemH },
@@ -185,6 +187,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setDraftLabel("");
     setDraftDataLabels(false);
     setDraftColor(undefined);
+    setDraftPalette([]);
     setDraftLegend(false);
     setDraftTopN(undefined);
   }
@@ -198,6 +201,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setDraftLabel(widget.label ?? "");
     setDraftDataLabels(!!widget.showDataLabels);
     setDraftColor(widget.color);
+    setDraftPalette(widget.palette ?? []);
     setDraftLegend(!!widget.showLegend);
     setDraftTopN(widget.topN);
   }
@@ -214,6 +218,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
               label: draftLabel || undefined,
               showDataLabels: draftDataLabels,
               color: draftColor,
+              palette: draftPalette.length > 0 ? draftPalette : undefined,
               showLegend: draftLegend,
               topN: draftTopN,
             }
@@ -344,7 +349,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             </div>
           )}
           <div>
-            <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR</div>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>{draftType === "bar" || draftType === "pie" ? "FALLBACK COLOR" : "COLOR"}</div>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
               {COLOR_SWATCHES.map((c) => (
                 <button
@@ -376,6 +381,83 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
               )}
             </div>
           </div>
+          {(draftType === "bar" || draftType === "pie") && (
+            <div style={{ width: "100%" }}>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>THEME — PER-CATEGORY PALETTE (OPTIONAL, OVERRIDES FALLBACK COLOR)</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                {PRESET_THEMES.map((theme) => (
+                  <button
+                    key={theme.name}
+                    onClick={() => setDraftPalette(theme.colors)}
+                    title={theme.name}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      border: `1px solid ${JSON.stringify(draftPalette) === JSON.stringify(theme.colors) ? "var(--signal)" : "var(--border)"}`,
+                      background: "var(--panel)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ display: "flex" }}>
+                      {theme.colors.slice(0, 5).map((c, i) => (
+                        <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: c, marginLeft: i > 0 ? -3 : 0, border: "1px solid var(--panel)" }} />
+                      ))}
+                    </span>
+                    <span style={{ fontSize: 11 }}>{theme.name}</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                {draftPalette.map((c, idx) => (
+                  <span key={idx} style={{ position: "relative", display: "inline-flex" }}>
+                    <input
+                      type="color"
+                      value={c}
+                      onChange={(e) => setDraftPalette((p) => p.map((x, i) => (i === idx ? e.target.value : x)))}
+                      title={`Color ${idx + 1} — click to change`}
+                      style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer" }}
+                    />
+                    <button
+                      onClick={() => setDraftPalette((p) => p.filter((_, i) => i !== idx))}
+                      title="Remove this color"
+                      style={{
+                        position: "absolute",
+                        top: -6,
+                        right: -6,
+                        width: 14,
+                        height: 14,
+                        lineHeight: "12px",
+                        fontSize: 10,
+                        padding: 0,
+                        borderRadius: "50%",
+                        border: "1px solid var(--border)",
+                        background: "var(--panel)",
+                        color: "var(--critical)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <button
+                  onClick={() => setDraftPalette((p) => [...p, PRESET_THEMES[0].colors[p.length % PRESET_THEMES[0].colors.length]])}
+                  title="Add a color to this palette — no limit"
+                  style={{ ...miniResetStyle, width: 22, height: 22, fontSize: 14, color: "var(--signal)" }}
+                >
+                  +
+                </button>
+                {draftPalette.length > 0 && (
+                  <button onClick={() => setDraftPalette([])} style={{ fontSize: 10.5, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>
+                    Clear palette
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           {(draftType === "bar" || draftType === "pie") && (
             <div>
               <div className="eyebrow" style={{ marginBottom: 4 }}>TOP N (SCALE)</div>
