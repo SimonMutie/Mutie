@@ -1,0 +1,514 @@
+import { useEffect, useMemo, useState } from "react";
+import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
+import {
+  api,
+  type DashboardWidget,
+  type IncidentItem,
+  type IncidentStats,
+  type NormalizedDashboardStats,
+  type WidgetDataField,
+  type WidgetType,
+} from "../api";
+import DashboardWidgetCard, { fieldLabel } from "./DashboardWidgetCard";
+
+const ResponsiveGridLayout = WidthProvider(GridLayout);
+
+const CATEGORY_FIELDS: WidgetDataField[] = ["by_sector", "by_actor", "by_tactic", "by_province", "by_country"];
+const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
+  stat: ["total", "deaths", "injuries", "kidnappings_ngo"],
+  bar: CATEGORY_FIELDS,
+  pie: CATEGORY_FIELDS,
+  line: ["time_series", ...CATEGORY_FIELDS],
+  map: [],
+};
+const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
+  { value: "stat", label: "Stat card" },
+  { value: "bar", label: "Bar chart" },
+  { value: "line", label: "Line chart" },
+  { value: "pie", label: "Pie chart" },
+  { value: "map", label: "Map" },
+];
+const COLOR_SWATCHES = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
+const SIZE_DEFAULTS: Record<DashboardWidget["size"], { w: number; h: number }> = {
+  small: { w: 3, h: 4 },
+  medium: { w: 6, h: 8 },
+  large: { w: 12, h: 9 },
+};
+const GRID_COLS = 12;
+
+/** IncidentStats (the existing authenticated stats endpoint) has casualties
+ *  broken into several named fields; widgets want three flat numbers. This
+ *  keeps every editor using the exact same widget-rendering code as the
+ *  public share view, which gets an already-normalized shape from the backend. */
+function normalizeStats(stats: IncidentStats): NormalizedDashboardStats {
+  const deaths = Object.entries(stats.casualties)
+    .filter(([k]) => k.startsWith("deaths_"))
+    .reduce((sum, [, v]) => sum + (v ?? 0), 0);
+  const injuries = Object.entries(stats.casualties)
+    .filter(([k]) => k.startsWith("injuries_"))
+    .reduce((sum, [, v]) => sum + (v ?? 0), 0);
+  return {
+    total: stats.total,
+    by_sector: stats.by_sector,
+    by_actor: stats.by_actor,
+    by_tactic: stats.by_tactic,
+    by_severity: stats.by_severity,
+    by_province: stats.by_province,
+    by_country: stats.by_country,
+    time_series: stats.time_series,
+    deaths,
+    injuries,
+    kidnappings_ngo: stats.casualties.kidnappings_ngo ?? 0,
+  };
+}
+
+/** Widgets from before real grid layout existed (or ones missing a saved
+ *  position for any other reason) get auto-placed in a simple left-to-right,
+ *  wrapping flow so nothing overlaps on first render. */
+function ensureLayouts(widgets: DashboardWidget[]): DashboardWidget[] {
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowH = 0;
+  return widgets.map((w) => {
+    if (w.layout) {
+      cursorY = Math.max(cursorY, w.layout.y + w.layout.h);
+      return w;
+    }
+    const { w: itemW, h: itemH } = SIZE_DEFAULTS[w.size] ?? SIZE_DEFAULTS.medium;
+    if (cursorX + itemW > GRID_COLS) {
+      cursorX = 0;
+      cursorY += rowH;
+      rowH = 0;
+    }
+    const layoutBox = { x: cursorX, y: cursorY, w: itemW, h: itemH };
+    cursorX += itemW;
+    rowH = Math.max(rowH, itemH);
+    return { ...w, layout: layoutBox };
+  });
+}
+
+type Mode = { kind: "bespoke"; id: string | null } | { kind: "auto" };
+
+interface Props {
+  mode: Mode;
+  onBack?: () => void;
+  onSavedNew?: (id: string) => void;
+}
+
+export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
+  const [name, setName] = useState(mode.kind === "auto" ? "Auto Dashboard" : "Untitled dashboard");
+  const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
+  const [backendId, setBackendId] = useState<string | null>(mode.kind === "bespoke" ? mode.id : null);
+  const [isPublic, setIsPublic] = useState(false);
+  const [shareToken, setShareToken] = useState<string | null>(null);
+  const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
+  const [incidents, setIncidents] = useState<IncidentItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [addingWidget, setAddingWidget] = useState(false);
+  const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
+  const [draftType, setDraftType] = useState<WidgetType>("bar");
+  const [draftField, setDraftField] = useState<WidgetDataField>("by_sector");
+  const [draftSize, setDraftSize] = useState<DashboardWidget["size"]>("medium");
+  const [draftLabel, setDraftLabel] = useState("");
+  const [draftDataLabels, setDraftDataLabels] = useState(false);
+  const [draftColor, setDraftColor] = useState<string | undefined>(undefined);
+  const [draftLegend, setDraftLegend] = useState(false);
+  const [draftTopN, setDraftTopN] = useState<number | undefined>(undefined);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  useEffect(() => {
+    api.getIncidentStats().then((s) => setStats(normalizeStats(s)));
+    api.getIncidents({ limit: 3000 }).then(setIncidents);
+  }, []);
+
+  useEffect(() => {
+    setLoaded(false);
+    const load = mode.kind === "auto" ? api.getOrCreateAutoDashboard() : mode.id ? api.getCustomDashboard(mode.id) : null;
+    if (!load) {
+      setLoaded(true);
+      return;
+    }
+    load.then((d) => {
+      setName(d.name);
+      setWidgets(ensureLayouts(d.widgets));
+      setBackendId(d.id);
+      setIsPublic(d.is_public);
+      setShareToken(d.share_token);
+      setLoaded(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode.kind, mode.kind === "bespoke" ? mode.id : null]);
+
+  const layout: Layout[] = useMemo(
+    () => widgets.filter((w) => w.layout).map((w) => ({ i: w.id, x: w.layout!.x, y: w.layout!.y, w: w.layout!.w, h: w.layout!.h })),
+    [widgets]
+  );
+
+  function handleLayoutChange(next: Layout[]) {
+    setWidgets((ws) =>
+      ws.map((w) => {
+        const item = next.find((l) => l.i === w.id);
+        return item ? { ...w, layout: { x: item.x, y: item.y, w: item.w, h: item.h } } : w;
+      })
+    );
+  }
+
+  function addWidget() {
+    const { w: itemW, h: itemH } = SIZE_DEFAULTS[draftSize];
+    const maxY = widgets.reduce((m, w) => Math.max(m, (w.layout?.y ?? 0) + (w.layout?.h ?? 0)), 0);
+    const widget: DashboardWidget = {
+      id: crypto.randomUUID(),
+      type: draftType,
+      title: `${draftType === "stat" ? "" : `${draftType[0].toUpperCase()}${draftType.slice(1)}: `}${fieldLabel(draftField)}`,
+      label: draftLabel || undefined,
+      dataField: draftType === "map" ? undefined : draftField,
+      size: draftSize,
+      showDataLabels: draftDataLabels,
+      color: draftColor,
+      showLegend: draftLegend,
+      topN: draftTopN,
+      layout: { x: 0, y: maxY, w: itemW, h: itemH },
+    };
+    setWidgets((w) => [...w, widget]);
+    resetDraft();
+  }
+
+  function resetDraft() {
+    setAddingWidget(false);
+    setEditingWidgetId(null);
+    setDraftType("bar");
+    setDraftField("by_sector");
+    setDraftSize("medium");
+    setDraftLabel("");
+    setDraftDataLabels(false);
+    setDraftColor(undefined);
+    setDraftLegend(false);
+    setDraftTopN(undefined);
+  }
+
+  function startEditWidget(widget: DashboardWidget) {
+    setAddingWidget(false);
+    setEditingWidgetId(widget.id);
+    setDraftType(widget.type);
+    setDraftField(widget.dataField ?? FIELDS_FOR_TYPE[widget.type][0]);
+    setDraftSize(widget.size);
+    setDraftLabel(widget.label ?? "");
+    setDraftDataLabels(!!widget.showDataLabels);
+    setDraftColor(widget.color);
+    setDraftLegend(!!widget.showLegend);
+    setDraftTopN(widget.topN);
+  }
+
+  function applyEditWidget() {
+    if (!editingWidgetId) return;
+    setWidgets((ws) =>
+      ws.map((w) =>
+        w.id === editingWidgetId
+          ? {
+              ...w,
+              type: draftType,
+              dataField: draftType === "map" ? undefined : draftField,
+              label: draftLabel || undefined,
+              showDataLabels: draftDataLabels,
+              color: draftColor,
+              showLegend: draftLegend,
+              topN: draftTopN,
+            }
+          : w
+      )
+    );
+    resetDraft();
+  }
+
+  function removeWidget(id: string) {
+    setWidgets((w) => w.filter((x) => x.id !== id));
+    if (editingWidgetId === id) resetDraft();
+  }
+  function renameWidget(id: string, title: string) {
+    setWidgets((w) => w.map((x) => (x.id === id ? { ...x, title } : x)));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      if (backendId) {
+        await api.updateCustomDashboard(backendId, { name, widgets });
+      } else {
+        const created = await api.createCustomDashboard(name, widgets);
+        setBackendId(created.id);
+        onSavedNew?.(created.id);
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function toggleShare() {
+    if (!backendId) await save();
+    if (!backendId) return;
+    const updated = await api.updateCustomDashboard(backendId, { is_public: !isPublic });
+    setIsPublic(updated.is_public);
+    setShareToken(updated.share_token);
+  }
+
+  function copyShareLink() {
+    if (!shareToken) return;
+    const url = `${window.location.origin}/shared/${shareToken}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
+        {onBack && (
+          <button onClick={onBack} style={secondaryBtnStyle}>
+            ← All dashboards
+          </button>
+        )}
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
+        />
+        <button
+          onClick={() => {
+            resetDraft();
+            setAddingWidget(true);
+          }}
+          style={primaryBtnStyle}
+        >
+          + Add widget
+        </button>
+        <button onClick={save} disabled={saving} style={secondaryBtnStyle}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle}>
+          {isPublic ? "● Live shared" : "Share for live viewing"}
+        </button>
+        {isPublic && shareToken && (
+          <button onClick={copyShareLink} style={secondaryBtnStyle}>
+            {linkCopied ? "Copied!" : "Copy link"}
+          </button>
+        )}
+      </div>
+
+      {(addingWidget || editingWidgetId) && (
+        <div style={{ padding: "14px 24px", borderBottom: "1px solid var(--border-soft)", display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", background: "var(--panel-raised)" }}>
+          <div className="eyebrow" style={{ width: "100%", marginBottom: -4 }}>{editingWidgetId ? "EDIT WIDGET" : "NEW WIDGET"}</div>
+          <div>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>TYPE</div>
+            <select
+              value={draftType}
+              onChange={(e) => {
+                const newType = e.target.value as WidgetType;
+                setDraftType(newType);
+                if (FIELDS_FOR_TYPE[newType].length > 0 && !FIELDS_FOR_TYPE[newType].includes(draftField)) {
+                  setDraftField(FIELDS_FOR_TYPE[newType][0]);
+                }
+              }}
+              style={selectStyle}
+            >
+              {WIDGET_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {draftType !== "map" && (
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>DATA</div>
+              <select value={draftField} onChange={(e) => setDraftField(e.target.value as WidgetDataField)} style={selectStyle}>
+                {FIELDS_FOR_TYPE[draftType].map((f) => (
+                  <option key={f} value={f}>
+                    {fieldLabel(f)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {!editingWidgetId && (
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>STARTING SIZE</div>
+              <select value={draftSize} onChange={(e) => setDraftSize(e.target.value as DashboardWidget["size"])} style={selectStyle}>
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
+              </select>
+            </div>
+          )}
+          <div>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR</div>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              {COLOR_SWATCHES.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setDraftColor(c)}
+                  title={c}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 5,
+                    background: c,
+                    border: draftColor === c ? "2px solid var(--text-primary)" : "1px solid var(--border)",
+                    cursor: "pointer",
+                    padding: 0,
+                  }}
+                />
+              ))}
+              <input
+                type="color"
+                value={draftColor ?? "#0d9488"}
+                onChange={(e) => setDraftColor(e.target.value)}
+                title="Custom color"
+                style={{ width: 22, height: 22, padding: 0, border: "none", background: "none", cursor: "pointer" }}
+              />
+              {draftColor && (
+                <button onClick={() => setDraftColor(undefined)} title="Reset to default" style={miniResetStyle}>
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+          {(draftType === "bar" || draftType === "pie") && (
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>TOP N (SCALE)</div>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={draftTopN ?? ""}
+                onChange={(e) => setDraftTopN(e.target.value ? Number(e.target.value) : undefined)}
+                placeholder="All"
+                style={{ ...selectStyle, width: 64 }}
+              />
+            </div>
+          )}
+          <div style={{ flex: 1, minWidth: 160 }}>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>LABEL / CAPTION (OPTIONAL)</div>
+            <input
+              value={draftLabel}
+              onChange={(e) => setDraftLabel(e.target.value)}
+              placeholder="e.g. source, note, date range…"
+              style={{ ...selectStyle, width: "100%" }}
+            />
+          </div>
+          {(draftType === "bar" || draftType === "line" || draftType === "pie") && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+              <input type="checkbox" checked={draftLegend} onChange={(e) => setDraftLegend(e.target.checked)} />
+              Show legend
+            </label>
+          )}
+          {(draftType === "bar" || draftType === "pie") && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+              <input type="checkbox" checked={draftDataLabels} onChange={(e) => setDraftDataLabels(e.target.checked)} />
+              Show values on chart
+            </label>
+          )}
+          <button onClick={editingWidgetId ? applyEditWidget : addWidget} style={primaryBtnStyle}>
+            {editingWidgetId ? "Save changes" : "Add"}
+          </button>
+          <button onClick={resetDraft} style={secondaryBtnStyle}>
+            Cancel
+          </button>
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+        {!loaded || !stats ? (
+          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+        ) : widgets.length === 0 ? (
+          <div className="panel" style={{ padding: "40px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
+            No widgets yet — click "+ Add widget" to build this dashboard from stat cards, charts, and a map. Drag any widget's edges to resize it, or click it to edit labels, color, and legend.
+          </div>
+        ) : (
+          <ResponsiveGridLayout
+            className="layout"
+            layout={layout}
+            cols={GRID_COLS}
+            rowHeight={26}
+            margin={[16, 16]}
+            onLayoutChange={handleLayoutChange}
+            draggableCancel=".no-drag"
+            isDraggable
+            isResizable
+          >
+            {widgets.map((w) => (
+              <div key={w.id}>
+                <DashboardWidgetCard
+                  widget={w}
+                  stats={stats}
+                  incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number }[]}
+                  onRemove={() => removeWidget(w.id)}
+                  onRename={(title) => renameWidget(w.id, title)}
+                  onEdit={() => startEditWidget(w)}
+                  selected={editingWidgetId === w.id}
+                />
+              </div>
+            ))}
+          </ResponsiveGridLayout>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const primaryBtnStyle: React.CSSProperties = {
+  padding: "8px 14px",
+  background: "var(--signal-dim)",
+  border: "1px solid var(--signal)",
+  color: "var(--text-primary)",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 13,
+};
+
+const secondaryBtnStyle: React.CSSProperties = {
+  padding: "8px 14px",
+  background: "var(--panel)",
+  border: "1px solid var(--border)",
+  color: "var(--text-primary)",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontSize: 13,
+};
+
+const liveBtnStyle: React.CSSProperties = {
+  padding: "8px 14px",
+  background: "color-mix(in srgb, var(--signal) 14%, transparent)",
+  border: "1px solid var(--signal)",
+  color: "var(--signal)",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 13,
+};
+
+const selectStyle: React.CSSProperties = {
+  fontSize: 12.5,
+  padding: "6px 8px",
+  borderRadius: 5,
+  border: "1px solid var(--border)",
+  background: "var(--panel)",
+  color: "var(--text-primary)",
+};
+
+const miniResetStyle: React.CSSProperties = {
+  fontSize: 12,
+  width: 20,
+  height: 20,
+  lineHeight: "18px",
+  padding: 0,
+  background: "transparent",
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  color: "var(--text-muted)",
+  cursor: "pointer",
+};
