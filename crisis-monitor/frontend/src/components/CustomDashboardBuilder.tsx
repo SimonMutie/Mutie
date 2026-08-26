@@ -144,9 +144,12 @@ function DashboardEditor({ editingId, onBack }: { editingId: string | null; onBa
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [addingWidget, setAddingWidget] = useState(false);
+  const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
   const [draftType, setDraftType] = useState<WidgetType>("bar");
   const [draftField, setDraftField] = useState<WidgetDataField>("by_sector");
   const [draftSize, setDraftSize] = useState<DashboardWidget["size"]>("medium");
+  const [draftLabel, setDraftLabel] = useState("");
+  const [draftDataLabels, setDraftDataLabels] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
@@ -171,11 +174,45 @@ function DashboardEditor({ editingId, onBack }: { editingId: string | null; onBa
       id: crypto.randomUUID(),
       type: draftType,
       title: `${draftType === "stat" ? "" : `${draftType[0].toUpperCase()}${draftType.slice(1)}: `}${fieldLabel(draftField)}`,
+      label: draftLabel || undefined,
       dataField: draftField,
       size: draftSize,
+      showDataLabels: draftDataLabels,
     };
     setWidgets((w) => [...w, widget]);
+    resetDraft();
+  }
+
+  function resetDraft() {
     setAddingWidget(false);
+    setEditingWidgetId(null);
+    setDraftType("bar");
+    setDraftField("by_sector");
+    setDraftSize("medium");
+    setDraftLabel("");
+    setDraftDataLabels(false);
+  }
+
+  function startEditWidget(widget: DashboardWidget) {
+    setAddingWidget(false);
+    setEditingWidgetId(widget.id);
+    setDraftType(widget.type);
+    setDraftField(widget.dataField ?? FIELDS_FOR_TYPE[widget.type][0]);
+    setDraftSize(widget.size);
+    setDraftLabel(widget.label ?? "");
+    setDraftDataLabels(!!widget.showDataLabels);
+  }
+
+  function applyEditWidget() {
+    if (!editingWidgetId) return;
+    setWidgets((ws) =>
+      ws.map((w) =>
+        w.id === editingWidgetId
+          ? { ...w, type: draftType, dataField: draftType === "map" ? undefined : draftField, size: draftSize, label: draftLabel || undefined, showDataLabels: draftDataLabels }
+          : w
+      )
+    );
+    resetDraft();
   }
 
   function removeWidget(id: string) {
@@ -239,7 +276,13 @@ function DashboardEditor({ editingId, onBack }: { editingId: string | null; onBa
           onChange={(e) => setName(e.target.value)}
           style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
         />
-        <button onClick={() => setAddingWidget(true)} style={primaryBtnStyle}>
+        <button
+          onClick={() => {
+            resetDraft();
+            setAddingWidget(true);
+          }}
+          style={primaryBtnStyle}
+        >
           + Add widget
         </button>
         <button onClick={save} disabled={saving} style={secondaryBtnStyle}>
@@ -255,8 +298,9 @@ function DashboardEditor({ editingId, onBack }: { editingId: string | null; onBa
         )}
       </div>
 
-      {addingWidget && (
+      {(addingWidget || editingWidgetId) && (
         <div style={{ padding: "14px 24px", borderBottom: "1px solid var(--border-soft)", display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", background: "var(--panel-raised)" }}>
+          <div className="eyebrow" style={{ width: "100%", marginBottom: -4 }}>{editingWidgetId ? "EDIT WIDGET" : "NEW WIDGET"}</div>
           <div>
             <div className="eyebrow" style={{ marginBottom: 4 }}>TYPE</div>
             <select
@@ -297,10 +341,25 @@ function DashboardEditor({ editingId, onBack }: { editingId: string | null; onBa
               <option value="large">Large</option>
             </select>
           </div>
-          <button onClick={addWidget} style={primaryBtnStyle}>
-            Add
+          <div style={{ flex: 1, minWidth: 160 }}>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>LABEL / CAPTION (OPTIONAL)</div>
+            <input
+              value={draftLabel}
+              onChange={(e) => setDraftLabel(e.target.value)}
+              placeholder="e.g. source, note, date range…"
+              style={{ ...selectStyle, width: "100%" }}
+            />
+          </div>
+          {(draftType === "bar" || draftType === "pie") && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+              <input type="checkbox" checked={draftDataLabels} onChange={(e) => setDraftDataLabels(e.target.checked)} />
+              Show values on chart
+            </label>
+          )}
+          <button onClick={editingWidgetId ? applyEditWidget : addWidget} style={primaryBtnStyle}>
+            {editingWidgetId ? "Save changes" : "Add"}
           </button>
-          <button onClick={() => setAddingWidget(false)} style={secondaryBtnStyle}>
+          <button onClick={resetDraft} style={secondaryBtnStyle}>
             Cancel
           </button>
         </div>
@@ -323,6 +382,7 @@ function DashboardEditor({ editingId, onBack }: { editingId: string | null; onBa
                 onMoveUp={idx > 0 ? () => moveWidget(w.id, -1) : undefined}
                 onMoveDown={idx < widgets.length - 1 ? () => moveWidget(w.id, 1) : undefined}
                 onRename={(title) => renameWidget(w.id, title)}
+                onEdit={() => startEditWidget(w)}
               />
             ))}
           </div>
