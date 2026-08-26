@@ -78,6 +78,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [backendId, setBackendId] = useState<string | null>(mode.kind === "bespoke" ? mode.id : null);
   const [isPublic, setIsPublic] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
+  const [locked, setLocked] = useState(false);
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -112,14 +113,18 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       setBackendId(d.id);
       setIsPublic(d.is_public);
       setShareToken(d.share_token);
+      setLocked(d.locked);
       setLoaded(true);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode.kind, mode.kind === "bespoke" ? mode.id : null]);
 
   const layout: Layout[] = useMemo(
-    () => widgets.filter((w) => w.layout).map((w) => ({ i: w.id, x: w.layout!.x, y: w.layout!.y, w: w.layout!.w, h: w.layout!.h })),
-    [widgets]
+    () =>
+      widgets
+        .filter((w) => w.layout)
+        .map((w) => ({ i: w.id, x: w.layout!.x, y: w.layout!.y, w: w.layout!.w, h: w.layout!.h, static: locked || !!w.locked })),
+    [widgets, locked]
   );
 
   function handleLayoutChange(next: Layout[]) {
@@ -208,6 +213,18 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     });
   }
 
+  async function toggleLock() {
+    if (!locked) {
+      // Locking is "I'm done editing" — make sure what gets locked is
+      // actually what's on screen, not a stale saved copy from before the
+      // last drag/resize/edit.
+      await save();
+    }
+    if (!backendId) return;
+    const updated = await api.updateCustomDashboard(backendId, { locked: !locked });
+    setLocked(updated.locked);
+  }
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
@@ -216,26 +233,41 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             ← All dashboards
           </button>
         )}
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
-        />
-        <button
-          onClick={() => {
-            resetDraft();
-            setAddingWidget(true);
-          }}
-          style={primaryBtnStyle}
-        >
-          + Add widget
+        {locked ? (
+          <div style={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 160, display: "flex", alignItems: "center", gap: 6 }}>
+            🔒 {name}
+          </div>
+        ) : (
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
+          />
+        )}
+        {!locked && (
+          <button
+            onClick={() => {
+              resetDraft();
+              setAddingWidget(true);
+            }}
+            style={primaryBtnStyle}
+          >
+            + Add widget
+          </button>
+        )}
+        {!locked && (
+          <button onClick={save} disabled={saving} style={secondaryBtnStyle}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        )}
+        <button onClick={toggleLock} title={locked ? "Unlock to edit again" : "Lock once you're done editing, to prevent accidental changes"} style={locked ? liveBtnStyle : secondaryBtnStyle}>
+          {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}
         </button>
-        <button onClick={save} disabled={saving} style={secondaryBtnStyle}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-        <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle}>
-          {isPublic ? "● Live shared" : "Share for live viewing"}
-        </button>
+        {!locked && (
+          <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle}>
+            {isPublic ? "● Live shared" : "Share for live viewing"}
+          </button>
+        )}
         {isPublic && shareToken && (
           <button onClick={copyShareLink} style={secondaryBtnStyle}>
             {linkCopied ? "Copied!" : "Copy link"}
@@ -456,8 +488,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             margin={[16, 16]}
             onLayoutChange={handleLayoutChange}
             draggableCancel=".no-drag"
-            isDraggable
-            isResizable
+            isDraggable={!locked}
+            isResizable={!locked}
           >
             {widgets.map((w) => (
               <div key={w.id}>
@@ -465,9 +497,9 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   widget={w}
                   stats={stats}
                   incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number }[]}
-                  onRemove={() => removeWidget(w.id)}
-                  onRename={(title) => renameWidget(w.id, title)}
-                  onUpdate={(patch) => updateWidget(w.id, patch)}
+                  onRemove={locked ? undefined : () => removeWidget(w.id)}
+                  onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
+                  onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
                 />
               </div>
             ))}
