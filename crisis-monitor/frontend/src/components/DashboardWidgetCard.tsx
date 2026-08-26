@@ -1,4 +1,4 @@
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from "recharts";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField } from "../api";
@@ -65,13 +65,14 @@ interface Props {
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   onRename?: (title: string) => void;
+  onEdit?: () => void;
 }
 
 /** Renders one dashboard widget — a stat card, bar/line/pie chart, or a small
  *  incidents map — from the same normalized stats shape whether it's being
  *  edited live in the builder or viewed read-only on a public share link. */
-export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onMoveUp, onMoveDown, onRename }: Props) {
-  const editable = !!(onRemove || onMoveUp || onMoveDown || onRename);
+export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onMoveUp, onMoveDown, onRename, onEdit }: Props) {
+  const editable = !!(onRemove || onMoveUp || onMoveDown || onRename || onEdit);
   const height = SIZE_HEIGHT[widget.size];
 
   return (
@@ -85,35 +86,43 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         gridColumn: widget.size === "large" ? "span 3" : widget.size === "medium" ? "span 2" : "span 1",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        {onRename ? (
-          <input
-            value={widget.title}
-            onChange={(e) => onRename(e.target.value)}
-            style={{ fontSize: 13, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 0 }}
-          />
-        ) : (
-          <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{widget.title}</div>
-        )}
-        {editable && (
-          <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-            {onMoveUp && (
-              <button onClick={onMoveUp} title="Move earlier" style={miniBtnStyle}>
-                ↑
-              </button>
-            )}
-            {onMoveDown && (
-              <button onClick={onMoveDown} title="Move later" style={miniBtnStyle}>
-                ↓
-              </button>
-            )}
-            {onRemove && (
-              <button onClick={onRemove} title="Remove widget" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
-                ×
-              </button>
-            )}
-          </div>
-        )}
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          {onRename ? (
+            <input
+              value={widget.title}
+              onChange={(e) => onRename(e.target.value)}
+              style={{ fontSize: 13, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 0 }}
+            />
+          ) : (
+            <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{widget.title}</div>
+          )}
+          {editable && (
+            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+              {onEdit && (
+                <button onClick={onEdit} title="Edit widget" style={miniBtnStyle}>
+                  ⚙
+                </button>
+              )}
+              {onMoveUp && (
+                <button onClick={onMoveUp} title="Move earlier" style={miniBtnStyle}>
+                  ↑
+                </button>
+              )}
+              {onMoveDown && (
+                <button onClick={onMoveDown} title="Move later" style={miniBtnStyle}>
+                  ↓
+                </button>
+              )}
+              {onRemove && (
+                <button onClick={onRemove} title="Remove widget" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
+                  ×
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        {widget.label && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{widget.label}</div>}
       </div>
 
       <div style={{ height }}>
@@ -133,7 +142,9 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
               <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
               <YAxis type="category" dataKey="value" width={100} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Bar dataKey="count" fill="var(--signal)" radius={[0, 3, 3, 0]} />
+              <Bar dataKey="count" fill="var(--signal)" radius={[0, 3, 3, 0]}>
+                {widget.showDataLabels && <LabelList dataKey="count" position="right" style={{ fill: "var(--text-primary)", fontSize: 11 }} />}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
@@ -153,7 +164,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         {widget.type === "pie" && (
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={seriesFor(stats, widget.dataField)} dataKey="count" nameKey="value" cx="50%" cy="50%" outerRadius="80%" label={{ fontSize: 10 }}>
+              <Pie
+                data={seriesFor(stats, widget.dataField)}
+                dataKey="count"
+                nameKey="value"
+                cx="50%"
+                cy="50%"
+                outerRadius="80%"
+                label={widget.showDataLabels ? { fontSize: 10 } : false}
+              >
                 {seriesFor(stats, widget.dataField).map((_, idx) => (
                   <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
                 ))}
