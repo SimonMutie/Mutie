@@ -564,6 +564,7 @@ function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCol
 
 export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
+  const [showLegend, setShowLegend] = useState(false);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
   const [heatWeighted, setHeatWeighted] = useState(false);
 
@@ -1408,7 +1409,39 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           ))
         )}
       </MapContainer>
-      <ActorLegend />
+
+      {/* legend toggle — always visible on the right edge; the legend itself only
+          shows when the user asks for it, rather than permanently taking up map space */}
+      <button
+        onClick={() => setShowLegend((v) => !v)}
+        title={showLegend ? "Hide legend" : "Show legend"}
+        style={{
+          position: "absolute",
+          top: 12,
+          right: 12,
+          zIndex: 1000,
+          width: 34,
+          height: 34,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: showLegend ? "var(--signal-dim)" : "var(--panel)",
+          border: `1px solid ${showLegend ? "var(--signal)" : "var(--border)"}`,
+          borderRadius: 8,
+          boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+          cursor: "pointer",
+        }}
+      >
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6" />
+          <line x1="8" y1="12" x2="21" y2="12" />
+          <line x1="8" y1="18" x2="21" y2="18" />
+          <circle cx="3.5" cy="6" r="1.6" fill="var(--text-primary)" stroke="none" />
+          <circle cx="3.5" cy="12" r="1.6" fill="var(--text-primary)" stroke="none" />
+          <circle cx="3.5" cy="18" r="1.6" fill="var(--text-primary)" stroke="none" />
+        </svg>
+      </button>
+      {showLegend && <ActorLegend />}
     </div>
   );
 }
