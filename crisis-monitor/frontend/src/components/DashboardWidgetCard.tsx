@@ -6,6 +6,37 @@ import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField } from 
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 const PIE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777", "#ea580c", "#4d7c0f"];
 
+/** Curated starting points, Tableau/Power-BI-style — each just a normal
+ *  palette (array of colors), same shape as a fully custom one. Picking a
+ *  preset copies its colors into the widget's own palette, which can then be
+ *  edited freely (add/remove/reorder/recolor any entry), so this isn't a
+ *  fixed set of themes to choose between — it's a starting point for an
+ *  open-ended one. */
+export const PRESET_THEMES: { name: string; colors: string[] }[] = [
+  { name: "Signal", colors: PIE_COLORS },
+  { name: "Ocean", colors: ["#0891b2", "#0d9488", "#2563eb", "#0369a1", "#155e75", "#134e4a"] },
+  { name: "Sunset", colors: ["#f97316", "#ea580c", "#dc2626", "#db2777", "#c026d3", "#f59e0b"] },
+  { name: "Forest", colors: ["#166534", "#15803d", "#65a30d", "#4d7c0f", "#84cc16", "#0f766e"] },
+  { name: "Berry", colors: ["#7c3aed", "#a21caf", "#db2777", "#e11d48", "#9333ea", "#6d28d9"] },
+  { name: "Corporate", colors: ["#1e3a5f", "#2f66f0", "#64748b", "#0d9488", "#475569", "#334155"] },
+  { name: "Vibrant", colors: ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899"] },
+  { name: "Earth", colors: ["#78350f", "#92400e", "#b45309", "#a16207", "#854d0e", "#57534e"] },
+];
+
+/** Resolves a widget's effective per-category color list: an explicit custom
+ *  palette wins; otherwise fall back to opacity variants of a single chosen
+ *  color; otherwise the default preset. Cycles if there are more categories
+ *  than colors, however many either has — no artificial cap either way. */
+function paletteFor(widget: DashboardWidget, count: number): string[] {
+  if (widget.palette && widget.palette.length > 0) {
+    return Array.from({ length: count }, (_, i) => widget.palette![i % widget.palette!.length]);
+  }
+  if (widget.color) {
+    return Array.from({ length: count }, (_, i) => adjustOpacity(widget.color!, i));
+  }
+  return Array.from({ length: count }, (_, i) => PIE_COLORS[i % PIE_COLORS.length]);
+}
+
 const FIELD_LABELS: Record<WidgetDataField, string> = {
   total: "Total incidents",
   by_sector: "By sector",
@@ -159,6 +190,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
               <Bar dataKey="count" name={fieldLabel(widget.dataField)} fill={color} radius={[0, 3, 3, 0]}>
+                {widget.palette && widget.palette.length > 0 && paletteFor(widget, series.length).map((c, idx) => <Cell key={idx} fill={c} />)}
                 {widget.showDataLabels && <LabelList dataKey="count" position="right" style={{ fill: "var(--text-primary)", fontSize: 11 }} />}
               </Bar>
             </BarChart>
@@ -182,8 +214,8 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie data={series} dataKey="count" nameKey="value" cx="50%" cy="50%" outerRadius="75%" label={widget.showDataLabels ? { fontSize: 10 } : false}>
-                {series.map((_, idx) => (
-                  <Cell key={idx} fill={widget.color ? adjustOpacity(widget.color, idx) : PIE_COLORS[idx % PIE_COLORS.length]} />
+                {paletteFor(widget, series.length).map((c, idx) => (
+                  <Cell key={idx} fill={c} />
                 ))}
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
