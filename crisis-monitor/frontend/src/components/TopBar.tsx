@@ -59,11 +59,11 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
 
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
         <nav style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
+            Trends & Patterns
+          </button>
           <button onClick={() => onNavigate("list")} style={navBtnStyle(view === "list" || view === "dashboard")}>
             Live Monitoring
-          </button>
-          <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
-            Historical Trends
           </button>
           {user.role === "admin" && (
             <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
