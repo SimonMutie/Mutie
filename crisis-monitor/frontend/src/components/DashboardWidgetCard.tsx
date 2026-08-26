@@ -1,7 +1,9 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField } from "../api";
+import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField, WidgetType } from "../api";
 
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 const PIE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777", "#ea580c", "#4d7c0f"];
@@ -21,6 +23,24 @@ export const PRESET_THEMES: { name: string; colors: string[] }[] = [
   { name: "Corporate", colors: ["#1e3a5f", "#2f66f0", "#64748b", "#0d9488", "#475569", "#334155"] },
   { name: "Vibrant", colors: ["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ec4899"] },
   { name: "Earth", colors: ["#78350f", "#92400e", "#b45309", "#a16207", "#854d0e", "#57534e"] },
+];
+
+export const COLOR_SWATCHES = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
+
+export const CATEGORY_FIELDS: WidgetDataField[] = ["by_sector", "by_actor", "by_tactic", "by_province", "by_country"];
+export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
+  stat: ["total", "deaths", "injuries", "kidnappings_ngo"],
+  bar: CATEGORY_FIELDS,
+  pie: CATEGORY_FIELDS,
+  line: ["time_series", ...CATEGORY_FIELDS],
+  map: [],
+};
+export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
+  { value: "stat", label: "Stat card" },
+  { value: "bar", label: "Bar chart" },
+  { value: "line", label: "Line chart" },
+  { value: "pie", label: "Pie chart" },
+  { value: "map", label: "Map" },
 ];
 
 /** Resolves a widget's effective per-category color list: an explicit custom
@@ -94,30 +114,60 @@ interface Props {
   stats: NormalizedDashboardStats;
   incidents?: { latitude: number; longitude: number; severity?: string | null }[];
   onRemove?: () => void;
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
   onRename?: (title: string) => void;
-  onEdit?: () => void;
-  /** True while this widget's edit panel is open — used to highlight it so
-   *  it's clear which widget the controls below are editing. */
-  selected?: boolean;
+  /** Applies a partial patch to just this widget — editing lives entirely
+   *  inside this card's own popover, independent of every other widget and
+   *  of any shared panel elsewhere on the page. */
+  onUpdate?: (patch: Partial<DashboardWidget>) => void;
 }
 
 /** Renders one dashboard widget — a stat card, bar/line/pie chart, or a small
  *  incidents map — from the same normalized stats shape whether it's being
- *  edited live in the builder or viewed read-only on a public share link.
+ *  edited live in an editor or viewed read-only on a public share link.
  *  Fills 100% of whatever size its container gives it (a react-grid-layout
  *  cell in the editors, a plain CSS grid cell on the public view) rather than
  *  a fixed pixel height, so real drag-resize actually changes the chart size. */
-export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onMoveUp, onMoveDown, onRename, onEdit, selected }: Props) {
-  const editable = !!(onRemove || onMoveUp || onMoveDown || onRename || onEdit);
+export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onRename, onUpdate }: Props) {
+  const editable = !!(onRemove || onRename || onUpdate);
   const color = widget.color || "var(--signal)";
   const series = seriesFor(stats, widget.dataField, widget.topN);
+  const [showEditor, setShowEditor] = useState(false);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const gearRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  // Positioned via a portal to document.body (fixed coordinates) rather than
+  // as a normal absolutely-positioned child, because this card's own
+  // `overflow: hidden` (needed to keep charts contained) would otherwise
+  // silently clip the popover the moment it tried to extend past the card's
+  // edge — invisible, not just cosmetically off.
+  useLayoutEffect(() => {
+    if (!showEditor || !gearRef.current) return;
+    const rect = gearRef.current.getBoundingClientRect();
+    const width = 320;
+    const left = Math.min(rect.left, window.innerWidth - width - 12);
+    setPopoverPos({ top: rect.bottom + 6, left: Math.max(8, left) });
+  }, [showEditor]);
+
+  useEffect(() => {
+    if (!showEditor) return;
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (cardRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      setShowEditor(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showEditor]);
 
   return (
     <div
+      ref={cardRef}
       className="panel"
       style={{
+        position: "relative",
         padding: "12px 14px",
         display: "flex",
         flexDirection: "column",
@@ -125,7 +175,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         height: "100%",
         width: "100%",
         boxSizing: "border-box",
-        border: selected ? "1.5px solid var(--signal)" : undefined,
+        border: showEditor ? "1.5px solid var(--signal)" : undefined,
         overflow: "hidden",
       }}
     >
@@ -143,19 +193,14 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           )}
           {editable && (
             <div style={{ display: "flex", gap: 3, flexShrink: 0 }} onMouseDown={(e) => e.stopPropagation()}>
-              {onEdit && (
-                <button onClick={onEdit} title="Edit widget" style={miniBtnStyle}>
+              {onUpdate && (
+                <button
+                  ref={gearRef}
+                  onClick={() => setShowEditor((v) => !v)}
+                  title="Edit this widget"
+                  style={{ ...miniBtnStyle, ...(showEditor ? { background: "var(--signal-dim)", borderColor: "var(--signal)", color: "var(--signal)" } : {}) }}
+                >
                   ⚙
-                </button>
-              )}
-              {onMoveUp && (
-                <button onClick={onMoveUp} title="Move earlier" style={miniBtnStyle}>
-                  ↑
-                </button>
-              )}
-              {onMoveDown && (
-                <button onClick={onMoveDown} title="Move later" style={miniBtnStyle}>
-                  ↓
                 </button>
               )}
               {onRemove && (
@@ -169,11 +214,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         {widget.label && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{widget.label}</div>}
       </div>
 
-      <div
-        style={{ flex: 1, minHeight: 0, cursor: onEdit ? "pointer" : undefined }}
-        onClick={onEdit}
-        title={onEdit ? "Click to edit this widget" : undefined}
-      >
+      <div style={{ flex: 1, minHeight: 0 }}>
         {widget.type === "stat" && (
           <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
             <div style={{ fontSize: 32, fontWeight: 700, color }}>{statValue(stats, widget.dataField).toLocaleString()}</div>
@@ -240,6 +281,270 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           </div>
         )}
       </div>
+
+      {showEditor && onUpdate && popoverPos && createPortal(
+        <WidgetEditPopover
+          popoverRef={popoverRef}
+          position={popoverPos}
+          widget={widget}
+          onSave={(patch) => {
+            onUpdate(patch);
+            setShowEditor(false);
+          }}
+          onClose={() => setShowEditor(false)}
+        />,
+        document.body
+      )}
+    </div>
+  );
+}
+
+/** Fully self-contained per-widget edit form — its own draft state, its own
+ *  open/close lifecycle. Opening one widget's editor has no effect on any
+ *  other widget; several could be open across the dashboard at once. */
+function WidgetEditPopover({
+  widget,
+  onSave,
+  onClose,
+  popoverRef,
+  position,
+}: {
+  widget: DashboardWidget;
+  onSave: (patch: Partial<DashboardWidget>) => void;
+  onClose: () => void;
+  popoverRef: React.RefObject<HTMLDivElement>;
+  position: { top: number; left: number };
+}) {
+  const [type, setType] = useState<WidgetType>(widget.type);
+  const [field, setField] = useState<WidgetDataField>(widget.dataField ?? (FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
+  const [label, setLabel] = useState(widget.label ?? "");
+  const [showDataLabels, setShowDataLabels] = useState(!!widget.showDataLabels);
+  const [color, setColor] = useState<string | undefined>(widget.color);
+  const [palette, setPalette] = useState<string[]>(widget.palette ?? []);
+  const [showLegend, setShowLegend] = useState(!!widget.showLegend);
+  const [topN, setTopN] = useState<number | undefined>(widget.topN);
+
+  function handleTypeChange(newType: WidgetType) {
+    setType(newType);
+    if (FIELDS_FOR_TYPE[newType].length > 0 && !FIELDS_FOR_TYPE[newType].includes(field)) {
+      setField(FIELDS_FOR_TYPE[newType][0]);
+    }
+  }
+
+  function handleSave() {
+    onSave({
+      type,
+      dataField: type === "map" ? undefined : field,
+      label: label || undefined,
+      showDataLabels,
+      color,
+      palette: palette.length > 0 ? palette : undefined,
+      showLegend,
+      topN,
+    });
+  }
+
+  return (
+    <div
+      ref={popoverRef}
+      onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        position: "fixed",
+        top: position.top,
+        left: position.left,
+        zIndex: 1000,
+        width: 320,
+        maxHeight: 420,
+        overflowY: "auto",
+        background: "var(--panel)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        boxShadow: "0 8px 24px rgba(19,23,34,0.18)",
+        padding: 14,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div className="eyebrow">EDIT THIS WIDGET</div>
+
+      <div>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>TYPE</div>
+        <select value={type} onChange={(e) => handleTypeChange(e.target.value as WidgetType)} style={selectStyle}>
+          {WIDGET_TYPES.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {type !== "map" && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>DATA</div>
+          <select value={field} onChange={(e) => setField(e.target.value as WidgetDataField)} style={selectStyle}>
+            {FIELDS_FOR_TYPE[type].map((f) => (
+              <option key={f} value={f}>
+                {fieldLabel(f)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>{type === "bar" || type === "pie" ? "FALLBACK COLOR" : "COLOR"}</div>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          {COLOR_SWATCHES.map((c) => (
+            <button
+              key={c}
+              onClick={() => setColor(c)}
+              title={c}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 5,
+                background: c,
+                border: color === c ? "2px solid var(--text-primary)" : "1px solid var(--border)",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            />
+          ))}
+          <input
+            type="color"
+            value={color ?? "#0d9488"}
+            onChange={(e) => setColor(e.target.value)}
+            title="Custom color"
+            style={{ width: 22, height: 22, padding: 0, border: "none", background: "none", cursor: "pointer" }}
+          />
+          {color && (
+            <button onClick={() => setColor(undefined)} title="Reset to default" style={miniBtnStyle}>
+              ×
+            </button>
+          )}
+        </div>
+      </div>
+
+      {(type === "bar" || type === "pie") && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>THEME — PALETTE (OVERRIDES FALLBACK COLOR)</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+            {PRESET_THEMES.map((theme) => (
+              <button
+                key={theme.name}
+                onClick={() => setPalette(theme.colors)}
+                title={theme.name}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                  padding: "3px 6px",
+                  borderRadius: 6,
+                  border: `1px solid ${JSON.stringify(palette) === JSON.stringify(theme.colors) ? "var(--signal)" : "var(--border)"}`,
+                  background: "var(--panel-raised)",
+                  cursor: "pointer",
+                }}
+              >
+                <span style={{ display: "flex" }}>
+                  {theme.colors.slice(0, 4).map((c, i) => (
+                    <span key={i} style={{ width: 9, height: 9, borderRadius: "50%", background: c, marginLeft: i > 0 ? -2 : 0, border: "1px solid var(--panel)" }} />
+                  ))}
+                </span>
+                <span style={{ fontSize: 10.5 }}>{theme.name}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+            {palette.map((c, idx) => (
+              <span key={idx} style={{ position: "relative", display: "inline-flex" }}>
+                <input
+                  type="color"
+                  value={c}
+                  onChange={(e) => setPalette((p) => p.map((x, i) => (i === idx ? e.target.value : x)))}
+                  title={`Color ${idx + 1}`}
+                  style={{ width: 20, height: 20, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer" }}
+                />
+                <button
+                  onClick={() => setPalette((p) => p.filter((_, i) => i !== idx))}
+                  title="Remove"
+                  style={{
+                    position: "absolute",
+                    top: -5,
+                    right: -5,
+                    width: 13,
+                    height: 13,
+                    lineHeight: "11px",
+                    fontSize: 9,
+                    padding: 0,
+                    borderRadius: "50%",
+                    border: "1px solid var(--border)",
+                    background: "var(--panel)",
+                    color: "var(--critical)",
+                    cursor: "pointer",
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              onClick={() => setPalette((p) => [...p, PRESET_THEMES[0].colors[p.length % PRESET_THEMES[0].colors.length]])}
+              title="Add a color — no limit"
+              style={{ ...miniBtnStyle, color: "var(--signal)" }}
+            >
+              +
+            </button>
+            {palette.length > 0 && (
+              <button onClick={() => setPalette([])} style={{ fontSize: 10, color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(type === "bar" || type === "pie") && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>TOP N (SCALE)</div>
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={topN ?? ""}
+            onChange={(e) => setTopN(e.target.value ? Number(e.target.value) : undefined)}
+            placeholder="All"
+            style={{ ...selectStyle, width: 70 }}
+          />
+        </div>
+      )}
+
+      <div>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>LABEL / CAPTION</div>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. source, note, date range…" style={{ ...selectStyle, width: "100%" }} />
+      </div>
+
+      {(type === "bar" || type === "line" || type === "pie") && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+          <input type="checkbox" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} />
+          Show legend
+        </label>
+      )}
+      {(type === "bar" || type === "pie") && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+          <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
+          Show values on chart
+        </label>
+      )}
+
+      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+        <button onClick={handleSave} style={primaryBtnStyle}>
+          Save changes
+        </button>
+        <button onClick={onClose} style={secondaryBtnStyle}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -268,4 +573,34 @@ const miniBtnStyle: React.CSSProperties = {
   borderRadius: 4,
   color: "var(--text-muted)",
   cursor: "pointer",
+};
+
+const selectStyle: React.CSSProperties = {
+  fontSize: 12.5,
+  padding: "6px 8px",
+  borderRadius: 5,
+  border: "1px solid var(--border)",
+  background: "var(--panel)",
+  color: "var(--text-primary)",
+};
+
+const primaryBtnStyle: React.CSSProperties = {
+  padding: "7px 12px",
+  background: "var(--signal-dim)",
+  border: "1px solid var(--signal)",
+  color: "var(--text-primary)",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 12.5,
+};
+
+const secondaryBtnStyle: React.CSSProperties = {
+  padding: "7px 12px",
+  background: "var(--panel)",
+  border: "1px solid var(--border)",
+  color: "var(--text-primary)",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontSize: 12.5,
 };
