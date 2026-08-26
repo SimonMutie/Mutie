@@ -130,6 +130,14 @@ export interface IncidentItem extends Omit<IncidentRow, "date" | "time" | "raw">
   raw_row: Record<string, unknown>;
 }
 
+export interface SavedUpload {
+  id: string;
+  owner_id: string | null;
+  label: string;
+  row_count: number;
+  created_at: string;
+}
+
 export interface IncidentFilters {
   country: string[];
   province: string[];
@@ -284,10 +292,10 @@ export const api = {
   getEscalationHistory: (queryId: string) =>
     req<{ window_end: string; escalation_score: number; volume: number }[]>(`/api/stats/escalation/${queryId}`),
 
-  uploadIncidentsBulk: (rows: IncidentRow[], batchLabel?: string) =>
+  uploadIncidentsBulk: (rows: IncidentRow[], batchLabel?: string, batchId?: string) =>
     req<{ inserted: number; batch_id: string; batch_label: string | null }>("/api/incidents/bulk", {
       method: "POST",
-      body: JSON.stringify({ rows, batch_label: batchLabel }),
+      body: JSON.stringify({ rows, batch_label: batchLabel, batch_id: batchId }),
     }),
   getIncidents: (params: { country?: string; province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string; limit?: number } = {}) => {
     const qs = new URLSearchParams(
@@ -297,6 +305,7 @@ export const api = {
   },
   getIncidentFilters: () => req<IncidentFilters>("/api/incidents/filters"),
   getIncidentStats: () => req<IncidentStats>("/api/incidents/stats"),
+  getIncidentUploads: () => req<SavedUpload[]>("/api/incidents/uploads"),
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
   updateIncident: (id: string, data: Partial<IncidentRow>) =>
