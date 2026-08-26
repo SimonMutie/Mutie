@@ -67,43 +67,55 @@ export default function IncidentSearch() {
   const hasFilters = Object.values(filters).some(Boolean);
   const mapContainerRef = useRef<HTMLElement | null>(null);
   const [downloadingPng, setDownloadingPng] = useState(false);
+  const [exportingExcel, setExportingExcel] = useState(false);
 
-  function downloadExcel() {
-    const rows = incidents.map((i) => ({
-      Date: i.occurred_date,
-      Time: i.occurred_time,
-      Country: i.country,
-      Province: i.province,
-      County: i.county,
-      District: i.district,
-      City: i.city,
-      Suburb: i.suburb,
-      "Precise Location": i.precise_location,
-      Latitude: i.latitude,
-      Longitude: i.longitude,
-      Sector: i.sector,
-      Actor: i.actor,
-      Operation: i.operation,
-      Tactic: i.tactic,
-      Severity: i.severity,
-      Details: i.details,
-      Target: i.target,
-      "Interest Group": i.interest_group,
-      "Actual Main Victim": i.actual_main_victim,
-      "Intended Primary Target": i.intended_primary_target,
-      "Civilian Death - Child": i.civilian_death_child,
-      "Civilian Death - Female": i.civilian_death_female,
-      "Civilian Death - Male": i.civilian_death_male,
-      "Civilian Death - Unknown": i.civilian_death_unknown,
-      "Civilian Injury - Female": i.civilian_injury_female,
-      "Civilian Injury - Male": i.civilian_injury_male,
-      "Civilian Injury - Unknown": i.civilian_injury_unknown,
-      "Kidnappings - Ngo": i.kidnappings_ngo,
-    }));
-    const sheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, sheet, "Incidents");
-    XLSX.writeFile(workbook, `incident_search_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  async function downloadExcel() {
+    setExportingExcel(true);
+    try {
+      // Fetches the complete matching set at click-time, independent of
+      // whatever's currently loaded for the map — the on-screen view stays
+      // capped for rendering performance (tens of thousands of individual pin
+      // markers would genuinely stall a browser tab), but export itself is
+      // never truncated, however many incidents match the current filters.
+      const allMatching = await api.getIncidents({ ...filters, limit: 250000 });
+      const rows = allMatching.map((i) => ({
+        Date: i.occurred_date,
+        Time: i.occurred_time,
+        Country: i.country,
+        Province: i.province,
+        County: i.county,
+        District: i.district,
+        City: i.city,
+        Suburb: i.suburb,
+        "Precise Location": i.precise_location,
+        Latitude: i.latitude,
+        Longitude: i.longitude,
+        Sector: i.sector,
+        Actor: i.actor,
+        Operation: i.operation,
+        Tactic: i.tactic,
+        Severity: i.severity,
+        Details: i.details,
+        Target: i.target,
+        "Interest Group": i.interest_group,
+        "Actual Main Victim": i.actual_main_victim,
+        "Intended Primary Target": i.intended_primary_target,
+        "Civilian Death - Child": i.civilian_death_child,
+        "Civilian Death - Female": i.civilian_death_female,
+        "Civilian Death - Male": i.civilian_death_male,
+        "Civilian Death - Unknown": i.civilian_death_unknown,
+        "Civilian Injury - Female": i.civilian_injury_female,
+        "Civilian Injury - Male": i.civilian_injury_male,
+        "Civilian Injury - Unknown": i.civilian_injury_unknown,
+        "Kidnappings - Ngo": i.kidnappings_ngo,
+      }));
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "Incidents");
+      XLSX.writeFile(workbook, `incident_search_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally {
+      setExportingExcel(false);
+    }
   }
 
   async function downloadPng() {
@@ -210,8 +222,8 @@ export default function IncidentSearch() {
         <div>
           <div className="eyebrow" style={{ marginBottom: 8 }}>EXPORT DATA</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <button onClick={downloadExcel} disabled={incidents.length === 0} style={secondaryBtnStyle}>
-              Export as Excel ({incidents.length.toLocaleString()} rows)
+            <button onClick={downloadExcel} disabled={exportingExcel || incidents.length === 0} style={secondaryBtnStyle}>
+              {exportingExcel ? "Exporting…" : "Export as Excel (all matching incidents)"}
             </button>
             <button onClick={downloadPng} disabled={downloadingPng} style={secondaryBtnStyle}>
               {downloadingPng ? "Capturing…" : "Export map as PNG"}
