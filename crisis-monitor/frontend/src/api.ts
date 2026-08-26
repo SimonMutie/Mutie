@@ -209,8 +209,13 @@ export interface DashboardWidget {
   id: string;
   type: WidgetType;
   title: string;
+  /** Short caption shown under the title — separate from the title itself,
+   *  for context like a source note or a description of what's shown. */
+  label?: string;
   dataField?: WidgetDataField;
   size: "small" | "medium" | "large";
+  /** Show the actual value on each bar/slice, not just on hover. */
+  showDataLabels?: boolean;
 }
 
 export interface CustomDashboard {
