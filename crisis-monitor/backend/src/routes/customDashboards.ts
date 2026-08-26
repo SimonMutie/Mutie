@@ -13,6 +13,8 @@ customDashboardsRouter.use("*", requireAuth);
  *  their owner has explicitly flagged public. */
 export const publicDashboardsRouter = new Hono<{ Bindings: Env }>();
 
+const layoutSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() });
+
 const widgetSchema = z.object({
   id: z.string(),
   type: z.enum(["stat", "bar", "line", "pie", "map"]),
@@ -21,6 +23,10 @@ const widgetSchema = z.object({
   dataField: z.enum(["total", "by_sector", "by_actor", "by_tactic", "by_province", "by_country", "time_series", "deaths", "injuries", "kidnappings_ngo"]).optional(),
   size: z.enum(["small", "medium", "large"]).default("medium"),
   showDataLabels: z.boolean().optional(),
+  color: z.string().optional(),
+  showLegend: z.boolean().optional(),
+  topN: z.number().int().positive().optional(),
+  layout: layoutSchema.optional(),
 });
 
 const createSchema = z.object({
@@ -29,7 +35,7 @@ const createSchema = z.object({
 });
 
 function rowToDashboard(row: Record<string, unknown>) {
-  return { ...row, widgets: JSON.parse(String(row.widgets ?? "[]")), is_public: !!row.is_public };
+  return { ...row, widgets: JSON.parse(String(row.widgets ?? "[]")), is_public: !!row.is_public, is_auto: !!row.is_auto };
 }
 
 customDashboardsRouter.get("/", async (c) => {
@@ -52,6 +58,44 @@ customDashboardsRouter.post("/", async (c) => {
     `INSERT INTO custom_dashboards (id, owner_id, name, widgets, is_public, share_token, created_at, updated_at) VALUES (?,?,?,?,0,NULL,?,?)`
   )
     .bind(id, c.get("userId"), parsed.data.name, JSON.stringify(parsed.data.widgets), now, now)
+    .run();
+
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [id]);
+  return c.json(rowToDashboard(row!));
+});
+
+/** Seeded the first time a user opens "Auto Dashboard" — mirrors what used to
+ *  be hardcoded there, but now as real, editable widgets like everything else. */
+function defaultAutoWidgets() {
+  return [
+    { id: newId(), type: "stat", title: "Total incidents", dataField: "total", size: "small", layout: { x: 0, y: 0, w: 3, h: 4 } },
+    { id: newId(), type: "stat", title: "Civilian deaths", dataField: "deaths", size: "small", color: "#d1352b", layout: { x: 3, y: 0, w: 3, h: 4 } },
+    { id: newId(), type: "stat", title: "Civilian injuries", dataField: "injuries", size: "small", color: "#b3690b", layout: { x: 6, y: 0, w: 3, h: 4 } },
+    { id: newId(), type: "stat", title: "NGO kidnappings", dataField: "kidnappings_ngo", size: "small", layout: { x: 9, y: 0, w: 3, h: 4 } },
+    { id: newId(), type: "bar", title: "Incidents by sector", dataField: "by_sector", size: "medium", layout: { x: 0, y: 4, w: 6, h: 8 } },
+    { id: newId(), type: "bar", title: "Incidents by actor", dataField: "by_actor", size: "medium", color: "#2f66f0", layout: { x: 6, y: 4, w: 6, h: 8 } },
+    { id: newId(), type: "bar", title: "Incidents by tactic", dataField: "by_tactic", size: "medium", color: "#b3690b", layout: { x: 0, y: 12, w: 6, h: 8 } },
+    { id: newId(), type: "bar", title: "Incidents by province", dataField: "by_province", size: "medium", color: "#d1352b", layout: { x: 6, y: 12, w: 6, h: 8 } },
+    { id: newId(), type: "bar", title: "Incidents by country", dataField: "by_country", size: "medium", color: "#7c3aed", layout: { x: 0, y: 20, w: 6, h: 8 } },
+    { id: newId(), type: "line", title: "Incidents over time", dataField: "time_series", size: "large", layout: { x: 6, y: 20, w: 6, h: 8 } },
+  ];
+}
+
+customDashboardsRouter.get("/auto", async (c) => {
+  const ownerId = c.get("userId");
+  const existing = await first<Record<string, unknown>>(
+    c.env.DB,
+    `SELECT * FROM custom_dashboards WHERE owner_id = ? AND is_auto = 1`,
+    [ownerId]
+  );
+  if (existing) return c.json(rowToDashboard(existing));
+
+  const id = newId();
+  const now = nowIso();
+  await c.env.DB.prepare(
+    `INSERT INTO custom_dashboards (id, owner_id, name, widgets, is_public, share_token, is_auto, created_at, updated_at) VALUES (?,?,?,?,0,NULL,1,?,?)`
+  )
+    .bind(id, ownerId, "Auto Dashboard", JSON.stringify(defaultAutoWidgets()), now, now)
     .run();
 
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [id]);
