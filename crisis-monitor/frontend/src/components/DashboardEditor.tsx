@@ -2,35 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import {
-  api,
-  type DashboardWidget,
-  type IncidentItem,
-  type IncidentStats,
-  type NormalizedDashboardStats,
-  type WidgetDataField,
-  type WidgetType,
-} from "../api";
-import DashboardWidgetCard, { fieldLabel, PRESET_THEMES } from "./DashboardWidgetCard";
+import { api, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type WidgetDataField, type WidgetType } from "../api";
+import DashboardWidgetCard, { fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES } from "./DashboardWidgetCard";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
-
-const CATEGORY_FIELDS: WidgetDataField[] = ["by_sector", "by_actor", "by_tactic", "by_province", "by_country"];
-const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
-  stat: ["total", "deaths", "injuries", "kidnappings_ngo"],
-  bar: CATEGORY_FIELDS,
-  pie: CATEGORY_FIELDS,
-  line: ["time_series", ...CATEGORY_FIELDS],
-  map: [],
-};
-const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
-  { value: "stat", label: "Stat card" },
-  { value: "bar", label: "Bar chart" },
-  { value: "line", label: "Line chart" },
-  { value: "pie", label: "Pie chart" },
-  { value: "map", label: "Map" },
-];
-const COLOR_SWATCHES = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
 const SIZE_DEFAULTS: Record<DashboardWidget["size"], { w: number; h: number }> = {
   small: { w: 3, h: 4 },
   medium: { w: 6, h: 8 },
@@ -108,7 +83,6 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [addingWidget, setAddingWidget] = useState(false);
-  const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
   const [draftType, setDraftType] = useState<WidgetType>("bar");
   const [draftField, setDraftField] = useState<WidgetDataField>("by_sector");
   const [draftSize, setDraftSize] = useState<DashboardWidget["size"]>("medium");
@@ -180,7 +154,6 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
 
   function resetDraft() {
     setAddingWidget(false);
-    setEditingWidgetId(null);
     setDraftType("bar");
     setDraftField("by_sector");
     setDraftSize("medium");
@@ -192,45 +165,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setDraftTopN(undefined);
   }
 
-  function startEditWidget(widget: DashboardWidget) {
-    setAddingWidget(false);
-    setEditingWidgetId(widget.id);
-    setDraftType(widget.type);
-    setDraftField(widget.dataField ?? FIELDS_FOR_TYPE[widget.type][0]);
-    setDraftSize(widget.size);
-    setDraftLabel(widget.label ?? "");
-    setDraftDataLabels(!!widget.showDataLabels);
-    setDraftColor(widget.color);
-    setDraftPalette(widget.palette ?? []);
-    setDraftLegend(!!widget.showLegend);
-    setDraftTopN(widget.topN);
-  }
-
-  function applyEditWidget() {
-    if (!editingWidgetId) return;
-    setWidgets((ws) =>
-      ws.map((w) =>
-        w.id === editingWidgetId
-          ? {
-              ...w,
-              type: draftType,
-              dataField: draftType === "map" ? undefined : draftField,
-              label: draftLabel || undefined,
-              showDataLabels: draftDataLabels,
-              color: draftColor,
-              palette: draftPalette.length > 0 ? draftPalette : undefined,
-              showLegend: draftLegend,
-              topN: draftTopN,
-            }
-          : w
-      )
-    );
-    resetDraft();
+  function updateWidget(id: string, patch: Partial<DashboardWidget>) {
+    setWidgets((ws) => ws.map((w) => (w.id === id ? { ...w, ...patch } : w)));
   }
 
   function removeWidget(id: string) {
     setWidgets((w) => w.filter((x) => x.id !== id));
-    if (editingWidgetId === id) resetDraft();
   }
   function renameWidget(id: string, title: string) {
     setWidgets((w) => w.map((x) => (x.id === id ? { ...x, title } : x)));
@@ -303,9 +243,9 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         )}
       </div>
 
-      {(addingWidget || editingWidgetId) && (
+      {addingWidget && (
         <div style={{ padding: "14px 24px", borderBottom: "1px solid var(--border-soft)", display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap", background: "var(--panel-raised)" }}>
-          <div className="eyebrow" style={{ width: "100%", marginBottom: -4 }}>{editingWidgetId ? "EDIT WIDGET" : "NEW WIDGET"}</div>
+          <div className="eyebrow" style={{ width: "100%", marginBottom: -4 }}>NEW WIDGET</div>
           <div>
             <div className="eyebrow" style={{ marginBottom: 4 }}>TYPE</div>
             <select
@@ -338,16 +278,14 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
               </select>
             </div>
           )}
-          {!editingWidgetId && (
-            <div>
-              <div className="eyebrow" style={{ marginBottom: 4 }}>STARTING SIZE</div>
-              <select value={draftSize} onChange={(e) => setDraftSize(e.target.value as DashboardWidget["size"])} style={selectStyle}>
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-              </select>
-            </div>
-          )}
+          <div>
+            <div className="eyebrow" style={{ marginBottom: 4 }}>STARTING SIZE</div>
+            <select value={draftSize} onChange={(e) => setDraftSize(e.target.value as DashboardWidget["size"])} style={selectStyle}>
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </div>
           <div>
             <div className="eyebrow" style={{ marginBottom: 4 }}>{draftType === "bar" || draftType === "pie" ? "FALLBACK COLOR" : "COLOR"}</div>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -493,8 +431,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
               Show values on chart
             </label>
           )}
-          <button onClick={editingWidgetId ? applyEditWidget : addWidget} style={primaryBtnStyle}>
-            {editingWidgetId ? "Save changes" : "Add"}
+          <button onClick={addWidget} style={primaryBtnStyle}>
+            Add
           </button>
           <button onClick={resetDraft} style={secondaryBtnStyle}>
             Cancel
@@ -529,8 +467,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number }[]}
                   onRemove={() => removeWidget(w.id)}
                   onRename={(title) => renameWidget(w.id, title)}
-                  onEdit={() => startEditWidget(w)}
-                  selected={editingWidgetId === w.id}
+                  onUpdate={(patch) => updateWidget(w.id, patch)}
                 />
               </div>
             ))}
