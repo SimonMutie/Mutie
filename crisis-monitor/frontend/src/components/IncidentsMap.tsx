@@ -18,7 +18,7 @@ interface Props {
   incidents: IncidentItem[];
 }
 
-const BASEMAPS = {
+export const BASEMAPS = {
   osm: {
     label: "OpenStreetMap",
     url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -35,7 +35,7 @@ const BASEMAPS = {
     attribution: "Tiles &copy; Esri",
   },
 } as const;
-type BasemapKey = keyof typeof BASEMAPS;
+export type BasemapKey = keyof typeof BASEMAPS;
 
 const ROUTE_COLORS = [
   "#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777",
@@ -48,8 +48,8 @@ const ROUTE_COLORS = [
  *  reads green. Pattern-matched (case-insensitive) against common real-world
  *  labels rather than requiring an exact match, since source data is rarely
  *  perfectly consistent. Order matters: first matching pattern wins. */
-type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "other";
-interface ActorCategory {
+export type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "other";
+export interface ActorCategory {
   color: string;
   label: string;
   shape: ActorShape;
@@ -63,7 +63,7 @@ const ACTOR_CATEGORIES: { pattern: RegExp; color: string; label: string; shape: 
 ];
 const OTHER_CATEGORY: ActorCategory = { color: "#64748b", label: "Other / Unspecified", shape: "other" };
 
-function classifyActor(actor: string | null | undefined): ActorCategory {
+export function classifyActor(actor: string | null | undefined): ActorCategory {
   const value = (actor ?? "").trim();
   if (!value) return OTHER_CATEGORY;
   for (const cat of ACTOR_CATEGORIES) {
@@ -111,7 +111,7 @@ function pinSvg(category: ActorCategory, size: number, opacity: number): string 
 // many incidents are on screen, so icons are built once and reused rather than
 // constructed fresh per marker per render.
 const iconCache = new Map<string, L.DivIcon>();
-function incidentIcon(category: ActorCategory, highlighted: boolean): L.DivIcon {
+export function incidentIcon(category: ActorCategory, highlighted: boolean): L.DivIcon {
   const cacheKey = `${category.shape}-${category.color}-${highlighted}`;
   const cached = iconCache.get(cacheKey);
   if (cached) return cached;
@@ -128,7 +128,7 @@ function incidentIcon(category: ActorCategory, highlighted: boolean): L.DivIcon 
   iconCache.set(cacheKey, icon);
   return icon;
 }
-function totalCasualties(i: IncidentItem): number {
+export function totalCasualties(i: IncidentItem): number {
   return (
     (i.civilian_death_child ?? 0) +
     (i.civilian_death_female ?? 0) +
@@ -443,7 +443,7 @@ function featureToEditableLayer(feature: GeoJSON.Feature, style: L.PathOptions):
  *  density becomes the more readable signal. `weighted` uses each incident's
  *  total casualties as intensity (so severe clusters stand out more); off,
  *  every incident counts equally (pure geographic density). */
-function HeatmapLayer({ points }: { points: [number, number, number][] }) {
+export function HeatmapLayer({ points }: { points: [number, number, number][] }) {
   const map = useMap();
   const layerRef = useRef<L.HeatLayer | null>(null);
 
