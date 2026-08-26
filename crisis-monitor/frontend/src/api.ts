@@ -213,9 +213,19 @@ export interface DashboardWidget {
    *  for context like a source note or a description of what's shown. */
   label?: string;
   dataField?: WidgetDataField;
+  /** Initial size when the widget is first added — after that, the real size
+   *  comes from `layout` (drag-resized), this just seeds a sensible starting box. */
   size: "small" | "medium" | "large";
   /** Show the actual value on each bar/slice, not just on hover. */
   showDataLabels?: boolean;
+  /** Overrides the default teal series color. */
+  color?: string;
+  showLegend?: boolean;
+  /** Bar/pie only — truncates to the top N categories by count. */
+  topN?: number;
+  /** Real drag/resize position, in react-grid-layout's 12-column grid units.
+   *  Missing until the widget has been placed at least once. */
+  layout?: { x: number; y: number; w: number; h: number };
 }
 
 export interface CustomDashboard {
@@ -224,6 +234,7 @@ export interface CustomDashboard {
   name: string;
   widgets: DashboardWidget[];
   is_public: boolean;
+  is_auto: boolean;
   share_token: string | null;
   created_at: string;
   updated_at: string;
@@ -387,6 +398,7 @@ export const api = {
   deleteMapShape: (id: string) => req<void>(`/api/map-shapes/${id}`, { method: "DELETE" }),
 
   getCustomDashboards: () => req<CustomDashboard[]>("/api/custom-dashboards"),
+  getOrCreateAutoDashboard: () => req<CustomDashboard>("/api/custom-dashboards/auto"),
   createCustomDashboard: (name: string, widgets: DashboardWidget[]) =>
     req<CustomDashboard>("/api/custom-dashboards", { method: "POST", body: JSON.stringify({ name, widgets }) }),
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
