@@ -218,8 +218,13 @@ export interface DashboardWidget {
   size: "small" | "medium" | "large";
   /** Show the actual value on each bar/slice, not just on hover. */
   showDataLabels?: boolean;
-  /** Overrides the default teal series color. */
+  /** Overrides the default teal series color — used by stat/line/map, and as
+   *  the bar-chart series color when no palette is set. */
   color?: string;
+  /** Bar/pie only — a full custom color per category, in order, cycling if
+   *  there are more categories than colors. Any length; not limited to a
+   *  fixed preset. Takes priority over `color` for these two chart types. */
+  palette?: string[];
   showLegend?: boolean;
   /** Bar/pie only — truncates to the top N categories by count. */
   topN?: number;
