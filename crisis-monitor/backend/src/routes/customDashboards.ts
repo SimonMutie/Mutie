@@ -17,8 +17,10 @@ const widgetSchema = z.object({
   id: z.string(),
   type: z.enum(["stat", "bar", "line", "pie", "map"]),
   title: z.string(),
+  label: z.string().optional(),
   dataField: z.enum(["total", "by_sector", "by_actor", "by_tactic", "by_province", "by_country", "time_series", "deaths", "injuries", "kidnappings_ngo"]).optional(),
   size: z.enum(["small", "medium", "large"]).default("medium"),
+  showDataLabels: z.boolean().optional(),
 });
 
 const createSchema = z.object({
