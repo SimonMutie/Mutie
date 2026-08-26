@@ -24,6 +24,7 @@ const widgetSchema = z.object({
   size: z.enum(["small", "medium", "large"]).default("medium"),
   showDataLabels: z.boolean().optional(),
   color: z.string().optional(),
+  palette: z.array(z.string()).optional(),
   showLegend: z.boolean().optional(),
   topN: z.number().int().positive().optional(),
   layout: layoutSchema.optional(),
