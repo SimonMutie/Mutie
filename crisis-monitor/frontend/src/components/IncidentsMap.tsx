@@ -8,6 +8,8 @@ import "leaflet.heat";
 import shp from "shpjs";
 import buffer from "@turf/buffer";
 import { lineString } from "@turf/helpers";
+import * as XLSX from "xlsx";
+import html2canvas from "html2canvas";
 import "leaflet/dist/leaflet.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 
@@ -522,6 +524,17 @@ function ClickCapture({ active, onClick }: { active: boolean; onClick: (lat: num
 /** Pans/zooms the map to fit a route's geometry when it's isolated via "Search
  *  route for incidents" — without this the user would have to manually find
  *  the route after everything else disappears from view. */
+/** Grabs the underlying Leaflet map's DOM container once mounted, for the PNG
+ *  export (html2canvas needs a real element, not the React component). */
+function MapContainerRefCapture({ onReady }: { onReady: (el: HTMLElement) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    onReady(map.getContainer());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+  return null;
+}
+
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
@@ -567,6 +580,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [showLegend, setShowLegend] = useState(false);
   const [showMapTypes, setShowMapTypes] = useState(false);
   const [showRoutesOverlays, setShowRoutesOverlays] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const mapContainerRef = useRef<HTMLElement | null>(null);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportingPng, setExportingPng] = useState(false);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
   const [heatWeighted, setHeatWeighted] = useState(false);
 
@@ -596,7 +613,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   // --- incident overlay filters ---
   const [incidents, setIncidents] = useState<IncidentItem[]>(initialIncidents);
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
-  const [filters, setFilters] = useState<{ sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
+  const [filters, setFilters] = useState<{ country?: string; province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
   // Isolating one route OR one shape hides every other overlay and filters
@@ -961,6 +978,77 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  async function exportExcel() {
+    setExportingExcel(true);
+    try {
+      // Fetches the complete matching set at click-time, uncapped, independent
+      // of whatever's currently rendered on the map (which stays capped for
+      // rendering performance — tens of thousands of individual pin markers
+      // would genuinely stall a browser tab).
+      const allMatching = await api.getIncidents({ ...filters, limit: 250000 });
+      const rows = allMatching.map((i) => ({
+        Date: i.occurred_date,
+        Time: i.occurred_time,
+        Country: i.country,
+        Province: i.province,
+        County: i.county,
+        District: i.district,
+        City: i.city,
+        Suburb: i.suburb,
+        "Precise Location": i.precise_location,
+        Latitude: i.latitude,
+        Longitude: i.longitude,
+        Sector: i.sector,
+        Actor: i.actor,
+        Operation: i.operation,
+        Tactic: i.tactic,
+        Severity: i.severity,
+        Details: i.details,
+        Target: i.target,
+        "Interest Group": i.interest_group,
+        "Actual Main Victim": i.actual_main_victim,
+        "Intended Primary Target": i.intended_primary_target,
+        "Civilian Death - Child": i.civilian_death_child,
+        "Civilian Death - Female": i.civilian_death_female,
+        "Civilian Death - Male": i.civilian_death_male,
+        "Civilian Death - Unknown": i.civilian_death_unknown,
+        "Civilian Injury - Female": i.civilian_injury_female,
+        "Civilian Injury - Male": i.civilian_injury_male,
+        "Civilian Injury - Unknown": i.civilian_injury_unknown,
+        "Kidnappings - Ngo": i.kidnappings_ngo,
+      }));
+      const sheet = XLSX.utils.json_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, sheet, "Incidents");
+      XLSX.writeFile(workbook, `incidents_map_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally {
+      setExportingExcel(false);
+    }
+  }
+
+  async function exportPng() {
+    if (!mapContainerRef.current) return;
+    setExportingPng(true);
+    try {
+      // Map tiles are cross-origin images; some tile servers don't send CORS
+      // headers permitting canvas export, so the base tiles may come out blank
+      // depending on the basemap — markers/routes/shapes (drawn locally, not
+      // loaded as images) always capture fine regardless.
+      const canvas = await html2canvas(mapContainerRef.current, { useCORS: true, allowTaint: false, logging: false });
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `incidents_map_${new Date().toISOString().slice(0, 10)}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    } finally {
+      setExportingPng(false);
+    }
+  }
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {(showMapTypes || showRoutesOverlays) && (
@@ -1269,6 +1357,8 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           )}
           {filterOptions && (
             <>
+              <FilterSelect label="Country" value={filters.country} options={filterOptions.country} onChange={(v) => setFilters((f) => ({ ...f, country: v }))} />
+              <FilterSelect label="Province" value={filters.province} options={filterOptions.province} onChange={(v) => setFilters((f) => ({ ...f, province: v }))} />
               <FilterSelect label="Sector" value={filters.sector} options={filterOptions.sector} onChange={(v) => setFilters((f) => ({ ...f, sector: v }))} />
               <FilterSelect label="Actor" value={filters.actor} options={filterOptions.actor} onChange={(v) => setFilters((f) => ({ ...f, actor: v }))} />
               <FilterSelect label="Tactic" value={filters.tactic} options={filterOptions.tactic} onChange={(v) => setFilters((f) => ({ ...f, tactic: v }))} />
@@ -1335,6 +1425,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         <ZoomControl position="bottomright" />
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
+        <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
         {focusedShape && <FitBounds positions={shapeGeometryToPositions(focusedShape.geometry)} />}
 
@@ -1475,6 +1566,46 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           </>
         }
       />
+      <IconToggleButton
+        active={showExport}
+        top={138}
+        title="Export Data"
+        onClick={() => setShowExport((v) => !v)}
+        icon={
+          <>
+            <path d="M12 3v12" />
+            <path d="M7 10l5 5 5-5" />
+            <path d="M4 20h16" />
+          </>
+        }
+      />
+      {showExport && (
+        <div
+          style={{
+            position: "absolute",
+            top: 138,
+            right: 54,
+            zIndex: 1000,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: 12,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+            width: 220,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div className="eyebrow">EXPORT DATA</div>
+          <button onClick={exportExcel} disabled={exportingExcel} style={secondaryChipStyle}>
+            {exportingExcel ? "Exporting…" : "Export as Excel (all matches)"}
+          </button>
+          <button onClick={exportPng} disabled={exportingPng} style={secondaryChipStyle}>
+            {exportingPng ? "Capturing…" : "Export map as PNG"}
+          </button>
+        </div>
+      )}
       {showLegend && <ActorLegend />}
     </div>
   );
