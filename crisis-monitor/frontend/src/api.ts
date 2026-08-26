@@ -231,6 +231,10 @@ export interface DashboardWidget {
   /** Real drag/resize position, in react-grid-layout's 12-column grid units.
    *  Missing until the widget has been placed at least once. */
   layout?: { x: number; y: number; w: number; h: number };
+  /** Locked independently of the dashboard-level lock — hides this widget's
+   *  own edit/remove controls and disables its drag/resize even while other
+   *  widgets on the same dashboard stay editable. */
+  locked?: boolean;
 }
 
 export interface CustomDashboard {
@@ -240,6 +244,9 @@ export interface CustomDashboard {
   widgets: DashboardWidget[];
   is_public: boolean;
   is_auto: boolean;
+  /** Read-only mode for the whole dashboard — disables add/edit/remove/rename
+   *  and all drag/resize, regardless of any individual widget's own lock state. */
+  locked: boolean;
   share_token: string | null;
   created_at: string;
   updated_at: string;
@@ -301,7 +308,6 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export { ApiError };
-
 export const api = {
   health: () => req<{ status: string }>("/api/health"),
 
@@ -407,7 +413,7 @@ export const api = {
   createCustomDashboard: (name: string, widgets: DashboardWidget[]) =>
     req<CustomDashboard>("/api/custom-dashboards", { method: "POST", body: JSON.stringify({ name, widgets }) }),
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
-  updateCustomDashboard: (id: string, data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean }) =>
+  updateCustomDashboard: (id: string, data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean }) =>
     req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
   // Public — no auth token needed, works for anyone with the share link.
