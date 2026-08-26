@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type IncidentItem } from "../api";
+import { api, type IncidentItem, type SavedUpload } from "../api";
 import IncidentManualEntry from "./IncidentManualEntry";
 
 interface Props {
@@ -21,6 +21,8 @@ function totalCasualties(i: IncidentItem): number {
 
 export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
+  const [uploads, setUploads] = useState<SavedUpload[]>([]);
+  const [uploadsDeleting, setUploadsDeleting] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<IncidentItem | null>(null);
@@ -29,10 +31,28 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
 
   async function load() {
     setLoading(true);
-    const rows = await api.getIncidents({ limit });
+    const [rows, uploadRows] = await Promise.all([api.getIncidents({ limit }), api.getIncidentUploads()]);
     setIncidents(rows);
+    setUploads(uploadRows);
     setSelected((s) => new Set([...s].filter((id) => rows.some((r) => r.id === id))));
     setLoading(false);
+  }
+
+  async function deleteUpload(upload: SavedUpload) {
+    if (!window.confirm(`Delete the entire "${upload.label}" upload — all ${upload.row_count.toLocaleString()} incidents from it? This can't be undone.`)) return;
+    setUploadsDeleting((s) => new Set(s).add(upload.id));
+    try {
+      await api.deleteIncidentBatch(upload.id);
+      setUploads((u) => u.filter((x) => x.id !== upload.id));
+      await load();
+      onChanged();
+    } finally {
+      setUploadsDeleting((s) => {
+        const next = new Set(s);
+        next.delete(upload.id);
+        return next;
+      });
+    }
   }
 
   useEffect(() => {
@@ -104,6 +124,31 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
 
   return (
     <div>
+      {uploads.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div className="eyebrow" style={{ marginBottom: 8 }}>UPLOADED FILES ({uploads.length})</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {uploads.map((u) => (
+              <div
+                key={u.id}
+                className="panel"
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px" }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.label}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                    {u.row_count.toLocaleString()} incidents · uploaded {new Date(u.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+                <button onClick={() => deleteUpload(u)} disabled={uploadsDeleting.has(u.id)} style={dangerBtnStyle}>
+                  {uploadsDeleting.has(u.id) ? "Deleting…" : "Delete entire upload"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
           {loading ? "Loading…" : `${incidents.length.toLocaleString()} incidents${incidents.length === limit ? " (showing most recent — increase below to see more)" : ""}`}
