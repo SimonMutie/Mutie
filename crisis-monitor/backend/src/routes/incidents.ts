@@ -48,6 +48,11 @@ const incidentRowSchema = z.object({
 const bulkUploadSchema = z.object({
   rows: z.array(incidentRowSchema).min(1).max(2000),
   batch_label: z.string().optional(),
+  // Client-supplied and reused across every chunk of one upload, so a >500-row
+  // file (sent as several bulk-insert calls) still shares one identity end to
+  // end — without this, each chunk would get its own random batch, and a
+  // large file could never be deleted as a single unit.
+  batch_id: z.string().optional(),
 });
 
 /** Best-effort combine of the spreadsheet's separate Date/Time text into one ISO
@@ -75,7 +80,7 @@ incidentsRouter.post("/bulk", async (c) => {
   }
 
   const ownerId = c.get("userId");
-  const batchId = newId();
+  const batchId = parsed.data.batch_id ?? newId();
   const now = nowIso();
 
   const statements = parsed.data.rows.map((row) => {
@@ -135,6 +140,21 @@ incidentsRouter.post("/bulk", async (c) => {
   const CHUNK = 200;
   for (let i = 0; i < statements.length; i += CHUNK) {
     await batchRun(c.env.DB, statements.slice(i, i + CHUNK));
+  }
+
+  // Track this as an "upload" the user can later see and delete as one unit —
+  // except single-row manual entries, which would otherwise clutter that list
+  // with one entry per incident someone typed in by hand. Upsert so repeated
+  // chunk calls sharing the same batch_id accumulate row_count on one row
+  // instead of creating duplicates (created_at/label stay from the first chunk).
+  if (parsed.data.batch_label !== "Manual entry") {
+    await c.env.DB.prepare(
+      `INSERT INTO incident_uploads (id, owner_id, label, row_count, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET row_count = row_count + excluded.row_count`
+    )
+      .bind(batchId, ownerId, parsed.data.batch_label ?? "Untitled upload", statements.length, now)
+      .run();
   }
 
   return c.json({ inserted: statements.length, batch_id: batchId, batch_label: parsed.data.batch_label ?? null });
@@ -444,14 +464,28 @@ incidentsRouter.patch("/:id", async (c) => {
   return c.json({ ...row, raw_row: JSON.parse(String(row?.raw_row ?? "{}")) });
 });
 
+/** Lists past uploads (real files, not manual single-row entries) so the user
+ *  can see and delete a whole file in one click, regardless of how many rows
+ *  it contained or how many chunk calls it took to insert. */
+incidentsRouter.get("/uploads", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const rows = isAdmin
+    ? await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`)
+    : await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id = ? ORDER BY created_at DESC`, [ownerId]);
+  return c.json(rows);
+});
+
 incidentsRouter.delete("/batch/:batchId", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
   const batchId = c.req.param("batchId");
   if (isAdmin) {
     await c.env.DB.prepare(`DELETE FROM incidents WHERE upload_batch_id = ?`).bind(batchId).run();
+    await c.env.DB.prepare(`DELETE FROM incident_uploads WHERE id = ?`).bind(batchId).run();
   } else {
     await c.env.DB.prepare(`DELETE FROM incidents WHERE upload_batch_id = ? AND owner_id = ?`).bind(batchId, ownerId).run();
+    await c.env.DB.prepare(`DELETE FROM incident_uploads WHERE id = ? AND owner_id = ?`).bind(batchId, ownerId).run();
   }
   return c.json({ ok: true });
 });
