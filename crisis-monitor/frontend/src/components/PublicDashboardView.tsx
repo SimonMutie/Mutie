@@ -1,7 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+import "react-resizable/css/styles.css";
 import { api, type PublicDashboardData } from "../api";
 import DashboardWidgetCard from "./DashboardWidgetCard";
 import Logo from "./Logo";
+
+const ResponsiveGridLayout = WidthProvider(GridLayout);
 
 export default function PublicDashboardView({ token }: { token: string }) {
   const [data, setData] = useState<PublicDashboardData | null>(null);
@@ -68,13 +73,31 @@ export default function PublicDashboardView({ token }: { token: string }) {
         {data.widgets.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13.5 }}>This dashboard has no widgets yet.</div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
-            {data.widgets.map((w) => (
-              <DashboardWidgetCard key={w.id} widget={w} stats={data.stats} incidents={data.incidents} />
-            ))}
-          </div>
+          <PublicWidgetGrid data={data} />
         )}
       </div>
     </div>
+  );
+}
+
+/** Renders widgets at the exact positions/sizes their owner set, via the same
+ *  grid system the editors use — just non-interactive (no drag, no resize). */
+function PublicWidgetGrid({ data }: { data: PublicDashboardData }) {
+  const layout: Layout[] = useMemo(
+    () =>
+      data.widgets
+        .filter((w) => w.layout)
+        .map((w) => ({ i: w.id, x: w.layout!.x, y: w.layout!.y, w: w.layout!.w, h: w.layout!.h })),
+    [data.widgets]
+  );
+
+  return (
+    <ResponsiveGridLayout className="layout" layout={layout} cols={12} rowHeight={26} margin={[16, 16]} isDraggable={false} isResizable={false}>
+      {data.widgets.map((w) => (
+        <div key={w.id}>
+          <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} />
+        </div>
+      ))}
+    </ResponsiveGridLayout>
   );
 }
