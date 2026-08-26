@@ -128,7 +128,13 @@ interface Props {
  *  cell in the editors, a plain CSS grid cell on the public view) rather than
  *  a fixed pixel height, so real drag-resize actually changes the chart size. */
 export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onRename, onUpdate }: Props) {
-  const editable = !!(onRemove || onRename || onUpdate);
+  // "Dashboard editable" = the editor gave us handlers at all (it withholds
+  // them entirely when the whole dashboard is locked). "Widget locked" is a
+  // second, per-widget flag that can be toggled independently — locking one
+  // chart doesn't touch any other, and the dashboard-level lock always wins.
+  const dashboardEditable = !!(onRemove || onRename || onUpdate);
+  const widgetLocked = !!widget.locked;
+  const showFullControls = dashboardEditable && !widgetLocked;
   const color = widget.color || "var(--signal)";
   const series = seriesFor(stats, widget.dataField, widget.topN);
   const [showEditor, setShowEditor] = useState(false);
@@ -181,7 +187,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
     >
       <div style={{ flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          {onRename ? (
+          {showFullControls && onRename ? (
             <input
               value={widget.title}
               onChange={(e) => onRename(e.target.value)}
@@ -189,11 +195,23 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
               style={{ fontSize: 13, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 0 }}
             />
           ) : (
-            <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{widget.title}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}>
+              {widgetLocked && <span title="This widget is locked">🔒</span>}
+              {widget.title}
+            </div>
           )}
-          {editable && (
+          {dashboardEditable && (
             <div style={{ display: "flex", gap: 3, flexShrink: 0 }} onMouseDown={(e) => e.stopPropagation()}>
               {onUpdate && (
+                <button
+                  onClick={() => onUpdate({ locked: !widgetLocked })}
+                  title={widgetLocked ? "Unlock this widget" : "Lock this widget"}
+                  style={widgetLocked ? { ...miniBtnStyle, background: "var(--signal-dim)", borderColor: "var(--signal)", color: "var(--signal)" } : miniBtnStyle}
+                >
+                  {widgetLocked ? "🔒" : "🔓"}
+                </button>
+              )}
+              {showFullControls && onUpdate && (
                 <button
                   ref={gearRef}
                   onClick={() => setShowEditor((v) => !v)}
@@ -203,7 +221,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
                   ⚙
                 </button>
               )}
-              {onRemove && (
+              {showFullControls && onRemove && (
                 <button onClick={onRemove} title="Remove widget" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
                   ×
                 </button>
@@ -267,7 +285,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
 
         {widget.type === "map" && (
           <div style={{ height: "100%", borderRadius: 6, overflow: "hidden" }}>
-            <MapContainer center={[1, 20]} zoom={2.2} style={{ width: "100%", height: "100%" }} scrollWheelZoom={false} dragging={editable} zoomControl={false}>
+            <MapContainer center={[1, 20]} zoom={2.2} style={{ width: "100%", height: "100%" }} scrollWheelZoom={false} dragging={showFullControls} zoomControl={false}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
               {(incidents ?? []).slice(0, 3000).map((i, idx) => (
                 <CircleMarker
