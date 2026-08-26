@@ -40,27 +40,30 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
             }}
           />
         </div>
-        <h1
-          style={{
-            margin: 0,
-            fontFamily: "var(--font-display)",
-            fontSize: 20,
-            fontWeight: 700,
-            letterSpacing: "0.01em",
-          }}
-        >
-          Globa<span style={{ color: "var(--signal)" }}>Lens</span>
-        </h1>
-        <span className="eyebrow">CRISIS MONITORING</span>
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 0 }}>
+          <h1
+            style={{
+              margin: 0,
+              fontFamily: "var(--font-display)",
+              fontSize: 25,
+              fontWeight: 700,
+              letterSpacing: "0.01em",
+              lineHeight: 1.05,
+            }}
+          >
+            Globa<span style={{ color: "var(--signal)" }}>Lens</span>
+          </h1>
+          <span className="eyebrow" style={{ fontSize: 9.5, lineHeight: 1.2 }}>CRISIS MONITORING</span>
+        </div>
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
         <nav style={{ display: "flex", gap: 6 }}>
           <button onClick={() => onNavigate("list")} style={navBtnStyle(view === "list" || view === "dashboard")}>
-            Queries
+            Live Monitoring
           </button>
           <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
-            Incidents
+            Historical Trends
           </button>
           {user.role === "admin" && (
             <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
