@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet-draw";
@@ -348,7 +348,7 @@ function DrawControl({
   useEffect(() => {
     const shapeOptions = { color, fillColor: color, fillOpacity: 0.3 };
     const control = new L.Control.Draw({
-      position: "topright",
+      position: "bottomright",
       draw: {
         polygon: { shapeOptions, showArea: true } as L.DrawOptions.PolygonOptions,
         rectangle: { shapeOptions } as L.DrawOptions.RectangleOptions,
@@ -1325,7 +1325,14 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         </div>
       )}
 
-      <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom>
+      <MapContainer
+        center={initialCenter}
+        zoom={geoIncidents.length ? 6 : 2}
+        style={{ width: "100%", height: "100%" }}
+        scrollWheelZoom
+        zoomControl={false}
+      >
+        <ZoomControl position="bottomright" />
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
