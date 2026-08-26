@@ -65,6 +65,13 @@ export default function IncidentsDashboard() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
+        <button onClick={() => setTab("dashboard")} style={tabBtnStyle(tab === "dashboard")}>
+          Dashboard
+        </button>
+        <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
+          Mapping
+        </button>
+
         <div ref={logMenuRef} style={{ position: "relative" }}>
           <button onClick={() => setLogMenuOpen((v) => !v)} style={tabBtnStyle(isLogTabActive)}>
             Incident Log ▾
@@ -117,13 +124,6 @@ export default function IncidentsDashboard() {
             </div>
           )}
         </div>
-
-        <button onClick={() => setTab("dashboard")} style={tabBtnStyle(tab === "dashboard")}>
-          Dashboard
-        </button>
-        <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
-          Mapping
-        </button>
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
