@@ -1,4 +1,4 @@
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from "recharts";
+import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField } from "../api";
@@ -23,21 +23,24 @@ export function fieldLabel(field: WidgetDataField | undefined): string {
   return field ? FIELD_LABELS[field] : "";
 }
 
-function seriesFor(stats: NormalizedDashboardStats, field: WidgetDataField | undefined): { value: string; count: number }[] {
-  switch (field) {
-    case "by_sector":
-      return stats.by_sector;
-    case "by_actor":
-      return stats.by_actor;
-    case "by_tactic":
-      return stats.by_tactic;
-    case "by_province":
-      return stats.by_province;
-    case "by_country":
-      return stats.by_country;
-    default:
-      return [];
-  }
+function seriesFor(stats: NormalizedDashboardStats, field: WidgetDataField | undefined, topN?: number): { value: string; count: number }[] {
+  const series = (() => {
+    switch (field) {
+      case "by_sector":
+        return stats.by_sector;
+      case "by_actor":
+        return stats.by_actor;
+      case "by_tactic":
+        return stats.by_tactic;
+      case "by_province":
+        return stats.by_province;
+      case "by_country":
+        return stats.by_country;
+      default:
+        return [];
+    }
+  })();
+  return topN && topN > 0 ? series.slice(0, topN) : series;
 }
 
 function statValue(stats: NormalizedDashboardStats, field: WidgetDataField | undefined): number {
@@ -55,8 +58,6 @@ function statValue(stats: NormalizedDashboardStats, field: WidgetDataField | und
   }
 }
 
-const SIZE_HEIGHT: Record<DashboardWidget["size"], number> = { small: 160, medium: 240, large: 340 };
-
 interface Props {
   widget: DashboardWidget;
   stats: NormalizedDashboardStats;
@@ -66,39 +67,51 @@ interface Props {
   onMoveDown?: () => void;
   onRename?: (title: string) => void;
   onEdit?: () => void;
+  /** True while this widget's edit panel is open — used to highlight it so
+   *  it's clear which widget the controls below are editing. */
+  selected?: boolean;
 }
 
 /** Renders one dashboard widget — a stat card, bar/line/pie chart, or a small
  *  incidents map — from the same normalized stats shape whether it's being
- *  edited live in the builder or viewed read-only on a public share link. */
-export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onMoveUp, onMoveDown, onRename, onEdit }: Props) {
+ *  edited live in the builder or viewed read-only on a public share link.
+ *  Fills 100% of whatever size its container gives it (a react-grid-layout
+ *  cell in the editors, a plain CSS grid cell on the public view) rather than
+ *  a fixed pixel height, so real drag-resize actually changes the chart size. */
+export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onMoveUp, onMoveDown, onRename, onEdit, selected }: Props) {
   const editable = !!(onRemove || onMoveUp || onMoveDown || onRename || onEdit);
-  const height = SIZE_HEIGHT[widget.size];
+  const color = widget.color || "var(--signal)";
+  const series = seriesFor(stats, widget.dataField, widget.topN);
 
   return (
     <div
       className="panel"
       style={{
-        padding: "14px 16px",
+        padding: "12px 14px",
         display: "flex",
         flexDirection: "column",
-        gap: 10,
-        gridColumn: widget.size === "large" ? "span 3" : widget.size === "medium" ? "span 2" : "span 1",
+        gap: 8,
+        height: "100%",
+        width: "100%",
+        boxSizing: "border-box",
+        border: selected ? "1.5px solid var(--signal)" : undefined,
+        overflow: "hidden",
       }}
     >
-      <div>
+      <div style={{ flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           {onRename ? (
             <input
               value={widget.title}
               onChange={(e) => onRename(e.target.value)}
+              onMouseDown={(e) => e.stopPropagation()}
               style={{ fontSize: 13, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 0 }}
             />
           ) : (
             <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{widget.title}</div>
           )}
           {editable && (
-            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+            <div style={{ display: "flex", gap: 3, flexShrink: 0 }} onMouseDown={(e) => e.stopPropagation()}>
               {onEdit && (
                 <button onClick={onEdit} title="Edit widget" style={miniBtnStyle}>
                   ⚙
@@ -125,24 +138,27 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         {widget.label && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{widget.label}</div>}
       </div>
 
-      <div style={{ height }}>
+      <div
+        style={{ flex: 1, minHeight: 0, cursor: onEdit ? "pointer" : undefined }}
+        onClick={onEdit}
+        title={onEdit ? "Click to edit this widget" : undefined}
+      >
         {widget.type === "stat" && (
           <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ fontSize: widget.size === "large" ? 48 : widget.size === "medium" ? 36 : 28, fontWeight: 700, color: "var(--signal)" }}>
-              {statValue(stats, widget.dataField).toLocaleString()}
-            </div>
+            <div style={{ fontSize: 32, fontWeight: 700, color }}>{statValue(stats, widget.dataField).toLocaleString()}</div>
             <div className="eyebrow" style={{ marginTop: 6 }}>{fieldLabel(widget.dataField).toUpperCase()}</div>
           </div>
         )}
 
         {widget.type === "bar" && (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={seriesFor(stats, widget.dataField)} layout="vertical" margin={{ left: 8, right: 8 }}>
+            <BarChart data={series} layout="vertical" margin={{ left: 8, right: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
               <YAxis type="category" dataKey="value" width={100} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Bar dataKey="count" fill="var(--signal)" radius={[0, 3, 3, 0]}>
+              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              <Bar dataKey="count" name={fieldLabel(widget.dataField)} fill={color} radius={[0, 3, 3, 0]}>
                 {widget.showDataLabels && <LabelList dataKey="count" position="right" style={{ fill: "var(--text-primary)", fontSize: 11 }} />}
               </Bar>
             </BarChart>
@@ -151,12 +167,13 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
 
         {widget.type === "line" && (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={widget.dataField === "time_series" ? stats.time_series : seriesFor(stats, widget.dataField)} margin={{ left: 8, right: 16 }}>
+            <LineChart data={widget.dataField === "time_series" ? stats.time_series : series} margin={{ left: 8, right: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" />
               <XAxis dataKey={widget.dataField === "time_series" ? "bucket" : "value"} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
               <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Line type="monotone" dataKey="count" stroke="var(--signal)" strokeWidth={2} dot={false} />
+              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              <Line type="monotone" dataKey="count" name={fieldLabel(widget.dataField)} stroke={color} strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -164,20 +181,13 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         {widget.type === "pie" && (
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie
-                data={seriesFor(stats, widget.dataField)}
-                dataKey="count"
-                nameKey="value"
-                cx="50%"
-                cy="50%"
-                outerRadius="80%"
-                label={widget.showDataLabels ? { fontSize: 10 } : false}
-              >
-                {seriesFor(stats, widget.dataField).map((_, idx) => (
-                  <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+              <Pie data={series} dataKey="count" nameKey="value" cx="50%" cy="50%" outerRadius="75%" label={widget.showDataLabels ? { fontSize: 10 } : false}>
+                {series.map((_, idx) => (
+                  <Cell key={idx} fill={widget.color ? adjustOpacity(widget.color, idx) : PIE_COLORS[idx % PIE_COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
+              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
             </PieChart>
           </ResponsiveContainer>
         )}
@@ -187,7 +197,12 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
             <MapContainer center={[1, 20]} zoom={2.2} style={{ width: "100%", height: "100%" }} scrollWheelZoom={false} dragging={editable} zoomControl={false}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
               {(incidents ?? []).slice(0, 3000).map((i, idx) => (
-                <CircleMarker key={idx} center={[i.latitude, i.longitude]} radius={2.5} pathOptions={{ color: "var(--signal)", fillColor: "var(--signal)", fillOpacity: 0.7, weight: 0.5 }} />
+                <CircleMarker
+                  key={idx}
+                  center={[i.latitude, i.longitude]}
+                  radius={2.5}
+                  pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 0.5 }}
+                />
               ))}
             </MapContainer>
           </div>
@@ -195,6 +210,19 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
       </div>
     </div>
   );
+}
+
+/** For pie slices when a single custom color is chosen: cycles through a few
+ *  opacity variants of that one color instead of the default rainbow palette,
+ *  so "pick a color theme" looks intentional on a multi-slice pie rather than
+ *  just recoloring slice #1. */
+function adjustOpacity(hex: string, index: number): string {
+  const opacities = [1, 0.75, 0.55, 0.4, 0.28, 0.2];
+  const opacity = opacities[index % opacities.length];
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }
 
 const miniBtnStyle: React.CSSProperties = {
