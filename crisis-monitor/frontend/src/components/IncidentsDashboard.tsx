@@ -1,22 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from "recharts";
-import { api, type IncidentFilters, type IncidentItem, type IncidentStats } from "../api";
-import IncidentsMap from "./IncidentsMap";
+import { api, type IncidentFilters, type IncidentStats } from "../api";
 import IncidentSearch from "./IncidentSearch";
 import IncidentUpload from "./IncidentUpload";
 import IncidentManualEntry from "./IncidentManualEntry";
 import IncidentManageTable from "./IncidentManageTable";
+import CustomDashboardBuilder from "./CustomDashboardBuilder";
 
 const CHART_COLOR = "#0d9488";
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 
-type Tab = "search" | "manual" | "overview" | "map" | "upload" | "manage";
+type Tab = "search" | "manual" | "dashboard" | "upload" | "manage";
+type DashboardMode = "auto" | "bespoke";
 
 export default function IncidentsDashboard() {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [dashboardMode, setDashboardMode] = useState<DashboardMode>("auto");
   const [stats, setStats] = useState<IncidentStats | null>(null);
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
-  const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [filters, setFilters] = useState<{ country?: string; province?: string; sector?: string; actor?: string; severity?: string }>({});
   const [loading, setLoading] = useState(true);
   const [manageRefreshKey, setManageRefreshKey] = useState(0);
@@ -38,14 +39,9 @@ export default function IncidentsDashboard() {
 
   async function loadAll() {
     setLoading(true);
-    const [statsRes, filtersRes, incidentsRes] = await Promise.all([
-      api.getIncidentStats(),
-      api.getIncidentFilters(),
-      api.getIncidents(filters),
-    ]);
+    const [statsRes, filtersRes] = await Promise.all([api.getIncidentStats(), api.getIncidentFilters()]);
     setStats(statsRes);
     setFilterOptions(filtersRes);
-    setIncidents(incidentsRes);
     setLoading(false);
   }
 
@@ -68,8 +64,6 @@ export default function IncidentsDashboard() {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
-        <div style={{ fontSize: 15, fontWeight: 700, marginRight: 12 }}>Incidents</div>
-
         <div ref={logMenuRef} style={{ position: "relative" }}>
           <button onClick={() => setLogMenuOpen((v) => !v)} style={tabBtnStyle(isLogTabActive)}>
             Incident Log ▾
@@ -123,11 +117,8 @@ export default function IncidentsDashboard() {
           )}
         </div>
 
-        <button onClick={() => setTab("overview")} style={tabBtnStyle(tab === "overview")}>
-          Overview
-        </button>
-        <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
-          Map
+        <button onClick={() => setTab("dashboard")} style={tabBtnStyle(tab === "dashboard")}>
+          Dashboard
         </button>
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
@@ -169,13 +160,20 @@ export default function IncidentsDashboard() {
         </div>
       )}
 
-      {tab === "map" && (
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <IncidentsMap incidents={incidents} />
-        </div>
-      )}
+      {tab === "dashboard" && (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ display: "flex", gap: 6, padding: "10px 24px 0" }}>
+            <button onClick={() => setDashboardMode("auto")} style={subTabBtnStyle(dashboardMode === "auto")}>
+              Auto Dashboard
+            </button>
+            <button onClick={() => setDashboardMode("bespoke")} style={subTabBtnStyle(dashboardMode === "bespoke")}>
+              Create Bespoke
+            </button>
+          </div>
 
-      {tab === "overview" && (
+          {dashboardMode === "bespoke" && <CustomDashboardBuilder />}
+
+          {dashboardMode === "auto" && (
         <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
           {filterOptions && (
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -292,6 +290,8 @@ export default function IncidentsDashboard() {
             </>
           ) : null}
         </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -351,6 +351,22 @@ function FilterSelect({
       ))}
     </select>
   );
+}
+
+function subTabBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    fontSize: 12,
+    padding: "6px 12px",
+    background: active ? "var(--panel)" : "transparent",
+    border: `1px solid ${active ? "var(--border)" : "transparent"}`,
+    borderBottom: active ? "1px solid var(--panel)" : "1px solid transparent",
+    borderRadius: "6px 6px 0 0",
+    color: active ? "var(--text-primary)" : "var(--text-muted)",
+    cursor: "pointer",
+    fontWeight: active ? 600 : 400,
+    position: "relative",
+    top: 1,
+  };
 }
 
 function tabBtnStyle(active: boolean): React.CSSProperties {
