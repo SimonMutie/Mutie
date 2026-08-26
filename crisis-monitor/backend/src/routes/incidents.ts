@@ -160,7 +160,7 @@ incidentsRouter.post("/bulk", async (c) => {
   return c.json({ inserted: statements.length, batch_id: batchId, batch_label: parsed.data.batch_label ?? null });
 });
 
-const MAX_LIST_LIMIT = 5000;
+const MAX_LIST_LIMIT = 250000; // effectively uncapped for any realistic dataset size here — was 5000, which silently truncated real exports
 
 incidentsRouter.get("/", async (c) => {
   const isAdmin = c.get("role") === "admin";
