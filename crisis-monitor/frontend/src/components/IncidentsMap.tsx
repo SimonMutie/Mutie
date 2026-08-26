@@ -565,6 +565,8 @@ function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCol
 export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
   const [showLegend, setShowLegend] = useState(false);
+  const [showMapTypes, setShowMapTypes] = useState(false);
+  const [showRoutesOverlays, setShowRoutesOverlays] = useState(false);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
   const [heatWeighted, setHeatWeighted] = useState(false);
 
@@ -961,55 +963,62 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          zIndex: 1000,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-          background: "var(--panel)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          padding: 12,
-          boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
-          width: 300,
-          maxHeight: "calc(100% - 24px)",
-          overflowY: "auto",
-        }}
-      >
-        {/* basemap */}
-        <div style={{ display: "flex", gap: 4 }}>
-          {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
-            <button key={k} onClick={() => setBasemap(k)} style={chipStyle(basemap === k)}>
-              {BASEMAPS[k].label}
-            </button>
-          ))}
-        </div>
+      {(showMapTypes || showRoutesOverlays) && (
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            zIndex: 1000,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: 12,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+            width: 300,
+            maxHeight: "calc(100% - 24px)",
+            overflowY: "auto",
+          }}
+        >
+        {showMapTypes && (
+          <>
+            {/* basemap */}
+            <div style={{ display: "flex", gap: 4 }}>
+              {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
+                <button key={k} onClick={() => setBasemap(k)} style={chipStyle(basemap === k)}>
+                  {BASEMAPS[k].label}
+                </button>
+              ))}
+            </div>
 
-        {/* incident view mode */}
-        <div>
-          <div className="eyebrow" style={{ marginBottom: 6 }}>VIEW</div>
-          <div style={{ display: "flex", gap: 4 }}>
-            <button onClick={() => setViewMode("markers")} style={chipStyle(viewMode === "markers")}>
-              Incidents
-            </button>
-            <button onClick={() => setViewMode("heatmap")} style={chipStyle(viewMode === "heatmap")}>
-              Heatmap
-            </button>
-          </div>
-          {viewMode === "heatmap" && (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-              <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
-              Weight by casualties, not just count
-            </label>
-          )}
-        </div>
+            {/* incident view mode */}
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 6 }}>VIEW</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => setViewMode("markers")} style={chipStyle(viewMode === "markers")}>
+                  Incidents
+                </button>
+                <button onClick={() => setViewMode("heatmap")} style={chipStyle(viewMode === "heatmap")}>
+                  Heatmap
+                </button>
+              </div>
+              {viewMode === "heatmap" && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                  <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
+                  Weight by casualties, not just count
+                </label>
+              )}
+            </div>
+          </>
+        )}
 
-        <div style={{ height: 1, background: "var(--border-soft)" }} />
+        {showMapTypes && showRoutesOverlays && <div style={{ height: 1, background: "var(--border-soft)" }} />}
 
+        {showRoutesOverlays && (
+          <>
         {/* route builder */}
         <details>
           <summary className="eyebrow" style={{ marginBottom: 6, cursor: "pointer" }}>ROUTE SIMULATION</summary>
@@ -1311,7 +1320,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           )}
         </div>
         </details>
-      </div>
+          </>
+        )}
+        </div>
+      )}
 
       <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom>
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
@@ -1410,37 +1422,52 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         )}
       </MapContainer>
 
-      {/* legend toggle — always visible on the right edge; the legend itself only
-          shows when the user asks for it, rather than permanently taking up map space */}
-      <button
+      {/* right-edge icon toggles — each panel/overlay only shows when asked for,
+          rather than permanently taking up map space */}
+      <IconToggleButton
+        active={showMapTypes}
+        top={12}
+        title="Map Types"
+        onClick={() => setShowMapTypes((v) => !v)}
+        icon={
+          <>
+            <polygon points="12,3 21,8 12,13 3,8" />
+            <polyline points="3,13 12,18 21,13" />
+          </>
+        }
+      />
+      <IconToggleButton
+        active={showRoutesOverlays}
+        top={54}
+        title="Routes & Overlays"
+        onClick={() => setShowRoutesOverlays((v) => !v)}
+        icon={
+          <>
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <circle cx="9" cy="7" r="2" fill="var(--text-primary)" stroke="none" />
+            <line x1="4" y1="14" x2="20" y2="14" />
+            <circle cx="16" cy="14" r="2" fill="var(--text-primary)" stroke="none" />
+            <line x1="4" y1="21" x2="20" y2="21" />
+            <circle cx="12" cy="21" r="2" fill="var(--text-primary)" stroke="none" />
+          </>
+        }
+      />
+      <IconToggleButton
+        active={showLegend}
+        top={96}
+        title="Legend"
         onClick={() => setShowLegend((v) => !v)}
-        title={showLegend ? "Hide legend" : "Show legend"}
-        style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          zIndex: 1000,
-          width: 34,
-          height: 34,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: showLegend ? "var(--signal-dim)" : "var(--panel)",
-          border: `1px solid ${showLegend ? "var(--signal)" : "var(--border)"}`,
-          borderRadius: 8,
-          boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
-          cursor: "pointer",
-        }}
-      >
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="8" y1="6" x2="21" y2="6" />
-          <line x1="8" y1="12" x2="21" y2="12" />
-          <line x1="8" y1="18" x2="21" y2="18" />
-          <circle cx="3.5" cy="6" r="1.6" fill="var(--text-primary)" stroke="none" />
-          <circle cx="3.5" cy="12" r="1.6" fill="var(--text-primary)" stroke="none" />
-          <circle cx="3.5" cy="18" r="1.6" fill="var(--text-primary)" stroke="none" />
-        </svg>
-      </button>
+        icon={
+          <>
+            <line x1="8" y1="6" x2="21" y2="6" />
+            <line x1="8" y1="12" x2="21" y2="12" />
+            <line x1="8" y1="18" x2="21" y2="18" />
+            <circle cx="3.5" cy="6" r="1.6" fill="var(--text-primary)" stroke="none" />
+            <circle cx="3.5" cy="12" r="1.6" fill="var(--text-primary)" stroke="none" />
+            <circle cx="3.5" cy="18" r="1.6" fill="var(--text-primary)" stroke="none" />
+          </>
+        }
+      />
       {showLegend && <ActorLegend />}
     </div>
   );
@@ -1449,6 +1476,50 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
 /** Bottom-left floating key for the shaped/colored incident icons — plain
  *  positioned HTML, deliberately NOT a MapContainer child (map layer
  *  components and arbitrary UI don't mix well as Leaflet-pane siblings). */
+/** A single named icon button on the map's right edge that toggles a panel's
+ *  visibility — stays highlighted while its panel is open so it doubles as a
+ *  status indicator, not just a trigger. */
+function IconToggleButton({
+  active,
+  top,
+  title,
+  onClick,
+  icon,
+}: {
+  active: boolean;
+  top: number;
+  title: string;
+  onClick: () => void;
+  icon: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={active ? `Hide ${title}` : `Show ${title}`}
+      style={{
+        position: "absolute",
+        top,
+        right: 12,
+        zIndex: 1000,
+        width: 34,
+        height: 34,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: active ? "var(--signal-dim)" : "var(--panel)",
+        border: `1px solid ${active ? "var(--signal)" : "var(--border)"}`,
+        borderRadius: 8,
+        boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+        cursor: "pointer",
+      }}
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        {icon}
+      </svg>
+    </button>
+  );
+}
+
 function ActorLegend() {
   return (
     <div
