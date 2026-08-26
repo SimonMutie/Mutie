@@ -28,6 +28,7 @@ const widgetSchema = z.object({
   showLegend: z.boolean().optional(),
   topN: z.number().int().positive().optional(),
   layout: layoutSchema.optional(),
+  locked: z.boolean().optional(),
 });
 
 const createSchema = z.object({
@@ -36,7 +37,7 @@ const createSchema = z.object({
 });
 
 function rowToDashboard(row: Record<string, unknown>) {
-  return { ...row, widgets: JSON.parse(String(row.widgets ?? "[]")), is_public: !!row.is_public, is_auto: !!row.is_auto };
+  return { ...row, widgets: JSON.parse(String(row.widgets ?? "[]")), is_public: !!row.is_public, is_auto: !!row.is_auto, locked: !!row.locked };
 }
 
 customDashboardsRouter.get("/", async (c) => {
@@ -116,6 +117,7 @@ const updateSchema = z.object({
   name: z.string().min(1).optional(),
   widgets: z.array(widgetSchema).optional(),
   is_public: z.boolean().optional(),
+  locked: z.boolean().optional(),
 });
 
 customDashboardsRouter.patch("/:id", async (c) => {
@@ -153,6 +155,10 @@ customDashboardsRouter.patch("/:id", async (c) => {
       updates.push("share_token = ?");
       params.push(newId());
     }
+  }
+  if (parsed.data.locked !== undefined) {
+    updates.push("locked = ?");
+    params.push(parsed.data.locked ? 1 : 0);
   }
   updates.push("updated_at = ?");
   params.push(nowIso());
