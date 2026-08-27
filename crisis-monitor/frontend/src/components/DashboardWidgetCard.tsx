@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart,
@@ -28,8 +28,13 @@ import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import { ComposableMap, Geographies, Geography } from "react-simple-maps";
 import worldTopology from "world-atlas/countries-110m.json?url";
+
+// Dynamically imported, not statically — this is the whole point: Three.js
+// and react-globe.gl are heavy, and every dashboard that never uses a globe
+// widget should never pay for that weight in its initial page load.
+const GlobeWidget = lazy(() => import("./GlobeWidget"));
 import "leaflet/dist/leaflet.css";
-import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField, WidgetType } from "../api";
+import type { CrosstabRow, Dataset, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
 
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 const PIE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777", "#ea580c", "#4d7c0f"];
@@ -53,7 +58,23 @@ export const PRESET_THEMES: { name: string; colors: string[] }[] = [
 
 export const COLOR_SWATCHES = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777"];
 
-export const CATEGORY_FIELDS: WidgetDataField[] = ["by_sector", "by_actor", "by_tactic", "by_province", "by_country"];
+export const CATEGORY_FIELDS: WidgetDataField[] = [
+  "by_sector",
+  "by_actor",
+  "by_tactic",
+  "by_province",
+  "by_country",
+  "by_severity",
+  "by_county",
+  "by_district",
+  "by_city",
+  "by_suburb",
+  "by_operation",
+  "by_target",
+  "by_interest_group",
+  "by_actual_main_victim",
+  "by_intended_primary_target",
+];
 export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   stat: ["total", "deaths", "injuries", "kidnappings_ngo"],
   bar: CATEGORY_FIELDS,
@@ -63,9 +84,10 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   radar: CATEGORY_FIELDS,
   funnel: CATEGORY_FIELDS,
   // Choropleth needs a category whose values are real place names it can
-  // shade on a world map — only "by_country" qualifies (sector/actor/tactic
-  // names aren't places).
-  choropleth: ["by_country"],
+  // shade on a map — only country/province have matching boundary data;
+  // county/district/etc. would need even more granular geometry this app
+  // doesn't have.
+  choropleth: ["by_country", "by_province"],
   // Calendar heatmap always uses stats.daily directly, like map does with
   // its incident list — no user-selectable breakdown field applies.
   calendar: [],
@@ -74,6 +96,7 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   sankey: [],
   network: [],
   bubble: CATEGORY_FIELDS,
+  globe: ["by_country"],
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
@@ -83,12 +106,48 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "radar", label: "Radar chart" },
   { value: "funnel", label: "Funnel chart" },
   { value: "choropleth", label: "Choropleth map" },
+  { value: "globe", label: "3D globe" },
   { value: "calendar", label: "Calendar heatmap" },
   { value: "sankey", label: "Sankey (actor → tactic)" },
   { value: "network", label: "Network (actor–tactic links)" },
   { value: "bubble", label: "Packed-circle bubbles" },
   { value: "map", label: "Incident map" },
 ];
+
+export const PIVOTABLE_FIELD_OPTIONS: PivotableField[] = [
+  "sector",
+  "actor",
+  "tactic",
+  "province",
+  "country",
+  "severity",
+  "county",
+  "district",
+  "city",
+  "suburb",
+  "operation",
+  "target",
+  "interest_group",
+  "actual_main_victim",
+  "intended_primary_target",
+];
+export const PIVOT_FIELD_LABELS: Record<PivotableField, string> = {
+  sector: "Sector",
+  actor: "Actor",
+  tactic: "Tactic",
+  province: "Province",
+  country: "Country",
+  severity: "Severity",
+  county: "County",
+  district: "District",
+  city: "City",
+  suburb: "Suburb",
+  operation: "Operation",
+  target: "Target",
+  interest_group: "Interest group",
+  actual_main_victim: "Actual main victim",
+  intended_primary_target: "Intended primary target",
+};
 
 /** Resolves a widget's effective per-category color list: an explicit custom
  *  palette wins; otherwise fall back to opacity variants of a single chosen
@@ -111,19 +170,40 @@ const FIELD_LABELS: Record<WidgetDataField, string> = {
   by_tactic: "By tactic",
   by_province: "By province",
   by_country: "By country",
+  by_severity: "By severity",
   time_series: "Over time",
   deaths: "Civilian deaths",
   injuries: "Civilian injuries",
   kidnappings_ngo: "NGO kidnappings",
+  by_county: "By county",
+  by_district: "By district",
+  by_city: "By city",
+  by_suburb: "By suburb",
+  by_operation: "By operation",
+  by_target: "By target",
+  by_interest_group: "By interest group",
+  by_actual_main_victim: "By actual main victim",
+  by_intended_primary_target: "By intended primary target",
 };
 
-export function fieldLabel(field: WidgetDataField | undefined): string {
-  return field ? FIELD_LABELS[field] : "";
+export function fieldLabel(field: WidgetDataField | string | undefined): string {
+  if (!field) return "";
+  return (FIELD_LABELS as Record<string, string>)[field] ?? field;
 }
 
-function seriesFor(stats: NormalizedDashboardStats, field: WidgetDataField | undefined, topN?: number): { value: string; count: number }[] {
+function seriesFor(
+  widget: DashboardWidget,
+  stats: NormalizedDashboardStats,
+  breakdowns?: Record<string, { value: string; count: number }[]>
+): { value: string; count: number }[] {
   const series = (() => {
-    switch (field) {
+    if (widget.datasetId) {
+      // Reuses the exact same key format breakdownKeyFor builds for
+      // fetching, so lookup and fetch can never drift apart.
+      const key = breakdownKeyFor(widget);
+      return (key && breakdowns?.[key]) || [];
+    }
+    switch (widget.dataField) {
       case "by_sector":
         return stats.by_sector;
       case "by_actor":
@@ -134,15 +214,107 @@ function seriesFor(stats: NormalizedDashboardStats, field: WidgetDataField | und
         return stats.by_province;
       case "by_country":
         return stats.by_country;
-      default:
-        return [];
+      case "by_severity":
+        return stats.by_severity;
+      default: {
+        // Every other by_X field is fetched on demand rather than
+        // precomputed — see breakdownKeyFor / DATA_FIELD_TO_COLUMN.
+        const column = widget.dataField ? DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField] : undefined;
+        return (column && breakdowns?.[column]) || [];
+      }
     }
   })();
-  return topN && topN > 0 ? series.slice(0, topN) : series;
+  return widget.topN && widget.topN > 0 ? series.slice(0, widget.topN) : series;
 }
 
-function statValue(stats: NormalizedDashboardStats, field: WidgetDataField | undefined): number {
-  switch (field) {
+/** Mirrors the backend's DATA_FIELD_TO_COLUMN exactly — widgets store their
+ *  primary field as "by_province" etc., crosstabs are keyed by the bare
+ *  column name to match the /crosstab endpoint's allowlist. */
+export const DATA_FIELD_TO_COLUMN: Partial<Record<WidgetDataField, PivotableField>> = {
+  by_sector: "sector",
+  by_actor: "actor",
+  by_tactic: "tactic",
+  by_province: "province",
+  by_country: "country",
+  by_severity: "severity",
+  by_county: "county",
+  by_district: "district",
+  by_city: "city",
+  by_suburb: "suburb",
+  by_operation: "operation",
+  by_target: "target",
+  by_interest_group: "interest_group",
+  by_actual_main_victim: "actual_main_victim",
+  by_intended_primary_target: "intended_primary_target",
+};
+
+/** The five originally-classic fields (plus severity) live precomputed on
+ *  `stats`; everything else needs an on-demand /breakdown fetch, same
+ *  mechanism as crosstabKeyFor but for a single dimension instead of two. */
+const PRECOMPUTED_FIELDS: string[] = ["by_sector", "by_actor", "by_tactic", "by_province", "by_country", "by_severity"];
+
+/** Key to look up this widget's single-field breakdown, or null if it
+ *  doesn't need one (a precomputed incidents field, or no primary field at
+ *  all). Dataset-sourced widgets get a namespaced "ds:<id>:<column>" key so
+ *  they can never collide with an incidents column of the same name. */
+export function breakdownKeyFor(widget: DashboardWidget): string | null {
+  if (!widget.dataField) return null;
+  if (widget.datasetId) return `ds:${widget.datasetId}:${widget.dataField}`;
+  if (PRECOMPUTED_FIELDS.includes(widget.dataField)) return null;
+  return DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField] ?? null;
+}
+
+export function crosstabKeyFor(widget: DashboardWidget): string | null {
+  if (!widget.dataField || !widget.secondaryField) return null;
+  if (widget.datasetId) return `ds:${widget.datasetId}:${widget.dataField}|${widget.secondaryField}`;
+  const primary = DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField];
+  if (!primary) return null;
+  return `${primary}|${widget.secondaryField}`;
+}
+
+/** Reshapes flat (primary, secondary, count) crosstab rows into the
+ *  wide/pivoted format recharts needs for stacked bars or multi-series
+ *  lines: one row per primary category, one column per secondary category.
+ *  Caps the number of secondary series (not the primary categories — topN
+ *  already handles that) since a stacked chart with dozens of tiny slices
+ *  per bar stops being readable well before dozens of bars would. */
+function pivotCrosstab(rows: CrosstabRow[], topNPrimary: number | undefined, maxSeries = 8): { data: Record<string, string | number>[]; seriesKeys: string[] } {
+  const secondaryTotals = new Map<string, number>();
+  for (const r of rows) secondaryTotals.set(r.secondary_value, (secondaryTotals.get(r.secondary_value) ?? 0) + r.count);
+  const seriesKeys = Array.from(secondaryTotals.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, maxSeries)
+    .map(([k]) => k);
+
+  const primaryTotals = new Map<string, number>();
+  for (const r of rows) primaryTotals.set(r.primary_value, (primaryTotals.get(r.primary_value) ?? 0) + r.count);
+  let primaryOrder = Array.from(primaryTotals.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => k);
+  if (topNPrimary && topNPrimary > 0) primaryOrder = primaryOrder.slice(0, topNPrimary);
+
+  const data = primaryOrder.map((p) => {
+    const row: Record<string, string | number> = { value: p };
+    for (const s of seriesKeys) row[s] = 0;
+    return row;
+  });
+  const rowByPrimary = new Map(data.map((r) => [r.value as string, r]));
+  for (const r of rows) {
+    if (!seriesKeys.includes(r.secondary_value)) continue;
+    const row = rowByPrimary.get(r.primary_value);
+    if (row) row[r.secondary_value] = r.count;
+  }
+  return { data, seriesKeys };
+}
+
+function statValue(widget: DashboardWidget, stats: NormalizedDashboardStats, datasetSummaries?: Record<string, DatasetSummary>): number {
+  if (widget.datasetId) {
+    const summary = datasetSummaries?.[widget.datasetId];
+    if (!summary) return 0;
+    // No field picked = row count; a numeric column picked = its sum.
+    return widget.dataField ? (summary.sums[widget.dataField] ?? 0) : summary.total;
+  }
+  switch (widget.dataField) {
     case "total":
       return stats.total;
     case "deaths":
@@ -160,6 +332,19 @@ interface Props {
   widget: DashboardWidget;
   stats: NormalizedDashboardStats;
   incidents?: { latitude: number; longitude: number; severity?: string | null }[];
+  /** Keyed "primaryColumn|secondaryColumn" — only present for widgets that
+   *  actually have a secondaryField set; see crosstabKeyFor(). */
+  crosstabs?: Record<string, CrosstabRow[]>;
+  /** Keyed by bare column name for incidents fields, or "ds:<id>:<column>"
+   *  for dataset-sourced fields — see breakdownKeyFor(). */
+  breakdowns?: Record<string, { value: string; count: number }[]>;
+  /** Keyed by dataset id — row count + numeric column sums, for stat cards
+   *  sourced from a dataset instead of incidents. */
+  datasetSummaries?: Record<string, DatasetSummary>;
+  /** The user's uploaded datasets, for the "Data source" selector in the
+   *  edit popover — only needed where editing happens, so undefined/empty
+   *  on the read-only public view is fine. */
+  datasets?: Dataset[];
   onRemove?: () => void;
   onRename?: (title: string) => void;
   /** Applies a partial patch to just this widget — editing lives entirely
@@ -174,7 +359,7 @@ interface Props {
  *  Fills 100% of whatever size its container gives it (a react-grid-layout
  *  cell in the editors, a plain CSS grid cell on the public view) rather than
  *  a fixed pixel height, so real drag-resize actually changes the chart size. */
-export default function DashboardWidgetCard({ widget, stats, incidents, onRemove, onRename, onUpdate }: Props) {
+export default function DashboardWidgetCard({ widget, stats, incidents, crosstabs, breakdowns, datasetSummaries, datasets, onRemove, onRename, onUpdate }: Props) {
   // "Dashboard editable" = the editor gave us handlers at all (it withholds
   // them entirely when the whole dashboard is locked). "Widget locked" is a
   // second, per-widget flag that can be toggled independently — locking one
@@ -183,7 +368,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
   const widgetLocked = !!widget.locked;
   const showFullControls = dashboardEditable && !widgetLocked;
   const color = widget.color || "var(--signal)";
-  const series = seriesFor(stats, widget.dataField, widget.topN);
+  const series = seriesFor(widget, stats, breakdowns);
+
+  // A pivoted, two-variable breakdown only kicks in when the widget actually
+  // has a secondaryField set and the matching crosstab data has arrived —
+  // otherwise every bar/line chart renders exactly as it always has.
+  const crosstabKey = crosstabKeyFor(widget);
+  const crosstabRows = crosstabKey ? crosstabs?.[crosstabKey] : undefined;
+  const pivoted = crosstabRows ? pivotCrosstab(crosstabRows, widget.topN) : null;
+
   const [showEditor, setShowEditor] = useState(false);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -282,7 +475,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
       <div style={{ flex: 1, minHeight: 0 }}>
         {widget.type === "stat" && (
           <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ fontSize: 32, fontWeight: 700, color }}>{statValue(stats, widget.dataField).toLocaleString()}</div>
+            <div style={{ fontSize: 32, fontWeight: 700, color }}>{statValue(widget, stats, datasetSummaries).toLocaleString()}</div>
             <div className="eyebrow" style={{ marginTop: 6 }}>{fieldLabel(widget.dataField).toUpperCase()}</div>
             {widget.showSparkline && stats.time_series.length > 1 && (
               <div style={{ width: "80%", height: 32, marginTop: 8 }}>
@@ -296,7 +489,22 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           </div>
         )}
 
-        {widget.type === "bar" && (
+        {widget.type === "bar" && pivoted && (
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={pivoted.data} layout="vertical" margin={{ left: 8, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" horizontal={false} />
+              <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+              <YAxis type="category" dataKey="value" width={100} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              {widget.showLegend !== false && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {pivoted.seriesKeys.map((key, idx) => (
+                <Bar key={key} dataKey={key} stackId="pivot" fill={paletteFor(widget, pivoted.seriesKeys.length)[idx]} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+
+        {widget.type === "bar" && !pivoted && (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={series} layout="vertical" margin={{ left: 8, right: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" horizontal={false} />
@@ -312,7 +520,22 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           </ResponsiveContainer>
         )}
 
-        {widget.type === "line" && (
+        {widget.type === "line" && pivoted && (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={pivoted.data} margin={{ left: 8, right: 16 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" />
+              <XAxis dataKey="value" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+              <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} allowDecimals={false} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              {widget.showLegend !== false && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {pivoted.seriesKeys.map((key, idx) => (
+                <Line key={key} type="monotone" dataKey={key} stroke={paletteFor(widget, pivoted.seriesKeys.length)[idx]} strokeWidth={2} dot={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+
+        {widget.type === "line" && !pivoted && (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={widget.dataField === "time_series" ? stats.time_series : series} margin={{ left: 8, right: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" />
@@ -366,7 +589,21 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           </ResponsiveContainer>
         )}
 
-        {widget.type === "choropleth" && <ChoroplethMap series={series} baseColor={widget.color || "#0d9488"} />}
+        {widget.type === "choropleth" && (
+          <ChoroplethMap series={series} baseColor={widget.color || "#0d9488"} field={widget.dataField === "by_province" ? "by_province" : "by_country"} />
+        )}
+
+        {widget.type === "globe" && (
+          <Suspense
+            fallback={
+              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--text-faint)" }}>
+                Loading 3D globe…
+              </div>
+            }
+          >
+            <GlobeWidget series={series} baseColor={widget.color || "#0d9488"} />
+          </Suspense>
+        )}
 
         {widget.type === "calendar" && <CalendarHeatmap daily={stats.daily} baseColor={widget.color || "#0d9488"} />}
 
@@ -427,7 +664,9 @@ function WidgetEditPopover({
   position: { top: number; left: number };
 }) {
   const [type, setType] = useState<WidgetType>(widget.type);
-  const [field, setField] = useState<WidgetDataField>(widget.dataField ?? (FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
+  const [datasetId, setDatasetId] = useState<string | undefined>(widget.datasetId);
+  const [field, setField] = useState<string>(widget.dataField ?? (FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
+  const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [label, setLabel] = useState(widget.label ?? "");
   const [showDataLabels, setShowDataLabels] = useState(!!widget.showDataLabels);
   const [color, setColor] = useState<string | undefined>(widget.color);
@@ -436,17 +675,21 @@ function WidgetEditPopover({
   const [topN, setTopN] = useState<number | undefined>(widget.topN);
   const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
 
+  const supportsBreakdown = type === "bar" || type === "line";
+
   function handleTypeChange(newType: WidgetType) {
     setType(newType);
-    if (FIELDS_FOR_TYPE[newType].length > 0 && !FIELDS_FOR_TYPE[newType].includes(field)) {
+    if (FIELDS_FOR_TYPE[newType].length > 0 && !(FIELDS_FOR_TYPE[newType] as string[]).includes(field)) {
       setField(FIELDS_FOR_TYPE[newType][0]);
     }
+    if (newType !== "bar" && newType !== "line") setSecondaryField(undefined);
   }
 
   function handleSave() {
     onSave({
       type,
       dataField: type === "map" ? undefined : field,
+      secondaryField: supportsBreakdown ? secondaryField : undefined,
       label: label || undefined,
       showDataLabels,
       color,
@@ -502,6 +745,29 @@ function WidgetEditPopover({
               </option>
             ))}
           </select>
+        </div>
+      )}
+
+      {supportsBreakdown && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>BREAK DOWN BY (OPTIONAL — 2ND VARIABLE)</div>
+          <select
+            value={secondaryField ?? ""}
+            onChange={(e) => setSecondaryField(e.target.value ? (e.target.value as PivotableField) : undefined)}
+            style={selectStyle}
+          >
+            <option value="">None — single variable</option>
+            {PIVOTABLE_FIELD_OPTIONS.filter((f) => f !== DATA_FIELD_TO_COLUMN[field as WidgetDataField]).map((f) => (
+              <option key={f} value={f}>
+                {PIVOT_FIELD_LABELS[f]}
+              </option>
+            ))}
+          </select>
+          {secondaryField && (
+            <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4 }}>
+              {type === "bar" ? "Stacked bars" : "Multiple lines"}, one per {PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
+            </div>
+          )}
         </div>
       )}
 
@@ -658,7 +924,7 @@ function WidgetEditPopover({
 
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
         <button onClick={handleSave} style={primaryBtnStyle}>
-          Save changes
+          Apply
         </button>
         <button onClick={onClose} style={secondaryBtnStyle}>
           Cancel
@@ -679,19 +945,37 @@ function WidgetEditPopover({
  *  a country in the data that doesn't match the topology's naming just stays
  *  unshaded rather than guessing, since a wrong match would misrepresent
  *  where incidents actually happened. */
-function ChoroplethMap({ series, baseColor }: { series: { value: string; count: number }[]; baseColor: string }) {
+// Global province/state (admin-1) boundaries, simplified from Natural Earth's
+// ~4,600-region worldwide dataset (44MB raw) down to ~1.6MB — same idea as
+// the country-level topology below, just one administrative level deeper.
+// Served as a static asset (not bundled into JS) so it only downloads when a
+// province-level choropleth is actually on screen.
+const PROVINCE_TOPOLOGY_URL = "/geo/admin1-provinces.json";
+
+/** Shades either whole countries or their individual provinces/states,
+ *  depending on which breakdown field the widget is showing — reuses the
+ *  exact same world topology and map library already proven working in
+ *  WorldMap.tsx, just driven by dashboard stats instead of live events.
+ *  Name matching is case/whitespace-insensitive but otherwise exact; a place
+ *  in the data that doesn't match the topology's naming just stays unshaded
+ *  rather than guessing, since a wrong match would misrepresent where
+ *  incidents actually happened. Known limitation: province names are matched
+ *  globally, not scoped to a country, so a name that happens to repeat across
+ *  countries (uncommon, but real) could match the wrong one. */
+function ChoroplethMap({ series, baseColor, field }: { series: { value: string; count: number }[]; baseColor: string; field: "by_country" | "by_province" }) {
   const maxCount = Math.max(1, ...series.map((s) => s.count));
-  const countByCountry = new Map<string, number>();
-  for (const s of series) countByCountry.set(s.value.trim().toLowerCase(), s.count);
+  const countByName = new Map<string, number>();
+  for (const s of series) countByName.set(s.value.trim().toLowerCase(), s.count);
+  const topologyUrl = field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
 
   return (
     <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)" }}>
       <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
-        <Geographies geography={worldTopology}>
+        <Geographies geography={topologyUrl}>
           {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) =>
             geographies.map((geo) => {
               const name = geo.properties?.name;
-              const count = name ? countByCountry.get(name.trim().toLowerCase()) : undefined;
+              const count = name ? countByName.get(name.trim().toLowerCase()) : undefined;
               const intensity = count ? Math.max(0.18, count / maxCount) : 0;
               return (
                 <Geography
@@ -699,7 +983,7 @@ function ChoroplethMap({ series, baseColor }: { series: { value: string; count: 
                   geography={geo}
                   fill={count ? hexToRgba(baseColor, intensity) : "var(--panel)"}
                   stroke="var(--border)"
-                  strokeWidth={0.4}
+                  strokeWidth={field === "by_province" ? 0.2 : 0.4}
                   style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.8 }, pressed: { outline: "none" } }}
                 />
               );
