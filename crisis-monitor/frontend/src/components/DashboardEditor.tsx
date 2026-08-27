@@ -33,6 +33,7 @@ function normalizeStats(stats: IncidentStats): NormalizedDashboardStats {
     by_province: stats.by_province,
     by_country: stats.by_country,
     time_series: stats.time_series,
+    daily: stats.daily,
     deaths,
     injuries,
     kidnappings_ngo: stats.casualties.kidnappings_ngo ?? 0,
