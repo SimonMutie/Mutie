@@ -5,612 +5,286 @@ import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
-export const incidentsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
+export const datasetsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
+datasetsRouter.use("*", requireAuth);
 
-incidentsRouter.use("*", requireAuth);
-
-// Loose on purpose: real-world spreadsheet exports are messy (blank cells, stray
-// whitespace, numbers-as-strings). Everything is optional except that a row with
-// truly nothing in it is rejected client-side before it ever gets here.
-const incidentRowSchema = z.object({
-  date: z.string().nullish(),
-  time: z.string().nullish(),
-  country: z.string().nullish(),
-  province: z.string().nullish(),
-  county: z.string().nullish(),
-  district: z.string().nullish(),
-  city: z.string().nullish(),
-  suburb: z.string().nullish(),
-  precise_location: z.string().nullish(),
-  latitude: z.number().nullish(),
-  longitude: z.number().nullish(),
-  sector: z.string().nullish(),
-  actor: z.string().nullish(),
-  operation: z.string().nullish(),
-  tactic: z.string().nullish(),
-  severity: z.string().nullish(),
-  details: z.string().nullish(),
-  target: z.string().nullish(),
-  interest_group: z.string().nullish(),
-  actual_main_victim: z.string().nullish(),
-  intended_primary_target: z.string().nullish(),
-  civilian_death_child: z.number().nullish(),
-  civilian_death_female: z.number().nullish(),
-  civilian_death_male: z.number().nullish(),
-  civilian_death_unknown: z.number().nullish(),
-  civilian_injury_female: z.number().nullish(),
-  civilian_injury_male: z.number().nullish(),
-  civilian_injury_unknown: z.number().nullish(),
-  kidnappings_ngo: z.number().nullish(),
-  raw: z.record(z.unknown()).default({}),
+const columnSchema = z.object({
+  name: z.string().min(1),
+  type: z.enum(["text", "number", "date"]),
 });
+const schemaArraySchema = z.array(columnSchema).min(1).max(100);
 
-const bulkUploadSchema = z.object({
-  rows: z.array(incidentRowSchema).min(1).max(2000),
-  batch_label: z.string().optional(),
-  // Client-supplied and reused across every chunk of one upload, so a >500-row
-  // file (sent as several bulk-insert calls) still shares one identity end to
-  // end — without this, each chunk would get its own random batch, and a
-  // large file could never be deleted as a single unit.
-  batch_id: z.string().optional(),
-});
-
-/** Best-effort combine of the spreadsheet's separate Date/Time text into one ISO
- *  timestamp for sorting/charting. Tries a handful of common export formats and
- *  gives up cleanly (returns null) rather than guessing wrong — a null just means
- *  the row won't count towards the time-series chart, it's still stored and
- *  shown on the map/table either way. */
-function combineDateTime(date: string | null | undefined, time: string | null | undefined): string | null {
-  if (!date) return null;
-  const datePart = date.trim();
-  const timePart = (time ?? "").trim();
-  const candidates = [`${datePart}T${timePart || "00:00:00"}`, `${datePart} ${timePart}`.trim(), datePart];
-  for (const candidate of candidates) {
-    const parsed = new Date(candidate);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-  }
-  return null;
+/** Column names are only ever interpolated into SQL (via json_extract) after
+ *  being checked against the specific dataset's own stored schema below —
+ *  never a fixed allowlist, since any dataset can define any columns. This
+ *  is the general-purpose version of the same principle behind the
+ *  incidents PIVOTABLE_FIELDS allowlist. Exported so the public dashboard
+ *  route (which has no auth token to call these routes over HTTP) can reuse
+ *  this exact validated logic instead of a second, drift-prone copy of it. */
+export function isValidColumn(schema: { name: string; type: string }[], field: string | undefined): field is string {
+  return !!field && schema.some((c) => c.name === field);
 }
 
-incidentsRouter.post("/bulk", async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsed = bulkUploadSchema.safeParse(body);
-  if (!parsed.success) {
-    return c.json({ error: parsed.error.flatten() }, 400);
+/** Builds a quoted JSON path for json_extract. Column names come from a
+ *  detected spreadsheet header, which can realistically contain periods,
+ *  spaces, or parentheses (e.g. "Q1.Revenue", "Cases (2024)") — an unquoted
+ *  `$.field` path treats a literal period as a nested-key separator, which
+ *  silently returns NULL instead of the real value. Quoting the key avoids
+ *  that; double-quotes inside the name itself are escaped by doubling, same
+ *  as standard SQL string-literal escaping. */
+export function jsonPathFor(field: string): string {
+  return `$."${field.replace(/"/g, '""')}"`;
+}
+
+/** Fetches a dataset row + its parsed schema, or null if it doesn't exist —
+ *  callers are responsible for their own ownership check, since the public
+ *  route's notion of "authorized" (matches the dashboard's owner) differs
+ *  from the authed routes' (matches the logged-in caller). */
+export async function loadDatasetSchema(db: D1Database, datasetId: string): Promise<{ owner_id: string | null; schema: { name: string; type: string }[] } | null> {
+  const dataset = await first<Record<string, unknown>>(db, `SELECT * FROM datasets WHERE id = ?`, [datasetId]);
+  if (!dataset) return null;
+  return { owner_id: (dataset.owner_id as string | null) ?? null, schema: JSON.parse(String(dataset.schema_json ?? "[]")) };
+}
+
+export async function fetchDatasetBreakdown(
+  db: D1Database,
+  datasetId: string,
+  schema: { name: string; type: string }[],
+  field: string | undefined
+): Promise<{ value: string; count: number }[]> {
+  if (!isValidColumn(schema, field)) return [];
+  const path = jsonPathFor(field);
+  return all<{ value: string; count: number }>(
+    db,
+    `SELECT json_extract(row_data, ?) AS value, COUNT(*) AS count
+     FROM dataset_rows
+     WHERE dataset_id = ? AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+     GROUP BY value
+     ORDER BY count DESC
+     LIMIT 30`,
+    [path, datasetId, path, path]
+  );
+}
+
+export async function fetchDatasetCrosstab(
+  db: D1Database,
+  datasetId: string,
+  schema: { name: string; type: string }[],
+  primary: string | undefined,
+  secondary: string | undefined
+): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
+  if (!isValidColumn(schema, primary) || !isValidColumn(schema, secondary)) return [];
+  const primaryPath = jsonPathFor(primary);
+  const secondaryPath = jsonPathFor(secondary);
+  return all<{ primary_value: string; secondary_value: string; count: number }>(
+    db,
+    `SELECT json_extract(row_data, ?) AS primary_value, json_extract(row_data, ?) AS secondary_value, COUNT(*) AS count
+     FROM dataset_rows
+     WHERE dataset_id = ?
+       AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+       AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+     GROUP BY primary_value, secondary_value
+     ORDER BY count DESC
+     LIMIT 300`,
+    [primaryPath, secondaryPath, datasetId, primaryPath, primaryPath, secondaryPath, secondaryPath]
+  );
+}
+
+export async function fetchDatasetSummary(db: D1Database, datasetId: string, schema: { name: string; type: string }[]): Promise<{ total: number; sums: Record<string, number> }> {
+  const total = await first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM dataset_rows WHERE dataset_id = ?`, [datasetId]);
+  const numericColumns = schema.filter((s) => s.type === "number");
+  const sums: Record<string, number> = {};
+  for (const col of numericColumns) {
+    const path = jsonPathFor(col.name);
+    const result = await first<{ total: number | null }>(
+      db,
+      `SELECT SUM(CAST(json_extract(row_data, ?) AS REAL)) AS total FROM dataset_rows WHERE dataset_id = ?`,
+      [path, datasetId]
+    );
+    sums[col.name] = result?.total ?? 0;
   }
+  return { total: total?.count ?? 0, sums };
+}
 
+/** Day-level counts for a genuinely date-typed column — the dataset
+ *  equivalent of incidents' own `daily` field, for a calendar heatmap.
+ *  Requires `type === "date"` on that column (not just any column), since
+ *  grouping text or numbers by their first 10 characters would produce
+ *  meaningless buckets. Relies on dataset upload having normalized date
+ *  values to ISO (YYYY-MM-DD) — see cellToDatasetValue on the upload side. */
+export async function fetchDatasetDaily(db: D1Database, datasetId: string, schema: { name: string; type: string }[], field: string | undefined): Promise<{ date: string; count: number }[]> {
+  if (!isValidColumn(schema, field)) return [];
+  if (schema.find((c) => c.name === field)?.type !== "date") return [];
+  const path = jsonPathFor(field);
+  return all<{ date: string; count: number }>(
+    db,
+    `SELECT substr(json_extract(row_data, ?), 1, 10) AS date, COUNT(*) AS count
+     FROM dataset_rows
+     WHERE dataset_id = ? AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+     GROUP BY date
+     ORDER BY date ASC`,
+    [path, datasetId, path, path]
+  );
+}
+
+function rowToDataset(row: Record<string, unknown>) {
+  return { ...row, schema: JSON.parse(String(row.schema_json ?? "[]")) };
+}
+
+datasetsRouter.get("/", async (c) => {
+  const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
-  const batchId = parsed.data.batch_id ?? newId();
+  const rows = isAdmin
+    ? await all(c.env.DB, `SELECT * FROM datasets ORDER BY updated_at DESC`)
+    : await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
+  return c.json(rows.map(rowToDataset));
+});
+
+const createSchema = z.object({
+  name: z.string().min(1),
+  schema: schemaArraySchema,
+});
+
+datasetsRouter.post("/", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = createSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const id = newId();
   const now = nowIso();
+  await c.env.DB.prepare(
+    `INSERT INTO datasets (id, owner_id, name, schema_json, row_count, created_at, updated_at) VALUES (?,?,?,?,0,?,?)`
+  )
+    .bind(id, c.get("userId"), parsed.data.name, JSON.stringify(parsed.data.schema), now, now)
+    .run();
 
-  const statements = parsed.data.rows.map((row) => {
-    const occurredAt = combineDateTime(row.date, row.time);
-    return {
-      sql: `INSERT INTO incidents (
-        id, owner_id, occurred_date, occurred_time, occurred_at,
-        country, province, county, district, city, suburb, precise_location, latitude, longitude,
-        sector, actor, operation, tactic, severity, details, target, interest_group,
-        actual_main_victim, intended_primary_target,
-        civilian_death_child, civilian_death_female, civilian_death_male, civilian_death_unknown,
-        civilian_injury_female, civilian_injury_male, civilian_injury_unknown, kidnappings_ngo,
-        raw_row, upload_batch_id, created_at
-      ) VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`,
-      params: [
-        newId(),
-        ownerId,
-        row.date ?? null,
-        row.time ?? null,
-        occurredAt,
-        row.country ?? null,
-        row.province ?? null,
-        row.county ?? null,
-        row.district ?? null,
-        row.city ?? null,
-        row.suburb ?? null,
-        row.precise_location ?? null,
-        row.latitude ?? null,
-        row.longitude ?? null,
-        row.sector ?? null,
-        row.actor ?? null,
-        row.operation ?? null,
-        row.tactic ?? null,
-        row.severity ?? null,
-        row.details ?? null,
-        row.target ?? null,
-        row.interest_group ?? null,
-        row.actual_main_victim ?? null,
-        row.intended_primary_target ?? null,
-        row.civilian_death_child ?? null,
-        row.civilian_death_female ?? null,
-        row.civilian_death_male ?? null,
-        row.civilian_death_unknown ?? null,
-        row.civilian_injury_female ?? null,
-        row.civilian_injury_male ?? null,
-        row.civilian_injury_unknown ?? null,
-        row.kidnappings_ngo ?? null,
-        JSON.stringify(row.raw ?? {}),
-        batchId,
-        now,
-      ],
-    };
-  });
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM datasets WHERE id = ?`, [id]);
+  return c.json(rowToDataset(row!));
+});
 
-  // D1 batches are capped well above 2000 statements, but chunk generously
-  // anyway so one oversized upload can't blow past any per-batch limit.
+datasetsRouter.get("/:id", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM datasets WHERE id = ?`, [c.req.param("id")]);
+  if (!row) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && row.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  return c.json(rowToDataset(row));
+});
+
+const rowsUploadSchema = z.object({
+  rows: z.array(z.record(z.unknown())).min(1).max(2000),
+});
+
+/** Bulk-inserts rows as JSON blobs — chunked the same way incident uploads
+ *  are, since a large spreadsheet becomes several calls from the client. */
+datasetsRouter.post("/:id/rows", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const dataset = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [datasetId]);
+  if (!dataset) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && dataset.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = rowsUploadSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const now = nowIso();
+  const statements = parsed.data.rows.map((row) => ({
+    sql: `INSERT INTO dataset_rows (id, dataset_id, owner_id, row_data, created_at) VALUES (?,?,?,?,?)`,
+    params: [newId(), datasetId, ownerId, JSON.stringify(row), now],
+  }));
+
   const CHUNK = 200;
   for (let i = 0; i < statements.length; i += CHUNK) {
     await batchRun(c.env.DB, statements.slice(i, i + CHUNK));
   }
 
-  // Track this as an "upload" the user can later see and delete as one unit —
-  // except single-row manual entries, which would otherwise clutter that list
-  // with one entry per incident someone typed in by hand. Upsert so repeated
-  // chunk calls sharing the same batch_id accumulate row_count on one row
-  // instead of creating duplicates (created_at/label stay from the first chunk).
-  if (parsed.data.batch_label !== "Manual entry") {
-    await c.env.DB.prepare(
-      `INSERT INTO incident_uploads (id, owner_id, label, row_count, created_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET row_count = row_count + excluded.row_count`
-    )
-      .bind(batchId, ownerId, parsed.data.batch_label ?? "Untitled upload", statements.length, now)
-      .run();
-  }
+  await c.env.DB.prepare(`UPDATE datasets SET row_count = row_count + ?, updated_at = ? WHERE id = ?`)
+    .bind(statements.length, now, datasetId)
+    .run();
 
-  return c.json({ inserted: statements.length, batch_id: batchId, batch_label: parsed.data.batch_label ?? null });
+  return c.json({ inserted: statements.length });
 });
 
-const MAX_LIST_LIMIT = 250000; // effectively uncapped for any realistic dataset size here — was 5000, which silently truncated real exports
-
-incidentsRouter.get("/", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-
-  const country = c.req.query("country");
-  const province = c.req.query("province");
-  const sector = c.req.query("sector");
-  const actor = c.req.query("actor");
-  const tactic = c.req.query("tactic");
-  const severity = c.req.query("severity");
-  const from = c.req.query("from");
-  const to = c.req.query("to");
-  const limit = Math.min(Number(c.req.query("limit") ?? 2000) || 2000, MAX_LIST_LIMIT);
-
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-  if (!isAdmin) {
-    conditions.push("owner_id = ?");
-    params.push(ownerId);
-  }
-  if (country) {
-    conditions.push("country = ?");
-    params.push(country);
-  }
-  if (province) {
-    conditions.push("province = ?");
-    params.push(province);
-  }
-  if (sector) {
-    conditions.push("sector = ?");
-    params.push(sector);
-  }
-  if (actor) {
-    conditions.push("actor = ?");
-    params.push(actor);
-  }
-  if (tactic) {
-    conditions.push("tactic = ?");
-    params.push(tactic);
-  }
-  if (severity) {
-    conditions.push("severity = ?");
-    params.push(severity);
-  }
-  if (from) {
-    conditions.push("occurred_at >= ?");
-    params.push(from);
-  }
-  if (to) {
-    conditions.push("occurred_at <= ?");
-    params.push(to);
-  }
-
-  const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  params.push(limit);
-
-  const rows = await all(
-    c.env.DB,
-    `SELECT * FROM incidents ${whereSql} ORDER BY occurred_at DESC NULLS LAST LIMIT ?`,
-    params
-  );
-  return c.json(rows.map((row) => ({ ...row, raw_row: JSON.parse(String(row.raw_row ?? "{}")) })));
-});
-
-/** Distinct values for each filterable field, so the frontend can populate filter
- *  dropdowns from real data rather than a hardcoded guess at what values exist. */
-incidentsRouter.get("/filters", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const ownerClause = isAdmin ? "" : "WHERE owner_id = ?";
-  const ownerParams = isAdmin ? [] : [ownerId];
-
-  const fields = ["country", "province", "sector", "actor", "tactic", "severity"] as const;
-  const results: Record<string, string[]> = {};
-  for (const field of fields) {
-    const rows = await all<{ value: string }>(
-      c.env.DB,
-      `SELECT DISTINCT ${field} AS value FROM incidents ${ownerClause} ${ownerClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`,
-      ownerParams
-    );
-    results[field] = rows.map((r) => r.value);
-  }
-  return c.json(results);
-});
-
-// Only ever interpolated into SQL after being checked against this allowlist
-// — column names can't be bound parameters, so a strict allowlist (not just
-// "looks like an identifier") is what keeps this safe from injection.
-// Deliberately excludes `details` (long free-text description) — grouping by
-// it would produce near-100%-unique buckets, not a usable category breakdown.
-export const PIVOTABLE_FIELDS = [
-  "sector",
-  "actor",
-  "tactic",
-  "province",
-  "country",
-  "severity",
-  "county",
-  "district",
-  "city",
-  "suburb",
-  "operation",
-  "target",
-  "interest_group",
-  "actual_main_victim",
-  "intended_primary_target",
-] as const;
-export type PivotableField = (typeof PIVOTABLE_FIELDS)[number];
-export function isPivotable(v: string | undefined): v is PivotableField {
-  return !!v && (PIVOTABLE_FIELDS as readonly string[]).includes(v);
-}
-
-/** Single-field version of /crosstab — a plain category breakdown for any of
- *  the (now much larger) pivotable field list, on demand rather than
- *  precomputed. The five original fields (sector/actor/tactic/province/
- *  country) still also exist as always-precomputed by_X fields on /stats for
- *  backward compatibility; this covers those five too plus the newer ones,
- *  through one general mechanism instead of a hardcoded query per field. */
-/** Reusable, already-validated single-field breakdown for any pivotable
- *  field, scoped to a specific owner (not the calling admin/user — the
- *  public dashboard route needs the *dashboard's* owner's data, not the
- *  anonymous viewer's, since there isn't one). Exported so that route and
- *  the authed /breakdown endpoint below share one query path instead of two
- *  that could quietly drift apart. */
-export async function fetchIncidentsBreakdown(db: D1Database, ownerId: string | null, field: string | undefined): Promise<{ value: string; count: number }[]> {
-  if (!isPivotable(field)) return [];
-  const andOwner = ownerId ? "AND owner_id = ?" : "";
-  const ownerParams = ownerId ? [ownerId] : [];
-  return all<{ value: string; count: number }>(
-    db,
-    `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andOwner} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
-    ownerParams
-  );
-}
-
-export async function fetchIncidentsCrosstab(
-  db: D1Database,
-  ownerId: string | null,
-  primary: string | undefined,
-  secondary: string | undefined
-): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
-  if (!isPivotable(primary) || !isPivotable(secondary)) return [];
-  const andOwner = ownerId ? "AND owner_id = ?" : "";
-  const ownerParams = ownerId ? [ownerId] : [];
-  return all<{ primary_value: string; secondary_value: string; count: number }>(
-    db,
-    `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
-     FROM incidents
-     WHERE ${primary} IS NOT NULL AND ${primary} != '' AND ${secondary} IS NOT NULL AND ${secondary} != '' ${andOwner}
-     GROUP BY ${primary}, ${secondary}
-     ORDER BY count DESC
-     LIMIT 300`,
-    ownerParams
-  );
-}
-
-incidentsRouter.get("/breakdown", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const field = c.req.query("field");
-  if (!isPivotable(field)) {
-    return c.json({ error: "field must be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
-  }
-  return c.json(await fetchIncidentsBreakdown(c.env.DB, isAdmin ? null : ownerId, field));
-});
-
-/** Genuine joint counts for any two of the pivotable fields — the general
- *  version of the one-off actor×tactic cross-tab already computed for
- *  Sankey/network widgets, now usable for any pair a chart actually needs. */
-incidentsRouter.get("/crosstab", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const primary = c.req.query("primary");
-  const secondary = c.req.query("secondary");
-  if (!isPivotable(primary) || !isPivotable(secondary)) {
-    return c.json({ error: "primary and secondary must each be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
-  }
-  return c.json(await fetchIncidentsCrosstab(c.env.DB, isAdmin ? null : ownerId, primary, secondary));
-});
-
-incidentsRouter.get("/stats", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const ownerClause = isAdmin ? "" : "WHERE owner_id = ?";
-  const ownerParams = isAdmin ? [] : [ownerId];
-  const andOwner = isAdmin ? "" : "AND owner_id = ?";
-
-  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
-    first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
-    all<{ value: string; count: number }>(
-      c.env.DB,
-      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andOwner} GROUP BY sector ORDER BY count DESC LIMIT 12`,
-      ownerParams
-    ),
-    all<{ value: string; count: number }>(
-      c.env.DB,
-      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andOwner} GROUP BY actor ORDER BY count DESC LIMIT 12`,
-      ownerParams
-    ),
-    all<{ value: string; count: number }>(
-      c.env.DB,
-      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
-      ownerParams
-    ),
-    all<{ value: string; count: number }>(
-      c.env.DB,
-      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andOwner} GROUP BY severity ORDER BY count DESC LIMIT 12`,
-      ownerParams
-    ),
-    all<{ value: string; count: number }>(
-      c.env.DB,
-      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andOwner} GROUP BY province ORDER BY count DESC LIMIT 20`,
-      ownerParams
-    ),
-    all<{ value: string; count: number }>(
-      c.env.DB,
-      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andOwner} GROUP BY country ORDER BY count DESC LIMIT 20`,
-      ownerParams
-    ),
-    all<{ bucket: string; count: number }>(
-      c.env.DB,
-      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andOwner} GROUP BY bucket ORDER BY bucket ASC`,
-      ownerParams
-    ),
-    // Day-level granularity, bounded to the last ~13 months — a calendar
-    // heatmap covering a whole dataset's history would be an enormous,
-    // mostly-empty grid; a recent window is what these are actually for.
-    all<{ date: string; count: number }>(
-      c.env.DB,
-      `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
-      ownerParams
-    ),
-    // Genuine joint counts (not independent marginals like the by_X fields
-    // above) — how often each actor/tactic combination actually co-occurs in
-    // the same incident. Powers Sankey and network/relationship widgets with
-    // real data, not an invented "who's connected to whom" narrative.
-    all<{ actor: string; tactic: string; count: number }>(
-      c.env.DB,
-      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
-      ownerParams
-    ),
-    first<Record<string, number>>(
-      c.env.DB,
-      `SELECT
-         COALESCE(SUM(civilian_death_child), 0) AS deaths_child,
-         COALESCE(SUM(civilian_death_female), 0) AS deaths_female,
-         COALESCE(SUM(civilian_death_male), 0) AS deaths_male,
-         COALESCE(SUM(civilian_death_unknown), 0) AS deaths_unknown,
-         COALESCE(SUM(civilian_injury_female), 0) AS injuries_female,
-         COALESCE(SUM(civilian_injury_male), 0) AS injuries_male,
-         COALESCE(SUM(civilian_injury_unknown), 0) AS injuries_unknown,
-         COALESCE(SUM(kidnappings_ngo), 0) AS kidnappings_ngo
-       FROM incidents ${ownerClause}`,
-      ownerParams
-    ),
-  ]);
-
-  return c.json({
-    total: total?.count ?? 0,
-    by_sector: bySector,
-    by_actor: byActor,
-    by_tactic: byTactic,
-    by_severity: bySeverity,
-    by_province: byProvince,
-    by_country: byCountry,
-    time_series: timeSeries,
-    daily,
-    actor_tactic: actorTactic,
-    casualties: casualties ?? {},
-  });
-});
-
-const bulkDeleteSchema = z.object({ ids: z.array(z.string()).min(1).max(2000) });
-
-/** POST, not DELETE-with-body — sending a body on a DELETE request is
- *  inconsistently supported across HTTP clients/proxies, so a dedicated bulk
- *  action route is more reliable than fighting that. */
-incidentsRouter.post("/bulk-delete", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const body = await c.req.json().catch(() => null);
-  const parsed = bulkDeleteSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-
-  // Chunked (rather than one giant IN clause) to stay safely under D1's bound
-  // parameter limit per statement even for a large selection.
-  const CHUNK = 100;
-  const statements: { sql: string; params: unknown[] }[] = [];
-  for (let i = 0; i < parsed.data.ids.length; i += CHUNK) {
-    const chunk = parsed.data.ids.slice(i, i + CHUNK);
-    const placeholders = chunk.map(() => "?").join(",");
-    statements.push(
-      isAdmin
-        ? { sql: `DELETE FROM incidents WHERE id IN (${placeholders})`, params: chunk }
-        : { sql: `DELETE FROM incidents WHERE id IN (${placeholders}) AND owner_id = ?`, params: [...chunk, ownerId] }
-    );
-  }
-  await batchRun(c.env.DB, statements);
-  return c.json({ ok: true, deleted: parsed.data.ids.length });
-});
-
-const SIMPLE_INCIDENT_FIELDS = [
-  "country",
-  "province",
-  "county",
-  "district",
-  "city",
-  "suburb",
-  "precise_location",
-  "latitude",
-  "longitude",
-  "sector",
-  "actor",
-  "operation",
-  "tactic",
-  "severity",
-  "details",
-  "target",
-  "interest_group",
-  "actual_main_victim",
-  "intended_primary_target",
-  "civilian_death_child",
-  "civilian_death_female",
-  "civilian_death_male",
-  "civilian_death_unknown",
-  "civilian_injury_female",
-  "civilian_injury_male",
-  "civilian_injury_unknown",
-  "kidnappings_ngo",
-] as const;
-
-const updateIncidentSchema = z.object({
-  date: z.string().nullish(),
-  time: z.string().nullish(),
-  country: z.string().nullish(),
-  province: z.string().nullish(),
-  county: z.string().nullish(),
-  district: z.string().nullish(),
-  city: z.string().nullish(),
-  suburb: z.string().nullish(),
-  precise_location: z.string().nullish(),
-  latitude: z.number().nullish(),
-  longitude: z.number().nullish(),
-  sector: z.string().nullish(),
-  actor: z.string().nullish(),
-  operation: z.string().nullish(),
-  tactic: z.string().nullish(),
-  severity: z.string().nullish(),
-  details: z.string().nullish(),
-  target: z.string().nullish(),
-  interest_group: z.string().nullish(),
-  actual_main_victim: z.string().nullish(),
-  intended_primary_target: z.string().nullish(),
-  civilian_death_child: z.number().nullish(),
-  civilian_death_female: z.number().nullish(),
-  civilian_death_male: z.number().nullish(),
-  civilian_death_unknown: z.number().nullish(),
-  civilian_injury_female: z.number().nullish(),
-  civilian_injury_male: z.number().nullish(),
-  civilian_injury_unknown: z.number().nullish(),
-  kidnappings_ngo: z.number().nullish(),
-});
-
-incidentsRouter.patch("/:id", async (c) => {
+datasetsRouter.delete("/:id", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
   const id = c.req.param("id");
-  const existing = await first<{ owner_id: string | null; occurred_date: string | null; occurred_time: string | null }>(
-    c.env.DB,
-    `SELECT owner_id, occurred_date, occurred_time FROM incidents WHERE id = ?`,
-    [id]
-  );
+  const existing = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
   if (!isAdmin && existing.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
-
-  const body = await c.req.json().catch(() => null);
-  const parsed = updateIncidentSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-
-  const updates: string[] = [];
-  const params: unknown[] = [];
-  const data = parsed.data as Record<string, unknown>;
-
-  for (const field of SIMPLE_INCIDENT_FIELDS) {
-    if (data[field] !== undefined) {
-      updates.push(`${field} = ?`);
-      params.push(data[field]);
-    }
-  }
-
-  // date/time map to differently-named columns and jointly recompute
-  // occurred_at, so they're handled separately from the simple 1:1 fields above.
-  if (parsed.data.date !== undefined || parsed.data.time !== undefined) {
-    const newDate = parsed.data.date !== undefined ? parsed.data.date : existing.occurred_date;
-    const newTime = parsed.data.time !== undefined ? parsed.data.time : existing.occurred_time;
-    if (parsed.data.date !== undefined) {
-      updates.push("occurred_date = ?");
-      params.push(parsed.data.date);
-    }
-    if (parsed.data.time !== undefined) {
-      updates.push("occurred_time = ?");
-      params.push(parsed.data.time);
-    }
-    updates.push("occurred_at = ?");
-    params.push(combineDateTime(newDate, newTime));
-  }
-
-  if (updates.length > 0) {
-    params.push(id);
-    await c.env.DB.prepare(`UPDATE incidents SET ${updates.join(", ")} WHERE id = ?`).bind(...params).run();
-  }
-
-  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM incidents WHERE id = ?`, [id]);
-  return c.json({ ...row, raw_row: JSON.parse(String(row?.raw_row ?? "{}")) });
-});
-
-/** Lists past uploads (real files, not manual single-row entries) so the user
- *  can see and delete a whole file in one click, regardless of how many rows
- *  it contained or how many chunk calls it took to insert. */
-incidentsRouter.get("/uploads", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const rows = isAdmin
-    ? await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`)
-    : await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id = ? ORDER BY created_at DESC`, [ownerId]);
-  return c.json(rows);
-});
-
-incidentsRouter.delete("/batch/:batchId", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const batchId = c.req.param("batchId");
-  if (isAdmin) {
-    await c.env.DB.prepare(`DELETE FROM incidents WHERE upload_batch_id = ?`).bind(batchId).run();
-    await c.env.DB.prepare(`DELETE FROM incident_uploads WHERE id = ?`).bind(batchId).run();
-  } else {
-    await c.env.DB.prepare(`DELETE FROM incidents WHERE upload_batch_id = ? AND owner_id = ?`).bind(batchId, ownerId).run();
-    await c.env.DB.prepare(`DELETE FROM incident_uploads WHERE id = ? AND owner_id = ?`).bind(batchId, ownerId).run();
-  }
+  // Explicit, not relying solely on ON DELETE CASCADE — same defensive
+  // approach already used for incident_uploads/incidents elsewhere.
+  await c.env.DB.prepare(`DELETE FROM dataset_rows WHERE dataset_id = ?`).bind(id).run();
+  await c.env.DB.prepare(`DELETE FROM datasets WHERE id = ?`).bind(id).run();
   return c.json({ ok: true });
 });
 
-incidentsRouter.delete("/:id", async (c) => {
+/** Single-field breakdown for any column the dataset's own schema declares —
+ *  the general-purpose version of /api/incidents/breakdown. json_extract's
+ *  path is built from `field` only after isValidColumn confirms it's one of
+ *  this specific dataset's real columns. */
+datasetsRouter.get("/:id/breakdown", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
-  const id = c.req.param("id");
-  const row = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM incidents WHERE id = ?`, [id]);
-  if (!row) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && row.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
-  await c.env.DB.prepare(`DELETE FROM incidents WHERE id = ?`).bind(id).run();
-  return c.json({ ok: true });
+  const datasetId = c.req.param("id");
+  const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+  if (!loaded) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const field = c.req.query("field");
+  if (!isValidColumn(loaded.schema, field)) {
+    return c.json({ error: "field must be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
+  }
+  return c.json(await fetchDatasetBreakdown(c.env.DB, datasetId, loaded.schema, field));
+});
+
+/** Two-field cross-tab, general-purpose version of /api/incidents/crosstab. */
+datasetsRouter.get("/:id/crosstab", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+  if (!loaded) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const primary = c.req.query("primary");
+  const secondary = c.req.query("secondary");
+  if (!isValidColumn(loaded.schema, primary) || !isValidColumn(loaded.schema, secondary)) {
+    return c.json({ error: "primary and secondary must each be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
+  }
+  return c.json(await fetchDatasetCrosstab(c.env.DB, datasetId, loaded.schema, primary, secondary));
+});
+
+/** Sum of a numeric column, plus total row count — the dataset equivalent of
+ *  the incidents casualty totals, generalized to whichever numeric columns
+ *  this particular dataset actually has. */
+datasetsRouter.get("/:id/summary", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+  if (!loaded) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  return c.json(await fetchDatasetSummary(c.env.DB, datasetId, loaded.schema));
+});
+
+datasetsRouter.get("/:id/daily", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+  if (!loaded) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const field = c.req.query("field");
+  if (!isValidColumn(loaded.schema, field)) {
+    return c.json({ error: "field must be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
+  }
+  if (loaded.schema.find((s) => s.name === field)?.type !== "date") {
+    return c.json({ error: "field must be a date-typed column" }, 400);
+  }
+  return c.json(await fetchDatasetDaily(c.env.DB, datasetId, loaded.schema, field));
 });
