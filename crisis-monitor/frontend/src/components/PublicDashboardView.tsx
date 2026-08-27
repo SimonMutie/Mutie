@@ -95,7 +95,7 @@ function PublicWidgetGrid({ data }: { data: PublicDashboardData }) {
     <ResponsiveGridLayout className="layout" layout={layout} cols={12} rowHeight={26} margin={[16, 16]} isDraggable={false} isResizable={false}>
       {data.widgets.map((w) => (
         <div key={w.id}>
-          <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} />
+          <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} crosstabs={data.crosstabs} breakdowns={data.breakdowns} datasetSummaries={data.datasetSummaries} />
         </div>
       ))}
     </ResponsiveGridLayout>
