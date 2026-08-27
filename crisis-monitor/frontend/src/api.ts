@@ -199,7 +199,34 @@ export interface SavedRoute {
   updated_at: string;
 }
 
-export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth" | "calendar" | "sankey" | "network" | "bubble";
+export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth" | "calendar" | "sankey" | "network" | "bubble" | "globe";
+
+/** Bar/line charts only — one of the pivotable columns the /crosstab
+ *  endpoint accepts, matching the backend's PIVOTABLE_FIELDS allowlist
+ *  exactly. `details` is deliberately excluded — long free text, not a
+ *  usable category. */
+export type PivotableField =
+  | "sector"
+  | "actor"
+  | "tactic"
+  | "province"
+  | "country"
+  | "severity"
+  | "county"
+  | "district"
+  | "city"
+  | "suburb"
+  | "operation"
+  | "target"
+  | "interest_group"
+  | "actual_main_victim"
+  | "intended_primary_target";
+
+export interface CrosstabRow {
+  primary_value: string;
+  secondary_value: string;
+  count: number;
+}
 export type WidgetDataField =
   | "total"
   | "by_sector"
@@ -207,10 +234,22 @@ export type WidgetDataField =
   | "by_tactic"
   | "by_province"
   | "by_country"
+  | "by_severity"
   | "time_series"
   | "deaths"
   | "injuries"
-  | "kidnappings_ngo";
+  | "kidnappings_ngo"
+  // Fetched on demand via /api/incidents/breakdown rather than precomputed
+  // on /stats, unlike the five classic by_X fields above.
+  | "by_county"
+  | "by_district"
+  | "by_city"
+  | "by_suburb"
+  | "by_operation"
+  | "by_target"
+  | "by_interest_group"
+  | "by_actual_main_victim"
+  | "by_intended_primary_target";
 
 export interface DashboardWidget {
   id: string;
@@ -219,7 +258,11 @@ export interface DashboardWidget {
   /** Short caption shown under the title — separate from the title itself,
    *  for context like a source note or a description of what's shown. */
   label?: string;
-  dataField?: WidgetDataField;
+  /** One of WidgetDataField's fixed values for incidents-sourced widgets, or
+   *  an arbitrary column name from that dataset's own schema when
+   *  datasetId is set — every dataset defines its own columns, so this
+   *  can't stay a fixed union once datasets are in play. */
+  dataField?: WidgetDataField | string;
   /** Initial size when the widget is first added — after that, the real size
    *  comes from `layout` (drag-resized), this just seeds a sensible starting box. */
   size: "small" | "medium" | "large";
@@ -244,6 +287,42 @@ export interface DashboardWidget {
   locked?: boolean;
   /** Stat cards only — shows a small monthly trend line beneath the number. */
   showSparkline?: boolean;
+  /** Bar/line only — a second dimension to break the primary field down by,
+   *  turning a single-variable chart into a genuine two-variable pivot
+   *  (stacked/grouped bars, multi-series lines). */
+  secondaryField?: PivotableField | string;
+  /** When set, this widget charts an uploaded dataset instead of incidents —
+   *  dataField/secondaryField then hold that dataset's own raw column names
+   *  directly, not the incidents by_X convention. Widget types that need
+   *  incidents-specific data shapes (choropleth's place names, calendar's
+   *  daily buckets, map's lat/lng, globe) aren't offered once a dataset is
+   *  the source, since a generic dataset can't be assumed to have any of that. */
+  datasetId?: string;
+}
+
+export type DatasetColumnType = "text" | "number" | "date";
+
+export interface DatasetColumn {
+  name: string;
+  type: DatasetColumnType;
+}
+
+/** A user-uploaded dataset with any schema — not tied to the incidents
+ *  table's fixed columns at all. Each row is stored as JSON server-side; the
+ *  schema here just describes what keys to expect and how to treat them. */
+export interface Dataset {
+  id: string;
+  owner_id: string | null;
+  name: string;
+  schema: DatasetColumn[];
+  row_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DatasetSummary {
+  total: number;
+  sums: Record<string, number>;
 }
 
 export interface CustomDashboard {
@@ -281,6 +360,12 @@ export interface PublicDashboardData {
   name: string;
   widgets: DashboardWidget[];
   stats: NormalizedDashboardStats;
+  /** Keyed "primaryColumn|secondaryColumn" — only the specific pairs this
+   *  dashboard's own widgets actually use, not every possible combination. */
+  crosstabs: Record<string, CrosstabRow[]>;
+  /** Keyed by bare column name — single-field breakdowns for widgets using
+   *  one of the newer by_X fields as their primary dimension. */
+  breakdowns: Record<string, { value: string; count: number }[]>;
   incidents: { id: string; latitude: number; longitude: number; severity: string | null; actor: string | null; sector: string | null; occurred_date: string | null; city: string | null; province: string | null }[];
   updated_at: string;
 }
@@ -398,6 +483,9 @@ export const api = {
   },
   getIncidentFilters: () => req<IncidentFilters>("/api/incidents/filters"),
   getIncidentStats: () => req<IncidentStats>("/api/incidents/stats"),
+  getCrosstab: (primary: PivotableField, secondary: PivotableField) =>
+    req<CrosstabRow[]>(`/api/incidents/crosstab?primary=${primary}&secondary=${secondary}`),
+  getBreakdown: (field: PivotableField) => req<{ value: string; count: number }[]>(`/api/incidents/breakdown?field=${field}`),
   getIncidentUploads: () => req<SavedUpload[]>("/api/incidents/uploads"),
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
@@ -430,6 +518,20 @@ export const api = {
   deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
   // Public — no auth token needed, works for anyone with the share link.
   getPublicDashboard: (token: string) => req<PublicDashboardData>(`/api/public/dashboards/${token}`),
+
+  // General-purpose datasets — any schema, not tied to incidents at all.
+  getDatasets: () => req<Dataset[]>("/api/datasets"),
+  getDataset: (id: string) => req<Dataset>(`/api/datasets/${id}`),
+  createDataset: (name: string, schema: DatasetColumn[]) =>
+    req<Dataset>("/api/datasets", { method: "POST", body: JSON.stringify({ name, schema }) }),
+  uploadDatasetRows: (datasetId: string, rows: Record<string, unknown>[]) =>
+    req<{ inserted: number }>(`/api/datasets/${datasetId}/rows`, { method: "POST", body: JSON.stringify({ rows }) }),
+  deleteDataset: (id: string) => req<void>(`/api/datasets/${id}`, { method: "DELETE" }),
+  getDatasetBreakdown: (datasetId: string, field: string) =>
+    req<{ value: string; count: number }[]>(`/api/datasets/${datasetId}/breakdown?field=${encodeURIComponent(field)}`),
+  getDatasetCrosstab: (datasetId: string, primary: string, secondary: string) =>
+    req<CrosstabRow[]>(`/api/datasets/${datasetId}/crosstab?primary=${encodeURIComponent(primary)}&secondary=${encodeURIComponent(secondary)}`),
+  getDatasetSummary: (datasetId: string) => req<DatasetSummary>(`/api/datasets/${datasetId}/summary`),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
