@@ -159,6 +159,10 @@ export interface IncidentStats {
   /** Day-level counts, bounded to roughly the last 13 months — for a
    *  calendar heatmap, which a monthly time_series can't drive. */
   daily: { date: string; count: number }[];
+  /** Genuine joint counts of (actor, tactic) pairs actually co-occurring in
+   *  the same incident — not independent marginals like the by_X fields
+   *  above. Powers Sankey/network widgets with real relationships. */
+  actor_tactic: { actor: string; tactic: string; count: number }[];
   casualties: Record<string, number>;
 }
 
@@ -195,7 +199,7 @@ export interface SavedRoute {
   updated_at: string;
 }
 
-export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth" | "calendar";
+export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth" | "calendar" | "sankey" | "network" | "bubble";
 export type WidgetDataField =
   | "total"
   | "by_sector"
@@ -267,6 +271,7 @@ export interface NormalizedDashboardStats {
   by_country: { value: string; count: number }[];
   time_series: { bucket: string; count: number }[];
   daily: { date: string; count: number }[];
+  actor_tactic: { actor: string; tactic: string; count: number }[];
   deaths: number;
   injuries: number;
   kidnappings_ngo: number;
@@ -328,7 +333,7 @@ export const api = {
     req<{ token: string; user: AuthUser }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
-          }),
+    }),
   me: () => req<AuthUser>("/api/auth/me"),
   listUsers: () => req<AuthUser[]>("/api/auth/users"),
   createUser: (username: string, password: string, display_name?: string, role: UserRole = "client") =>
