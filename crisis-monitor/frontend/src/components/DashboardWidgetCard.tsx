@@ -91,10 +91,12 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   // Calendar heatmap always uses stats.daily directly, like map does with
   // its incident list — no user-selectable breakdown field applies.
   calendar: [],
-  // These three always use the actor×tactic joint-count data directly — like
-  // calendar/map, there's no single "which field" choice that applies.
-  sankey: [],
-  network: [],
+  // Primary field only — the secondary ("break down by") field is what makes
+  // these genuinely two-variable, handled the same way as bar/line's own
+  // optional second variable, just required here instead of optional (a
+  // one-variable flow/network diagram isn't meaningful).
+  sankey: CATEGORY_FIELDS,
+  network: CATEGORY_FIELDS,
   bubble: CATEGORY_FIELDS,
   globe: ["by_country"],
 };
@@ -108,20 +110,22 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "choropleth", label: "Choropleth map" },
   { value: "globe", label: "3D globe" },
   { value: "calendar", label: "Calendar heatmap" },
-  { value: "sankey", label: "Sankey (actor → tactic)" },
-  { value: "network", label: "Network (actor–tactic links)" },
+  { value: "sankey", label: "Sankey (flow between 2 fields)" },
+  { value: "network", label: "Network (links between 2 fields)" },
   { value: "bubble", label: "Packed-circle bubbles" },
   { value: "map", label: "Incident map" },
 ];
 
 /** Only these types' rendering actually reads from a dataset when
  *  widget.datasetId is set — choropleth/globe assume real country names,
- *  calendar assumes daily incident buckets, map assumes lat/lng, and
- *  sankey/network are still hardcoded to incidents' own actor×tactic data.
- *  Offering those against an uploaded spreadsheet would silently show
- *  incidents data (or nothing) regardless of which dataset was picked, so
- *  they're left off the list here rather than offered and quietly wrong. */
-export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble"];
+ *  calendar assumes daily incident buckets, and map assumes lat/lng, none of
+ *  which a generic spreadsheet can be assumed to have. Offering those against
+ *  an uploaded dataset would silently show nothing (or incidents data)
+ *  regardless of which dataset was picked, so they're left off the list here
+ *  rather than offered and quietly wrong. Sankey/network read from the same
+ *  generic two-field crosstab bar/line already use, so they work for either
+ *  source just fine. */
+export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble", "sankey", "network", "calendar"];
 
 export const PIVOTABLE_FIELD_OPTIONS: PivotableField[] = [
   "sector",
@@ -200,6 +204,20 @@ export function fieldLabel(field: WidgetDataField | string | undefined): string 
   return (FIELD_LABELS as Record<string, string>)[field] ?? field;
 }
 
+/** Sankey/network widgets originally always showed actor × tactic with no
+ *  way to change it. A widget saved from that era has no dataField/
+ *  secondaryField at all, so it still falls back to that same default here —
+ *  existing dashboards don't change appearance. Once a widget has been
+ *  customized (or created fresh, which fills in real fields immediately),
+ *  this reads from the same generic crosstab mechanism bar/line already use. */
+function relationshipData(widget: DashboardWidget, stats: NormalizedDashboardStats, crosstabs?: Record<string, CrosstabRow[]>): CrosstabRow[] {
+  if (!widget.dataField) {
+    return stats.actor_tactic.map((d) => ({ primary_value: d.actor, secondary_value: d.tactic, count: d.count }));
+  }
+  const key = crosstabKeyFor(widget);
+  return (key && crosstabs?.[key]) || [];
+}
+
 function seriesFor(
   widget: DashboardWidget,
   stats: NormalizedDashboardStats,
@@ -271,6 +289,13 @@ export function breakdownKeyFor(widget: DashboardWidget): string | null {
   if (widget.datasetId) return `ds:${widget.datasetId}:${widget.dataField}`;
   if (PRECOMPUTED_FIELDS.includes(widget.dataField)) return null;
   return DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField] ?? null;
+}
+
+/** Only calendar widgets sourced from a dataset need this — incidents' own
+ *  calendar always reads stats.daily directly, same as before. */
+export function dailyKeyFor(widget: DashboardWidget): string | null {
+  if (widget.type !== "calendar" || !widget.datasetId || !widget.dataField) return null;
+  return `ds:${widget.datasetId}:${widget.dataField}`;
 }
 
 export function crosstabKeyFor(widget: DashboardWidget): string | null {
@@ -347,6 +372,10 @@ interface Props {
   /** Keyed by bare column name for incidents fields, or "ds:<id>:<column>"
    *  for dataset-sourced fields — see breakdownKeyFor(). */
   breakdowns?: Record<string, { value: string; count: number }[]>;
+  /** Keyed "ds:<id>:<column>" — daily counts for a dataset-sourced calendar
+   *  widget's chosen date column; see dailyKeyFor(). Incidents' own calendar
+   *  reads stats.daily directly and never needs this. */
+  dailyBreakdowns?: Record<string, { date: string; count: number }[]>;
   /** Keyed by dataset id — row count + numeric column sums, for stat cards
    *  sourced from a dataset instead of incidents. */
   datasetSummaries?: Record<string, DatasetSummary>;
@@ -368,7 +397,7 @@ interface Props {
  *  Fills 100% of whatever size its container gives it (a react-grid-layout
  *  cell in the editors, a plain CSS grid cell on the public view) rather than
  *  a fixed pixel height, so real drag-resize actually changes the chart size. */
-export default function DashboardWidgetCard({ widget, stats, incidents, crosstabs, breakdowns, datasetSummaries, datasets, onRemove, onRename, onUpdate }: Props) {
+export default function DashboardWidgetCard({ widget, stats, incidents, crosstabs, breakdowns, dailyBreakdowns, datasetSummaries, datasets, onRemove, onRename, onUpdate }: Props) {
   // "Dashboard editable" = the editor gave us handlers at all (it withholds
   // them entirely when the whole dashboard is locked). "Widget locked" is a
   // second, per-widget flag that can be toggled independently — locking one
@@ -614,11 +643,16 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
           </Suspense>
         )}
 
-        {widget.type === "calendar" && <CalendarHeatmap daily={stats.daily} baseColor={widget.color || "#0d9488"} />}
+        {widget.type === "calendar" && (
+          <CalendarHeatmap
+            daily={widget.datasetId ? (dailyBreakdowns?.[dailyKeyFor(widget) ?? ""] ?? []) : stats.daily}
+            baseColor={widget.color || "#0d9488"}
+          />
+        )}
 
-        {widget.type === "sankey" && <ActorTacticSankey data={stats.actor_tactic} baseColor={widget.color || "#0d9488"} />}
+        {widget.type === "sankey" && <RelationshipSankey data={relationshipData(widget, stats, crosstabs)} baseColor={widget.color || "#0d9488"} />}
 
-        {widget.type === "network" && <ActorTacticNetwork data={stats.actor_tactic} baseColor={widget.color || "#0d9488"} />}
+        {widget.type === "network" && <RelationshipNetwork data={relationshipData(widget, stats, crosstabs)} baseColor={widget.color || "#0d9488"} />}
 
         {widget.type === "bubble" && <BubbleChart series={series} colors={paletteFor(widget, series.length)} />}
 
@@ -687,8 +721,36 @@ function WidgetEditPopover({
   const [topN, setTopN] = useState<number | undefined>(widget.topN);
   const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
 
-  const supportsBreakdown = type === "bar" || type === "line";
+  const supportsBreakdown = type === "bar" || type === "line" || type === "sankey" || type === "network";
+  const requiresSecondary = type === "sankey" || type === "network";
   const activeDataset = datasetId ? datasets?.find((d) => d.id === datasetId) : undefined;
+
+  /** Sankey/network need two *different* fields to mean anything — unlike
+   *  bar/line's optional second variable, picking one of these types with no
+   *  secondary field set (or the same field as primary) would render an
+   *  empty or nonsensical diagram, so this fills in a sensible different
+   *  field automatically rather than leaving the user to notice and pick one. */
+  function defaultSecondary(primaryField: string, dataset: Dataset | undefined): string | undefined {
+    if (dataset) return dataset.schema.map((c) => c.name).find((c) => c !== primaryField);
+    const primaryColumn = DATA_FIELD_TO_COLUMN[primaryField as WidgetDataField];
+    return PIVOTABLE_FIELD_OPTIONS.find((f) => f !== primaryColumn);
+  }
+
+  /** A sensible starting field for a given (type, source) combination — a
+   *  numeric column for stat, a date column for calendar, any column
+   *  otherwise for a dataset source; the fixed WidgetDataField list for
+   *  Incidents. Used both when first switching to a dataset and when
+   *  changing type while a dataset is already active, since a field valid
+   *  for the old type (e.g. a number column for "stat") usually isn't valid
+   *  for the new one (e.g. calendar needs a date column specifically). */
+  function defaultFieldFor(forType: WidgetType, dataset: Dataset | undefined): string {
+    if (dataset) {
+      if (forType === "stat") return dataset.schema.find((c) => c.type === "number")?.name ?? "";
+      if (forType === "calendar") return dataset.schema.find((c) => c.type === "date")?.name ?? "";
+      return dataset.schema[0]?.name ?? "";
+    }
+    return FIELDS_FOR_TYPE[forType][0] ?? "by_sector";
+  }
 
   function handleTypeChange(newType: WidgetType) {
     setType(newType);
@@ -697,27 +759,32 @@ function WidgetEditPopover({
       // DATASET_COMPATIBLE_TYPES) — fall back to Incidents rather than offer
       // a combination that would silently show the wrong data.
       setDatasetId(undefined);
-      setField(FIELDS_FOR_TYPE[newType][0] ?? "by_sector");
-    } else if (FIELDS_FOR_TYPE[newType].length > 0 && !(FIELDS_FOR_TYPE[newType] as string[]).includes(field) && !datasetId) {
+      setField(defaultFieldFor(newType, undefined));
+    } else if (datasetId) {
+      // Still dataset-sourced — the current field might not fit the new
+      // type's constraints (a number column doesn't work for calendar, a
+      // date column doesn't work for stat's sums), so re-validate it.
+      const currentColType = activeDataset?.schema.find((c) => c.name === field)?.type;
+      const stillValid = newType === "stat" ? currentColType === "number" : newType === "calendar" ? currentColType === "date" : true;
+      if (!stillValid) setField(defaultFieldFor(newType, activeDataset));
+    } else if (FIELDS_FOR_TYPE[newType].length > 0 && !(FIELDS_FOR_TYPE[newType] as string[]).includes(field)) {
       setField(FIELDS_FOR_TYPE[newType][0]);
     }
-    if (newType !== "bar" && newType !== "line") setSecondaryField(undefined);
+    if (newType === "sankey" || newType === "network") {
+      if (!secondaryField || secondaryField === field) setSecondaryField(defaultSecondary(field, activeDataset));
+    } else if (newType !== "bar" && newType !== "line") {
+      setSecondaryField(undefined);
+    }
   }
 
   function handleDatasetChange(newDatasetId: string | undefined) {
     setDatasetId(newDatasetId);
-    setSecondaryField(undefined);
-    if (newDatasetId) {
-      // Switching to a dataset: land on a type that can actually read one,
-      // and a sensible first field from that dataset's own schema.
-      if (!DATASET_COMPATIBLE_TYPES.includes(type)) setType("bar");
-      const dataset = datasets?.find((d) => d.id === newDatasetId);
-      const firstNumeric = dataset?.schema.find((c) => c.type === "number")?.name;
-      const firstAny = dataset?.schema[0]?.name;
-      setField((type === "stat" ? firstNumeric : firstAny) ?? "");
-    } else {
-      setField(FIELDS_FOR_TYPE[type][0] ?? "by_sector");
-    }
+    const dataset = newDatasetId ? datasets?.find((d) => d.id === newDatasetId) : undefined;
+    const effectiveType = newDatasetId && !DATASET_COMPATIBLE_TYPES.includes(type) ? "bar" : type;
+    if (effectiveType !== type) setType(effectiveType);
+    const newField = defaultFieldFor(effectiveType, dataset);
+    setField(newField);
+    setSecondaryField(requiresSecondary || effectiveType === "sankey" || effectiveType === "network" ? defaultSecondary(newField, dataset) : undefined);
   }
 
   function handleSave() {
@@ -789,12 +856,20 @@ function WidgetEditPopover({
       {type !== "map" && (
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>DATA</div>
-          <select value={field} onChange={(e) => setField(e.target.value)} style={selectStyle}>
+          <select
+            value={field}
+            onChange={(e) => {
+              const newField = e.target.value;
+              setField(newField);
+              if (requiresSecondary && secondaryField === newField) setSecondaryField(defaultSecondary(newField, activeDataset));
+            }}
+            style={selectStyle}
+          >
             {activeDataset ? (
               <>
                 {type === "stat" && <option value="">Row count</option>}
                 {activeDataset.schema
-                  .filter((col) => type !== "stat" || col.type === "number")
+                  .filter((col) => (type === "stat" ? col.type === "number" : type === "calendar" ? col.type === "date" : true))
                   .map((col) => (
                     <option key={col.name} value={col.name}>
                       {col.name}
@@ -814,13 +889,15 @@ function WidgetEditPopover({
 
       {supportsBreakdown && (
         <div>
-          <div className="eyebrow" style={{ marginBottom: 4 }}>BREAK DOWN BY (OPTIONAL — 2ND VARIABLE)</div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            {requiresSecondary ? "LINKED TO (2ND FIELD)" : "BREAK DOWN BY (OPTIONAL — 2ND VARIABLE)"}
+          </div>
           <select
             value={secondaryField ?? ""}
             onChange={(e) => setSecondaryField(e.target.value || undefined)}
             style={selectStyle}
           >
-            <option value="">None — single variable</option>
+            {!requiresSecondary && <option value="">None — single variable</option>}
             {activeDataset
               ? activeDataset.schema
                   .filter((col) => col.name !== field)
@@ -837,7 +914,10 @@ function WidgetEditPopover({
           </select>
           {secondaryField && (
             <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4 }}>
-              {type === "bar" ? "Stacked bars" : "Multiple lines"}, one per {activeDataset ? secondaryField : PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
+              {type === "bar" && "Stacked bars"}
+              {type === "line" && "Multiple lines"}
+              {type === "sankey" && "Flow"}
+              {type === "network" && "Links"}, one per {activeDataset ? secondaryField : PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
             </div>
           )}
         </div>
@@ -1128,24 +1208,25 @@ function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: n
   );
 }
 
-/** Builds recharts' required {nodes, links} shape from flat (actor, tactic,
- *  count) rows — actors and tactics each become their own node, so the same
- *  name never collides even if an actor and tactic happened to share a label. */
-function sankeyDataFrom(rows: { actor: string; tactic: string; count: number }[]) {
-  const actors = Array.from(new Set(rows.map((d) => d.actor)));
-  const tactics = Array.from(new Set(rows.map((d) => d.tactic)));
-  const nodes = [...actors.map((a) => ({ name: a })), ...tactics.map((t) => ({ name: t }))];
+/** Builds recharts' required {nodes, links} shape from flat crosstab rows —
+ *  each distinct primary/secondary value becomes its own node, so the same
+ *  label never collides even if a primary and secondary value happen to
+ *  share text (e.g. a "Region" and a "Category" both having a "North"). */
+function sankeyDataFrom(rows: CrosstabRow[]) {
+  const primaries = Array.from(new Set(rows.map((d) => d.primary_value)));
+  const secondaries = Array.from(new Set(rows.map((d) => d.secondary_value)));
+  const nodes = [...primaries.map((a) => ({ name: a })), ...secondaries.map((t) => ({ name: t }))];
   const links = rows.map((d) => ({
-    source: actors.indexOf(d.actor),
-    target: actors.length + tactics.indexOf(d.tactic),
+    source: primaries.indexOf(d.primary_value),
+    target: primaries.length + secondaries.indexOf(d.secondary_value),
     value: d.count,
   }));
   return { nodes, links };
 }
 
-function ActorTacticSankey({ data, baseColor }: { data: { actor: string; tactic: string; count: number }[]; baseColor: string }) {
+function RelationshipSankey({ data, baseColor }: { data: CrosstabRow[]; baseColor: string }) {
   if (data.length === 0) {
-    return <EmptyState message="No actor/tactic data to show a flow for yet." />;
+    return <EmptyState message="No data for this pair of fields yet." />;
   }
   const sankeyData = sankeyDataFrom(data);
   return (
@@ -1162,32 +1243,32 @@ function ActorTacticSankey({ data, baseColor }: { data: { actor: string; tactic:
   );
 }
 
-/** Hand-rolled bipartite relationship diagram — actors on the left, tactics on
- *  the right, a curved link between them whenever they genuinely co-occurred
- *  in the same incident, thickness scaled to how often. No graph/network
+/** Hand-rolled bipartite relationship diagram — primary values on the left,
+ *  secondary values on the right, a curved link between them whenever they
+ *  genuinely co-occurred, thickness scaled to how often. No graph/network
  *  library needed for this simplified two-column layout, which keeps this
  *  widget from adding any new dependency at all. */
-function ActorTacticNetwork({ data, baseColor }: { data: { actor: string; tactic: string; count: number }[]; baseColor: string }) {
+function RelationshipNetwork({ data, baseColor }: { data: CrosstabRow[]; baseColor: string }) {
   if (data.length === 0) {
-    return <EmptyState message="No actor/tactic data to show relationships for yet." />;
+    return <EmptyState message="No data for this pair of fields yet." />;
   }
-  const actors = Array.from(new Set(data.map((d) => d.actor)));
-  const tactics = Array.from(new Set(data.map((d) => d.tactic)));
+  const primaries = Array.from(new Set(data.map((d) => d.primary_value)));
+  const secondaries = Array.from(new Set(data.map((d) => d.secondary_value)));
   const maxCount = Math.max(1, ...data.map((d) => d.count));
 
   const width = 480;
-  const height = Math.max(160, Math.max(actors.length, tactics.length) * 26);
+  const height = Math.max(160, Math.max(primaries.length, secondaries.length) * 26);
   const leftX = 90;
   const rightX = width - 90;
-  const actorY = new Map(actors.map((a, i) => [a, ((i + 1) * height) / (actors.length + 1)]));
-  const tacticY = new Map(tactics.map((t, i) => [t, ((i + 1) * height) / (tactics.length + 1)]));
+  const leftY = new Map(primaries.map((a, i) => [a, ((i + 1) * height) / (primaries.length + 1)]));
+  const rightY = new Map(secondaries.map((t, i) => [t, ((i + 1) * height) / (secondaries.length + 1)]));
 
   return (
     <div style={{ height: "100%", overflow: "auto" }}>
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
         {data.map((d, i) => {
-          const y1 = actorY.get(d.actor)!;
-          const y2 = tacticY.get(d.tactic)!;
+          const y1 = leftY.get(d.primary_value)!;
+          const y2 = rightY.get(d.secondary_value)!;
           const strokeWidth = 1 + (d.count / maxCount) * 5;
           return (
             <path
@@ -1198,22 +1279,22 @@ function ActorTacticNetwork({ data, baseColor }: { data: { actor: string; tactic
               fill="none"
               opacity={0.35}
             >
-              <title>{`${d.actor} × ${d.tactic}: ${d.count}`}</title>
+              <title>{`${d.primary_value} × ${d.secondary_value}: ${d.count}`}</title>
             </path>
           );
         })}
-        {actors.map((a) => (
+        {primaries.map((a) => (
           <g key={`a-${a}`}>
-            <circle cx={leftX} cy={actorY.get(a)} r={4} fill={baseColor} />
-            <text x={leftX - 8} y={actorY.get(a)} fontSize={10} textAnchor="end" dominantBaseline="middle" fill="var(--text-primary)">
+            <circle cx={leftX} cy={leftY.get(a)} r={4} fill={baseColor} />
+            <text x={leftX - 8} y={leftY.get(a)} fontSize={10} textAnchor="end" dominantBaseline="middle" fill="var(--text-primary)">
               {a}
             </text>
           </g>
         ))}
-        {tactics.map((t) => (
+        {secondaries.map((t) => (
           <g key={`t-${t}`}>
-            <circle cx={rightX} cy={tacticY.get(t)} r={4} fill={baseColor} />
-            <text x={rightX + 8} y={tacticY.get(t)} fontSize={10} textAnchor="start" dominantBaseline="middle" fill="var(--text-primary)">
+            <circle cx={rightX} cy={rightY.get(t)} r={4} fill={baseColor} />
+            <text x={rightX + 8} y={rightY.get(t)} fontSize={10} textAnchor="start" dominantBaseline="middle" fill="var(--text-primary)">
               {t}
             </text>
           </g>
