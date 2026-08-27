@@ -17,7 +17,7 @@ const layoutSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: 
 
 const widgetSchema = z.object({
   id: z.string(),
-  type: z.enum(["stat", "bar", "line", "pie", "map"]),
+  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth"]),
   title: z.string(),
   label: z.string().optional(),
   dataField: z.enum(["total", "by_sector", "by_actor", "by_tactic", "by_province", "by_country", "time_series", "deaths", "injuries", "kidnappings_ngo"]).optional(),
@@ -29,6 +29,7 @@ const widgetSchema = z.object({
   topN: z.number().int().positive().optional(),
   layout: layoutSchema.optional(),
   locked: z.boolean().optional(),
+  showSparkline: z.boolean().optional(),
 });
 
 const createSchema = z.object({
