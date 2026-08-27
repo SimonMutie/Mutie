@@ -1,7 +1,31 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LabelList } from "recharts";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  LabelList,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  FunnelChart,
+  Funnel,
+} from "recharts";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
+import { ComposableMap, Geographies, Geography } from "react-simple-maps";
+import worldTopology from "world-atlas/countries-110m.json?url";
 import "leaflet/dist/leaflet.css";
 import type { DashboardWidget, NormalizedDashboardStats, WidgetDataField, WidgetType } from "../api";
 
@@ -34,13 +58,22 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   pie: CATEGORY_FIELDS,
   line: ["time_series", ...CATEGORY_FIELDS],
   map: [],
+  radar: CATEGORY_FIELDS,
+  funnel: CATEGORY_FIELDS,
+  // Choropleth needs a category whose values are real place names it can
+  // shade on a world map — only "by_country" qualifies (sector/actor/tactic
+  // names aren't places).
+  choropleth: ["by_country"],
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
   { value: "bar", label: "Bar chart" },
   { value: "line", label: "Line chart" },
   { value: "pie", label: "Pie chart" },
-  { value: "map", label: "Map" },
+  { value: "radar", label: "Radar chart" },
+  { value: "funnel", label: "Funnel chart" },
+  { value: "choropleth", label: "Choropleth map" },
+  { value: "map", label: "Incident map" },
 ];
 
 /** Resolves a widget's effective per-category color list: an explicit custom
@@ -237,6 +270,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
           <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
             <div style={{ fontSize: 32, fontWeight: 700, color }}>{statValue(stats, widget.dataField).toLocaleString()}</div>
             <div className="eyebrow" style={{ marginTop: 6 }}>{fieldLabel(widget.dataField).toUpperCase()}</div>
+            {widget.showSparkline && stats.time_series.length > 1 && (
+              <div style={{ width: "80%", height: 32, marginTop: 8 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={stats.time_series}>
+                    <Line type="monotone" dataKey="count" stroke={color} strokeWidth={1.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
         )}
 
@@ -282,6 +324,35 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
             </PieChart>
           </ResponsiveContainer>
         )}
+
+        {widget.type === "radar" && (
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart data={series} outerRadius="75%">
+              <PolarGrid stroke="var(--border-soft)" />
+              <PolarAngleAxis dataKey="value" tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
+              <PolarRadiusAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} allowDecimals={false} />
+              <Radar name={fieldLabel(widget.dataField)} dataKey="count" stroke={color} fill={color} fillOpacity={0.35} />
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+            </RadarChart>
+          </ResponsiveContainer>
+        )}
+
+        {widget.type === "funnel" && (
+          <ResponsiveContainer width="100%" height="100%">
+            <FunnelChart>
+              <Tooltip contentStyle={TOOLTIP_STYLE} />
+              <Funnel dataKey="count" data={series} nameKey="value" isAnimationActive={false}>
+                {paletteFor(widget, series.length).map((c, idx) => (
+                  <Cell key={idx} fill={c} />
+                ))}
+                {widget.showDataLabels && <LabelList dataKey="value" position="right" fill="var(--text-primary)" stroke="none" fontSize={11} />}
+              </Funnel>
+            </FunnelChart>
+          </ResponsiveContainer>
+        )}
+
+        {widget.type === "choropleth" && <ChoroplethMap series={series} baseColor={widget.color || "#0d9488"} />}
 
         {widget.type === "map" && (
           <div style={{ height: "100%", borderRadius: 6, overflow: "hidden" }}>
@@ -341,6 +412,7 @@ function WidgetEditPopover({
   const [palette, setPalette] = useState<string[]>(widget.palette ?? []);
   const [showLegend, setShowLegend] = useState(!!widget.showLegend);
   const [topN, setTopN] = useState<number | undefined>(widget.topN);
+  const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
 
   function handleTypeChange(newType: WidgetType) {
     setType(newType);
@@ -359,6 +431,7 @@ function WidgetEditPopover({
       palette: palette.length > 0 ? palette : undefined,
       showLegend,
       topN,
+      showSparkline,
     });
   }
 
@@ -444,7 +517,7 @@ function WidgetEditPopover({
         </div>
       </div>
 
-      {(type === "bar" || type === "pie") && (
+      {(type === "bar" || type === "pie" || type === "funnel") && (
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>THEME — PALETTE (OVERRIDES FALLBACK COLOR)</div>
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
@@ -522,7 +595,7 @@ function WidgetEditPopover({
         </div>
       )}
 
-      {(type === "bar" || type === "pie") && (
+      {(type === "bar" || type === "pie" || type === "radar" || type === "funnel") && (
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>TOP N (SCALE)</div>
           <input
@@ -542,16 +615,22 @@ function WidgetEditPopover({
         <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. source, note, date range…" style={{ ...selectStyle, width: "100%" }} />
       </div>
 
-      {(type === "bar" || type === "line" || type === "pie") && (
+      {(type === "bar" || type === "line" || type === "pie" || type === "radar") && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
           <input type="checkbox" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} />
           Show legend
         </label>
       )}
-      {(type === "bar" || type === "pie") && (
+      {(type === "bar" || type === "pie" || type === "funnel") && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
           <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
           Show values on chart
+        </label>
+      )}
+      {type === "stat" && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+          <input type="checkbox" checked={showSparkline} onChange={(e) => setShowSparkline(e.target.checked)} />
+          Show trend line (overall incident volume by month)
         </label>
       )}
 
@@ -571,6 +650,52 @@ function WidgetEditPopover({
  *  opacity variants of that one color instead of the default rainbow palette,
  *  so "pick a color theme" looks intentional on a multi-slice pie rather than
  *  just recoloring slice #1. */
+/** Shades each country by its share of the max value in the series — reuses
+ *  the exact same world topology and map library already proven working in
+ *  WorldMap.tsx, just driven by dashboard stats instead of live events.
+ *  Country-name matching is case/whitespace-insensitive but otherwise exact;
+ *  a country in the data that doesn't match the topology's naming just stays
+ *  unshaded rather than guessing, since a wrong match would misrepresent
+ *  where incidents actually happened. */
+function ChoroplethMap({ series, baseColor }: { series: { value: string; count: number }[]; baseColor: string }) {
+  const maxCount = Math.max(1, ...series.map((s) => s.count));
+  const countByCountry = new Map<string, number>();
+  for (const s of series) countByCountry.set(s.value.trim().toLowerCase(), s.count);
+
+  return (
+    <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)" }}>
+      <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
+        <Geographies geography={worldTopology}>
+          {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) =>
+            geographies.map((geo) => {
+              const name = geo.properties?.name;
+              const count = name ? countByCountry.get(name.trim().toLowerCase()) : undefined;
+              const intensity = count ? Math.max(0.18, count / maxCount) : 0;
+              return (
+                <Geography
+                  key={geo.rsmKey}
+                  geography={geo}
+                  fill={count ? hexToRgba(baseColor, intensity) : "var(--panel)"}
+                  stroke="var(--border)"
+                  strokeWidth={0.4}
+                  style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.8 }, pressed: { outline: "none" } }}
+                />
+              );
+            })
+          }
+        </Geographies>
+      </ComposableMap>
+    </div>
+  );
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function adjustOpacity(hex: string, index: number): string {
   const opacities = [1, 0.75, 0.55, 0.4, 0.28, 0.2];
   const opacity = opacities[index % opacities.length];
