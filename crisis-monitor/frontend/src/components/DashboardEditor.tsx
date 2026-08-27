@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type WidgetDataField, type WidgetType } from "../api";
-import DashboardWidgetCard, { fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES } from "./DashboardWidgetCard";
+import { api, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
+import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 const SIZE_DEFAULTS: Record<DashboardWidget["size"], { w: number; h: number }> = {
@@ -84,7 +84,15 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Loading existing data fires this same "widgets changed" effect once on
+  // arrival (setWidgets from the fetch), which isn't a real edit and
+  // shouldn't trigger a pointless immediate re-save — but a brand new,
+  // never-saved dashboard has no such load to skip past, so its very first
+  // widget needs to autosave right away rather than have that one change
+  // silently consumed as the "skip".
+  const skipNextAutoSave = useRef(!(mode.kind === "bespoke" && mode.id === null));
   const [addingWidget, setAddingWidget] = useState(false);
   const [draftType, setDraftType] = useState<WidgetType>("bar");
   const [draftField, setDraftField] = useState<WidgetDataField>("by_sector");
@@ -95,12 +103,103 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [draftPalette, setDraftPalette] = useState<string[]>([]);
   const [draftLegend, setDraftLegend] = useState(false);
   const [draftTopN, setDraftTopN] = useState<number | undefined>(undefined);
+  const [draftSecondaryField, setDraftSecondaryField] = useState<PivotableField | undefined>(undefined);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [crosstabs, setCrosstabs] = useState<Record<string, CrosstabRow[]>>({});
+  const [breakdowns, setBreakdowns] = useState<Record<string, { value: string; count: number }[]>>({});
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [datasetSummaries, setDatasetSummaries] = useState<Record<string, DatasetSummary>>({});
+
+  useEffect(() => {
+    api.getDatasets().then(setDatasets);
+  }, []);
 
   useEffect(() => {
     api.getIncidentStats().then((s) => setStats(normalizeStats(s)));
     api.getIncidents({ limit: 3000 }).then(setIncidents);
   }, []);
+
+  // Fetches only the specific (primary, secondary) cross-tabs the current set
+  // of widgets actually need, and only the ones not already fetched — adding
+  // a "Break down by" field to one widget shouldn't re-fetch data every other
+  // widget already has. A "ds:<id>:<primary>|<secondary>" key (see
+  // crosstabKeyFor) routes to that dataset's own crosstab endpoint instead of
+  // the incidents one — same idea, different table underneath.
+  useEffect(() => {
+    const neededKeys = new Set<string>();
+    for (const w of widgets) {
+      const key = crosstabKeyFor(w);
+      if (key) neededKeys.add(key);
+    }
+    const missing = Array.from(neededKeys).filter((k) => !(k in crosstabs));
+    if (missing.length === 0) return;
+    missing.forEach((key) => {
+      if (key.startsWith("ds:")) {
+        const rest = key.slice(3);
+        const idEnd = rest.indexOf(":");
+        const datasetId = rest.slice(0, idEnd);
+        const fields = rest.slice(idEnd + 1);
+        const sepIdx = fields.indexOf("|");
+        const primary = fields.slice(0, sepIdx);
+        const secondary = fields.slice(sepIdx + 1);
+        api.getDatasetCrosstab(datasetId, primary, secondary).then((rows) => {
+          setCrosstabs((prev) => ({ ...prev, [key]: rows }));
+        });
+        return;
+      }
+      const [primary, secondary] = key.split("|") as [PivotableField, PivotableField];
+      api.getCrosstab(primary, secondary).then((rows) => {
+        setCrosstabs((prev) => ({ ...prev, [key]: rows }));
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widgets]);
+
+  // Same idea, one dimension instead of two — for widgets whose primary
+  // field is one of the newer by_X fields not precomputed on stats, or any
+  // dataset-sourced field at all (a dataset never has anything precomputed).
+  useEffect(() => {
+    const neededFields = new Set<string>();
+    for (const w of widgets) {
+      const field = breakdownKeyFor(w);
+      if (field) neededFields.add(field);
+    }
+    const missing = Array.from(neededFields).filter((f) => !(f in breakdowns));
+    if (missing.length === 0) return;
+    missing.forEach((field) => {
+      if (field.startsWith("ds:")) {
+        const rest = field.slice(3);
+        const idEnd = rest.indexOf(":");
+        const datasetId = rest.slice(0, idEnd);
+        const column = rest.slice(idEnd + 1);
+        api.getDatasetBreakdown(datasetId, column).then((rows) => {
+          setBreakdowns((prev) => ({ ...prev, [field]: rows }));
+        });
+        return;
+      }
+      api.getBreakdown(field as PivotableField).then((rows) => {
+        setBreakdowns((prev) => ({ ...prev, [field]: rows }));
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widgets]);
+
+  // Stat cards sourced from a dataset need that dataset's row count / column
+  // sums — fetched once per dataset actually in use, not once per widget.
+  useEffect(() => {
+    const neededDatasetIds = new Set<string>();
+    for (const w of widgets) {
+      if (w.type === "stat" && w.datasetId) neededDatasetIds.add(w.datasetId);
+    }
+    const missing = Array.from(neededDatasetIds).filter((id) => !(id in datasetSummaries));
+    if (missing.length === 0) return;
+    missing.forEach((id) => {
+      api.getDatasetSummary(id).then((summary) => {
+        setDatasetSummaries((prev) => ({ ...prev, [id]: summary }));
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widgets]);
 
   useEffect(() => {
     setLoaded(false);
@@ -117,6 +216,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       setShareToken(d.share_token);
       setLocked(d.locked);
       setLoaded(true);
+      skipNextAutoSave.current = true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode.kind, mode.kind === "bespoke" ? mode.id : null]);
@@ -141,12 +241,14 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   function addWidget() {
     const { w: itemW, h: itemH } = SIZE_DEFAULTS[draftSize];
     const maxY = widgets.reduce((m, w) => Math.max(m, (w.layout?.y ?? 0) + (w.layout?.h ?? 0)), 0);
+    const supportsBreakdown = draftType === "bar" || draftType === "line";
     const widget: DashboardWidget = {
       id: crypto.randomUUID(),
       type: draftType,
       title: `${draftType === "stat" ? "" : `${draftType[0].toUpperCase()}${draftType.slice(1)}: `}${fieldLabel(draftField)}`,
       label: draftLabel || undefined,
       dataField: draftType === "map" ? undefined : draftField,
+      secondaryField: supportsBreakdown ? draftSecondaryField : undefined,
       size: draftSize,
       showDataLabels: draftDataLabels,
       color: draftColor,
@@ -170,6 +272,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setDraftPalette([]);
     setDraftLegend(false);
     setDraftTopN(undefined);
+    setDraftSecondaryField(undefined);
   }
 
   function updateWidget(id: string, patch: Partial<DashboardWidget>) {
@@ -184,7 +287,11 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   }
 
   async function save() {
-    setSaving(true);
+    setSaveStatus("saving");
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
     try {
       if (backendId) {
         await api.updateCustomDashboard(backendId, { name, widgets });
@@ -193,10 +300,43 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         setBackendId(created.id);
         onSavedNew?.(created.id);
       }
-    } finally {
-      setSaving(false);
+      setSaveStatus("saved");
+    } catch {
+      // Surfaced, not swallowed — a silent failure here is exactly what made
+      // edits look saved (the widget itself updates instantly either way)
+      // while nothing had actually reached the server.
+      setSaveStatus("error");
     }
   }
+
+  // Every edit — dragging, resizing, adding/removing/renaming a widget, or
+  // changing a widget's settings in its popover — updates `widgets` here,
+  // which now saves itself a beat later. There is no separate "did you
+  // remember to click Save" step for this to fail silently against; the
+  // manual Save button below still exists for an immediate, explicit save,
+  // but it's a convenience, not a requirement.
+  useEffect(() => {
+    if (!loaded || locked) return;
+    if (skipNextAutoSave.current) {
+      skipNextAutoSave.current = false;
+      return;
+    }
+    setSaveStatus("idle");
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      save();
+    }, 900);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widgets, name, loaded, locked]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
 
   async function toggleShare() {
     if (!backendId) await save();
@@ -257,11 +397,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             + Add widget
           </button>
         )}
-        {!locked && (
-          <button onClick={save} disabled={saving} style={secondaryBtnStyle}>
-            {saving ? "Saving…" : "Save"}
-          </button>
-        )}
+        {!locked && <SaveStatusIndicator status={saveStatus} onRetry={save} />}
         <button onClick={toggleLock} title={locked ? "Unlock to edit again" : "Lock once you're done editing, to prevent accidental changes"} style={locked ? liveBtnStyle : secondaryBtnStyle}>
           {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}
         </button>
@@ -307,6 +443,23 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                 {FIELDS_FOR_TYPE[draftType].map((f) => (
                   <option key={f} value={f}>
                     {fieldLabel(f)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {(draftType === "bar" || draftType === "line") && (
+            <div>
+              <div className="eyebrow" style={{ marginBottom: 4 }}>BREAK DOWN BY (OPTIONAL)</div>
+              <select
+                value={draftSecondaryField ?? ""}
+                onChange={(e) => setDraftSecondaryField(e.target.value ? (e.target.value as PivotableField) : undefined)}
+                style={selectStyle}
+              >
+                <option value="">None</option>
+                {PIVOTABLE_FIELD_OPTIONS.filter((f) => f !== DATA_FIELD_TO_COLUMN[draftField]).map((f) => (
+                  <option key={f} value={f}>
+                    {PIVOT_FIELD_LABELS[f]}
                   </option>
                 ))}
               </select>
@@ -499,6 +652,10 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   widget={w}
                   stats={stats}
                   incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number }[]}
+                  crosstabs={crosstabs}
+                  breakdowns={breakdowns}
+                  datasets={datasets}
+                  datasetSummaries={datasetSummaries}
                   onRemove={locked ? undefined : () => removeWidget(w.id)}
                   onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
                   onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
@@ -510,6 +667,24 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       </div>
     </div>
   );
+}
+
+/** Shows the actual, current persistence state — not just "there's a Save
+ *  button somewhere, hope you remember it." Idle right after loading reads as
+ *  "saved" (there's nothing unsaved yet); a real failure stays visible with a
+ *  retry rather than silently reverting to looking fine. */
+function SaveStatusIndicator({ status, onRetry }: { status: "idle" | "saving" | "saved" | "error"; onRetry: () => void }) {
+  if (status === "error") {
+    return (
+      <button onClick={onRetry} style={{ ...secondaryBtnStyle, color: "var(--critical)", borderColor: "var(--critical)" }} title="Click to retry saving">
+        ⚠ Save failed — retry
+      </button>
+    );
+  }
+  if (status === "saving") {
+    return <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Saving…</span>;
+  }
+  return <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>✓ All changes saved</span>;
 }
 
 const primaryBtnStyle: React.CSSProperties = {
