@@ -5,7 +5,7 @@ import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { isPivotable, fetchIncidentsBreakdown, fetchIncidentsCrosstab } from "./incidents";
-import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary } from "./datasets";
+import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 customDashboardsRouter.use("*", requireAuth);
@@ -346,6 +346,7 @@ publicDashboardsRouter.get("/:token", async (c) => {
   // public route has no login to fall back on for that check.
   const crosstabs: Record<string, { primary_value: string; secondary_value: string; count: number }[]> = {};
   const breakdowns: Record<string, { value: string; count: number }[]> = {};
+  const dailyBreakdowns: Record<string, { date: string; count: number }[]> = {};
   const datasetSummaries: Record<string, { total: number; sums: Record<string, number> }> = {};
   const datasetSchemaCache = new Map<string, { name: string; type: string }[] | null>();
 
@@ -364,7 +365,10 @@ publicDashboardsRouter.get("/:token", async (c) => {
       if (w.type === "stat" && !(w.datasetId in datasetSummaries)) {
         datasetSummaries[w.datasetId] = await fetchDatasetSummary(c.env.DB, w.datasetId, schema);
       }
-      if (w.dataField && w.secondaryField) {
+      if (w.type === "calendar" && w.dataField) {
+        const key = `ds:${w.datasetId}:${w.dataField}`;
+        if (!(key in dailyBreakdowns)) dailyBreakdowns[key] = await fetchDatasetDaily(c.env.DB, w.datasetId, schema, w.dataField);
+      } else if (w.dataField && w.secondaryField) {
         const key = `ds:${w.datasetId}:${w.dataField}|${w.secondaryField}`;
         if (!(key in crosstabs)) crosstabs[key] = await fetchDatasetCrosstab(c.env.DB, w.datasetId, schema, w.dataField, w.secondaryField);
       } else if (w.dataField) {
@@ -389,6 +393,7 @@ publicDashboardsRouter.get("/:token", async (c) => {
     stats,
     crosstabs,
     breakdowns,
+    dailyBreakdowns,
     datasetSummaries,
     incidents,
     updated_at: dashboard.updated_at,
