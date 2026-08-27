@@ -192,7 +192,7 @@ export interface SavedRoute {
   updated_at: string;
 }
 
-export type WidgetType = "stat" | "bar" | "line" | "pie" | "map";
+export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth";
 export type WidgetDataField =
   | "total"
   | "by_sector"
@@ -235,6 +235,8 @@ export interface DashboardWidget {
    *  own edit/remove controls and disables its drag/resize even while other
    *  widgets on the same dashboard stay editable. */
   locked?: boolean;
+  /** Stat cards only — shows a small monthly trend line beneath the number. */
+  showSparkline?: boolean;
 }
 
 export interface CustomDashboard {
