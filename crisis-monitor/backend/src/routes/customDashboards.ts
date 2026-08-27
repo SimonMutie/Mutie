@@ -4,9 +4,32 @@ import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
+import { isPivotable, fetchIncidentsBreakdown, fetchIncidentsCrosstab } from "./incidents";
+import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 customDashboardsRouter.use("*", requireAuth);
+
+/** Widgets store their primary breakdown as e.g. "by_province" (matching the
+ *  by_X stats fields), but crosstabs are keyed by the bare column name
+ *  ("province") to match /crosstab and the pivotable-fields allowlist. */
+const DATA_FIELD_TO_COLUMN: Partial<Record<string, string>> = {
+  by_sector: "sector",
+  by_actor: "actor",
+  by_tactic: "tactic",
+  by_province: "province",
+  by_country: "country",
+  by_severity: "severity",
+  by_county: "county",
+  by_district: "district",
+  by_city: "city",
+  by_suburb: "suburb",
+  by_operation: "operation",
+  by_target: "target",
+  by_interest_group: "interest_group",
+  by_actual_main_victim: "actual_main_victim",
+  by_intended_primary_target: "intended_primary_target",
+};
 
 /** Not gated by requireAuth — reachable by anyone with the link, which is the
  *  entire point of "share for live viewing". Only returns data for dashboards
@@ -17,10 +40,26 @@ const layoutSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: 
 
 const widgetSchema = z.object({
   id: z.string(),
-  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar"]),
+  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar", "sankey", "network", "bubble", "globe"]),
   title: z.string(),
   label: z.string().optional(),
-  dataField: z.enum(["total", "by_sector", "by_actor", "by_tactic", "by_province", "by_country", "time_series", "deaths", "injuries", "kidnappings_ngo"]).optional(),
+  /** For incidents-sourced widgets, one of the fixed by_X/total/etc. values
+   *  (not re-validated as a strict enum here — an invalid value just yields
+   *  an empty series on the frontend rather than breaking anything, same
+   *  tolerance already extended to secondaryField/datasetId). For a
+   *  dataset-sourced widget (datasetId set), this holds that dataset's own
+   *  raw column name instead, which can't be constrained to a fixed list
+   *  since every dataset defines its own columns. */
+  dataField: z.string().optional(),
+  /** Bar/line only — a second dimension to break the primary field down by
+   *  (stacked/grouped bars, multi-series lines), turning a single-variable
+   *  chart into a genuine two-variable pivot. For incidents-sourced widgets
+   *  this is one of the /crosstab allowlist's columns; for dataset-sourced
+   *  widgets, any of that dataset's own column names. Not re-validated as a
+   *  strict enum here for the same reason as dataField above — the actual
+   *  SQL-facing endpoints (/crosstab, /datasets/:id/crosstab) do their own
+   *  allowlist checks against real column names at query time regardless. */
+  secondaryField: z.string().optional(),
   size: z.enum(["small", "medium", "large"]).default("medium"),
   showDataLabels: z.boolean().optional(),
   color: z.string().optional(),
@@ -30,6 +69,10 @@ const widgetSchema = z.object({
   layout: layoutSchema.optional(),
   locked: z.boolean().optional(),
   showSparkline: z.boolean().optional(),
+  /** When set, this widget charts an uploaded dataset instead of incidents —
+   *  dataField/secondaryField then hold that dataset's own raw column names
+   *  directly, not the incidents by_X convention. */
+  datasetId: z.string().optional(),
 });
 
 const createSchema = z.object({
@@ -276,14 +319,14 @@ publicDashboardsRouter.get("/:token", async (c) => {
   if (!dashboard) return c.json({ error: "Not found" }, 404);
 
   const stats = await computeStatsForOwner(c.env.DB, dashboard.owner_id as string | null);
+  const ownerId = dashboard.owner_id as string | null;
 
   // Only fetched if a map widget is actually present — no point pulling
   // thousands of rows for a purely chart-based dashboard.
-  const widgets = JSON.parse(String(dashboard.widgets ?? "[]"));
-  const hasMapWidget = Array.isArray(widgets) && widgets.some((w: { type?: string }) => w.type === "map");
+  const widgets = JSON.parse(String(dashboard.widgets ?? "[]")) as { type?: string; dataField?: string; secondaryField?: string; datasetId?: string }[];
+  const hasMapWidget = Array.isArray(widgets) && widgets.some((w) => w.type === "map");
   let incidents: Record<string, unknown>[] = [];
   if (hasMapWidget) {
-    const ownerId = dashboard.owner_id as string | null;
     incidents = ownerId
       ? await all(
           c.env.DB,
@@ -293,10 +336,60 @@ publicDashboardsRouter.get("/:token", async (c) => {
       : [];
   }
 
+  // Only the specific (primary, secondary) pairs and single fields this
+  // dashboard's own widgets actually use — not every possible combination.
+  // A "ds:<id>:..." key, matching the frontend's crosstabKeyFor /
+  // breakdownKeyFor exactly, routes to that dataset's own crosstab/breakdown
+  // instead of the incidents one — but only once schemaFor() below confirms
+  // the dataset actually belongs to *this dashboard's* owner. A tampered
+  // widget referencing someone else's dataset id must not leak it here; the
+  // public route has no login to fall back on for that check.
+  const crosstabs: Record<string, { primary_value: string; secondary_value: string; count: number }[]> = {};
+  const breakdowns: Record<string, { value: string; count: number }[]> = {};
+  const datasetSummaries: Record<string, { total: number; sums: Record<string, number> }> = {};
+  const datasetSchemaCache = new Map<string, { name: string; type: string }[] | null>();
+
+  async function schemaFor(datasetId: string): Promise<{ name: string; type: string }[] | null> {
+    if (datasetSchemaCache.has(datasetId)) return datasetSchemaCache.get(datasetId)!;
+    const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+    const schema = loaded && loaded.owner_id === ownerId ? loaded.schema : null;
+    datasetSchemaCache.set(datasetId, schema);
+    return schema;
+  }
+
+  for (const w of widgets) {
+    if (w.datasetId) {
+      const schema = await schemaFor(w.datasetId);
+      if (!schema) continue; // dataset missing, or doesn't belong to this dashboard's owner
+      if (w.type === "stat" && !(w.datasetId in datasetSummaries)) {
+        datasetSummaries[w.datasetId] = await fetchDatasetSummary(c.env.DB, w.datasetId, schema);
+      }
+      if (w.dataField && w.secondaryField) {
+        const key = `ds:${w.datasetId}:${w.dataField}|${w.secondaryField}`;
+        if (!(key in crosstabs)) crosstabs[key] = await fetchDatasetCrosstab(c.env.DB, w.datasetId, schema, w.dataField, w.secondaryField);
+      } else if (w.dataField) {
+        const key = `ds:${w.datasetId}:${w.dataField}`;
+        if (!(key in breakdowns)) breakdowns[key] = await fetchDatasetBreakdown(c.env.DB, w.datasetId, schema, w.dataField);
+      }
+      continue;
+    }
+
+    const primary = w.dataField ? DATA_FIELD_TO_COLUMN[w.dataField] : undefined;
+    if (primary && isPivotable(primary) && isPivotable(w.secondaryField)) {
+      const key = `${primary}|${w.secondaryField}`;
+      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId, primary, w.secondaryField);
+    } else if (primary && isPivotable(primary) && !("by_" + primary in stats)) {
+      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId, primary);
+    }
+  }
+
   return c.json({
     name: dashboard.name,
     widgets,
     stats,
+    crosstabs,
+    breakdowns,
+    datasetSummaries,
     incidents,
     updated_at: dashboard.updated_at,
   });
