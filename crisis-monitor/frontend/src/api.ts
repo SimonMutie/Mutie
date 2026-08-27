@@ -366,6 +366,9 @@ export interface PublicDashboardData {
   /** Keyed by bare column name — single-field breakdowns for widgets using
    *  one of the newer by_X fields as their primary dimension. */
   breakdowns: Record<string, { value: string; count: number }[]>;
+  /** Keyed by dataset id — row count + numeric column sums, for any
+   *  dataset-sourced stat cards on this dashboard. */
+  datasetSummaries: Record<string, DatasetSummary>;
   incidents: { id: string; latitude: number; longitude: number; severity: string | null; actor: string | null; sector: string | null; occurred_date: string | null; city: string | null; province: string | null }[];
   updated_at: string;
 }
