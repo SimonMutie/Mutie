@@ -369,6 +369,9 @@ export interface PublicDashboardData {
   /** Keyed by dataset id — row count + numeric column sums, for any
    *  dataset-sourced stat cards on this dashboard. */
   datasetSummaries: Record<string, DatasetSummary>;
+  /** Keyed "ds:<id>:<column>" — daily counts for any dataset-sourced
+   *  calendar widget's chosen date column. */
+  dailyBreakdowns: Record<string, { date: string; count: number }[]>;
   incidents: { id: string; latitude: number; longitude: number; severity: string | null; actor: string | null; sector: string | null; occurred_date: string | null; city: string | null; province: string | null }[];
   updated_at: string;
 }
@@ -535,6 +538,8 @@ export const api = {
   getDatasetCrosstab: (datasetId: string, primary: string, secondary: string) =>
     req<CrosstabRow[]>(`/api/datasets/${datasetId}/crosstab?primary=${encodeURIComponent(primary)}&secondary=${encodeURIComponent(secondary)}`),
   getDatasetSummary: (datasetId: string) => req<DatasetSummary>(`/api/datasets/${datasetId}/summary`),
+  getDatasetDaily: (datasetId: string, field: string) =>
+    req<{ date: string; count: number }[]>(`/api/datasets/${datasetId}/daily?field=${encodeURIComponent(field)}`),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
