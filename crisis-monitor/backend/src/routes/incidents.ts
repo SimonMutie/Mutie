@@ -247,6 +247,101 @@ incidentsRouter.get("/filters", async (c) => {
   return c.json(results);
 });
 
+// Only ever interpolated into SQL after being checked against this allowlist
+// — column names can't be bound parameters, so a strict allowlist (not just
+// "looks like an identifier") is what keeps this safe from injection.
+// Deliberately excludes `details` (long free-text description) — grouping by
+// it would produce near-100%-unique buckets, not a usable category breakdown.
+export const PIVOTABLE_FIELDS = [
+  "sector",
+  "actor",
+  "tactic",
+  "province",
+  "country",
+  "severity",
+  "county",
+  "district",
+  "city",
+  "suburb",
+  "operation",
+  "target",
+  "interest_group",
+  "actual_main_victim",
+  "intended_primary_target",
+] as const;
+export type PivotableField = (typeof PIVOTABLE_FIELDS)[number];
+export function isPivotable(v: string | undefined): v is PivotableField {
+  return !!v && (PIVOTABLE_FIELDS as readonly string[]).includes(v);
+}
+
+/** Single-field version of /crosstab — a plain category breakdown for any of
+ *  the (now much larger) pivotable field list, on demand rather than
+ *  precomputed. The five original fields (sector/actor/tactic/province/
+ *  country) still also exist as always-precomputed by_X fields on /stats for
+ *  backward compatibility; this covers those five too plus the newer ones,
+ *  through one general mechanism instead of a hardcoded query per field. */
+/** Reusable, already-validated single-field breakdown for any pivotable
+ *  field, scoped to a specific owner (not the calling admin/user — the
+ *  public dashboard route needs the *dashboard's* owner's data, not the
+ *  anonymous viewer's, since there isn't one). Exported so that route and
+ *  the authed /breakdown endpoint below share one query path instead of two
+ *  that could quietly drift apart. */
+export async function fetchIncidentsBreakdown(db: D1Database, ownerId: string | null, field: string | undefined): Promise<{ value: string; count: number }[]> {
+  if (!isPivotable(field)) return [];
+  const andOwner = ownerId ? "AND owner_id = ?" : "";
+  const ownerParams = ownerId ? [ownerId] : [];
+  return all<{ value: string; count: number }>(
+    db,
+    `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andOwner} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
+    ownerParams
+  );
+}
+
+export async function fetchIncidentsCrosstab(
+  db: D1Database,
+  ownerId: string | null,
+  primary: string | undefined,
+  secondary: string | undefined
+): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
+  if (!isPivotable(primary) || !isPivotable(secondary)) return [];
+  const andOwner = ownerId ? "AND owner_id = ?" : "";
+  const ownerParams = ownerId ? [ownerId] : [];
+  return all<{ primary_value: string; secondary_value: string; count: number }>(
+    db,
+    `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
+     FROM incidents
+     WHERE ${primary} IS NOT NULL AND ${primary} != '' AND ${secondary} IS NOT NULL AND ${secondary} != '' ${andOwner}
+     GROUP BY ${primary}, ${secondary}
+     ORDER BY count DESC
+     LIMIT 300`,
+    ownerParams
+  );
+}
+
+incidentsRouter.get("/breakdown", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const field = c.req.query("field");
+  if (!isPivotable(field)) {
+    return c.json({ error: "field must be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
+  }
+  return c.json(await fetchIncidentsBreakdown(c.env.DB, isAdmin ? null : ownerId, field));
+});
+
+/** Genuine joint counts for any two of the pivotable fields — the general
+ *  version of the one-off actor×tactic cross-tab already computed for
+ *  Sankey/network widgets, now usable for any pair a chart actually needs. */
+incidentsRouter.get("/crosstab", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const primary = c.req.query("primary");
+  const secondary = c.req.query("secondary");
+  if (!isPivotable(primary) || !isPivotable(secondary)) {
+    return c.json({ error: "primary and secondary must each be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
+  }
+  return c.json(await fetchIncidentsCrosstab(c.env.DB, isAdmin ? null : ownerId, primary, secondary));
+});
+
 incidentsRouter.get("/stats", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
