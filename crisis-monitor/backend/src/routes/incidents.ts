@@ -254,10 +254,9 @@ incidentsRouter.get("/stats", async (c) => {
   const ownerParams = isAdmin ? [] : [ownerId];
   const andOwner = isAdmin ? "" : "AND owner_id = ?";
 
-  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, casualties] = await Promise.all([
+  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, casualties] = await Promise.all([
     first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
-    all<{ value: string; count: number }>(
-      c.env.DB,
+    all<{ value: string; count: number }>(      c.env.DB,
       `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andOwner} GROUP BY sector ORDER BY count DESC LIMIT 12`,
       ownerParams
     ),
@@ -291,6 +290,14 @@ incidentsRouter.get("/stats", async (c) => {
       `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andOwner} GROUP BY bucket ORDER BY bucket ASC`,
       ownerParams
     ),
+    // Day-level granularity, bounded to the last ~13 months — a calendar
+    // heatmap covering a whole dataset's history would be an enormous,
+    // mostly-empty grid; a recent window is what these are actually for.
+    all<{ date: string; count: number }>(
+      c.env.DB,
+      `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
+      ownerParams
+    ),
     first<Record<string, number>>(
       c.env.DB,
       `SELECT
@@ -316,6 +323,7 @@ incidentsRouter.get("/stats", async (c) => {
     by_province: byProvince,
     by_country: byCountry,
     time_series: timeSeries,
+    daily,
     casualties: casualties ?? {},
   });
 });
@@ -384,119 +392,3 @@ const updateIncidentSchema = z.object({
   time: z.string().nullish(),
   country: z.string().nullish(),
   province: z.string().nullish(),
-  county: z.string().nullish(),
-  district: z.string().nullish(),
-  city: z.string().nullish(),
-  suburb: z.string().nullish(),
-  precise_location: z.string().nullish(),
-  latitude: z.number().nullish(),
-  longitude: z.number().nullish(),
-  sector: z.string().nullish(),
-  actor: z.string().nullish(),
-  operation: z.string().nullish(),
-  tactic: z.string().nullish(),
-  severity: z.string().nullish(),
-  details: z.string().nullish(),
-  target: z.string().nullish(),
-  interest_group: z.string().nullish(),
-  actual_main_victim: z.string().nullish(),
-  intended_primary_target: z.string().nullish(),
-  civilian_death_child: z.number().nullish(),
-  civilian_death_female: z.number().nullish(),
-  civilian_death_male: z.number().nullish(),
-  civilian_death_unknown: z.number().nullish(),
-  civilian_injury_female: z.number().nullish(),
-  civilian_injury_male: z.number().nullish(),
-  civilian_injury_unknown: z.number().nullish(),
-  kidnappings_ngo: z.number().nullish(),
-});
-
-incidentsRouter.patch("/:id", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const id = c.req.param("id");
-  const existing = await first<{ owner_id: string | null; occurred_date: string | null; occurred_time: string | null }>(
-    c.env.DB,
-    `SELECT owner_id, occurred_date, occurred_time FROM incidents WHERE id = ?`,
-    [id]
-  );
-  if (!existing) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && existing.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
-
-  const body = await c.req.json().catch(() => null);
-  const parsed = updateIncidentSchema.safeParse(body);
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-
-  const updates: string[] = [];
-  const params: unknown[] = [];
-  const data = parsed.data as Record<string, unknown>;
-
-  for (const field of SIMPLE_INCIDENT_FIELDS) {
-    if (data[field] !== undefined) {
-      updates.push(`${field} = ?`);
-      params.push(data[field]);
-    }
-  }
-
-  // date/time map to differently-named columns and jointly recompute
-  // occurred_at, so they're handled separately from the simple 1:1 fields above.
-  if (parsed.data.date !== undefined || parsed.data.time !== undefined) {
-    const newDate = parsed.data.date !== undefined ? parsed.data.date : existing.occurred_date;
-    const newTime = parsed.data.time !== undefined ? parsed.data.time : existing.occurred_time;
-    if (parsed.data.date !== undefined) {
-      updates.push("occurred_date = ?");
-      params.push(parsed.data.date);
-    }
-    if (parsed.data.time !== undefined) {
-      updates.push("occurred_time = ?");
-      params.push(parsed.data.time);
-    }
-    updates.push("occurred_at = ?");
-    params.push(combineDateTime(newDate, newTime));
-  }
-
-  if (updates.length > 0) {
-    params.push(id);
-    await c.env.DB.prepare(`UPDATE incidents SET ${updates.join(", ")} WHERE id = ?`).bind(...params).run();
-  }
-
-  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM incidents WHERE id = ?`, [id]);
-  return c.json({ ...row, raw_row: JSON.parse(String(row?.raw_row ?? "{}")) });
-});
-
-/** Lists past uploads (real files, not manual single-row entries) so the user
- *  can see and delete a whole file in one click, regardless of how many rows
- *  it contained or how many chunk calls it took to insert. */
-incidentsRouter.get("/uploads", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const rows = isAdmin
-    ? await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`)
-    : await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id = ? ORDER BY created_at DESC`, [ownerId]);
-  return c.json(rows);
-});
-
-incidentsRouter.delete("/batch/:batchId", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const batchId = c.req.param("batchId");
-  if (isAdmin) {
-    await c.env.DB.prepare(`DELETE FROM incidents WHERE upload_batch_id = ?`).bind(batchId).run();
-    await c.env.DB.prepare(`DELETE FROM incident_uploads WHERE id = ?`).bind(batchId).run();
-  } else {
-    await c.env.DB.prepare(`DELETE FROM incidents WHERE upload_batch_id = ? AND owner_id = ?`).bind(batchId, ownerId).run();
-    await c.env.DB.prepare(`DELETE FROM incident_uploads WHERE id = ? AND owner_id = ?`).bind(batchId, ownerId).run();
-  }
-  return c.json({ ok: true });
-});
-
-incidentsRouter.delete("/:id", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const id = c.req.param("id");
-  const row = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM incidents WHERE id = ?`, [id]);
-  if (!row) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && row.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
-  await c.env.DB.prepare(`DELETE FROM incidents WHERE id = ?`).bind(id).run();
-  return c.json({ ok: true });
-});
