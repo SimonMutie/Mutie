@@ -51,6 +51,11 @@ const ROUTE_COLORS = [
  *  labels rather than requiring an exact match, since source data is rarely
  *  perfectly consistent. Order matters: first matching pattern wins. */
 export type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "other";
+/** Conflict-specific icons keyed to the incident's Tactic field — an
+ *  alternative to shape-by-actor-category, selectable via the map's icon
+ *  mode toggle. Actor-driven color is kept either way; only the glyph swaps. */
+export type TacticGlyph = "gun" | "tank" | "aircraft" | "ship" | "explosion" | "people" | "other";
+export type IconGlyph = ActorShape | TacticGlyph;
 export interface ActorCategory {
   color: string;
   label: string;
@@ -74,9 +79,34 @@ export function classifyActor(actor: string | null | undefined): ActorCategory {
   return OTHER_CATEGORY;
 }
 
-/** SVG path data per shape, in a shared 0-18 viewBox — kept as plain path/circle
- *  data (not full elements) so color/opacity can be injected once, in one place. */
-function shapePathD(shape: ActorShape): string | null {
+export interface TacticCategory {
+  label: string;
+  glyph: TacticGlyph;
+}
+const TACTIC_CATEGORIES: { pattern: RegExp; label: string; glyph: TacticGlyph }[] = [
+  { pattern: /\b(shoot\w*|gunfire|gun battle|small arms|firearm)\b/i, label: "Shooting / Armed Attack", glyph: "gun" },
+  { pattern: /\b(shell\w*|artillery|mortar\w*|rocket\w*)\b/i, label: "Shelling / Artillery", glyph: "tank" },
+  { pattern: /\b(air ?strike|air ?raid|drone strike|aerial bomb\w*)\b/i, label: "Airstrike", glyph: "aircraft" },
+  { pattern: /\b(naval|maritime|boat attack|piracy)\b/i, label: "Naval / Maritime", glyph: "ship" },
+  { pattern: /\b(ied|explos\w*|bomb\w*|blast|landmine|grenade)\b/i, label: "Explosive Device", glyph: "explosion" },
+  { pattern: /\b(protest|riot\w*|demonstration|unrest)\b/i, label: "Civil Unrest", glyph: "people" },
+];
+const OTHER_TACTIC: TacticCategory = { label: "Other / Unspecified", glyph: "other" };
+
+export function classifyTactic(tactic: string | null | undefined): TacticCategory {
+  const value = (tactic ?? "").trim();
+  if (!value) return OTHER_TACTIC;
+  for (const cat of TACTIC_CATEGORIES) {
+    if (cat.pattern.test(value)) return cat;
+  }
+  return OTHER_TACTIC;
+}
+
+/** SVG path data per glyph, in a shared 0-24 viewBox — kept as plain path
+ *  data (not full elements) so color/opacity can be injected once, in one
+ *  place. Visually verified by rendering before writing, not just eyeballed
+ *  as coordinates — small hand-authored paths are easy to get subtly wrong. */
+function shapePathD(shape: IconGlyph): string | null {
   switch (shape) {
     case "aog":
       return "M12 6.5 L17 15.5 L7 15.5 Z"; // triangle
@@ -88,6 +118,18 @@ function shapePathD(shape: ActorShape): string | null {
       return "M12 5.3 L13.3 9.8 L18 10.8 L13.3 11.8 L12 16.3 L10.7 11.8 L6 10.8 L10.7 9.8 Z"; // burst/star
     case "militia":
       return "M12 5.3 L16.3 7.7 V12.3 L12 16.7 L7.7 12.3 V7.7 Z"; // hexagon
+    case "gun":
+      return "M4 10 L15 10 L15 8 L18 8 L18 12 L15 12 L9 12 L9 14 L6 17 L6 12 L4 12 Z";
+    case "tank":
+      return "M5 16 L19 16 L19 13 L5 13 Z M9 13 L9 10 L15 10 L15 13 Z M15 11.5 L20 11.5 L20 10.5 L15 10.5 Z";
+    case "aircraft":
+      return "M12 5 L14 11 L20 14 L14 13.5 L15 18 L12 16 L9 18 L10 13.5 L4 14 L10 11 Z";
+    case "ship":
+      return "M4 14 L20 14 L18 17 L6 17 Z M9 14 L9 10 L15 10 L15 14 Z M11 10 L11 7 L13 7 L13 10 Z";
+    case "explosion":
+      return "M12 4 L13.5 9 L18 7 L14.5 11 L20 12 L14.5 13 L18 17 L13.5 15 L12 20 L10.5 15 L6 17 L9.5 13 L4 12 L9.5 11 L6 7 L10.5 9 Z";
+    case "people":
+      return "M12 6 A2 2 0 1 1 11.99 6 Z M8 17 L8 12 Q8 10 12 10 Q16 10 16 12 L16 17 Z";
     default:
       return null; // dot
   }
@@ -99,7 +141,7 @@ function shapePathD(shape: ActorShape): string | null {
 // for custom category markers.
 const PIN_PATH_D = "M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z";
 
-function pinSvg(category: ActorCategory, size: number, opacity: number): string {
+function pinSvg(category: { color: string; shape: IconGlyph }, size: number, opacity: number): string {
   const glyphD = shapePathD(category.shape);
   const glyph = glyphD ? `<path d="${glyphD}" fill="#fff" />` : `<circle cx="12" cy="11" r="4" fill="#fff" />`;
   const height = Math.round((size * 32) / 24);
@@ -113,7 +155,7 @@ function pinSvg(category: ActorCategory, size: number, opacity: number): string 
 // many incidents are on screen, so icons are built once and reused rather than
 // constructed fresh per marker per render.
 const iconCache = new Map<string, L.DivIcon>();
-export function incidentIcon(category: ActorCategory, highlighted: boolean): L.DivIcon {
+export function incidentIcon(category: { color: string; shape: IconGlyph }, highlighted: boolean): L.DivIcon {
   const cacheKey = `${category.shape}-${category.color}-${highlighted}`;
   const cached = iconCache.get(cacheKey);
   if (cached) return cached;
@@ -585,6 +627,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingPng, setExportingPng] = useState(false);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
+  const [iconMode, setIconMode] = useState<"actor" | "tactic">("actor");
   const [heatWeighted, setHeatWeighted] = useState(false);
 
   // --- route drafting ---
@@ -1099,6 +1142,19 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                   Weight by casualties, not just count
                 </label>
               )}
+              {viewMode === "markers" && (
+                <div style={{ marginTop: 8 }}>
+                  <div className="eyebrow" style={{ marginBottom: 4 }}>ICON BY</div>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button onClick={() => setIconMode("actor")} style={chipStyle(iconMode === "actor")}>
+                      Actor
+                    </button>
+                    <button onClick={() => setIconMode("tactic")} style={chipStyle(iconMode === "tactic")}>
+                      Tactic
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -1461,9 +1517,11 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
         {viewMode === "markers" &&
           displayIncidents.map((i) => {
           const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
-          const category = classifyActor(i.actor);
+          const actorCategory = classifyActor(i.actor);
+          const displayCategory =
+            iconMode === "tactic" ? { color: actorCategory.color, shape: classifyTactic(i.tactic).glyph } : actorCategory;
           return (
-            <Marker key={i.id} position={[i.latitude!, i.longitude!]} icon={incidentIcon(category, highlighted)}>
+            <Marker key={i.id} position={[i.latitude!, i.longitude!]} icon={incidentIcon(displayCategory, highlighted)}>
               <Popup>
                 <div style={{ fontSize: 13, minWidth: 180 }}>
                   <div style={{ fontWeight: 700, marginBottom: 2 }}>
@@ -1471,7 +1529,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
                   </div>
                   <div style={{ color: "#666", marginBottom: 4 }}>{i.occurred_date || ""}</div>
                   <div style={{ marginBottom: 4 }}>
-                    <span style={{ color: category.color, fontWeight: 600 }}>{category.label}</span>
+                    <span style={{ color: actorCategory.color, fontWeight: 600 }}>{actorCategory.label}</span>
                     {[i.sector, i.tactic, i.actor].filter(Boolean).length > 0 && " · "}
                     {[i.sector, i.tactic, i.actor].filter(Boolean).join(" · ")}
                   </div>
@@ -1606,7 +1664,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           </button>
         </div>
       )}
-      {showLegend && <ActorLegend />}
+      {showLegend && <ActorLegend iconMode={iconMode} />}
     </div>
   );
 }
@@ -1658,7 +1716,12 @@ function IconToggleButton({
   );
 }
 
-function ActorLegend() {
+function ActorLegend({ iconMode }: { iconMode: "actor" | "tactic" }) {
+  const entries =
+    iconMode === "actor"
+      ? [...ACTOR_CATEGORIES.map((c) => ({ color: c.color, label: c.label, shape: c.shape as IconGlyph })), { color: OTHER_CATEGORY.color, label: OTHER_CATEGORY.label, shape: OTHER_CATEGORY.shape as IconGlyph }]
+      : [...TACTIC_CATEGORIES.map((c) => ({ color: "#475569", label: c.label, shape: c.glyph as IconGlyph })), { color: "#475569", label: OTHER_TACTIC.label, shape: OTHER_TACTIC.glyph as IconGlyph }];
+
   return (
     <div
       style={{
@@ -1674,9 +1737,9 @@ function ActorLegend() {
         fontSize: 11.5,
       }}
     >
-      <div className="eyebrow" style={{ marginBottom: 6 }}>INCIDENT ACTOR</div>
+      <div className="eyebrow" style={{ marginBottom: 6 }}>{iconMode === "actor" ? "INCIDENT ACTOR" : "INCIDENT TACTIC"}</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {[...ACTOR_CATEGORIES.map((c) => ({ color: c.color, label: c.label, shape: c.shape })), OTHER_CATEGORY].map((c) => (
+        {entries.map((c) => (
           <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ width: 14, height: 19, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: pinSvg(c, 14, 1) }} />
             <span style={{ color: "var(--text-muted)" }}>{c.label}</span>
