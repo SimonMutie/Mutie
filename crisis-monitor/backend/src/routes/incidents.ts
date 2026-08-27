@@ -254,9 +254,10 @@ incidentsRouter.get("/stats", async (c) => {
   const ownerParams = isAdmin ? [] : [ownerId];
   const andOwner = isAdmin ? "" : "AND owner_id = ?";
 
-  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, casualties] = await Promise.all([
+  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
-    all<{ value: string; count: number }>(      c.env.DB,
+    all<{ value: string; count: number }>(
+      c.env.DB,
       `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andOwner} GROUP BY sector ORDER BY count DESC LIMIT 12`,
       ownerParams
     ),
@@ -298,6 +299,15 @@ incidentsRouter.get("/stats", async (c) => {
       `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
       ownerParams
     ),
+    // Genuine joint counts (not independent marginals like the by_X fields
+    // above) — how often each actor/tactic combination actually co-occurs in
+    // the same incident. Powers Sankey and network/relationship widgets with
+    // real data, not an invented "who's connected to whom" narrative.
+    all<{ actor: string; tactic: string; count: number }>(
+      c.env.DB,
+      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
+      ownerParams
+    ),
     first<Record<string, number>>(
       c.env.DB,
       `SELECT
@@ -324,6 +334,7 @@ incidentsRouter.get("/stats", async (c) => {
     by_country: byCountry,
     time_series: timeSeries,
     daily,
+    actor_tactic: actorTactic,
     casualties: casualties ?? {},
   });
 });
@@ -391,7 +402,8 @@ const updateIncidentSchema = z.object({
   date: z.string().nullish(),
   time: z.string().nullish(),
   country: z.string().nullish(),
-  province: z.string().nullish(),  county: z.string().nullish(),
+  province: z.string().nullish(),
+  county: z.string().nullish(),
   district: z.string().nullish(),
   city: z.string().nullish(),
   suburb: z.string().nullish(),
