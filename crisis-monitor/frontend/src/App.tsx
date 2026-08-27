@@ -7,10 +7,11 @@ import QueryDashboard from "./components/QueryDashboard";
 import QueryEditor from "./components/QueryEditor";
 import AdminPanel from "./components/AdminPanel";
 import IncidentsDashboard from "./components/IncidentsDashboard";
+import DatasetsPanel from "./components/DatasetsPanel";
 import PublicDashboardView from "./components/PublicDashboardView";
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
-type View = "list" | { queryId: string } | "admin" | "new-query" | { editQueryId: string } | "incidents";
+type View = "list" | { queryId: string } | "admin" | "new-query" | { editQueryId: string } | "incidents" | "datasets";
 
 /** Minimal, single-purpose routing: this app is otherwise entirely
  *  state-driven (no URLs for any authenticated view), but a "share for live
@@ -113,7 +114,7 @@ export default function App() {
       <TopBar
         connected={connected}
         user={user}
-        view={view === "admin" ? "admin" : view === "list" ? "list" : view === "incidents" ? "incidents" : "dashboard"}
+        view={view === "admin" ? "admin" : view === "list" ? "list" : view === "incidents" ? "incidents" : view === "datasets" ? "datasets" : "dashboard"}
         onNavigate={(v) => setView(v)}
         onLogout={handleLogout}
       />
@@ -121,6 +122,8 @@ export default function App() {
       {view === "admin" && <AdminPanel onBack={() => setView("list")} />}
 
       {view === "incidents" && <IncidentsDashboard />}
+
+      {view === "datasets" && <DatasetsPanel />}
 
       {view === "list" && (
         <QueryList
