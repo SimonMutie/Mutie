@@ -156,6 +156,9 @@ export interface IncidentStats {
   by_province: { value: string; count: number }[];
   by_country: { value: string; count: number }[];
   time_series: { bucket: string; count: number }[];
+  /** Day-level counts, bounded to roughly the last 13 months — for a
+   *  calendar heatmap, which a monthly time_series can't drive. */
+  daily: { date: string; count: number }[];
   casualties: Record<string, number>;
 }
 
@@ -192,7 +195,7 @@ export interface SavedRoute {
   updated_at: string;
 }
 
-export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth";
+export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth" | "calendar";
 export type WidgetDataField =
   | "total"
   | "by_sector"
@@ -263,6 +266,7 @@ export interface NormalizedDashboardStats {
   by_province: { value: string; count: number }[];
   by_country: { value: string; count: number }[];
   time_series: { bucket: string; count: number }[];
+  daily: { date: string; count: number }[];
   deaths: number;
   injuries: number;
   kidnappings_ngo: number;
@@ -310,6 +314,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export { ApiError };
+
 export const api = {
   health: () => req<{ status: string }>("/api/health"),
 
@@ -323,7 +328,7 @@ export const api = {
     req<{ token: string; user: AuthUser }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
-    }),
+          }),
   me: () => req<AuthUser>("/api/auth/me"),
   listUsers: () => req<AuthUser[]>("/api/auth/users"),
   createUser: (username: string, password: string, display_name?: string, role: UserRole = "client") =>
