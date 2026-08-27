@@ -114,6 +114,15 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "map", label: "Incident map" },
 ];
 
+/** Only these types' rendering actually reads from a dataset when
+ *  widget.datasetId is set — choropleth/globe assume real country names,
+ *  calendar assumes daily incident buckets, map assumes lat/lng, and
+ *  sankey/network are still hardcoded to incidents' own actor×tactic data.
+ *  Offering those against an uploaded spreadsheet would silently show
+ *  incidents data (or nothing) regardless of which dataset was picked, so
+ *  they're left off the list here rather than offered and quietly wrong. */
+export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble"];
+
 export const PIVOTABLE_FIELD_OPTIONS: PivotableField[] = [
   "sector",
   "actor",
@@ -635,6 +644,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
           popoverRef={popoverRef}
           position={popoverPos}
           widget={widget}
+          datasets={datasets}
           onSave={(patch) => {
             onUpdate(patch);
             setShowEditor(false);
@@ -656,16 +666,18 @@ function WidgetEditPopover({
   onClose,
   popoverRef,
   position,
+  datasets,
 }: {
   widget: DashboardWidget;
   onSave: (patch: Partial<DashboardWidget>) => void;
   onClose: () => void;
   popoverRef: React.RefObject<HTMLDivElement>;
   position: { top: number; left: number };
+  datasets?: Dataset[];
 }) {
   const [type, setType] = useState<WidgetType>(widget.type);
   const [datasetId, setDatasetId] = useState<string | undefined>(widget.datasetId);
-  const [field, setField] = useState<string>(widget.dataField ?? (FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
+  const [field, setField] = useState<string>(widget.dataField ?? (widget.datasetId ? "" : FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [label, setLabel] = useState(widget.label ?? "");
   const [showDataLabels, setShowDataLabels] = useState(!!widget.showDataLabels);
@@ -676,19 +688,43 @@ function WidgetEditPopover({
   const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
 
   const supportsBreakdown = type === "bar" || type === "line";
+  const activeDataset = datasetId ? datasets?.find((d) => d.id === datasetId) : undefined;
 
   function handleTypeChange(newType: WidgetType) {
     setType(newType);
-    if (FIELDS_FOR_TYPE[newType].length > 0 && !(FIELDS_FOR_TYPE[newType] as string[]).includes(field)) {
+    if (datasetId && !DATASET_COMPATIBLE_TYPES.includes(newType)) {
+      // This type can't actually read from a dataset (see
+      // DATASET_COMPATIBLE_TYPES) — fall back to Incidents rather than offer
+      // a combination that would silently show the wrong data.
+      setDatasetId(undefined);
+      setField(FIELDS_FOR_TYPE[newType][0] ?? "by_sector");
+    } else if (FIELDS_FOR_TYPE[newType].length > 0 && !(FIELDS_FOR_TYPE[newType] as string[]).includes(field) && !datasetId) {
       setField(FIELDS_FOR_TYPE[newType][0]);
     }
     if (newType !== "bar" && newType !== "line") setSecondaryField(undefined);
   }
 
+  function handleDatasetChange(newDatasetId: string | undefined) {
+    setDatasetId(newDatasetId);
+    setSecondaryField(undefined);
+    if (newDatasetId) {
+      // Switching to a dataset: land on a type that can actually read one,
+      // and a sensible first field from that dataset's own schema.
+      if (!DATASET_COMPATIBLE_TYPES.includes(type)) setType("bar");
+      const dataset = datasets?.find((d) => d.id === newDatasetId);
+      const firstNumeric = dataset?.schema.find((c) => c.type === "number")?.name;
+      const firstAny = dataset?.schema[0]?.name;
+      setField((type === "stat" ? firstNumeric : firstAny) ?? "");
+    } else {
+      setField(FIELDS_FOR_TYPE[type][0] ?? "by_sector");
+    }
+  }
+
   function handleSave() {
     onSave({
       type,
-      dataField: type === "map" ? undefined : field,
+      datasetId,
+      dataField: type === "map" ? undefined : field || undefined,
       secondaryField: supportsBreakdown ? secondaryField : undefined,
       label: label || undefined,
       showDataLabels,
@@ -725,9 +761,24 @@ function WidgetEditPopover({
       <div className="eyebrow">EDIT THIS WIDGET</div>
 
       <div>
+        <div className="eyebrow" style={{ marginBottom: 4 }}>DATA SOURCE</div>
+        <select value={datasetId ?? ""} onChange={(e) => handleDatasetChange(e.target.value || undefined)} style={selectStyle}>
+          <option value="">Incidents (this app's conflict/security data)</option>
+          {(datasets ?? []).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
+        </select>
+        {datasetId && (datasets ?? []).length === 0 && (
+          <div style={{ fontSize: 10.5, color: "var(--text-faint)", marginTop: 3 }}>No datasets uploaded yet — see the Datasets tab.</div>
+        )}
+      </div>
+
+      <div>
         <div className="eyebrow" style={{ marginBottom: 4 }}>TYPE</div>
         <select value={type} onChange={(e) => handleTypeChange(e.target.value as WidgetType)} style={selectStyle}>
-          {WIDGET_TYPES.map((t) => (
+          {WIDGET_TYPES.filter((t) => !datasetId || DATASET_COMPATIBLE_TYPES.includes(t.value)).map((t) => (
             <option key={t.value} value={t.value}>
               {t.label}
             </option>
@@ -738,12 +789,25 @@ function WidgetEditPopover({
       {type !== "map" && (
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>DATA</div>
-          <select value={field} onChange={(e) => setField(e.target.value as WidgetDataField)} style={selectStyle}>
-            {FIELDS_FOR_TYPE[type].map((f) => (
-              <option key={f} value={f}>
-                {fieldLabel(f)}
-              </option>
-            ))}
+          <select value={field} onChange={(e) => setField(e.target.value)} style={selectStyle}>
+            {activeDataset ? (
+              <>
+                {type === "stat" && <option value="">Row count</option>}
+                {activeDataset.schema
+                  .filter((col) => type !== "stat" || col.type === "number")
+                  .map((col) => (
+                    <option key={col.name} value={col.name}>
+                      {col.name}
+                    </option>
+                  ))}
+              </>
+            ) : (
+              FIELDS_FOR_TYPE[type].map((f) => (
+                <option key={f} value={f}>
+                  {fieldLabel(f)}
+                </option>
+              ))
+            )}
           </select>
         </div>
       )}
@@ -753,19 +817,27 @@ function WidgetEditPopover({
           <div className="eyebrow" style={{ marginBottom: 4 }}>BREAK DOWN BY (OPTIONAL — 2ND VARIABLE)</div>
           <select
             value={secondaryField ?? ""}
-            onChange={(e) => setSecondaryField(e.target.value ? (e.target.value as PivotableField) : undefined)}
+            onChange={(e) => setSecondaryField(e.target.value || undefined)}
             style={selectStyle}
           >
             <option value="">None — single variable</option>
-            {PIVOTABLE_FIELD_OPTIONS.filter((f) => f !== DATA_FIELD_TO_COLUMN[field as WidgetDataField]).map((f) => (
-              <option key={f} value={f}>
-                {PIVOT_FIELD_LABELS[f]}
-              </option>
-            ))}
+            {activeDataset
+              ? activeDataset.schema
+                  .filter((col) => col.name !== field)
+                  .map((col) => (
+                    <option key={col.name} value={col.name}>
+                      {col.name}
+                    </option>
+                  ))
+              : PIVOTABLE_FIELD_OPTIONS.filter((f) => f !== DATA_FIELD_TO_COLUMN[field as WidgetDataField]).map((f) => (
+                  <option key={f} value={f}>
+                    {PIVOT_FIELD_LABELS[f]}
+                  </option>
+                ))}
           </select>
           {secondaryField && (
             <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4 }}>
-              {type === "bar" ? "Stacked bars" : "Multiple lines"}, one per {PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
+              {type === "bar" ? "Stacked bars" : "Multiple lines"}, one per {activeDataset ? secondaryField : PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
             </div>
           )}
         </div>
