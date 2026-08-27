@@ -17,7 +17,7 @@ const layoutSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: 
 
 const widgetSchema = z.object({
   id: z.string(),
-  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth"]),
+  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar"]),
   title: z.string(),
   label: z.string().optional(),
   dataField: z.enum(["total", "by_sector", "by_actor", "by_tactic", "by_province", "by_country", "time_series", "deaths", "injuries", "kidnappings_ngo"]).optional(),
@@ -147,8 +147,7 @@ customDashboardsRouter.patch("/:id", async (c) => {
     updates.push("widgets = ?");
     params.push(JSON.stringify(parsed.data.widgets));
   }
-  if (parsed.data.is_public !== undefined) {
-    updates.push("is_public = ?");
+  if (parsed.data.is_public !== undefined) {    updates.push("is_public = ?");
     params.push(parsed.data.is_public ? 1 : 0);
     // Mint a share token the first time a dashboard goes public; keep the
     // same token across future toggles so a previously-shared link keeps working.
@@ -191,7 +190,7 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
   const andOwner = ownerId ? "AND owner_id = ?" : "";
   const ownerParams = ownerId ? [ownerId] : [];
 
-  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, casualties] = await Promise.all([
+  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, casualties] = await Promise.all([
     first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
     all<{ value: string; count: number }>(
       db,
@@ -228,6 +227,11 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
       `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andOwner} GROUP BY bucket ORDER BY bucket ASC`,
       ownerParams
     ),
+    all<{ date: string; count: number }>(
+      db,
+      `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
+      ownerParams
+    ),
     first<Record<string, number>>(
       db,
       `SELECT
@@ -248,6 +252,7 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
     by_province: byProvince,
     by_country: byCountry,
     time_series: timeSeries,
+    daily,
     deaths: casualties?.deaths ?? 0,
     injuries: casualties?.injuries ?? 0,
     kidnappings_ngo: casualties?.kidnappings_ngo ?? 0,
