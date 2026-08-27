@@ -4,8 +4,8 @@ import Logo from "./Logo";
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "list" | "dashboard" | "admin" | "incidents";
-  onNavigate: (view: "list" | "admin" | "incidents") => void;
+  view: "list" | "dashboard" | "admin" | "incidents" | "datasets";
+  onNavigate: (view: "list" | "admin" | "incidents" | "datasets") => void;
   onLogout: () => void;
 }
 
@@ -64,6 +64,9 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           </button>
           <button onClick={() => onNavigate("list")} style={navBtnStyle(view === "list" || view === "dashboard")}>
             Live Monitoring
+          </button>
+          <button onClick={() => onNavigate("datasets")} style={navBtnStyle(view === "datasets")}>
+            Datasets
           </button>
           {user.role === "admin" && (
             <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
