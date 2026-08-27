@@ -36,7 +36,15 @@ function cellToDatasetValue(value: unknown, type: DatasetColumnType): string | n
   if (value === null || value === undefined || value === "") return null;
   if (type === "date") {
     if (value instanceof Date) return value.toISOString().slice(0, 10);
-    return String(value).trim() || null;
+    // detectColumnType already confirmed this string parses as a real date
+    // (isDateLike) — but without normalizing here too, a text-formatted cell
+    // like "3/15/2024" would be stored exactly as typed instead of as ISO,
+    // and different rows could end up in different formats depending on how
+    // each was typed in the original spreadsheet. Sorting or grouping by
+    // date (a calendar heatmap, "over time" charts) needs one consistent
+    // format to mean anything.
+    const parsed = new Date(String(value).trim());
+    return Number.isNaN(parsed.getTime()) ? String(value).trim() || null : parsed.toISOString().slice(0, 10);
   }
   if (type === "number") {
     const n = typeof value === "number" ? value : Number(String(value).replace(/,/g, "").trim());
