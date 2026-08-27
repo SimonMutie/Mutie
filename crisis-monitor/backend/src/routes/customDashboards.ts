@@ -147,7 +147,8 @@ customDashboardsRouter.patch("/:id", async (c) => {
     updates.push("widgets = ?");
     params.push(JSON.stringify(parsed.data.widgets));
   }
-  if (parsed.data.is_public !== undefined) {    updates.push("is_public = ?");
+  if (parsed.data.is_public !== undefined) {
+    updates.push("is_public = ?");
     params.push(parsed.data.is_public ? 1 : 0);
     // Mint a share token the first time a dashboard goes public; keep the
     // same token across future toggles so a previously-shared link keeps working.
@@ -190,7 +191,7 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
   const andOwner = ownerId ? "AND owner_id = ?" : "";
   const ownerParams = ownerId ? [ownerId] : [];
 
-  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, casualties] = await Promise.all([
+  const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
     all<{ value: string; count: number }>(
       db,
@@ -232,6 +233,11 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
       `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
       ownerParams
     ),
+    all<{ actor: string; tactic: string; count: number }>(
+      db,
+      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
+      ownerParams
+    ),
     first<Record<string, number>>(
       db,
       `SELECT
@@ -253,6 +259,7 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
     by_country: byCountry,
     time_series: timeSeries,
     daily,
+    actor_tactic: actorTactic,
     deaths: casualties?.deaths ?? 0,
     injuries: casualties?.injuries ?? 0,
     kidnappings_ngo: casualties?.kidnappings_ngo ?? 0,
