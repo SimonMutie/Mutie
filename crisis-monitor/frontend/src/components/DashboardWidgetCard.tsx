@@ -64,6 +64,9 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   // shade on a world map — only "by_country" qualifies (sector/actor/tactic
   // names aren't places).
   choropleth: ["by_country"],
+  // Calendar heatmap always uses stats.daily directly, like map does with
+  // its incident list — no user-selectable breakdown field applies.
+  calendar: [],
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
@@ -73,6 +76,7 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "radar", label: "Radar chart" },
   { value: "funnel", label: "Funnel chart" },
   { value: "choropleth", label: "Choropleth map" },
+  { value: "calendar", label: "Calendar heatmap" },
   { value: "map", label: "Incident map" },
 ];
 
@@ -353,6 +357,8 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         )}
 
         {widget.type === "choropleth" && <ChoroplethMap series={series} baseColor={widget.color || "#0d9488"} />}
+
+        {widget.type === "calendar" && <CalendarHeatmap daily={stats.daily} baseColor={widget.color || "#0d9488"} />}
 
         {widget.type === "map" && (
           <div style={{ height: "100%", borderRadius: 6, overflow: "hidden" }}>
@@ -694,6 +700,60 @@ function hexToRgba(hex: string, alpha: number): string {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** GitHub-contributions-style grid — a year of days as columns of weeks, rows
+ *  of weekdays, shaded by count. Horizontally scrollable rather than squeezed
+ *  to fit, since 52 columns compressed into a narrow widget just becomes
+ *  illegible; native SVG <title> elements give per-day tooltips with no extra
+ *  dependency. */
+function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: number }[]; baseColor: string }) {
+  const countByDate = new Map(daily.map((d) => [d.date, d.count]));
+  const maxCount = Math.max(1, ...daily.map((d) => d.count));
+
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - 364);
+  start.setDate(start.getDate() - start.getDay()); // align to the preceding Sunday
+
+  const cells: { date: string; count: number; col: number; row: number }[] = [];
+  let col = 0;
+  const cursor = new Date(start);
+  while (cursor <= today) {
+    const dow = cursor.getDay();
+    const iso = cursor.toISOString().slice(0, 10);
+    cells.push({ date: iso, count: countByDate.get(iso) ?? 0, col, row: dow });
+    if (dow === 6) col++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const totalCols = col + 1;
+  const cell = 11;
+  const gap = 2;
+  const width = totalCols * (cell + gap);
+  const height = 7 * (cell + gap);
+
+  return (
+    <div style={{ height: "100%", overflowX: "auto", overflowY: "hidden", display: "flex", alignItems: "center" }}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }}>
+        {cells.map((d) => {
+          const intensity = d.count > 0 ? Math.max(0.15, d.count / maxCount) : 0;
+          return (
+            <rect
+              key={d.date}
+              x={d.col * (cell + gap)}
+              y={d.row * (cell + gap)}
+              width={cell}
+              height={cell}
+              rx={2}
+              fill={d.count > 0 ? hexToRgba(baseColor, intensity) : "var(--border-soft)"}
+            >
+              <title>{`${d.date}: ${d.count} incident${d.count === 1 ? "" : "s"}`}</title>
+            </rect>
+          );
+        })}
+      </svg>
+    </div>
+  );
 }
 
 function adjustOpacity(hex: string, index: number): string {
