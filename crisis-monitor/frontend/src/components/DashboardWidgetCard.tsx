@@ -22,7 +22,9 @@ import {
   PolarRadiusAxis,
   FunnelChart,
   Funnel,
+  Sankey,
 } from "recharts";
+import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
 import { ComposableMap, Geographies, Geography } from "react-simple-maps";
 import worldTopology from "world-atlas/countries-110m.json?url";
@@ -67,6 +69,11 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   // Calendar heatmap always uses stats.daily directly, like map does with
   // its incident list — no user-selectable breakdown field applies.
   calendar: [],
+  // These three always use the actor×tactic joint-count data directly — like
+  // calendar/map, there's no single "which field" choice that applies.
+  sankey: [],
+  network: [],
+  bubble: CATEGORY_FIELDS,
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
@@ -77,6 +84,9 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "funnel", label: "Funnel chart" },
   { value: "choropleth", label: "Choropleth map" },
   { value: "calendar", label: "Calendar heatmap" },
+  { value: "sankey", label: "Sankey (actor → tactic)" },
+  { value: "network", label: "Network (actor–tactic links)" },
+  { value: "bubble", label: "Packed-circle bubbles" },
   { value: "map", label: "Incident map" },
 ];
 
@@ -359,6 +369,12 @@ export default function DashboardWidgetCard({ widget, stats, incidents, onRemove
         {widget.type === "choropleth" && <ChoroplethMap series={series} baseColor={widget.color || "#0d9488"} />}
 
         {widget.type === "calendar" && <CalendarHeatmap daily={stats.daily} baseColor={widget.color || "#0d9488"} />}
+
+        {widget.type === "sankey" && <ActorTacticSankey data={stats.actor_tactic} baseColor={widget.color || "#0d9488"} />}
+
+        {widget.type === "network" && <ActorTacticNetwork data={stats.actor_tactic} baseColor={widget.color || "#0d9488"} />}
+
+        {widget.type === "bubble" && <BubbleChart series={series} colors={paletteFor(widget, series.length)} />}
 
         {widget.type === "map" && (
           <div style={{ height: "100%", borderRadius: 6, overflow: "hidden" }}>
@@ -752,6 +768,145 @@ function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: n
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+/** Builds recharts' required {nodes, links} shape from flat (actor, tactic,
+ *  count) rows — actors and tactics each become their own node, so the same
+ *  name never collides even if an actor and tactic happened to share a label. */
+function sankeyDataFrom(rows: { actor: string; tactic: string; count: number }[]) {
+  const actors = Array.from(new Set(rows.map((d) => d.actor)));
+  const tactics = Array.from(new Set(rows.map((d) => d.tactic)));
+  const nodes = [...actors.map((a) => ({ name: a })), ...tactics.map((t) => ({ name: t }))];
+  const links = rows.map((d) => ({
+    source: actors.indexOf(d.actor),
+    target: actors.length + tactics.indexOf(d.tactic),
+    value: d.count,
+  }));
+  return { nodes, links };
+}
+
+function ActorTacticSankey({ data, baseColor }: { data: { actor: string; tactic: string; count: number }[]; baseColor: string }) {
+  if (data.length === 0) {
+    return <EmptyState message="No actor/tactic data to show a flow for yet." />;
+  }
+  const sankeyData = sankeyDataFrom(data);
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <Sankey
+        data={sankeyData}
+        nodePadding={20}
+        node={{ fill: baseColor, fillOpacity: 0.85 } as never}
+        link={{ stroke: baseColor, strokeOpacity: 0.25 } as never}
+      >
+        <Tooltip contentStyle={TOOLTIP_STYLE} />
+      </Sankey>
+    </ResponsiveContainer>
+  );
+}
+
+/** Hand-rolled bipartite relationship diagram — actors on the left, tactics on
+ *  the right, a curved link between them whenever they genuinely co-occurred
+ *  in the same incident, thickness scaled to how often. No graph/network
+ *  library needed for this simplified two-column layout, which keeps this
+ *  widget from adding any new dependency at all. */
+function ActorTacticNetwork({ data, baseColor }: { data: { actor: string; tactic: string; count: number }[]; baseColor: string }) {
+  if (data.length === 0) {
+    return <EmptyState message="No actor/tactic data to show relationships for yet." />;
+  }
+  const actors = Array.from(new Set(data.map((d) => d.actor)));
+  const tactics = Array.from(new Set(data.map((d) => d.tactic)));
+  const maxCount = Math.max(1, ...data.map((d) => d.count));
+
+  const width = 480;
+  const height = Math.max(160, Math.max(actors.length, tactics.length) * 26);
+  const leftX = 90;
+  const rightX = width - 90;
+  const actorY = new Map(actors.map((a, i) => [a, ((i + 1) * height) / (actors.length + 1)]));
+  const tacticY = new Map(tactics.map((t, i) => [t, ((i + 1) * height) / (tactics.length + 1)]));
+
+  return (
+    <div style={{ height: "100%", overflow: "auto" }}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+        {data.map((d, i) => {
+          const y1 = actorY.get(d.actor)!;
+          const y2 = tacticY.get(d.tactic)!;
+          const strokeWidth = 1 + (d.count / maxCount) * 5;
+          return (
+            <path
+              key={i}
+              d={`M ${leftX} ${y1} C ${width / 2} ${y1}, ${width / 2} ${y2}, ${rightX} ${y2}`}
+              stroke={baseColor}
+              strokeWidth={strokeWidth}
+              fill="none"
+              opacity={0.35}
+            >
+              <title>{`${d.actor} × ${d.tactic}: ${d.count}`}</title>
+            </path>
+          );
+        })}
+        {actors.map((a) => (
+          <g key={`a-${a}`}>
+            <circle cx={leftX} cy={actorY.get(a)} r={4} fill={baseColor} />
+            <text x={leftX - 8} y={actorY.get(a)} fontSize={10} textAnchor="end" dominantBaseline="middle" fill="var(--text-primary)">
+              {a}
+            </text>
+          </g>
+        ))}
+        {tactics.map((t) => (
+          <g key={`t-${t}`}>
+            <circle cx={rightX} cy={tacticY.get(t)} r={4} fill={baseColor} />
+            <text x={rightX + 8} y={tacticY.get(t)} fontSize={10} textAnchor="start" dominantBaseline="middle" fill="var(--text-primary)">
+              {t}
+            </text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+/** Circle-packing layout via d3-hierarchy — each category becomes a circle
+ *  sized by its count, packed together with no wasted space. */
+function BubbleChart({ series, colors }: { series: { value: string; count: number }[]; colors: string[] }) {
+  if (series.length === 0) {
+    return <EmptyState message="No data for this breakdown yet." />;
+  }
+  const width = 320;
+  const height = 240;
+  const root = hierarchy<{ children: { value: string; count: number }[] }>({ children: series })
+    .sum((d) => ("count" in d ? (d as unknown as { count: number }).count : 0));
+  const packed = pack<{ children: { value: string; count: number }[] }>().size([width, height]).padding(3)(root);
+  const leaves = packed.leaves();
+
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+        {leaves.map((leaf, i) => {
+          const datum = leaf.data as unknown as { value: string; count: number };
+          return (
+            <g key={i} transform={`translate(${leaf.x},${leaf.y})`}>
+              <circle r={leaf.r} fill={colors[i % colors.length]} fillOpacity={0.85}>
+                <title>{`${datum.value}: ${datum.count}`}</title>
+              </circle>
+              {leaf.r > 18 && (
+                <text textAnchor="middle" dy="0.35em" fontSize={Math.min(11, leaf.r / 3)} fill="#fff" pointerEvents="none">
+                  {datum.count}
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </ResponsiveContainer>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--text-faint)", textAlign: "center", padding: 12 }}>
+      {message}
     </div>
   );
 }
