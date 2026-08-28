@@ -81,35 +81,53 @@ interface ParsedResult {
   missingDate: number;
 }
 
-function parseSheet(rawRows: Record<string, unknown>[]): ParsedResult {
+/** Runs the whole parse in small bursts rather than one unbroken loop —
+ *  for tens of thousands of rows, each with ~30 columns to normalize and
+ *  match against HEADER_MAP, the previous synchronous version blocked the
+ *  main thread long enough (multiple seconds, for a truly large file) to
+ *  trigger the browser's own "page unresponsive" warning. Worse, a frozen
+ *  main thread also can't process the response of any *other* in-flight
+ *  request (a live-feed poll, a health check, anything unrelated to this
+ *  upload) — so those started timing out too, surfacing as an unrelated
+ *  "failed to fetch" once the thread finally freed up. Yielding back to the
+ *  browser every ROWS_PER_TICK rows via a 0ms setTimeout keeps the tab
+ *  responsive throughout, at effectively no cost to total parse time. */
+async function parseSheet(rawRows: Record<string, unknown>[]): Promise<ParsedResult> {
   const unmatchedHeaders = new Set<string>();
   const rows: IncidentRow[] = [];
   let missingLatLng = 0;
   let missingDate = 0;
+  const ROWS_PER_TICK = 1000;
 
-  for (const rawRow of rawRows) {
+  for (let i = 0; i < rawRows.length; i++) {
+    const rawRow = rawRows[i];
     const isBlank = Object.values(rawRow).every((v) => v === null || v === undefined || v === "");
-    if (isBlank) continue;
-
-    const row: IncidentRow = { raw: rawRow };
-    for (const [header, value] of Object.entries(rawRow)) {
-      const canonical = HEADER_MAP[normalizeHeader(header)];
-      if (!canonical) {
-        if (normalizeHeader(header)) unmatchedHeaders.add(header);
-        continue;
+    if (!isBlank) {
+      const row: IncidentRow = { raw: rawRow };
+      for (const [header, value] of Object.entries(rawRow)) {
+        const normalized = normalizeHeader(header);
+        const canonical = HEADER_MAP[normalized];
+        if (!canonical) {
+          if (normalized) unmatchedHeaders.add(header);
+          continue;
+        }
+        (row as Record<string, unknown>)[canonical] = NUMERIC_FIELDS.has(canonical) ? cellToNumber(value) : cellToText(value);
       }
-      (row as Record<string, unknown>)[canonical] = NUMERIC_FIELDS.has(canonical) ? cellToNumber(value) : cellToText(value);
+
+      if (row.latitude == null || row.longitude == null) missingLatLng++;
+      if (!row.date) missingDate++;
+      rows.push(row);
     }
 
-    if (row.latitude == null || row.longitude == null) missingLatLng++;
-    if (!row.date) missingDate++;
-    rows.push(row);
+    if (i > 0 && i % ROWS_PER_TICK === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
 
   return { rows, unmatchedHeaders: [...unmatchedHeaders], missingLatLng, missingDate };
 }
 
-type Stage = "idle" | "parsed" | "uploading" | "done" | "error";
+type Stage = "idle" | "parsing" | "parsed" | "uploading" | "done" | "error";
 
 export default function IncidentUpload({ onUploaded }: Props) {
   const [stage, setStage] = useState<Stage>("idle");
@@ -137,7 +155,8 @@ export default function IncidentUpload({ onUploaded }: Props) {
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null });
       if (rawRows.length === 0) throw new Error("No rows found in the first sheet.");
 
-      const result = parseSheet(rawRows);
+      setStage("parsing");
+      const result = await parseSheet(rawRows);
       if (result.rows.length === 0) throw new Error("Every row was blank after parsing.");
       setParsed(result);
       setStage("parsed");
@@ -225,6 +244,12 @@ export default function IncidentUpload({ onUploaded }: Props) {
 
   return (
     <div style={{ maxWidth: 640 }}>
+      {stage === "parsing" && (
+        <div className="panel" style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
+          Reading {fileName}… this can take a moment for a large file, and the tab stays responsive while it works.
+        </div>
+      )}
+
       {stage === "idle" && (
         <label
           style={{
