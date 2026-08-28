@@ -250,13 +250,51 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
  *  is why they rendered as barely-visible dots rather than recognizable
  *  shapes. These are roughly 4-6x bigger and reshaped for a clearer
  *  silhouette at that scale, not just bigger versions of the same shapes. */
+// Top-down outlines, verified by rendering as flat 2D shapes and visually
+// checking them before converting to 3D — recognizability comes almost
+// entirely from the silhouette itself, which extrusion preserves exactly,
+// so this closes most of the "can't render Three.js to check it" gap.
+// Coordinates have "nose"/bow at +Y in this 2D design; SHAPE_SCALE and the
+// rotation applied in extrudedSilhouette() below (both verified numerically,
+// not hand-derived) bring it to a final on-globe size with the nose facing
+// local +X, matching the arrowhead/plane cone's existing convention for how
+// objectRotation's bearing then swings it to face the right compass direction.
+const SHAPE_SCALE = 0.09;
+
+const SHIP_OUTLINE: [number, number][] = [
+  [0, 45], [5, 38], [9, 15], [9, -35], [7, -42], [-7, -42], [-9, -35], [-9, 15], [-5, 38],
+];
+const WARSHIP_OUTLINE: [number, number][] = [
+  [0, 48], [4, 40], [7, 15], [6, -8], [9, -10], [9, -38], [7, -44], [-7, -44], [-9, -38], [-6, -8], [-7, 15], [-4, 40],
+];
+const PLANE_OUTLINE: [number, number][] = [
+  [0, 45], [4, 20], [35, -5], [35, -12], [5, -2], [3, -20], [14, -32], [14, -38], [0, -32],
+  [-14, -38], [-14, -32], [-3, -20], [-5, -2], [-35, -12], [-35, -5], [-4, 20],
+];
+
+/** Extrudes a flat top-down outline into a thin solid, then applies the
+ *  numerically-verified rotation that lays it flat with its nose along
+ *  local +X — see SHAPE_SCALE comment above. */
+function extrudedSilhouette(outline: [number, number][], material: THREE.Material): THREE.Mesh {
+  const shape = new THREE.Shape();
+  shape.moveTo(outline[0][0], outline[0][1]);
+  for (const [x, y] of outline.slice(1)) shape.lineTo(x, y);
+  shape.closePath();
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 6, bevelEnabled: false });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.rotateX(-Math.PI / 2);
+  mesh.rotateY(-Math.PI / 2);
+  mesh.scale.setScalar(SHAPE_SCALE);
+  return mesh;
+}
+
 function vehicleMesh(d: { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: string }): THREE.Object3D {
   const material = new THREE.MeshBasicMaterial({ color: d.color });
   const group = new THREE.Group();
 
   if (d.kind === "arrow") {
     // A short, wide cone reads as a real arrowhead — deliberately distinct
-    // from the plane's longer, thinner dart shape below.
+    // from the plane's longer, thinner silhouette below.
     const head = new THREE.ConeGeometry(2.2, 3.2, 3);
     const mesh = new THREE.Mesh(head, material);
     mesh.rotation.z = -Math.PI / 2;
@@ -265,40 +303,30 @@ function vehicleMesh(d: { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: s
   }
 
   if (d.vehicle === "plane") {
-    const body = new THREE.ConeGeometry(1.8, 7, 8);
-    const mesh = new THREE.Mesh(body, material);
-    mesh.rotation.z = -Math.PI / 2; // point along +X, matching bearing 0 = north after objectRotation
-    group.add(mesh);
+    group.add(extrudedSilhouette(PLANE_OUTLINE, material));
   } else if (d.vehicle === "drone") {
-    // A flattened diamond body plus four small rotor markers at the
-    // extended corners — reads as "quadcopter" rather than a plain blob.
-    const body = new THREE.BoxGeometry(4, 0.8, 4);
-    const bodyMesh = new THREE.Mesh(body, material);
-    bodyMesh.rotation.y = Math.PI / 4;
-    group.add(bodyMesh);
-    const rotorGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.3, 10);
-    for (const [x, z] of [
-      [2.6, 2.6],
-      [2.6, -2.6],
-      [-2.6, 2.6],
-      [-2.6, -2.6],
-    ]) {
+    // Hub + 4 arms + 4 rotor discs, an "X" viewed from above — box/cylinder
+    // primitives already lie flat by default with no rotation trick needed,
+    // unlike the extruded silhouettes above.
+    const hub = new THREE.CylinderGeometry(0.9, 0.9, 0.4, 8);
+    group.add(new THREE.Mesh(hub, material));
+    const armGeo = new THREE.BoxGeometry(0.35, 0.3, 4.6);
+    const rotorGeo = new THREE.CylinderGeometry(0.85, 0.85, 0.25, 12);
+    for (const angleDeg of [45, 135, 225, 315]) {
+      const angle = (angleDeg * Math.PI) / 180;
+      const arm = new THREE.Mesh(armGeo, material);
+      arm.position.set((Math.cos(angle) * 4.6) / 2, 0, (Math.sin(angle) * 4.6) / 2);
+      arm.rotation.y = angle;
+      group.add(arm);
       const rotor = new THREE.Mesh(rotorGeo, material);
-      rotor.position.set(x, 0.3, z);
+      rotor.position.set(Math.cos(angle) * 4.6, 0.1, Math.sin(angle) * 4.6);
       group.add(rotor);
     }
   } else if (d.vehicle === "warship") {
-    const hull = new THREE.BoxGeometry(8, 1.4, 2.2);
-    group.add(new THREE.Mesh(hull, material));
-    const tower = new THREE.BoxGeometry(2.2, 2.2, 1.8);
-    const towerMesh = new THREE.Mesh(tower, material);
-    towerMesh.position.set(0.8, 1.6, 0);
-    group.add(towerMesh);
+    group.add(extrudedSilhouette(WARSHIP_OUTLINE, material));
   } else {
-    // commercial-ship — a longer, lower hull than the warship's, no tower,
-    // the visual distinction being "cargo vessel" vs. "combatant".
-    const hull = new THREE.BoxGeometry(8.5, 1.1, 2.6);
-    group.add(new THREE.Mesh(hull, material));
+    // commercial-ship — a plainer hull than the warship's angular one.
+    group.add(extrudedSilhouette(SHIP_OUTLINE, material));
   }
 
   return group;
