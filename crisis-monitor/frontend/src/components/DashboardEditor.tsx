@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
+import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
@@ -85,6 +85,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveErrorDetail, setSaveErrorDetail] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Loading existing data fires this same "widgets changed" effect once on
   // arrival (setWidgets from the fetch), which isn't a real edit and
@@ -325,11 +327,16 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         onSavedNew?.(created.id);
       }
       setSaveStatus("saved");
-    } catch {
+      setSaveErrorDetail(null);
+      setDirty(false);
+    } catch (err) {
       // Surfaced, not swallowed — a silent failure here is exactly what made
       // edits look saved (the widget itself updates instantly either way)
-      // while nothing had actually reached the server.
+      // while nothing had actually reached the server. The specific message
+      // (not just "it failed") is what makes this actually diagnosable
+      // in-app instead of needing DevTools every time.
       setSaveStatus("error");
+      setSaveErrorDetail(err instanceof ApiError ? err.message : "Couldn't reach the server. Check your connection and try again.");
     }
   }
 
@@ -346,6 +353,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       return;
     }
     setSaveStatus("idle");
+    setDirty(true);
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       save();
@@ -361,6 +369,24 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, []);
+
+  // Covers closing the tab, refreshing, or typing a new URL — anything
+  // that isn't a click inside this app (that's handled separately by
+  // guardedBack below, since beforeunload can't intercept in-app navigation).
+  useEffect(() => {
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [dirty]);
+
+  function guardedBack() {
+    if (dirty && !window.confirm("You have unsaved changes. Leave without saving?")) return;
+    onBack?.();
+  }
 
   async function toggleShare() {
     if (!backendId) await save();
@@ -395,7 +421,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
         {onBack && (
-          <button onClick={onBack} style={secondaryBtnStyle}>
+          <button onClick={guardedBack} style={secondaryBtnStyle}>
             ← All dashboards
           </button>
         )}
@@ -421,7 +447,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             + Add widget
           </button>
         )}
-        {!locked && <SaveStatusIndicator status={saveStatus} onRetry={save} />}
+        {!locked && (
+          <button onClick={save} disabled={saveStatus === "saving"} style={primaryBtnStyle}>
+            Save
+          </button>
+        )}
+        {!locked && <SaveStatusIndicator status={saveStatus} errorDetail={saveErrorDetail} onRetry={save} />}
         <button onClick={toggleLock} title={locked ? "Unlock to edit again" : "Lock once you're done editing, to prevent accidental changes"} style={locked ? liveBtnStyle : secondaryBtnStyle}>
           {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}
         </button>
@@ -698,16 +729,31 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
  *  button somewhere, hope you remember it." Idle right after loading reads as
  *  "saved" (there's nothing unsaved yet); a real failure stays visible with a
  *  retry rather than silently reverting to looking fine. */
-function SaveStatusIndicator({ status, onRetry }: { status: "idle" | "saving" | "saved" | "error"; onRetry: () => void }) {
+function SaveStatusIndicator({
+  status,
+  errorDetail,
+  onRetry,
+}: {
+  status: "idle" | "saving" | "saved" | "error";
+  errorDetail: string | null;
+  onRetry: () => void;
+}) {
   if (status === "error") {
     return (
-      <button onClick={onRetry} style={{ ...secondaryBtnStyle, color: "var(--critical)", borderColor: "var(--critical)" }} title="Click to retry saving">
+      <button
+        onClick={onRetry}
+        style={{ ...secondaryBtnStyle, color: "var(--critical)", borderColor: "var(--critical)" }}
+        title={errorDetail ? `Save failed: ${errorDetail} — click to retry` : "Click to retry saving"}
+      >
         ⚠ Save failed — retry
       </button>
     );
   }
   if (status === "saving") {
     return <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Saving…</span>;
+  }
+  if (status === "idle") {
+    return <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Unsaved changes…</span>;
   }
   return <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>✓ All changes saved</span>;
 }
