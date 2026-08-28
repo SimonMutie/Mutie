@@ -270,6 +270,35 @@ export const PIVOTABLE_FIELDS = [
   "intended_primary_target",
 ] as const;
 export type PivotableField = (typeof PIVOTABLE_FIELDS)[number];
+/** Builds consistent owner + date-range conditions once, for every incidents
+ *  query that needs them — a dashboard-wide date filter touches roughly a
+ *  dozen separate queries across /stats, /breakdown, and /crosstab (plus
+ *  their public-route equivalents in customDashboards.ts), and building this
+ *  by hand in each one is exactly how they'd quietly drift apart over time.
+ *  `andClause` is for queries that already have their own WHERE (e.g.
+ *  `sector IS NOT NULL`); `whereClause` is for ones that don't. */
+export function buildScopeClause(ownerId: string | null, dateFrom?: string, dateTo?: string): { whereClause: string; andClause: string; params: unknown[] } {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (ownerId) {
+    conditions.push("owner_id = ?");
+    params.push(ownerId);
+  }
+  if (dateFrom) {
+    conditions.push("occurred_at >= ?");
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    conditions.push("occurred_at <= ?");
+    params.push(dateTo);
+  }
+  return {
+    whereClause: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
+    andClause: conditions.length ? `AND ${conditions.join(" AND ")}` : "",
+    params,
+  };
+}
+
 export function isPivotable(v: string | undefined): v is PivotableField {
   return !!v && (PIVOTABLE_FIELDS as readonly string[]).includes(v);
 }
@@ -286,14 +315,13 @@ export function isPivotable(v: string | undefined): v is PivotableField {
  *  anonymous viewer's, since there isn't one). Exported so that route and
  *  the authed /breakdown endpoint below share one query path instead of two
  *  that could quietly drift apart. */
-export async function fetchIncidentsBreakdown(db: D1Database, ownerId: string | null, field: string | undefined): Promise<{ value: string; count: number }[]> {
+export async function fetchIncidentsBreakdown(db: D1Database, ownerId: string | null, field: string | undefined, dateFrom?: string, dateTo?: string): Promise<{ value: string; count: number }[]> {
   if (!isPivotable(field)) return [];
-  const andOwner = ownerId ? "AND owner_id = ?" : "";
-  const ownerParams = ownerId ? [ownerId] : [];
+  const { andClause, params } = buildScopeClause(ownerId, dateFrom, dateTo);
   return all<{ value: string; count: number }>(
     db,
-    `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andOwner} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
-    ownerParams
+    `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andClause} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
+    params
   );
 }
 
@@ -301,20 +329,21 @@ export async function fetchIncidentsCrosstab(
   db: D1Database,
   ownerId: string | null,
   primary: string | undefined,
-  secondary: string | undefined
+  secondary: string | undefined,
+  dateFrom?: string,
+  dateTo?: string
 ): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
   if (!isPivotable(primary) || !isPivotable(secondary)) return [];
-  const andOwner = ownerId ? "AND owner_id = ?" : "";
-  const ownerParams = ownerId ? [ownerId] : [];
+  const { andClause, params } = buildScopeClause(ownerId, dateFrom, dateTo);
   return all<{ primary_value: string; secondary_value: string; count: number }>(
     db,
     `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
      FROM incidents
-     WHERE ${primary} IS NOT NULL AND ${primary} != '' AND ${secondary} IS NOT NULL AND ${secondary} != '' ${andOwner}
+     WHERE ${primary} IS NOT NULL AND ${primary} != '' AND ${secondary} IS NOT NULL AND ${secondary} != '' ${andClause}
      GROUP BY ${primary}, ${secondary}
      ORDER BY count DESC
      LIMIT 300`,
-    ownerParams
+    params
   );
 }
 
@@ -325,7 +354,7 @@ incidentsRouter.get("/breakdown", async (c) => {
   if (!isPivotable(field)) {
     return c.json({ error: "field must be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
-  return c.json(await fetchIncidentsBreakdown(c.env.DB, isAdmin ? null : ownerId, field));
+  return c.json(await fetchIncidentsBreakdown(c.env.DB, isAdmin ? null : ownerId, field, c.req.query("from"), c.req.query("to")));
 });
 
 /** Genuine joint counts for any two of the pivotable fields — the general
@@ -339,69 +368,77 @@ incidentsRouter.get("/crosstab", async (c) => {
   if (!isPivotable(primary) || !isPivotable(secondary)) {
     return c.json({ error: "primary and secondary must each be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
-  return c.json(await fetchIncidentsCrosstab(c.env.DB, isAdmin ? null : ownerId, primary, secondary));
+  return c.json(await fetchIncidentsCrosstab(c.env.DB, isAdmin ? null : ownerId, primary, secondary, c.req.query("from"), c.req.query("to")));
 });
 
 incidentsRouter.get("/stats", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
-  const ownerClause = isAdmin ? "" : "WHERE owner_id = ?";
-  const ownerParams = isAdmin ? [] : [ownerId];
-  const andOwner = isAdmin ? "" : "AND owner_id = ?";
+  const dateFrom = c.req.query("from");
+  const dateTo = c.req.query("to");
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(isAdmin ? null : ownerId, dateFrom, dateTo);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
-    first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
+    first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andOwner} GROUP BY sector ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andClause} GROUP BY sector ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andOwner} GROUP BY actor ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andClause} GROUP BY actor ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andOwner} GROUP BY severity ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andClause} GROUP BY severity ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andOwner} GROUP BY province ORDER BY count DESC LIMIT 20`,
-      ownerParams
+      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andClause} GROUP BY province ORDER BY count DESC LIMIT 20`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andOwner} GROUP BY country ORDER BY count DESC LIMIT 20`,
-      ownerParams
+      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andClause} GROUP BY country ORDER BY count DESC LIMIT 20`,
+      scopeParams
     ),
     all<{ bucket: string; count: number }>(
       c.env.DB,
-      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andOwner} GROUP BY bucket ORDER BY bucket ASC`,
-      ownerParams
+      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY bucket ORDER BY bucket ASC`,
+      scopeParams
     ),
-    // Day-level granularity, bounded to the last ~13 months — a calendar
-    // heatmap covering a whole dataset's history would be an enormous,
-    // mostly-empty grid; a recent window is what these are actually for.
-    all<{ date: string; count: number }>(
-      c.env.DB,
-      `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
-      ownerParams
-    ),
+    // Day-level granularity. When a dashboard-wide date range is set, that
+    // range drives the calendar directly (it's what was explicitly asked
+    // for); otherwise this stays bounded to the last ~13 months, since a
+    // calendar heatmap over a whole dataset's unfiltered history would be an
+    // enormous, mostly-empty grid.
+    dateFrom || dateTo
+      ? all<{ date: string; count: number }>(
+          c.env.DB,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY date ORDER BY date ASC`,
+          scopeParams
+        )
+      : all<{ date: string; count: number }>(
+          c.env.DB,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
+          scopeParams
+        ),
     // Genuine joint counts (not independent marginals like the by_X fields
     // above) — how often each actor/tactic combination actually co-occurs in
     // the same incident. Powers Sankey and network/relationship widgets with
     // real data, not an invented "who's connected to whom" narrative.
     all<{ actor: string; tactic: string; count: number }>(
       c.env.DB,
-      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
-      ownerParams
+      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
+      scopeParams
     ),
     first<Record<string, number>>(
       c.env.DB,
@@ -414,8 +451,8 @@ incidentsRouter.get("/stats", async (c) => {
          COALESCE(SUM(civilian_injury_male), 0) AS injuries_male,
          COALESCE(SUM(civilian_injury_unknown), 0) AS injuries_unknown,
          COALESCE(SUM(kidnappings_ngo), 0) AS kidnappings_ngo
-       FROM incidents ${ownerClause}`,
-      ownerParams
+       FROM incidents ${whereClause}`,
+      scopeParams
     ),
   ]);
 
