@@ -369,6 +369,13 @@ export interface CustomDashboard {
    *  and all drag/resize, regardless of any individual widget's own lock state. */
   locked: boolean;
   share_token: string | null;
+  /** A dashboard-wide date filter, applied to every Incidents-sourced widget
+   *  at once. Set once by whoever builds the dashboard, persisted so it's
+   *  still in effect on reload and for public share viewers. Doesn't affect
+   *  dataset-sourced widgets — there's no single canonical date column for
+   *  those the way Incidents has occurred_at. */
+  date_range_from: string | null;
+  date_range_to: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -393,6 +400,10 @@ export interface PublicDashboardData {
   name: string;
   widgets: DashboardWidget[];
   stats: NormalizedDashboardStats;
+  /** The date range this dashboard's owner set, if any — for display only;
+   *  stats/breakdowns/etc. above are already computed with it applied. */
+  date_range_from: string | null;
+  date_range_to: string | null;
   /** Keyed "primaryColumn|secondaryColumn" — only the specific pairs this
    *  dashboard's own widgets actually use, not every possible combination. */
   crosstabs: Record<string, CrosstabRow[]>;
@@ -521,10 +532,18 @@ export const api = {
     return req<IncidentItem[]>(`/api/incidents${qs ? `?${qs}` : ""}`);
   },
   getIncidentFilters: () => req<IncidentFilters>("/api/incidents/filters"),
-  getIncidentStats: () => req<IncidentStats>("/api/incidents/stats"),
-  getCrosstab: (primary: PivotableField, secondary: PivotableField) =>
-    req<CrosstabRow[]>(`/api/incidents/crosstab?primary=${primary}&secondary=${secondary}`),
-  getBreakdown: (field: PivotableField) => req<{ value: string; count: number }[]>(`/api/incidents/breakdown?field=${field}`),
+  getIncidentStats: (range: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined))).toString();
+    return req<IncidentStats>(`/api/incidents/stats${qs ? `?${qs}` : ""}`);
+  },
+  getCrosstab: (primary: PivotableField, secondary: PivotableField, range: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams({ primary, secondary, ...Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) }).toString();
+    return req<CrosstabRow[]>(`/api/incidents/crosstab?${qs}`);
+  },
+  getBreakdown: (field: PivotableField, range: { from?: string; to?: string } = {}) => {
+    const qs = new URLSearchParams({ field, ...Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) }).toString();
+    return req<{ value: string; count: number }[]>(`/api/incidents/breakdown?${qs}`);
+  },
   getIncidentUploads: () => req<SavedUpload[]>("/api/incidents/uploads"),
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
@@ -552,7 +571,10 @@ export const api = {
   createCustomDashboard: (name: string, widgets: DashboardWidget[]) =>
     req<CustomDashboard>("/api/custom-dashboards", { method: "POST", body: JSON.stringify({ name, widgets }) }),
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
-  updateCustomDashboard: (id: string, data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean }) =>
+  updateCustomDashboard: (
+    id: string,
+    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null }
+  ) =>
     req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
   // Public — no auth token needed, works for anyone with the share link.
