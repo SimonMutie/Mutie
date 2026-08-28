@@ -434,6 +434,8 @@ publicDashboardsRouter.get("/:token", async (c) => {
     name: dashboard.name,
     widgets,
     stats,
+    date_range_from: dateFrom,
+    date_range_to: dateTo,
     crosstabs,
     breakdowns,
     dailyBreakdowns,
