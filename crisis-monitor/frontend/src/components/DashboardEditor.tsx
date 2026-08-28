@@ -81,6 +81,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [isPublic, setIsPublic] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
+  const [dateRangeFrom, setDateRangeFrom] = useState<string | undefined>(undefined);
+  const [dateRangeTo, setDateRangeTo] = useState<string | undefined>(undefined);
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -118,9 +120,19 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   }, []);
 
   useEffect(() => {
-    api.getIncidentStats().then((s) => setStats(normalizeStats(s)));
-    api.getIncidents({ limit: 3000 }).then(setIncidents);
-  }, []);
+    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo }).then((s) => setStats(normalizeStats(s)));
+    api.getIncidents({ limit: 3000, from: dateRangeFrom, to: dateRangeTo }).then(setIncidents);
+  }, [dateRangeFrom, dateRangeTo]);
+
+  // A changed date range invalidates every previously-fetched breakdown and
+  // crosstab (they were computed under the *old* range) — clearing them
+  // lets the fetch effects below, which only fetch keys they don't already
+  // have, naturally treat everything as needing a fresh fetch.
+  useEffect(() => {
+    setBreakdowns({});
+    setCrosstabs({});
+    setDailyBreakdowns({});
+  }, [dateRangeFrom, dateRangeTo]);
 
   // Fetches only the specific (primary, secondary) cross-tabs the current set
   // of widgets actually need, and only the ones not already fetched — adding
@@ -151,12 +163,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         return;
       }
       const [primary, secondary] = key.split("|") as [PivotableField, PivotableField];
-      api.getCrosstab(primary, secondary).then((rows) => {
+      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo }).then((rows) => {
         setCrosstabs((prev) => ({ ...prev, [key]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets]);
+  }, [widgets, dateRangeFrom, dateRangeTo]);
 
   // Same idea, one dimension instead of two — for widgets whose primary
   // field is one of the newer by_X fields not precomputed on stats, or any
@@ -180,12 +192,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         });
         return;
       }
-      api.getBreakdown(field as PivotableField).then((rows) => {
+      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo }).then((rows) => {
         setBreakdowns((prev) => ({ ...prev, [field]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets]);
+  }, [widgets, dateRangeFrom, dateRangeTo]);
 
   // Stat cards sourced from a dataset need that dataset's row count / column
   // sums — fetched once per dataset actually in use, not once per widget.
@@ -241,6 +253,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       setIsPublic(d.is_public);
       setShareToken(d.share_token);
       setLocked(d.locked);
+      setDateRangeFrom(d.date_range_from ?? undefined);
+      setDateRangeTo(d.date_range_to ?? undefined);
       setLoaded(true);
       skipNextAutoSave.current = true;
     });
@@ -417,6 +431,17 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setLocked(updated.locked);
   }
 
+  /** Persists immediately rather than waiting for the debounced auto-save —
+   *  a date range is exactly the kind of setting where "I picked a date and
+   *  nothing visibly happened yet" would be confusing, and every widget's
+   *  data already refetches the moment local state changes regardless. */
+  async function updateDateRange(from: string | undefined, to: string | undefined) {
+    setDateRangeFrom(from);
+    setDateRangeTo(to);
+    if (!backendId) return;
+    await api.updateCustomDashboard(backendId, { date_range_from: from ?? null, date_range_to: to ?? null });
+  }
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
@@ -435,6 +460,30 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             onChange={(e) => setName(e.target.value)}
             style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
           />
+        )}
+        {!locked && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>DATE RANGE</span>
+            <input
+              type="date"
+              value={dateRangeFrom ?? ""}
+              onChange={(e) => updateDateRange(e.target.value || undefined, dateRangeTo)}
+              title="Only affects Incidents-sourced widgets — dataset-sourced widgets have no single date column to filter by"
+              style={{ ...secondaryBtnStyle, padding: "6px 8px", fontSize: 12 }}
+            />
+            <span style={{ color: "var(--text-faint)", fontSize: 11 }}>to</span>
+            <input
+              type="date"
+              value={dateRangeTo ?? ""}
+              onChange={(e) => updateDateRange(dateRangeFrom, e.target.value || undefined)}
+              style={{ ...secondaryBtnStyle, padding: "6px 8px", fontSize: 12 }}
+            />
+            {(dateRangeFrom || dateRangeTo) && (
+              <button onClick={() => updateDateRange(undefined, undefined)} title="Clear the date filter — show all time" style={secondaryBtnStyle}>
+                ×
+              </button>
+            )}
+          </div>
         )}
         {!locked && (
           <button
