@@ -78,6 +78,8 @@ const widgetSchema = z.object({
    *  against a fixed list — an unmatched name just renders unshaded on the
    *  frontend rather than breaking anything. */
   manualCountryData: z.array(z.object({ country: z.string(), value: z.number(), color: z.string().optional() })).optional(),
+  mapView: z.object({ lat: z.number(), lng: z.number(), zoom: z.number() }).optional(),
+  mapViewMode: z.enum(["markers", "heatmap"]).optional(),
   /** Globe only — free-standing text labels (checkpoints, ports, chokepoints,
    *  anything worth naming directly on the map) at a country name or precise
    *  "lat,lng", independent of country shading and routes. */
