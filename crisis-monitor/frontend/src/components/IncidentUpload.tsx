@@ -118,6 +118,12 @@ export default function IncidentUpload({ onUploaded }: Props) {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
   const [insertedCount, setInsertedCount] = useState(0);
+  // Both null until an upload starts, then persist across a failure — a
+  // retry needs the *same* batch id (so the D1-side upload record stays one
+  // coherent unit) and needs to pick up from where it actually stopped, not
+  // row 0, since re-sending already-inserted rows would create duplicates.
+  const [uploadBatchId, setUploadBatchId] = useState<string | null>(null);
+  const [resumeFromIndex, setResumeFromIndex] = useState(0);
 
   async function handleFile(file: File) {
     setError(null);
@@ -141,30 +147,69 @@ export default function IncidentUpload({ onUploaded }: Props) {
     }
   }
 
-  async function handleUpload() {
+  /** Retries a single chunk a few times with a short backoff before giving
+   *  up — absorbs the transient network hiccups a sequential upload of many
+   *  requests over several minutes will realistically hit sometimes, rather
+   *  than letting one blip take down an entire large upload that had
+   *  otherwise been working fine. */
+  async function uploadChunkWithRetry(chunk: IncidentRow[], batchLabel: string | undefined, batchId: string, maxAttempts = 3): Promise<number> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const result = await api.uploadIncidentsBulk(chunk, batchLabel, batchId);
+        return result.inserted;
+      } catch (err) {
+        lastError = err;
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
+        }
+      }
+    }
+    throw lastError;
+  }
+
+  async function handleUpload(startIndex = 0) {
     if (!parsed) return;
     setStage("uploading");
     setError(null);
-    const CHUNK = 500;
-    let done = 0;
-    setProgress({ done: 0, total: parsed.rows.length });
-    // One batch ID for the whole file, reused across every chunk call — without
-    // this, each chunk got its own random batch server-side, so a >500-row file
-    // ended up split into disconnected batches with no shared identity, making
-    // "delete this whole upload" impossible for anything but the smallest files.
-    const batchId = crypto.randomUUID();
+    // 200 rather than something larger — this is the exact size the old
+    // version of this upload flow successfully completed well over a
+    // hundred times in a row before ever failing, so it's a size D1
+    // reliably handles in this app specifically, not just a number that
+    // sounds reasonable. Matching it here means each request now maps to
+    // exactly one D1 batch() call server-side (see incidents.ts) rather
+    // than several — which is what makes a failed request safe to retry
+    // without risking duplicate rows: D1 batch() is atomic, so a failed
+    // request is guaranteed to have inserted nothing at all.
+    const CHUNK = 200;
+    let done = startIndex;
+    setProgress({ done, total: parsed.rows.length });
+    // One batch ID for the whole file, reused across every chunk call (and
+    // across a resume after a failure) — without this, each chunk got its
+    // own random batch server-side, so a >500-row file ended up split into
+    // disconnected batches with no shared identity, making "delete this
+    // whole upload" impossible for anything but the smallest files.
+    const batchId = uploadBatchId ?? crypto.randomUUID();
+    setUploadBatchId(batchId);
     try {
-      for (let i = 0; i < parsed.rows.length; i += CHUNK) {
+      for (let i = startIndex; i < parsed.rows.length; i += CHUNK) {
         const chunk = parsed.rows.slice(i, i + CHUNK);
-        const result = await api.uploadIncidentsBulk(chunk, fileName ?? undefined, batchId);
-        done += result.inserted;
+        const inserted = await uploadChunkWithRetry(chunk, fileName ?? undefined, batchId);
+        done += inserted;
         setProgress({ done, total: parsed.rows.length });
+        // Tracked after every successful chunk, not just on failure — if
+        // the *next* chunk fails, resuming should start there, not back at
+        // wherever the upload originally began.
+        setResumeFromIndex(i + CHUNK);
       }
       setInsertedCount(done);
       setStage("done");
       onUploaded();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed partway through.");
+      setError(
+        (err instanceof Error ? err.message : "Upload failed partway through.") +
+          ` — ${done.toLocaleString()} of ${parsed.rows.length.toLocaleString()} rows are in already; use Resume to continue from there without re-sending them.`
+      );
       setStage("error");
     }
   }
@@ -174,6 +219,8 @@ export default function IncidentUpload({ onUploaded }: Props) {
     setParsed(null);
     setFileName(null);
     setError(null);
+    setUploadBatchId(null);
+    setResumeFromIndex(0);
   }
 
   return (
@@ -213,9 +260,16 @@ export default function IncidentUpload({ onUploaded }: Props) {
           <div style={{ fontSize: 13, color: "var(--critical)", background: "color-mix(in srgb, var(--critical) 8%, transparent)", padding: "10px 12px", borderRadius: 8, marginBottom: 12 }}>
             {error}
           </div>
-          <button onClick={reset} style={secondaryBtnStyle}>
-            Try another file
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {parsed && resumeFromIndex > 0 && resumeFromIndex < parsed.rows.length && (
+              <button onClick={() => handleUpload(resumeFromIndex)} style={primaryBtnStyle}>
+                Resume — continue from row {resumeFromIndex.toLocaleString()}
+              </button>
+            )}
+            <button onClick={reset} style={secondaryBtnStyle}>
+              Try another file
+            </button>
+          </div>
         </div>
       )}
 
@@ -243,7 +297,7 @@ export default function IncidentUpload({ onUploaded }: Props) {
           )}
 
           <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-            <button onClick={handleUpload} style={primaryBtnStyle}>
+            <button onClick={() => handleUpload()} style={primaryBtnStyle}>
               Upload {parsed.rows.length.toLocaleString()} incidents
             </button>
             <button onClick={reset} style={secondaryBtnStyle}>
