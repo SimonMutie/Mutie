@@ -13,6 +13,7 @@ interface Route {
   label?: string;
   color?: string;
   vehicle?: Vehicle;
+  strokeWidth?: number;
 }
 
 interface Props {
@@ -39,6 +40,7 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [features, setFeatures] = useState<GeoJSON.Feature[] | null>(null);
   const [tick, setTick] = useState(0);
+  const [rotationLocked, setRotationLocked] = useState(false);
 
   const usingManualData = !!manualData;
   const countByCountry = usingManualData
@@ -80,9 +82,17 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
     if (!features) return;
     const controls = globeRef.current?.controls?.();
     if (controls) {
-      controls.autoRotate = true;
+      controls.autoRotate = !rotationLocked;
       controls.autoRotateSpeed = 0.6;
+      // Freezes the view exactly where it is — the trajectory/vehicle
+      // animation below is driven by tick, entirely independent of camera
+      // state, so it keeps moving either way.
+      controls.enableRotate = !rotationLocked;
     }
+  }, [features, rotationLocked]);
+
+  useEffect(() => {
+    if (!features) return;
     // Default camera distance leaves a lot of empty space around the globe;
     // pulling it in fills the widget card properly. 0-ms transition — this
     // is the *initial* framing, not something that should visibly animate in.
@@ -125,7 +135,17 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
     points: r.points.map(([lng, lat]) => [lat, lng] as [number, number]),
     color: r.resolvedColor,
     label: r.label ?? r.waypoints.join(" → "),
+    strokeWidth: r.strokeWidth ?? 2.2,
   }));
+
+  // Every route gets a fixed arrowhead at its destination showing direction —
+  // independent of whether it also has an animated vehicle travelling along it.
+  const arrowheads = resolvedRoutes.map((r) => {
+    const points = r.points.map(([lng, lat]) => [lat, lng] as [number, number]);
+    const [lat1, lng1] = points[points.length - 2];
+    const [lat2, lng2] = points[points.length - 1];
+    return { kind: "arrow" as const, lat: lat2, lng: lng2, bearing: bearingBetween(lat1, lng1, lat2, lng2), color: r.resolvedColor };
+  });
 
   const vehicleObjects = resolvedRoutes
     .filter((r) => r.vehicle && r.vehicle !== "none")
@@ -135,22 +155,48 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
       // transoceanic route would otherwise crawl compared to a short one).
       const progress = ((tick * 0.05 + idx * 1.7) % 14) / 14;
       const { lat, lng, bearingDeg } = interpolateAlongPath(r.points, progress);
-      return { lat, lng, bearing: bearingDeg, vehicle: r.vehicle as Vehicle, color: r.resolvedColor };
+      return { kind: "vehicle" as const, lat, lng, bearing: bearingDeg, vehicle: r.vehicle as Vehicle, color: r.resolvedColor };
     });
 
+  const objects = [...arrowheads, ...vehicleObjects];
+
   return (
-    <div ref={containerRef} style={{ height: "100%", width: "100%", borderRadius: 6, overflow: "hidden" }}>
+    <div ref={containerRef} style={{ height: "100%", width: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
       {!features || size.width === 0 ? (
         <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "var(--text-faint)" }}>
           Loading globe…
         </div>
       ) : (
-        <Globe
-          ref={globeRef}
-          width={size.width}
-          height={size.height}
+        <>
+          <button
+            onClick={() => setRotationLocked((v) => !v)}
+            onMouseDown={(e) => e.stopPropagation()}
+            title={rotationLocked ? "Unlock — resume rotating" : "Lock — hold the globe at its current position"}
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              zIndex: 10,
+              width: 22,
+              height: 22,
+              lineHeight: "20px",
+              padding: 0,
+              fontSize: 11,
+              borderRadius: 4,
+              border: "1px solid rgba(255,255,255,0.3)",
+              background: rotationLocked ? "rgba(13,148,136,0.85)" : "rgba(0,0,0,0.45)",
+              color: "#fff",
+              cursor: "pointer",
+            }}
+          >
+            {rotationLocked ? "🔒" : "🔓"}
+          </button>
+          <Globe
+            ref={globeRef}
+            width={size.width}
+            height={size.height}
           backgroundColor="rgba(0,0,0,0)"
-          globeImageUrl="//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"
+          globeImageUrl="//unpkg.com/three-globe/example/img/earth-day.jpg"
           polygonsData={features}
           polygonCapColor={(f: object) => {
             const name = (f as GeoJSON.Feature).properties?.name as string | undefined;
@@ -173,18 +219,19 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
           pathPointLng={(p: unknown) => (p as [number, number])[1]}
           pathColor={(d: object) => (d as { color: string }).color}
           pathLabel={(d: object) => (d as { label: string }).label}
-          pathStroke={2.2}
+          pathStroke={(d: object) => (d as { strokeWidth: number }).strokeWidth}
           pathDashLength={0.4}
           pathDashGap={0.15}
           pathDashAnimateTime={2500}
           pathTransitionDuration={0}
-          objectsData={vehicleObjects}
+          objectsData={objects}
           objectLat={(d: object) => (d as { lat: number }).lat}
           objectLng={(d: object) => (d as { lng: number }).lng}
-          objectAltitude={0.02}
+          objectAltitude={0.025}
           objectRotation={(d: object) => ({ y: (d as { bearing: number }).bearing })}
-          objectThreeObject={(d: object) => vehicleMesh(d as { vehicle: Vehicle; color: string })}
+          objectThreeObject={(d: object) => vehicleMesh(d as { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: string })}
         />
+        </>
       )}
     </div>
   );
@@ -198,29 +245,59 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
  *  shipping — SVG could be rendered and inspected directly; a Three.js
  *  scene can't be in this environment, so the shapes are deliberately kept
  *  simple to minimize how much could look wrong sight-unseen. */
-function vehicleMesh(d: { vehicle: Vehicle; color: string }): THREE.Object3D {
+/** Sizes here are deliberately large relative to three-globe's ~100-unit
+ *  globe radius — the earlier version used sizes around 0.5-2 units, which
+ *  is why they rendered as barely-visible dots rather than recognizable
+ *  shapes. These are roughly 4-6x bigger and reshaped for a clearer
+ *  silhouette at that scale, not just bigger versions of the same shapes. */
+function vehicleMesh(d: { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: string }): THREE.Object3D {
   const material = new THREE.MeshBasicMaterial({ color: d.color });
   const group = new THREE.Group();
 
+  if (d.kind === "arrow") {
+    // A short, wide cone reads as a real arrowhead — deliberately distinct
+    // from the plane's longer, thinner dart shape below.
+    const head = new THREE.ConeGeometry(2.2, 3.2, 3);
+    const mesh = new THREE.Mesh(head, material);
+    mesh.rotation.z = -Math.PI / 2;
+    group.add(mesh);
+    return group;
+  }
+
   if (d.vehicle === "plane") {
-    const body = new THREE.ConeGeometry(0.5, 2, 8);
+    const body = new THREE.ConeGeometry(1.8, 7, 8);
     const mesh = new THREE.Mesh(body, material);
     mesh.rotation.z = -Math.PI / 2; // point along +X, matching bearing 0 = north after objectRotation
     group.add(mesh);
   } else if (d.vehicle === "drone") {
-    const body = new THREE.OctahedronGeometry(0.7);
-    group.add(new THREE.Mesh(body, material));
+    // A flattened diamond body plus four small rotor markers at the
+    // extended corners — reads as "quadcopter" rather than a plain blob.
+    const body = new THREE.BoxGeometry(4, 0.8, 4);
+    const bodyMesh = new THREE.Mesh(body, material);
+    bodyMesh.rotation.y = Math.PI / 4;
+    group.add(bodyMesh);
+    const rotorGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.3, 10);
+    for (const [x, z] of [
+      [2.6, 2.6],
+      [2.6, -2.6],
+      [-2.6, 2.6],
+      [-2.6, -2.6],
+    ]) {
+      const rotor = new THREE.Mesh(rotorGeo, material);
+      rotor.position.set(x, 0.3, z);
+      group.add(rotor);
+    }
   } else if (d.vehicle === "warship") {
-    const hull = new THREE.BoxGeometry(2.4, 0.5, 0.8);
-    const hullMesh = new THREE.Mesh(hull, material);
-    group.add(hullMesh);
-    const tower = new THREE.BoxGeometry(0.6, 0.5, 0.5);
+    const hull = new THREE.BoxGeometry(8, 1.4, 2.2);
+    group.add(new THREE.Mesh(hull, material));
+    const tower = new THREE.BoxGeometry(2.2, 2.2, 1.8);
     const towerMesh = new THREE.Mesh(tower, material);
-    towerMesh.position.set(0.3, 0.5, 0);
+    towerMesh.position.set(0.8, 1.6, 0);
     group.add(towerMesh);
   } else {
-    // commercial-ship
-    const hull = new THREE.BoxGeometry(2.4, 0.4, 0.9);
+    // commercial-ship — a longer, lower hull than the warship's, no tower,
+    // the visual distinction being "cargo vessel" vs. "combatant".
+    const hull = new THREE.BoxGeometry(8.5, 1.1, 2.6);
     group.add(new THREE.Mesh(hull, material));
   }
 
