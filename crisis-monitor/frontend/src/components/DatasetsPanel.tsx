@@ -53,7 +53,7 @@ function cellToDatasetValue(value: unknown, type: DatasetColumnType): string | n
   return String(value).trim() || null;
 }
 
-type Stage = "list" | "upload-pick" | "upload-preview" | "uploading" | "done";
+type Stage = "list" | "upload-pick" | "upload-preview" | "uploading" | "done" | "viewing";
 
 export default function DatasetsPanel() {
   const [stage, setStage] = useState<Stage>("list");
@@ -67,6 +67,7 @@ export default function DatasetsPanel() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [viewingDataset, setViewingDataset] = useState<Dataset | null>(null);
 
   async function loadDatasets() {
     setLoading(true);
@@ -186,6 +187,15 @@ export default function DatasetsPanel() {
                     {d.schema.map((c) => c.name).join(", ")}
                   </div>
                 </div>
+                <button
+                  onClick={() => {
+                    setViewingDataset(d);
+                    setStage("viewing");
+                  }}
+                  style={secondaryBtnStyle}
+                >
+                  View / Edit
+                </button>
                 <button onClick={() => handleDelete(d.id)} style={dangerBtnStyle}>
                   Delete
                 </button>
@@ -194,6 +204,18 @@ export default function DatasetsPanel() {
           </div>
         )}
       </div>
+    );
+  }
+
+  if (stage === "viewing" && viewingDataset) {
+    return (
+      <DatasetRowsView
+        dataset={viewingDataset}
+        onBack={() => {
+          setViewingDataset(null);
+          setStage("list");
+        }}
+      />
     );
   }
 
@@ -296,6 +318,237 @@ export default function DatasetsPanel() {
   return null;
 }
 
+/** A row's own data keyed by column name, plus the id/timestamp the backend
+ *  wraps it in. */
+type RowRecord = { id: string; data: Record<string, unknown>; created_at: string };
+
+/** Paginated view of an existing dataset's actual rows, not just chart
+ *  aggregates over them — "open and edit that data" directly, the same way
+ *  a spreadsheet would let you. Editing swaps a whole row into inputs at
+ *  once (not per-cell) — simpler to reason about correctly than tracking
+ *  which of many individual cells is mid-edit at any moment. */
+function DatasetRowsView({ dataset, onBack }: { dataset: Dataset; onBack: () => void }) {
+  const [rows, setRows] = useState<RowRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const limit = 50;
+  const [loading, setLoading] = useState(true);
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<Record<string, unknown>>({});
+  const [addingRow, setAddingRow] = useState(false);
+  const [newRowDraft, setNewRowDraft] = useState<Record<string, unknown>>({});
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await api.getDatasetRows(dataset.id, offset, limit);
+      setRows(result.rows);
+      setTotal(result.total);
+    } catch {
+      setError("Couldn't load rows — try again.");
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset.id, offset]);
+
+  function coerce(value: string, colType: DatasetColumnType): string | number | null {
+    if (value === "") return null;
+    if (colType === "number") {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : value;
+    }
+    return value;
+  }
+
+  function startEdit(row: RowRecord) {
+    setEditingRowId(row.id);
+    setEditDraft({ ...row.data });
+  }
+
+  async function saveEdit() {
+    if (!editingRowId) return;
+    try {
+      await api.updateDatasetRow(dataset.id, editingRowId, editDraft);
+      setEditingRowId(null);
+      load();
+    } catch {
+      setError("Couldn't save that edit — try again.");
+    }
+  }
+
+  async function handleDeleteRow(id: string) {
+    if (!window.confirm("Delete this row? This can't be undone.")) return;
+    try {
+      await api.deleteDatasetRow(dataset.id, id);
+      load();
+    } catch {
+      setError("Couldn't delete that row — try again.");
+    }
+  }
+
+  async function handleAddRow() {
+    try {
+      await api.addDatasetRow(dataset.id, newRowDraft);
+      setAddingRow(false);
+      setNewRowDraft({});
+      setOffset(0);
+      load();
+    } catch {
+      setError("Couldn't add that row — try again.");
+    }
+  }
+
+  const pageStart = total === 0 ? 0 : offset + 1;
+  const pageEnd = Math.min(offset + limit, total);
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 12 }}>
+        <div>
+          <button onClick={onBack} style={{ ...secondaryBtnStyle, marginBottom: 8 }}>
+            ← All datasets
+          </button>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>{dataset.name}</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {total.toLocaleString()} row{total === 1 ? "" : "s"} · {dataset.schema.length} columns
+          </div>
+        </div>
+        {!addingRow && (
+          <button onClick={() => setAddingRow(true)} style={primaryBtnStyle}>
+            + Add row manually
+          </button>
+        )}
+      </div>
+
+      {error && <div style={{ color: "var(--critical)", fontSize: 12.5, marginBottom: 8 }}>{error}</div>}
+
+      {addingRow && (
+        <div className="panel" style={{ padding: 14, marginBottom: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="eyebrow">NEW ROW</div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(3, dataset.schema.length)}, 1fr)`, gap: 8 }}>
+            {dataset.schema.map((col) => (
+              <label key={col.name} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11 }}>
+                <span style={{ color: "var(--text-muted)" }}>
+                  {col.name} <span style={{ color: "var(--text-faint)" }}>({col.type})</span>
+                </span>
+                <input
+                  type={col.type === "date" ? "date" : col.type === "number" ? "number" : "text"}
+                  value={String(newRowDraft[col.name] ?? "")}
+                  onChange={(e) => setNewRowDraft((prev) => ({ ...prev, [col.name]: coerce(e.target.value, col.type) }))}
+                  style={selectStyle}
+                />
+              </label>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleAddRow} style={primaryBtnStyle}>
+              Save row
+            </button>
+            <button
+              onClick={() => {
+                setAddingRow(false);
+                setNewRowDraft({});
+              }}
+              style={secondaryBtnStyle}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="panel" style={{ padding: "24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
+          No rows yet.
+        </div>
+      ) : (
+        <>
+          <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: "var(--panel-raised)" }}>
+                  {dataset.schema.map((col) => (
+                    <th key={col.name} style={{ textAlign: "left", padding: "7px 10px", borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>
+                      {col.name}
+                    </th>
+                  ))}
+                  <th style={{ padding: "7px 10px", borderBottom: "1px solid var(--border)", width: 120 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => {
+                  const isEditing = editingRowId === row.id;
+                  return (
+                    <tr key={row.id} style={{ borderBottom: "1px solid var(--border-soft)" }}>
+                      {dataset.schema.map((col) => (
+                        <td key={col.name} style={{ padding: "5px 10px" }}>
+                          {isEditing ? (
+                            <input
+                              type={col.type === "date" ? "date" : col.type === "number" ? "number" : "text"}
+                              value={String(editDraft[col.name] ?? "")}
+                              onChange={(e) => setEditDraft((prev) => ({ ...prev, [col.name]: coerce(e.target.value, col.type) }))}
+                              style={{ ...selectStyle, minWidth: 90 }}
+                            />
+                          ) : (
+                            <span>{row.data[col.name] === null || row.data[col.name] === undefined ? "—" : String(row.data[col.name])}</span>
+                          )}
+                        </td>
+                      ))}
+                      <td style={{ padding: "5px 10px", whiteSpace: "nowrap" }}>
+                        {isEditing ? (
+                          <>
+                            <button onClick={saveEdit} style={{ ...miniActionBtnStyle, color: "var(--signal)" }}>
+                              Save
+                            </button>
+                            <button onClick={() => setEditingRowId(null)} style={miniActionBtnStyle}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => startEdit(row)} style={miniActionBtnStyle}>
+                              Edit
+                            </button>
+                            <button onClick={() => handleDeleteRow(row.id)} style={{ ...miniActionBtnStyle, color: "var(--critical)" }}>
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 10, fontSize: 12, color: "var(--text-muted)" }}>
+            <span>
+              Showing {pageStart}–{pageEnd} of {total.toLocaleString()}
+            </span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setOffset((o) => Math.max(0, o - limit))} disabled={offset === 0} style={secondaryBtnStyle}>
+                ← Previous
+              </button>
+              <button onClick={() => setOffset((o) => o + limit)} disabled={offset + limit >= total} style={secondaryBtnStyle}>
+                Next →
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 const primaryBtnStyle: React.CSSProperties = {
   padding: "8px 14px",
   background: "var(--signal-dim)",
@@ -325,6 +578,17 @@ const dangerBtnStyle: React.CSSProperties = {
   borderRadius: 6,
   cursor: "pointer",
   fontSize: 12.5,
+};
+
+const miniActionBtnStyle: React.CSSProperties = {
+  padding: "2px 6px",
+  marginRight: 4,
+  background: "transparent",
+  border: "none",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+  fontSize: 11.5,
+  textDecoration: "underline",
 };
 
 const selectStyle: React.CSSProperties = {
