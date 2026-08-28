@@ -135,12 +135,15 @@ incidentsRouter.post("/bulk", async (c) => {
     };
   });
 
-  // D1 batches are capped well above 2000 statements, but chunk generously
-  // anyway so one oversized upload can't blow past any per-batch limit.
-  const CHUNK = 200;
-  for (let i = 0; i < statements.length; i += CHUNK) {
-    await batchRun(c.env.DB, statements.slice(i, i + CHUNK));
-  }
+  // A single D1 batch() call is atomic (all statements succeed or none do);
+  // *separate* batch() calls are not atomic with each other — if this were
+  // split into several batch() calls and a later one failed, the earlier
+  // ones' rows would already be committed. Sending the whole request as one
+  // batch means a failed request is guaranteed to have inserted nothing,
+  // which is what makes the frontend's retry-the-same-chunk-on-failure logic
+  // safe from creating duplicates. D1 comfortably supports batches well
+  // above the 500-statement chunks the frontend sends.
+  await batchRun(c.env.DB, statements);
 
   // Track this as an "upload" the user can later see and delete as one unit —
   // except single-row manual entries, which would otherwise clutter that list
