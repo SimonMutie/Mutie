@@ -152,8 +152,14 @@ export async function fetchGdeltArticles(
     throw new GdeltRateLimitError(Number.isFinite(retryAfterMs) ? retryAfterMs : 15_000);
   }
   if (!res.ok) {
-    throw new Error(`GDELT request failed: ${res.status} ${res.statusText}`);
-  }
+  const errorBody = await res.text().catch(() => "");
+  console.error(
+    `[gdelt] HTTP ${res.status} ${res.statusText} | URL=${res.url} | response=${errorBody.slice(0, 500)}`
+  );
+  throw new Error(
+    `GDELT request failed: ${res.status} ${res.statusText} | ${errorBody.slice(0, 300)}`
+  );
+}
   const text = await res.text();
   if (!text.trim()) return []; // GDELT returns an empty body (not valid JSON) when nothing matches
 
