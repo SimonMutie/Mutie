@@ -736,7 +736,7 @@ function WidgetEditPopover({
   const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
   const [useManualData, setUseManualData] = useState(!!widget.manualCountryData);
   const [manualCountryData, setManualCountryData] = useState<{ country: string; value: number; color?: string }[]>(widget.manualCountryData ?? []);
-  const [manualRoutes, setManualRoutes] = useState<{ from: string; to: string; label?: string; color?: string }[]>(widget.manualRoutes ?? []);
+  const [manualRoutes, setManualRoutes] = useState<{ waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none" }[]>(widget.manualRoutes ?? []);
 
   const supportsManualData = type === "choropleth" || type === "globe";
 
@@ -1471,63 +1471,99 @@ function ManualCountryDataEditor({
  *  (matched the same way as country shading) or a precise "lat,lng" for a
  *  spot no country polygon covers, like open water on a shipping route.
  *  Globe-only: a flat choropleth has no arc rendering. */
-function ManualRoutesEditor({
-  routes,
-  onChange,
-}: {
-  routes: { from: string; to: string; label?: string; color?: string }[];
-  onChange: (routes: { from: string; to: string; label?: string; color?: string }[]) => void;
-}) {
-  function update(idx: number, patch: Partial<{ from: string; to: string; label?: string; color?: string }>) {
+type ManualRoute = { waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none" };
+
+const VEHICLE_OPTIONS: { value: NonNullable<ManualRoute["vehicle"]>; label: string }[] = [
+  { value: "none", label: "None — line only" },
+  { value: "plane", label: "✈ Plane" },
+  { value: "commercial-ship", label: "🚢 Commercial ship" },
+  { value: "warship", label: "⚓ Warship" },
+  { value: "drone", label: "🛸 Drone" },
+];
+
+function ManualRoutesEditor({ routes, onChange }: { routes: ManualRoute[]; onChange: (routes: ManualRoute[]) => void }) {
+  function updateRoute(idx: number, patch: Partial<ManualRoute>) {
     onChange(routes.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   }
-  function remove(idx: number) {
+  function removeRoute(idx: number) {
     onChange(routes.filter((_, i) => i !== idx));
   }
+  function updateWaypoint(routeIdx: number, wpIdx: number, value: string) {
+    const route = routes[routeIdx];
+    const waypoints = route.waypoints.map((w, i) => (i === wpIdx ? value : w));
+    updateRoute(routeIdx, { waypoints });
+  }
+  function addWaypoint(routeIdx: number) {
+    updateRoute(routeIdx, { waypoints: [...routes[routeIdx].waypoints, ""] });
+  }
+  function removeWaypoint(routeIdx: number, wpIdx: number) {
+    const route = routes[routeIdx];
+    if (route.waypoints.length <= 2) return; // a path needs at least 2 points
+    updateRoute(routeIdx, { waypoints: route.waypoints.filter((_, i) => i !== wpIdx) });
+  }
+
   return (
     <div>
-      <div className="eyebrow" style={{ marginBottom: 4 }}>ROUTES / LINKAGES (ANIMATED ARCS)</div>
+      <div className="eyebrow" style={{ marginBottom: 4 }}>ROUTES (BENDABLE PATHS)</div>
       <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 6 }}>
-        Country name or a precise "lat,lng" (e.g. for open water) at each end.
+        Country name or a precise "lat,lng" (e.g. for open water) per waypoint — add more waypoints to bend a route through the sea rather than a straight line between two countries.
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        {routes.map((route, idx) => (
-          <div key={idx} style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
-            <input
-              value={route.from}
-              onChange={(e) => update(idx, { from: e.target.value })}
-              placeholder="From"
-              list="known-country-names"
-              style={{ ...selectStyle, flex: 1, minWidth: 70 }}
-            />
-            <span style={{ color: "var(--text-faint)", fontSize: 11 }}>→</span>
-            <input
-              value={route.to}
-              onChange={(e) => update(idx, { to: e.target.value })}
-              placeholder="To"
-              list="known-country-names"
-              style={{ ...selectStyle, flex: 1, minWidth: 70 }}
-            />
-            <input
-              value={route.label ?? ""}
-              onChange={(e) => update(idx, { label: e.target.value || undefined })}
-              placeholder="Label (optional)"
-              style={{ ...selectStyle, flex: 1, minWidth: 80 }}
-            />
-            <input
-              type="color"
-              value={route.color ?? "#0d9488"}
-              onChange={(e) => update(idx, { color: e.target.value })}
-              title="Arc color (optional)"
-              style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", flexShrink: 0 }}
-            />
-            <button onClick={() => remove(idx)} title="Remove" style={miniBtnStyle}>
-              ×
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {routes.map((route, routeIdx) => (
+          <div key={routeIdx} style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+            {route.waypoints.map((wp, wpIdx) => (
+              <div key={wpIdx} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <span style={{ fontSize: 9.5, color: "var(--text-faint)", width: 14, flexShrink: 0 }}>{wpIdx + 1}</span>
+                <input
+                  value={wp}
+                  onChange={(e) => updateWaypoint(routeIdx, wpIdx, e.target.value)}
+                  placeholder={wpIdx === 0 ? "Start" : wpIdx === route.waypoints.length - 1 ? "End" : "Bend through…"}
+                  list="known-country-names"
+                  style={{ ...selectStyle, flex: 1, minWidth: 0 }}
+                />
+                {route.waypoints.length > 2 && (
+                  <button onClick={() => removeWaypoint(routeIdx, wpIdx)} title="Remove this waypoint" style={miniBtnStyle}>
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => addWaypoint(routeIdx)}
+              style={{ ...miniBtnStyle, width: "auto", padding: "2px 7px", fontSize: 10, color: "var(--signal)", alignSelf: "flex-start" }}
+            >
+              + Bend through another point
             </button>
+
+            <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
+              <select value={route.vehicle ?? "none"} onChange={(e) => updateRoute(routeIdx, { vehicle: e.target.value as ManualRoute["vehicle"] })} style={{ ...selectStyle, flex: 1, minWidth: 110 }}>
+                {VEHICLE_OPTIONS.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={route.label ?? ""}
+                onChange={(e) => updateRoute(routeIdx, { label: e.target.value || undefined })}
+                placeholder="Label (optional)"
+                style={{ ...selectStyle, flex: 1, minWidth: 80 }}
+              />
+              <input
+                type="color"
+                value={route.color ?? "#0d9488"}
+                onChange={(e) => updateRoute(routeIdx, { color: e.target.value })}
+                title="Line and icon color"
+                style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", flexShrink: 0 }}
+              />
+              <button onClick={() => removeRoute(routeIdx)} title="Remove this route" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
+                × Route
+              </button>
+            </div>
           </div>
         ))}
         <button
-          onClick={() => onChange([...routes, { from: "", to: "" }])}
+          onClick={() => onChange([...routes, { waypoints: ["", ""], vehicle: "none" }])}
           style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", color: "var(--signal)" }}
         >
           + Add route
