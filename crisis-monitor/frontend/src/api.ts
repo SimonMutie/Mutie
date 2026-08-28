@@ -293,11 +293,21 @@ export interface DashboardWidget {
    *  Presence of this array (even empty) means "manual mode" for that
    *  widget; countries not listed here just render unshaded. */
   manualCountryData?: { country: string; value: number; color?: string }[];
-  /** Globe only — arcs between two named locations, for showing routes,
-   *  trajectories, or cross-border/cross-group linkages. Independent of how
-   *  the globe's country shading is sourced — arcs can sit on top of
+  /** Globe only — a path through 2 or more named locations, for showing
+   *  routes, trajectories, or cross-border/cross-group linkages. A country
+   *  name (matched the same way as country shading) or a precise "lat,lng"
+   *  at each waypoint — a route can bend through open water via extra
+   *  waypoints rather than being a single straight arc. Independent of how
+   *  the globe's country shading is sourced — routes can sit on top of
    *  Incidents data, dataset data, manual country data, or no shading at all. */
-  manualRoutes?: { from: string; to: string; label?: string; color?: string }[];
+  manualRoutes?: {
+    waypoints: string[];
+    label?: string;
+    color?: string;
+    /** An icon animates along the path when set — "none" (or omitted) is
+     *  just the line itself. */
+    vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none";
+  }[];
   /** Bar/line only — a second dimension to break the primary field down by,
    *  turning a single-variable chart into a genuine two-variable pivot
    *  (stacked/grouped bars, multi-series lines). */
