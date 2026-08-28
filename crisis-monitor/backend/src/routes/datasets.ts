@@ -207,6 +207,103 @@ datasetsRouter.post("/:id/rows", async (c) => {
   return c.json({ inserted: statements.length });
 });
 
+const MAX_ROWS_PAGE = 200;
+
+/** Paginated listing of a dataset's actual rows — for viewing and editing
+ *  them directly, not just charting aggregates over them. Ordered by
+ *  creation so pages stay stable as you page through, rather than SQLite's
+ *  otherwise-undefined row order potentially shifting between requests. */
+datasetsRouter.get("/:id/rows", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const dataset = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [datasetId]);
+  if (!dataset) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && dataset.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
+  const limit = Math.min(MAX_ROWS_PAGE, Math.max(1, Number(c.req.query("limit") ?? 50) || 50));
+
+  const [rows, total] = await Promise.all([
+    all<{ id: string; row_data: string; created_at: string }>(
+      c.env.DB,
+      `SELECT id, row_data, created_at FROM dataset_rows WHERE dataset_id = ? ORDER BY created_at ASC, id ASC LIMIT ? OFFSET ?`,
+      [datasetId, limit, offset]
+    ),
+    first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM dataset_rows WHERE dataset_id = ?`, [datasetId]),
+  ]);
+
+  return c.json({
+    rows: rows.map((r) => ({ id: r.id, data: JSON.parse(r.row_data), created_at: r.created_at })),
+    total: total?.count ?? 0,
+    offset,
+    limit,
+  });
+});
+
+/** A single new row, typed in by hand rather than uploaded in bulk — the
+ *  same insert path as /rows, just one row and returning it so the
+ *  caller can show it immediately without a full page refetch. */
+datasetsRouter.post("/:id/rows/manual", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const dataset = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [datasetId]);
+  if (!dataset) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && dataset.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ data: z.record(z.unknown()) }).safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const id = newId();
+  const now = nowIso();
+  await c.env.DB.prepare(`INSERT INTO dataset_rows (id, dataset_id, owner_id, row_data, created_at) VALUES (?,?,?,?,?)`)
+    .bind(id, datasetId, ownerId, JSON.stringify(parsed.data.data), now)
+    .run();
+  await c.env.DB.prepare(`UPDATE datasets SET row_count = row_count + 1, updated_at = ? WHERE id = ?`).bind(now, datasetId).run();
+
+  return c.json({ id, data: parsed.data.data, created_at: now });
+});
+
+datasetsRouter.patch("/:id/rows/:rowId", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const rowId = c.req.param("rowId");
+  const dataset = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [datasetId]);
+  if (!dataset) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && dataset.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const existing = await first<{ dataset_id: string }>(c.env.DB, `SELECT dataset_id FROM dataset_rows WHERE id = ?`, [rowId]);
+  if (!existing || existing.dataset_id !== datasetId) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ data: z.record(z.unknown()) }).safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  await c.env.DB.prepare(`UPDATE dataset_rows SET row_data = ? WHERE id = ?`).bind(JSON.stringify(parsed.data.data), rowId).run();
+  await c.env.DB.prepare(`UPDATE datasets SET updated_at = ? WHERE id = ?`).bind(nowIso(), datasetId).run();
+  return c.json({ id: rowId, data: parsed.data.data });
+});
+
+datasetsRouter.delete("/:id/rows/:rowId", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const datasetId = c.req.param("id");
+  const rowId = c.req.param("rowId");
+  const dataset = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [datasetId]);
+  if (!dataset) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && dataset.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+
+  const existing = await first<{ dataset_id: string }>(c.env.DB, `SELECT dataset_id FROM dataset_rows WHERE id = ?`, [rowId]);
+  if (!existing || existing.dataset_id !== datasetId) return c.json({ error: "Not found" }, 404);
+
+  await c.env.DB.prepare(`DELETE FROM dataset_rows WHERE id = ?`).bind(rowId).run();
+  await c.env.DB.prepare(`UPDATE datasets SET row_count = MAX(0, row_count - 1), updated_at = ? WHERE id = ?`).bind(nowIso(), datasetId).run();
+  return c.json({ ok: true });
+});
+
 datasetsRouter.delete("/:id", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
