@@ -130,6 +130,11 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
  *  source just fine. */
 export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble", "sankey", "network", "calendar"];
 
+/** Web-safe system fonts only — no webfont loading, so every option here is
+ *  guaranteed to actually render as chosen rather than silently falling back
+ *  on whatever device someone's viewing the dashboard on. */
+const LABEL_FONT_OPTIONS = ["Arial", "Helvetica", "Georgia", "Times New Roman", "Courier New", "Verdana", "Trebuchet MS", "Impact"];
+
 export const PIVOTABLE_FIELD_OPTIONS: PivotableField[] = [
   "sector",
   "actor",
@@ -564,7 +569,13 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
               {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
               <Bar dataKey="count" name={fieldLabel(widget.dataField)} fill={color} radius={[0, 3, 3, 0]}>
                 {widget.palette && widget.palette.length > 0 && paletteFor(widget, series.length).map((c, idx) => <Cell key={idx} fill={c} />)}
-                {widget.showDataLabels && <LabelList dataKey="count" position="right" style={{ fill: "var(--text-primary)", fontSize: 11 }} />}
+                {widget.showDataLabels && (
+                  <LabelList
+                    dataKey="count"
+                    position="right"
+                    style={{ fill: "var(--text-primary)", fontSize: widget.labelFontSize ?? 11, fontFamily: widget.labelFontFamily }}
+                  />
+                )}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -601,7 +612,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
         {widget.type === "pie" && (
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={series} dataKey="count" nameKey="value" cx="50%" cy="50%" outerRadius="75%" label={widget.showDataLabels ? { fontSize: 10 } : false}>
+              <Pie
+                data={series}
+                dataKey="count"
+                nameKey="value"
+                cx="50%"
+                cy="50%"
+                outerRadius="75%"
+                label={widget.showDataLabels ? { fontSize: widget.labelFontSize ?? 10, fontFamily: widget.labelFontFamily } : false}
+              >
                 {paletteFor(widget, series.length).map((c, idx) => (
                   <Cell key={idx} fill={c} />
                 ))}
@@ -633,7 +652,16 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
                 {paletteFor(widget, series.length).map((c, idx) => (
                   <Cell key={idx} fill={c} />
                 ))}
-                {widget.showDataLabels && <LabelList dataKey="value" position="right" fill="var(--text-primary)" stroke="none" fontSize={11} />}
+                {widget.showDataLabels && (
+                  <LabelList
+                    dataKey="value"
+                    position="right"
+                    fill="var(--text-primary)"
+                    stroke="none"
+                    fontSize={widget.labelFontSize ?? 11}
+                    fontFamily={widget.labelFontFamily}
+                  />
+                )}
               </Funnel>
             </FunnelChart>
           </ResponsiveContainer>
@@ -646,6 +674,8 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
             field={widget.dataField === "by_province" ? "by_province" : "by_country"}
             manualData={widget.manualCountryData}
             showLabels={widget.showDataLabels}
+            fontFamily={widget.labelFontFamily}
+            fontSize={widget.labelFontSize}
           />
         )}
 
@@ -670,9 +700,29 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
 
         {widget.type === "sankey" && <RelationshipSankey data={relationshipData(widget, stats, crosstabs)} baseColor={widget.color || "#0d9488"} />}
 
-        {widget.type === "network" && <RelationshipNetwork data={relationshipData(widget, stats, crosstabs)} baseColor={widget.color || "#0d9488"} />}
+        {widget.type === "network" && (
+          <RelationshipNetwork
+            data={relationshipData(widget, stats, crosstabs)}
+            baseColor={widget.color || "#0d9488"}
+            showLabels={widget.showDataLabels}
+            fontFamily={widget.labelFontFamily}
+            fontSize={widget.labelFontSize}
+            offsets={widget.labelOffsets}
+            onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
+          />
+        )}
 
-        {widget.type === "bubble" && <BubbleChart series={series} colors={paletteFor(widget, series.length)} />}
+        {widget.type === "bubble" && (
+          <BubbleChart
+            series={series}
+            colors={paletteFor(widget, series.length)}
+            showLabels={widget.showDataLabels}
+            fontFamily={widget.labelFontFamily}
+            fontSize={widget.labelFontSize}
+            offsets={widget.labelOffsets}
+            onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
+          />
+        )}
 
         {widget.type === "map" && (
           <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
@@ -756,6 +806,8 @@ function WidgetEditPopover({
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [label, setLabel] = useState(widget.label ?? "");
   const [showDataLabels, setShowDataLabels] = useState(!!widget.showDataLabels);
+  const [labelFontFamily, setLabelFontFamily] = useState(widget.labelFontFamily ?? "");
+  const [labelFontSize, setLabelFontSize] = useState<number | undefined>(widget.labelFontSize);
   const [color, setColor] = useState<string | undefined>(widget.color);
   const [palette, setPalette] = useState<string[]>(widget.palette ?? []);
   const [showLegend, setShowLegend] = useState(!!widget.showLegend);
@@ -847,6 +899,8 @@ function WidgetEditPopover({
       secondaryField: supportsBreakdown && !manualActive ? secondaryField : undefined,
       label: label || undefined,
       showDataLabels,
+      labelFontFamily: labelFontFamily || undefined,
+      labelFontSize,
       color,
       palette: palette.length > 0 ? palette : undefined,
       showLegend,
@@ -1133,11 +1187,43 @@ function WidgetEditPopover({
           Show legend
         </label>
       )}
-      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth") && (
+      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network") && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
           <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
-          {type === "choropleth" ? "Show region name labels on the map" : "Show values on chart"}
+          {type === "choropleth"
+            ? "Show region name labels on the map"
+            : type === "bubble"
+              ? "Show category names (not just counts)"
+              : type === "network"
+                ? "Show counts on each link"
+                : "Show values on chart"}
         </label>
+      )}
+      {showDataLabels &&
+        (type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network") && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", paddingLeft: 20 }}>
+            <select value={labelFontFamily} onChange={(e) => setLabelFontFamily(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
+              <option value="">Default font</option>
+              {LABEL_FONT_OPTIONS.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={6}
+              max={32}
+              value={labelFontSize ?? ""}
+              onChange={(e) => setLabelFontSize(e.target.value ? Number(e.target.value) : undefined)}
+              placeholder="Size"
+              title="Font size — leave blank for the default"
+              style={{ ...selectStyle, width: 56 }}
+            />
+          </div>
+        )}
+      {(type === "bubble" || type === "network") && showDataLabels && (
+        <div style={{ fontSize: 10, color: "var(--text-faint)", paddingLeft: 20 }}>Drag any label directly on the chart to reposition it.</div>
       )}
       {type === "stat" && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
@@ -1192,12 +1278,16 @@ function ChoroplethMap({
   field,
   manualData,
   showLabels,
+  fontFamily,
+  fontSize,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
   field: "by_country" | "by_province";
   manualData?: { country: string; value: number; color?: string }[];
   showLabels?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
 }) {
   const usingManualData = !!manualData;
   const countByName = new Map<string, number>();
@@ -1246,7 +1336,10 @@ function ChoroplethMap({
                   if (!Number.isFinite(centroid[0]) || !Number.isFinite(centroid[1])) return null;
                   return (
                     <Marker key={`label-${geo.rsmKey}`} coordinates={centroid}>
-                      <text textAnchor="middle" style={{ fontSize: field === "by_province" ? 5 : 7, fill: "var(--text-primary)", pointerEvents: "none" }}>
+                      <text
+                        textAnchor="middle"
+                        style={{ fontSize: fontSize ?? (field === "by_province" ? 5 : 7), fontFamily, fill: "var(--text-primary)", pointerEvents: "none" }}
+                      >
                         {name}
                       </text>
                     </Marker>
@@ -1361,13 +1454,31 @@ function RelationshipSankey({ data, baseColor }: { data: CrosstabRow[]; baseColo
  *  genuinely co-occurred, thickness scaled to how often. No graph/network
  *  library needed for this simplified two-column layout, which keeps this
  *  widget from adding any new dependency at all. */
-function RelationshipNetwork({ data, baseColor }: { data: CrosstabRow[]; baseColor: string }) {
+function RelationshipNetwork({
+  data,
+  baseColor,
+  showLabels,
+  fontFamily,
+  fontSize,
+  offsets,
+  onCommitOffset,
+}: {
+  data: CrosstabRow[];
+  baseColor: string;
+  showLabels?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  offsets?: Record<string, { dx: number; dy: number }>;
+  onCommitOffset?: (key: string, dx: number, dy: number) => void;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
   if (data.length === 0) {
     return <EmptyState message="No data for this pair of fields yet." />;
   }
   const primaries = Array.from(new Set(data.map((d) => d.primary_value)));
   const secondaries = Array.from(new Set(data.map((d) => d.secondary_value)));
   const maxCount = Math.max(1, ...data.map((d) => d.count));
+  const nodeFontSize = fontSize ?? 10;
 
   const width = 480;
   const height = Math.max(160, Math.max(primaries.length, secondaries.length) * 26);
@@ -1378,38 +1489,73 @@ function RelationshipNetwork({ data, baseColor }: { data: CrosstabRow[]; baseCol
 
   return (
     <div style={{ height: "100%", overflow: "auto" }}>
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <svg ref={svgRef} width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
         {data.map((d, i) => {
           const y1 = leftY.get(d.primary_value)!;
           const y2 = rightY.get(d.secondary_value)!;
           const strokeWidth = 1 + (d.count / maxCount) * 5;
+          const midX = width / 2;
+          const midY = (y1 + y2) / 2;
+          const linkKey = `${d.primary_value}→${d.secondary_value}`;
           return (
-            <path
-              key={i}
-              d={`M ${leftX} ${y1} C ${width / 2} ${y1}, ${width / 2} ${y2}, ${rightX} ${y2}`}
-              stroke={baseColor}
-              strokeWidth={strokeWidth}
-              fill="none"
-              opacity={0.35}
-            >
-              <title>{`${d.primary_value} × ${d.secondary_value}: ${d.count}`}</title>
-            </path>
+            <g key={i}>
+              <path d={`M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`} stroke={baseColor} strokeWidth={strokeWidth} fill="none" opacity={0.35}>
+                <title>{`${d.primary_value} × ${d.secondary_value}: ${d.count}`}</title>
+              </path>
+              {showLabels && (
+                <DraggableLabel
+                  x={midX}
+                  y={midY}
+                  text={d.count}
+                  fontSize={nodeFontSize - 1}
+                  fontFamily={fontFamily}
+                  fill="var(--text-muted)"
+                  textAnchor="middle"
+                  offsetKey={linkKey}
+                  offsets={offsets}
+                  onCommitOffset={onCommitOffset}
+                  svgRef={svgRef}
+                />
+              )}
+            </g>
           );
         })}
         {primaries.map((a) => (
           <g key={`a-${a}`}>
             <circle cx={leftX} cy={leftY.get(a)} r={4} fill={baseColor} />
-            <text x={leftX - 8} y={leftY.get(a)} fontSize={10} textAnchor="end" dominantBaseline="middle" fill="var(--text-primary)">
-              {a}
-            </text>
+            <DraggableLabel
+              x={leftX - 8}
+              y={leftY.get(a)!}
+              text={a}
+              fontSize={nodeFontSize}
+              fontFamily={fontFamily}
+              fill="var(--text-primary)"
+              textAnchor="end"
+              dominantBaseline="middle"
+              offsetKey={`node:${a}`}
+              offsets={offsets}
+              onCommitOffset={onCommitOffset}
+              svgRef={svgRef}
+            />
           </g>
         ))}
         {secondaries.map((t) => (
           <g key={`t-${t}`}>
             <circle cx={rightX} cy={rightY.get(t)} r={4} fill={baseColor} />
-            <text x={rightX + 8} y={rightY.get(t)} fontSize={10} textAnchor="start" dominantBaseline="middle" fill="var(--text-primary)">
-              {t}
-            </text>
+            <DraggableLabel
+              x={rightX + 8}
+              y={rightY.get(t)!}
+              text={t}
+              fontSize={nodeFontSize}
+              fontFamily={fontFamily}
+              fill="var(--text-primary)"
+              textAnchor="start"
+              dominantBaseline="middle"
+              offsetKey={`node:${t}`}
+              offsets={offsets}
+              onCommitOffset={onCommitOffset}
+              svgRef={svgRef}
+            />
           </g>
         ))}
       </svg>
@@ -1419,7 +1565,24 @@ function RelationshipNetwork({ data, baseColor }: { data: CrosstabRow[]; baseCol
 
 /** Circle-packing layout via d3-hierarchy — each category becomes a circle
  *  sized by its count, packed together with no wasted space. */
-function BubbleChart({ series, colors }: { series: { value: string; count: number }[]; colors: string[] }) {
+function BubbleChart({
+  series,
+  colors,
+  showLabels,
+  fontFamily,
+  fontSize,
+  offsets,
+  onCommitOffset,
+}: {
+  series: { value: string; count: number }[];
+  colors: string[];
+  showLabels?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  offsets?: Record<string, { dx: number; dy: number }>;
+  onCommitOffset?: (key: string, dx: number, dy: number) => void;
+}) {
+  const svgRef = useRef<SVGSVGElement>(null);
   if (series.length === 0) {
     return <EmptyState message="No data for this breakdown yet." />;
   }
@@ -1432,18 +1595,49 @@ function BubbleChart({ series, colors }: { series: { value: string; count: numbe
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+      <svg ref={svgRef} width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
         {leaves.map((leaf, i) => {
           const datum = leaf.data as unknown as { value: string; count: number };
+          const baseFontSize = fontSize ?? Math.min(11, leaf.r / 3);
           return (
-            <g key={i} transform={`translate(${leaf.x},${leaf.y})`}>
-              <circle r={leaf.r} fill={colors[i % colors.length]} fillOpacity={0.85}>
+            <g key={i}>
+              <circle cx={leaf.x} cy={leaf.y} r={leaf.r} fill={colors[i % colors.length]} fillOpacity={0.85}>
                 <title>{`${datum.value}: ${datum.count}`}</title>
               </circle>
-              {leaf.r > 18 && (
-                <text textAnchor="middle" dy="0.35em" fontSize={Math.min(11, leaf.r / 3)} fill="#fff" pointerEvents="none">
+              {leaf.r > 18 && !showLabels && (
+                <text x={leaf.x} y={leaf.y} textAnchor="middle" dy="0.35em" fontSize={baseFontSize} fontFamily={fontFamily} fill="#fff" pointerEvents="none">
                   {datum.count}
                 </text>
+              )}
+              {leaf.r > 18 && showLabels && (
+                <>
+                  <DraggableLabel
+                    x={leaf.x}
+                    y={leaf.y - baseFontSize * 0.6}
+                    text={datum.value}
+                    fontSize={baseFontSize}
+                    fontFamily={fontFamily}
+                    fill="#fff"
+                    textAnchor="middle"
+                    offsetKey={`${datum.value}:name`}
+                    offsets={offsets}
+                    onCommitOffset={onCommitOffset}
+                    svgRef={svgRef}
+                  />
+                  <DraggableLabel
+                    x={leaf.x}
+                    y={leaf.y + baseFontSize * 0.9}
+                    text={datum.count}
+                    fontSize={baseFontSize}
+                    fontFamily={fontFamily}
+                    fill="#fff"
+                    textAnchor="middle"
+                    offsetKey={`${datum.value}:count`}
+                    offsets={offsets}
+                    onCommitOffset={onCommitOffset}
+                    svgRef={svgRef}
+                  />
+                </>
               )}
             </g>
           );
@@ -1816,6 +2010,110 @@ function MapModeToggle({ mode, onChange }: { mode: "markers" | "heatmap"; onChan
     >
       {mode === "markers" ? "🔥 Heatmap" : "📍 Markers"}
     </button>
+  );
+}
+
+/** A text label that can be dragged to a custom offset when onCommitOffset
+ *  is provided (i.e. the dashboard is editable — never on the read-only
+ *  public view). Tracks the drag with plain window mouse listeners rather
+ *  than a drag library, since this only needs to work within one SVG's own
+ *  coordinate space, not general-purpose drag-and-drop.
+ *
+ *  The coordinate conversion matters here: these SVGs scale responsively
+ *  (viewBox + percentage width/height), so a mouse movement measured in
+ *  screen pixels isn't the same distance in the SVG's own coordinate units
+ *  unless the chart happens to be rendered at exactly 1:1 — the ratio
+ *  between the SVG's actual rendered size (getBoundingClientRect) and its
+ *  viewBox size gives the right scale factor.
+ *
+ *  Only commits the final position on mouseup, not on every mousemove — a
+ *  live local offset drives the visual feedback during the drag itself,
+ *  so dragging doesn't trigger a save-worthy state update dozens of times
+ *  per second. */
+function DraggableLabel({
+  x,
+  y,
+  text,
+  fontSize,
+  fontFamily,
+  fill,
+  textAnchor,
+  dominantBaseline,
+  offsetKey,
+  offsets,
+  onCommitOffset,
+  svgRef,
+}: {
+  x: number;
+  y: number;
+  text: string | number;
+  fontSize: number;
+  fontFamily?: string;
+  fill: string;
+  textAnchor: "start" | "middle" | "end";
+  dominantBaseline?: "middle" | "auto" | "hanging";
+  offsetKey: string;
+  offsets?: Record<string, { dx: number; dy: number }>;
+  onCommitOffset?: (key: string, dx: number, dy: number) => void;
+  svgRef: React.RefObject<SVGSVGElement>;
+}) {
+  const savedOffset = offsets?.[offsetKey] ?? { dx: 0, dy: 0 };
+  const [liveOffset, setLiveOffset] = useState<{ dx: number; dy: number } | null>(null);
+  const displayOffset = liveOffset ?? savedOffset;
+
+  function handleMouseDown(e: React.MouseEvent) {
+    if (!onCommitOffset) return;
+    const commitOffset = onCommitOffset;
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startDx = savedOffset.dx;
+    const startDy = savedOffset.dy;
+
+    function scaleFactors(): { scaleX: number; scaleY: number } | null {
+      const svg = svgRef.current;
+      if (!svg) return null;
+      const rect = svg.getBoundingClientRect();
+      const viewBox = svg.viewBox.baseVal;
+      if (rect.width === 0 || rect.height === 0) return null;
+      return { scaleX: viewBox.width / rect.width, scaleY: viewBox.height / rect.height };
+    }
+
+    function handleMove(ev: MouseEvent) {
+      const scale = scaleFactors();
+      if (!scale) return;
+      setLiveOffset({
+        dx: startDx + (ev.clientX - startX) * scale.scaleX,
+        dy: startDy + (ev.clientY - startY) * scale.scaleY,
+      });
+    }
+    function handleUp(ev: MouseEvent) {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      const scale = scaleFactors();
+      setLiveOffset(null);
+      if (!scale) return;
+      commitOffset(offsetKey, startDx + (ev.clientX - startX) * scale.scaleX, startDy + (ev.clientY - startY) * scale.scaleY);
+    }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }
+
+  return (
+    <text
+      x={x + displayOffset.dx}
+      y={y + displayOffset.dy}
+      textAnchor={textAnchor}
+      dominantBaseline={dominantBaseline}
+      fontSize={fontSize}
+      fontFamily={fontFamily}
+      fill={fill}
+      onMouseDown={handleMouseDown}
+      style={{ cursor: onCommitOffset ? "grab" : undefined, userSelect: "none" }}
+    >
+      {text}
+    </text>
   );
 }
 
