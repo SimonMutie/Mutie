@@ -25,6 +25,9 @@ interface Props {
   /** Bendable multi-waypoint paths, each optionally with an animated vehicle
    *  icon travelling along it. */
   routes?: Route[];
+  /** Free-standing text labels — checkpoints, ports, chokepoints, anything
+   *  worth naming directly on the map. */
+  labels?: { location: string; text: string; color?: string }[];
 }
 
 /** This file is dynamically imported (see DashboardWidgetCard's React.lazy
@@ -34,7 +37,7 @@ interface Props {
  *  the flat choropleth widget by default, just projected onto a rotating 3D
  *  sphere — or manually-entered country values/routes instead, independent
  *  of any database or uploaded dataset. */
-export default function GlobeWidget({ series, baseColor, manualData, routes }: Props) {
+export default function GlobeWidget({ series, baseColor, manualData, routes, labels }: Props) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -160,6 +163,14 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
 
   const objects = [...arrowheads, ...vehicleObjects];
 
+  const resolvedLabels = (labels ?? [])
+    .map((l) => {
+      const point = resolveLocation(l.location, centroidByCountry);
+      if (!point) return null;
+      return { lat: point[1], lng: point[0], text: l.text, color: l.color || baseColor };
+    })
+    .filter((l): l is NonNullable<typeof l> => l !== null);
+
   return (
     <div ref={containerRef} style={{ height: "100%", width: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
       {!features || size.width === 0 ? (
@@ -228,8 +239,30 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
           objectLat={(d: object) => (d as { lat: number }).lat}
           objectLng={(d: object) => (d as { lng: number }).lng}
           objectAltitude={0.025}
-          objectRotation={(d: object) => ({ y: (d as { bearing: number }).bearing })}
+          // The type definitions for this library declare "objectFacesSurfaces"
+          // (plural), but the actual shipped implementation only reads
+          // "objectFacesSurface" (singular) — confirmed directly in
+          // node_modules/three-globe's source, not assumed from the types.
+          // Using the name the types expect would silently do nothing at
+          // runtime, so this is spread in via a cast rather than passed as a
+          // normal prop. Without it, each object's wrapper never aligns to
+          // the globe's local surface at that point, which was the actual
+          // cause of vehicles facing inconsistent directions — their "flat"
+          // orientation was fixed to a single global direction instead of
+          // being tangent to the sphere wherever they currently are.
+          {...({ objectFacesSurface: true } as Record<string, unknown>)}
+          objectRotation={(d: object) => ({ z: (d as { bearing: number }).bearing })}
           objectThreeObject={(d: object) => vehicleMesh(d as { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: string })}
+          labelsData={resolvedLabels}
+          labelLat={(d: object) => (d as { lat: number }).lat}
+          labelLng={(d: object) => (d as { lng: number }).lng}
+          labelText={(d: object) => (d as { text: string }).text}
+          labelColor={(d: object) => (d as { color: string }).color}
+          labelSize={1.4}
+          labelDotRadius={0.4}
+          labelIncludeDot
+          labelAltitude={0.015}
+          labelResolution={3}
         />
         </>
       )}
@@ -254,11 +287,20 @@ export default function GlobeWidget({ series, baseColor, manualData, routes }: P
 // checking them before converting to 3D — recognizability comes almost
 // entirely from the silhouette itself, which extrusion preserves exactly,
 // so this closes most of the "can't render Three.js to check it" gap.
-// Coordinates have "nose"/bow at +Y in this 2D design; SHAPE_SCALE and the
-// rotation applied in extrudedSilhouette() below (both verified numerically,
-// not hand-derived) bring it to a final on-globe size with the nose facing
-// local +X, matching the arrowhead/plane cone's existing convention for how
-// objectRotation's bearing then swings it to face the right compass direction.
+//
+// Orientation: traced through three-globe's actual source (not just its
+// docs) to confirm the real convention, since an earlier version of this
+// file got it wrong (some vehicles faced backward/sideways depending on
+// where they were on the globe). With objectFacesSurface set (below), each
+// object's wrapper aligns so LOCAL +Z is "up" (away from the globe centre)
+// and LOCAL +Y is "north" — verified numerically from the library's own
+// polar2Cartesian math, not assumed. THREE.ExtrudeGeometry already produces
+// a shape lying flat in the XY plane with its extrusion depth along +Z, and
+// these outlines already have their "nose" at design +Y — so the correct
+// orientation needs no extra rotation at all; a previous version rotated
+// these unnecessarily (for a different, incorrect axis assumption), which
+// was the actual bug. objectRotation then rotates around Z (the real "up"
+// axis here, not Y) to swing the nose from north to the current bearing.
 const SHAPE_SCALE = 0.09;
 
 const SHIP_OUTLINE: [number, number][] = [
@@ -272,9 +314,9 @@ const PLANE_OUTLINE: [number, number][] = [
   [-14, -38], [-14, -32], [-3, -20], [-5, -2], [-35, -12], [-35, -5], [-4, 20],
 ];
 
-/** Extrudes a flat top-down outline into a thin solid, then applies the
- *  numerically-verified rotation that lays it flat with its nose along
- *  local +X — see SHAPE_SCALE comment above. */
+/** Extrudes a flat top-down outline into a thin solid. No rotation needed —
+ *  see the orientation note above; the shape's native orientation already
+ *  matches what's required. */
 function extrudedSilhouette(outline: [number, number][], material: THREE.Material): THREE.Mesh {
   const shape = new THREE.Shape();
   shape.moveTo(outline[0][0], outline[0][1]);
@@ -282,8 +324,6 @@ function extrudedSilhouette(outline: [number, number][], material: THREE.Materia
   shape.closePath();
   const geometry = new THREE.ExtrudeGeometry(shape, { depth: 6, bevelEnabled: false });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotateX(-Math.PI / 2);
-  mesh.rotateY(-Math.PI / 2);
   mesh.scale.setScalar(SHAPE_SCALE);
   return mesh;
 }
@@ -293,33 +333,37 @@ function vehicleMesh(d: { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: s
   const group = new THREE.Group();
 
   if (d.kind === "arrow") {
-    // A short, wide cone reads as a real arrowhead — deliberately distinct
-    // from the plane's longer, thinner silhouette below.
+    // ConeGeometry already points its tip along +Y by default — which, per
+    // the orientation note above, already means "north". No rotation needed.
     const head = new THREE.ConeGeometry(2.2, 3.2, 3);
-    const mesh = new THREE.Mesh(head, material);
-    mesh.rotation.z = -Math.PI / 2;
-    group.add(mesh);
+    group.add(new THREE.Mesh(head, material));
     return group;
   }
 
   if (d.vehicle === "plane") {
     group.add(extrudedSilhouette(PLANE_OUTLINE, material));
   } else if (d.vehicle === "drone") {
-    // Hub + 4 arms + 4 rotor discs, an "X" viewed from above — box/cylinder
-    // primitives already lie flat by default with no rotation trick needed,
-    // unlike the extruded silhouettes above.
+    // Hub + 4 arms + 4 rotor discs, an "X" viewed from above — built flat in
+    // the XY plane (Z as the small vertical offset) to match the corrected
+    // convention. CylinderGeometry's axis is Y by default, so each cylinder
+    // is rotated 90° around X to stand its flat face against Z instead —
+    // the same axis-remap the ship/plane shapes get for free from
+    // ExtrudeGeometry's own default orientation.
     const hub = new THREE.CylinderGeometry(0.9, 0.9, 0.4, 8);
-    group.add(new THREE.Mesh(hub, material));
-    const armGeo = new THREE.BoxGeometry(0.35, 0.3, 4.6);
+    const hubMesh = new THREE.Mesh(hub, material);
+    hubMesh.rotation.x = Math.PI / 2;
+    group.add(hubMesh);
+    const armGeo = new THREE.BoxGeometry(0.35, 4.6, 0.3);
     const rotorGeo = new THREE.CylinderGeometry(0.85, 0.85, 0.25, 12);
     for (const angleDeg of [45, 135, 225, 315]) {
       const angle = (angleDeg * Math.PI) / 180;
       const arm = new THREE.Mesh(armGeo, material);
-      arm.position.set((Math.cos(angle) * 4.6) / 2, 0, (Math.sin(angle) * 4.6) / 2);
-      arm.rotation.y = angle;
+      arm.position.set((Math.cos(angle) * 4.6) / 2, (Math.sin(angle) * 4.6) / 2, 0);
+      arm.rotation.z = angle - Math.PI / 2;
       group.add(arm);
       const rotor = new THREE.Mesh(rotorGeo, material);
-      rotor.position.set(Math.cos(angle) * 4.6, 0.1, Math.sin(angle) * 4.6);
+      rotor.position.set(Math.cos(angle) * 4.6, Math.sin(angle) * 4.6, 0.1);
+      rotor.rotation.x = Math.PI / 2;
       group.add(rotor);
     }
   } else if (d.vehicle === "warship") {
