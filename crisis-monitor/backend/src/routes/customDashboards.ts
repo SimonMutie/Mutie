@@ -73,6 +73,13 @@ const widgetSchema = z.object({
    *  dataField/secondaryField then hold that dataset's own raw column names
    *  directly, not the incidents by_X convention. */
   datasetId: z.string().optional(),
+  /** Choropleth/globe only — user-typed country values, bypassing
+   *  Incidents/dataset entirely. Free-text country names, not re-validated
+   *  against a fixed list — an unmatched name just renders unshaded on the
+   *  frontend rather than breaking anything. */
+  manualCountryData: z.array(z.object({ country: z.string(), value: z.number(), color: z.string().optional() })).optional(),
+  /** Globe only — arcs between two named locations. */
+  manualRoutes: z.array(z.object({ from: z.string(), to: z.string(), label: z.string().optional(), color: z.string().optional() })).optional(),
 });
 
 const createSchema = z.object({
