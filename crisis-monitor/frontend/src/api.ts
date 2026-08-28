@@ -287,6 +287,17 @@ export interface DashboardWidget {
   locked?: boolean;
   /** Stat cards only — shows a small monthly trend line beneath the number. */
   showSparkline?: boolean;
+  /** Choropleth/globe only — bypasses Incidents and any dataset entirely:
+   *  values you type in yourself, per country, with an optional specific
+   *  color per entry (rather than one base color varying only by intensity).
+   *  Presence of this array (even empty) means "manual mode" for that
+   *  widget; countries not listed here just render unshaded. */
+  manualCountryData?: { country: string; value: number; color?: string }[];
+  /** Globe only — arcs between two named locations, for showing routes,
+   *  trajectories, or cross-border/cross-group linkages. Independent of how
+   *  the globe's country shading is sourced — arcs can sit on top of
+   *  Incidents data, dataset data, manual country data, or no shading at all. */
+  manualRoutes?: { from: string; to: string; label?: string; color?: string }[];
   /** Bar/line only — a second dimension to break the primary field down by,
    *  turning a single-variable chart into a genuine two-variable pivot
    *  (stacked/grouped bars, multi-series lines). */
