@@ -4,7 +4,7 @@ import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { isPivotable, fetchIncidentsBreakdown, fetchIncidentsCrosstab } from "./incidents";
+import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab } from "./incidents";
 import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -184,6 +184,11 @@ const updateSchema = z.object({
   widgets: z.array(widgetSchema).optional(),
   is_public: z.boolean().optional(),
   locked: z.boolean().optional(),
+  // Nullable (not just optional) so the filter can be explicitly cleared —
+  // undefined means "don't touch this field", null means "remove the date
+  // filter and show all time".
+  date_range_from: z.string().nullable().optional(),
+  date_range_to: z.string().nullable().optional(),
 });
 
 customDashboardsRouter.patch("/:id", async (c) => {
@@ -226,6 +231,14 @@ customDashboardsRouter.patch("/:id", async (c) => {
     updates.push("locked = ?");
     params.push(parsed.data.locked ? 1 : 0);
   }
+  if (parsed.data.date_range_from !== undefined) {
+    updates.push("date_range_from = ?");
+    params.push(parsed.data.date_range_from);
+  }
+  if (parsed.data.date_range_to !== undefined) {
+    updates.push("date_range_to = ?");
+    params.push(parsed.data.date_range_to);
+  }
   updates.push("updated_at = ?");
   params.push(nowIso());
   params.push(id);
@@ -250,58 +263,64 @@ customDashboardsRouter.delete("/:id", async (c) => {
 
 /** Same aggregate shape as /api/incidents/stats, computed here directly rather
  *  than calling that authed route internally, and explicitly scoped to the
- *  dashboard's owner (not any viewer — there isn't one, this is public). */
-async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
-  const ownerClause = ownerId ? "WHERE owner_id = ?" : "";
-  const andOwner = ownerId ? "AND owner_id = ?" : "";
-  const ownerParams = ownerId ? [ownerId] : [];
+ *  dashboard's owner (not any viewer — there isn't one, this is public).
+ *  Uses the exact same clause-building helper as the authenticated route, so
+ *  the two can't quietly drift into different date-filtering behavior. */
+async function computeStatsForOwner(db: D1Database, ownerId: string | null, dateFrom?: string | null, dateTo?: string | null) {
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerId, dateFrom ?? undefined, dateTo ?? undefined);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
-    first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${ownerClause}`, ownerParams),
+    first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
     all<{ value: string; count: number }>(
       db,
-      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andOwner} GROUP BY sector ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andClause} GROUP BY sector ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andOwner} GROUP BY actor ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andClause} GROUP BY actor ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andOwner} GROUP BY severity ORDER BY count DESC LIMIT 12`,
-      ownerParams
+      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andClause} GROUP BY severity ORDER BY count DESC LIMIT 12`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andOwner} GROUP BY province ORDER BY count DESC LIMIT 20`,
-      ownerParams
+      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andClause} GROUP BY province ORDER BY count DESC LIMIT 20`,
+      scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andOwner} GROUP BY country ORDER BY count DESC LIMIT 20`,
-      ownerParams
+      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andClause} GROUP BY country ORDER BY count DESC LIMIT 20`,
+      scopeParams
     ),
     all<{ bucket: string; count: number }>(
       db,
-      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andOwner} GROUP BY bucket ORDER BY bucket ASC`,
-      ownerParams
+      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY bucket ORDER BY bucket ASC`,
+      scopeParams
     ),
-    all<{ date: string; count: number }>(
-      db,
-      `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andOwner} GROUP BY date ORDER BY date ASC`,
-      ownerParams
-    ),
+    dateFrom || dateTo
+      ? all<{ date: string; count: number }>(
+          db,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY date ORDER BY date ASC`,
+          scopeParams
+        )
+      : all<{ date: string; count: number }>(
+          db,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
+          scopeParams
+        ),
     all<{ actor: string; tactic: string; count: number }>(
       db,
-      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andOwner} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
-      ownerParams
+      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
+      scopeParams
     ),
     first<Record<string, number>>(
       db,
@@ -309,8 +328,8 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null) {
          COALESCE(SUM(civilian_death_child), 0) + COALESCE(SUM(civilian_death_female), 0) + COALESCE(SUM(civilian_death_male), 0) + COALESCE(SUM(civilian_death_unknown), 0) AS deaths,
          COALESCE(SUM(civilian_injury_female), 0) + COALESCE(SUM(civilian_injury_male), 0) + COALESCE(SUM(civilian_injury_unknown), 0) AS injuries,
          COALESCE(SUM(kidnappings_ngo), 0) AS kidnappings_ngo
-       FROM incidents ${ownerClause}`,
-      ownerParams
+       FROM incidents ${whereClause}`,
+      scopeParams
     ),
   ]);
 
@@ -340,7 +359,9 @@ publicDashboardsRouter.get("/:token", async (c) => {
   );
   if (!dashboard) return c.json({ error: "Not found" }, 404);
 
-  const stats = await computeStatsForOwner(c.env.DB, dashboard.owner_id as string | null);
+  const dateFrom = dashboard.date_range_from as string | null;
+  const dateTo = dashboard.date_range_to as string | null;
+  const stats = await computeStatsForOwner(c.env.DB, dashboard.owner_id as string | null, dateFrom, dateTo);
   const ownerId = dashboard.owner_id as string | null;
 
   // Only fetched if a map widget is actually present — no point pulling
@@ -403,9 +424,9 @@ publicDashboardsRouter.get("/:token", async (c) => {
     const primary = w.dataField ? DATA_FIELD_TO_COLUMN[w.dataField] : undefined;
     if (primary && isPivotable(primary) && isPivotable(w.secondaryField)) {
       const key = `${primary}|${w.secondaryField}`;
-      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId, primary, w.secondaryField);
+      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined);
     } else if (primary && isPivotable(primary) && !("by_" + primary in stats)) {
-      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId, primary);
+      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId, primary, dateFrom ?? undefined, dateTo ?? undefined);
     }
   }
 
