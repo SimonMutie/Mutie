@@ -628,7 +628,12 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
         )}
 
         {widget.type === "choropleth" && (
-          <ChoroplethMap series={series} baseColor={widget.color || "#0d9488"} field={widget.dataField === "by_province" ? "by_province" : "by_country"} />
+          <ChoroplethMap
+            series={series}
+            baseColor={widget.color || "#0d9488"}
+            field={widget.dataField === "by_province" ? "by_province" : "by_country"}
+            manualData={widget.manualCountryData}
+          />
         )}
 
         {widget.type === "globe" && (
@@ -639,7 +644,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
               </div>
             }
           >
-            <GlobeWidget series={series} baseColor={widget.color || "#0d9488"} />
+            <GlobeWidget series={series} baseColor={widget.color || "#0d9488"} manualData={widget.manualCountryData} routes={widget.manualRoutes} />
           </Suspense>
         )}
 
@@ -720,6 +725,11 @@ function WidgetEditPopover({
   const [showLegend, setShowLegend] = useState(!!widget.showLegend);
   const [topN, setTopN] = useState<number | undefined>(widget.topN);
   const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
+  const [useManualData, setUseManualData] = useState(!!widget.manualCountryData);
+  const [manualCountryData, setManualCountryData] = useState<{ country: string; value: number; color?: string }[]>(widget.manualCountryData ?? []);
+  const [manualRoutes, setManualRoutes] = useState<{ from: string; to: string; label?: string; color?: string }[]>(widget.manualRoutes ?? []);
+
+  const supportsManualData = type === "choropleth" || type === "globe";
 
   const supportsBreakdown = type === "bar" || type === "line" || type === "sankey" || type === "network";
   const requiresSecondary = type === "sankey" || type === "network";
@@ -775,6 +785,8 @@ function WidgetEditPopover({
     } else if (newType !== "bar" && newType !== "line") {
       setSecondaryField(undefined);
     }
+    if (newType !== "choropleth" && newType !== "globe") setUseManualData(false);
+    if (newType !== "globe") setManualRoutes([]);
   }
 
   function handleDatasetChange(newDatasetId: string | undefined) {
@@ -788,11 +800,12 @@ function WidgetEditPopover({
   }
 
   function handleSave() {
+    const manualActive = supportsManualData && useManualData;
     onSave({
       type,
-      datasetId,
-      dataField: type === "map" ? undefined : field || undefined,
-      secondaryField: supportsBreakdown ? secondaryField : undefined,
+      datasetId: manualActive ? undefined : datasetId,
+      dataField: type === "map" || manualActive ? undefined : field || undefined,
+      secondaryField: supportsBreakdown && !manualActive ? secondaryField : undefined,
       label: label || undefined,
       showDataLabels,
       color,
@@ -800,6 +813,8 @@ function WidgetEditPopover({
       showLegend,
       topN,
       showSparkline,
+      manualCountryData: manualActive ? manualCountryData : undefined,
+      manualRoutes: type === "globe" && manualRoutes.length > 0 ? manualRoutes : undefined,
     });
   }
 
@@ -827,20 +842,29 @@ function WidgetEditPopover({
     >
       <div className="eyebrow">EDIT THIS WIDGET</div>
 
-      <div>
-        <div className="eyebrow" style={{ marginBottom: 4 }}>DATA SOURCE</div>
-        <select value={datasetId ?? ""} onChange={(e) => handleDatasetChange(e.target.value || undefined)} style={selectStyle}>
-          <option value="">Incidents (this app's conflict/security data)</option>
-          {(datasets ?? []).map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
-        {datasetId && (datasets ?? []).length === 0 && (
-          <div style={{ fontSize: 10.5, color: "var(--text-faint)", marginTop: 3 }}>No datasets uploaded yet — see the Datasets tab.</div>
-        )}
-      </div>
+      {supportsManualData && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
+          <input type="checkbox" checked={useManualData} onChange={(e) => setUseManualData(e.target.checked)} />
+          Use manual country data instead of Incidents/a dataset
+        </label>
+      )}
+
+      {!(supportsManualData && useManualData) && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>DATA SOURCE</div>
+          <select value={datasetId ?? ""} onChange={(e) => handleDatasetChange(e.target.value || undefined)} style={selectStyle}>
+            <option value="">Incidents (this app's conflict/security data)</option>
+            {(datasets ?? []).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </select>
+          {datasetId && (datasets ?? []).length === 0 && (
+            <div style={{ fontSize: 10.5, color: "var(--text-faint)", marginTop: 3 }}>No datasets uploaded yet — see the Datasets tab.</div>
+          )}
+        </div>
+      )}
 
       <div>
         <div className="eyebrow" style={{ marginBottom: 4 }}>TYPE</div>
@@ -853,7 +877,13 @@ function WidgetEditPopover({
         </select>
       </div>
 
-      {type !== "map" && (
+      {supportsManualData && useManualData && (
+        <ManualCountryDataEditor rows={manualCountryData} onChange={setManualCountryData} />
+      )}
+
+      {type === "globe" && <ManualRoutesEditor routes={manualRoutes} onChange={setManualRoutes} />}
+
+      {type !== "map" && !(supportsManualData && useManualData) && (
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>DATA</div>
           <select
@@ -1114,10 +1144,29 @@ const PROVINCE_TOPOLOGY_URL = "/geo/admin1-provinces.json";
  *  incidents actually happened. Known limitation: province names are matched
  *  globally, not scoped to a country, so a name that happens to repeat across
  *  countries (uncommon, but real) could match the wrong one. */
-function ChoroplethMap({ series, baseColor, field }: { series: { value: string; count: number }[]; baseColor: string; field: "by_country" | "by_province" }) {
-  const maxCount = Math.max(1, ...series.map((s) => s.count));
+function ChoroplethMap({
+  series,
+  baseColor,
+  field,
+  manualData,
+}: {
+  series: { value: string; count: number }[];
+  baseColor: string;
+  field: "by_country" | "by_province";
+  manualData?: { country: string; value: number; color?: string }[];
+}) {
+  const usingManualData = !!manualData;
   const countByName = new Map<string, number>();
-  for (const s of series) countByName.set(s.value.trim().toLowerCase(), s.count);
+  const colorByName = new Map<string, string>();
+  if (usingManualData) {
+    for (const d of manualData!) {
+      countByName.set(d.country.trim().toLowerCase(), d.value);
+      if (d.color) colorByName.set(d.country.trim().toLowerCase(), d.color);
+    }
+  } else {
+    for (const s of series) countByName.set(s.value.trim().toLowerCase(), s.count);
+  }
+  const maxCount = Math.max(1, ...Array.from(countByName.values()));
   const topologyUrl = field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
 
   return (
@@ -1127,13 +1176,15 @@ function ChoroplethMap({ series, baseColor, field }: { series: { value: string; 
           {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) =>
             geographies.map((geo) => {
               const name = geo.properties?.name;
-              const count = name ? countByName.get(name.trim().toLowerCase()) : undefined;
+              const key = name?.trim().toLowerCase();
+              const count = key ? countByName.get(key) : undefined;
+              const explicitColor = key ? colorByName.get(key) : undefined;
               const intensity = count ? Math.max(0.18, count / maxCount) : 0;
               return (
                 <Geography
                   key={geo.rsmKey}
                   geography={geo}
-                  fill={count ? hexToRgba(baseColor, intensity) : "var(--panel)"}
+                  fill={explicitColor ?? (count ? hexToRgba(baseColor, intensity) : "var(--panel)")}
                   stroke="var(--border)"
                   strokeWidth={field === "by_province" ? 0.2 : 0.4}
                   style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.8 }, pressed: { outline: "none" } }}
@@ -1339,6 +1390,171 @@ function BubbleChart({ series, colors }: { series: { value: string; count: numbe
     </ResponsiveContainer>
   );
 }
+
+/** Repeatable-row form for typing in per-country values directly — the
+ *  "delink from the database, fill in what I want" path. Free-text country
+ *  names (matched case-insensitively against the world map at render time,
+ *  same tolerance as everywhere else country names get matched), a numeric
+ *  value driving shading intensity, and an optional specific color that
+ *  overrides intensity-based shading for that one country. */
+function ManualCountryDataEditor({
+  rows,
+  onChange,
+}: {
+  rows: { country: string; value: number; color?: string }[];
+  onChange: (rows: { country: string; value: number; color?: string }[]) => void;
+}) {
+  function update(idx: number, patch: Partial<{ country: string; value: number; color?: string }>) {
+    onChange(rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+  function remove(idx: number) {
+    onChange(rows.filter((_, i) => i !== idx));
+  }
+  return (
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 4 }}>COUNTRIES</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {rows.map((row, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <input
+              value={row.country}
+              onChange={(e) => update(idx, { country: e.target.value })}
+              placeholder="Country name"
+              list="known-country-names"
+              style={{ ...selectStyle, flex: 1.4, minWidth: 0 }}
+            />
+            <input
+              type="number"
+              value={Number.isFinite(row.value) ? row.value : ""}
+              onChange={(e) => update(idx, { value: e.target.value ? Number(e.target.value) : 0 })}
+              placeholder="Value"
+              style={{ ...selectStyle, width: 64 }}
+            />
+            <input
+              type="color"
+              value={row.color ?? "#0d9488"}
+              onChange={(e) => update(idx, { color: e.target.value })}
+              title="Specific color for this country (optional — overrides intensity shading)"
+              style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", flexShrink: 0 }}
+            />
+            <button onClick={() => remove(idx)} title="Remove" style={miniBtnStyle}>
+              ×
+            </button>
+          </div>
+        ))}
+        <datalist id="known-country-names">
+          {KNOWN_COUNTRY_NAMES.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+        <button
+          onClick={() => onChange([...rows, { country: "", value: 1 }])}
+          style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", color: "var(--signal)" }}
+        >
+          + Add country
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Repeatable-row form for arcs between two named locations — a country name
+ *  (matched the same way as country shading) or a precise "lat,lng" for a
+ *  spot no country polygon covers, like open water on a shipping route.
+ *  Globe-only: a flat choropleth has no arc rendering. */
+function ManualRoutesEditor({
+  routes,
+  onChange,
+}: {
+  routes: { from: string; to: string; label?: string; color?: string }[];
+  onChange: (routes: { from: string; to: string; label?: string; color?: string }[]) => void;
+}) {
+  function update(idx: number, patch: Partial<{ from: string; to: string; label?: string; color?: string }>) {
+    onChange(routes.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
+  function remove(idx: number) {
+    onChange(routes.filter((_, i) => i !== idx));
+  }
+  return (
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 4 }}>ROUTES / LINKAGES (ANIMATED ARCS)</div>
+      <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 6 }}>
+        Country name or a precise "lat,lng" (e.g. for open water) at each end.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {routes.map((route, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              value={route.from}
+              onChange={(e) => update(idx, { from: e.target.value })}
+              placeholder="From"
+              list="known-country-names"
+              style={{ ...selectStyle, flex: 1, minWidth: 70 }}
+            />
+            <span style={{ color: "var(--text-faint)", fontSize: 11 }}>→</span>
+            <input
+              value={route.to}
+              onChange={(e) => update(idx, { to: e.target.value })}
+              placeholder="To"
+              list="known-country-names"
+              style={{ ...selectStyle, flex: 1, minWidth: 70 }}
+            />
+            <input
+              value={route.label ?? ""}
+              onChange={(e) => update(idx, { label: e.target.value || undefined })}
+              placeholder="Label (optional)"
+              style={{ ...selectStyle, flex: 1, minWidth: 80 }}
+            />
+            <input
+              type="color"
+              value={route.color ?? "#0d9488"}
+              onChange={(e) => update(idx, { color: e.target.value })}
+              title="Arc color (optional)"
+              style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", flexShrink: 0 }}
+            />
+            <button onClick={() => remove(idx)} title="Remove" style={miniBtnStyle}>
+              ×
+            </button>
+          </div>
+        ))}
+        <button
+          onClick={() => onChange([...routes, { from: "", to: "" }])}
+          style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", color: "var(--signal)" }}
+        >
+          + Add route
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The exact country names this app's world topology (world-atlas
+ *  countries-110m) actually uses — extracted directly from that file, not
+ *  hand-typed, since Natural Earth's naming has real quirks ("Côte
+ *  d'Ivoire" not "Ivory Coast", "S. Sudan" not "South Sudan", "Macedonia"
+ *  not "North Macedonia") that a guessed list would silently get wrong,
+ *  defeating the point of an autocomplete meant to guarantee a match. */
+const KNOWN_COUNTRY_NAMES = [
+  "Afghanistan", "Albania", "Algeria", "Angola", "Argentina", "Armenia", "Australia", "Austria", "Azerbaijan",
+  "Bahamas", "Bangladesh", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia", "Bosnia and Herz.",
+  "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cambodia", "Cameroon", "Canada",
+  "Central African Rep.", "Chad", "Chile", "China", "Colombia", "Congo", "Costa Rica", "Croatia", "Cuba",
+  "Cyprus", "Czechia", "Côte d'Ivoire", "Dem. Rep. Congo", "Denmark", "Djibouti", "Dominican Rep.", "Ecuador",
+  "Egypt", "El Salvador", "Eq. Guinea", "Eritrea", "Estonia", "Ethiopia", "Fiji", "Finland", "France", "Gabon",
+  "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti",
+  "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy",
+  "Jamaica", "Japan", "Jordan", "Kazakhstan", "Kenya", "Kosovo", "Kuwait", "Kyrgyzstan", "Laos", "Latvia",
+  "Lebanon", "Lesotho", "Liberia", "Libya", "Lithuania", "Luxembourg", "Macedonia", "Madagascar", "Malawi",
+  "Malaysia", "Mali", "Mauritania", "Mexico", "Moldova", "Mongolia", "Montenegro", "Morocco", "Mozambique",
+  "Myanmar", "Namibia", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea",
+  "Norway", "Oman", "Pakistan", "Palestine", "Panama", "Papua New Guinea", "Paraguay", "Peru", "Philippines",
+  "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "S. Sudan", "Saudi Arabia", "Senegal", "Serbia",
+  "Sierra Leone", "Slovakia", "Slovenia", "Solomon Is.", "Somalia", "Somaliland", "South Africa", "South Korea",
+  "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", "Tajikistan",
+  "Tanzania", "Thailand", "Timor-Leste", "Togo", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan",
+  "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States of America", "Uruguay",
+  "Uzbekistan", "Vanuatu", "Venezuela", "Vietnam", "W. Sahara", "Yemen", "Zambia", "Zimbabwe", "eSwatini",
+];
 
 function EmptyState({ message }: { message: string }) {
   return (
