@@ -32,7 +32,7 @@ new_sqlite_classes = ["LiveFeedHub", "IngestionActor", "AlertingActor"]
 crons = ["*/5 * * * *"]
 
 [vars]
-MOCK_MODE = "true"
+MOCK_MODE = "false"
 GDELT_ENABLED = "true"
 
 [observability.logs]
