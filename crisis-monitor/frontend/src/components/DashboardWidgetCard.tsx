@@ -1471,7 +1471,7 @@ function ManualCountryDataEditor({
  *  (matched the same way as country shading) or a precise "lat,lng" for a
  *  spot no country polygon covers, like open water on a shipping route.
  *  Globe-only: a flat choropleth has no arc rendering. */
-type ManualRoute = { waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none" };
+type ManualRoute = { waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none"; strokeWidth?: number };
 
 const VEHICLE_OPTIONS: { value: NonNullable<ManualRoute["vehicle"]>; label: string }[] = [
   { value: "none", label: "None — line only" },
@@ -1548,6 +1548,16 @@ function ManualRoutesEditor({ routes, onChange }: { routes: ManualRoute[]; onCha
                 onChange={(e) => updateRoute(routeIdx, { label: e.target.value || undefined })}
                 placeholder="Label (optional)"
                 style={{ ...selectStyle, flex: 1, minWidth: 80 }}
+              />
+              <input
+                type="number"
+                min={0.5}
+                max={10}
+                step={0.5}
+                value={route.strokeWidth ?? 2.2}
+                onChange={(e) => updateRoute(routeIdx, { strokeWidth: e.target.value ? Number(e.target.value) : undefined })}
+                title="Line thickness"
+                style={{ ...selectStyle, width: 48 }}
               />
               <input
                 type="color"
