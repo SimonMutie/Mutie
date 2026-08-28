@@ -707,7 +707,17 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                 <DashboardWidgetCard
                   widget={w}
                   stats={stats}
-                  incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number }[]}
+                  incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as {
+                    latitude: number;
+                    longitude: number;
+                    severity?: string | null;
+                    actor?: string | null;
+                    sector?: string | null;
+                    tactic?: string | null;
+                    occurred_date?: string | null;
+                    city?: string | null;
+                    province?: string | null;
+                  }[]}
                   crosstabs={crosstabs}
                   breakdowns={breakdowns}
                   dailyBreakdowns={dailyBreakdowns}
