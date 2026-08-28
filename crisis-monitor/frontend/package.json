@@ -30,6 +30,7 @@
     "react-simple-maps": "^3.0.0",
     "recharts": "^2.12.7",
     "shpjs": "^6.2.0",
+    "three": "^0.185.1",
     "topojson-client": "^3.1.0",
     "world-atlas": "^2.0.2",
     "xlsx": "^0.18.5"
@@ -40,6 +41,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@types/react-simple-maps": "^3.0.6",
+    "@types/three": "^0.185.1",
     "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.5.3",
     "vite": "^5.3.4"
