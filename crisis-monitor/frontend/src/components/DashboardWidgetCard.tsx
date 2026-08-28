@@ -33,6 +33,7 @@ import worldTopology from "world-atlas/countries-110m.json?url";
 // and react-globe.gl are heavy, and every dashboard that never uses a globe
 // widget should never pay for that weight in its initial page load.
 const GlobeWidget = lazy(() => import("./GlobeWidget"));
+const RouteDrawingGlobe = lazy(() => import("./RouteDrawingGlobe"));
 import "leaflet/dist/leaflet.css";
 import type { CrosstabRow, Dataset, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
 
@@ -1482,11 +1483,14 @@ const VEHICLE_OPTIONS: { value: NonNullable<ManualRoute["vehicle"]>; label: stri
 ];
 
 function ManualRoutesEditor({ routes, onChange }: { routes: ManualRoute[]; onChange: (routes: ManualRoute[]) => void }) {
+  const [drawingRouteIdx, setDrawingRouteIdx] = useState<number | null>(null);
+
   function updateRoute(idx: number, patch: Partial<ManualRoute>) {
     onChange(routes.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
   }
   function removeRoute(idx: number) {
     onChange(routes.filter((_, i) => i !== idx));
+    if (drawingRouteIdx === idx) setDrawingRouteIdx(null);
   }
   function updateWaypoint(routeIdx: number, wpIdx: number, value: string) {
     const route = routes[routeIdx];
@@ -1534,6 +1538,24 @@ function ManualRoutesEditor({ routes, onChange }: { routes: ManualRoute[]; onCha
             >
               + Bend through another point
             </button>
+            <button
+              onClick={() => setDrawingRouteIdx((cur) => (cur === routeIdx ? null : routeIdx))}
+              style={{
+                ...miniBtnStyle,
+                width: "auto",
+                padding: "2px 7px",
+                fontSize: 10,
+                alignSelf: "flex-start",
+                ...(drawingRouteIdx === routeIdx ? { background: "var(--signal-dim)", borderColor: "var(--signal)", color: "var(--signal)" } : {}),
+              }}
+            >
+              🌐 {drawingRouteIdx === routeIdx ? "Close globe editor" : "Draw / adjust on globe"}
+            </button>
+            {drawingRouteIdx === routeIdx && (
+              <Suspense fallback={<div style={{ fontSize: 11, color: "var(--text-faint)", padding: 8 }}>Loading globe…</div>}>
+                <RouteDrawingGlobe waypoints={route.waypoints} color={route.color ?? "#0d9488"} onChange={(waypoints) => updateRoute(routeIdx, { waypoints })} />
+              </Suspense>
+            )}
 
             <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
               <select value={route.vehicle ?? "none"} onChange={(e) => updateRoute(routeIdx, { vehicle: e.target.value as ManualRoute["vehicle"] })} style={{ ...selectStyle, flex: 1, minWidth: 110 }}>
