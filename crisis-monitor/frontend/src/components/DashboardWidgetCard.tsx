@@ -465,6 +465,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
     >
       <div style={{ flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          {dashboardEditable && !widgetLocked && (
+            <span
+              className="widget-drag-handle"
+              title="Drag from here to reposition this widget"
+              style={{ cursor: "grab", color: "var(--text-faint)", fontSize: 13, flexShrink: 0, lineHeight: 1, padding: "0 2px" }}
+            >
+              ⣿
+            </span>
+          )}
           {showFullControls && onRename ? (
             <input
               value={widget.title}
