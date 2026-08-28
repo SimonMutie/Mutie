@@ -138,9 +138,41 @@ export async function fetchGdeltArticles(
     timespan,
   });
 
-  const res = await fetch(`${GDELT_ENDPOINT}?${params.toString()}`, {
-    headers: { "User-Agent": "GlobaLensCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },
+  const requestUrl = `${GDELT_ENDPOINT}?${params.toString()}`;
+
+console.log(`[gdelt] requesting: ${requestUrl}`);
+
+let res: Response;
+
+try {
+  res = await fetch(requestUrl, {
+    headers: {
+      "User-Agent": "GlobaLensCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)",
+    },
   });
+} catch (err) {
+  console.error(
+    `[gdelt] FETCH ITSELF FAILED:`,
+    err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+  );
+  throw err;
+}
+
+console.log(
+  `[gdelt] response: ${res.status} ${res.statusText} url=${res.url}`
+);
+
+if (!res.ok) {
+  const errorBody = await res.text().catch(() => "");
+
+  console.error(
+    `[gdelt] HTTP ERROR ${res.status} ${res.statusText}: ${errorBody.slice(0, 1000)}`
+  );
+
+  throw new Error(
+    `GDELT request failed: ${res.status} ${res.statusText} | ${errorBody.slice(0, 300)}`
+  );
+}
   if (res.status === 429 || res.status === 403) {
     // GDELT's anti-abuse layer appears to escalate from 429 (soft rate limit) to
     // 403 (harder block) under continued request volume from the same source —
