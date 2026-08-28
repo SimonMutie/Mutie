@@ -587,6 +587,18 @@ export const api = {
     req<Dataset>("/api/datasets", { method: "POST", body: JSON.stringify({ name, schema }) }),
   uploadDatasetRows: (datasetId: string, rows: Record<string, unknown>[]) =>
     req<{ inserted: number }>(`/api/datasets/${datasetId}/rows`, { method: "POST", body: JSON.stringify({ rows }) }),
+  getDatasetRows: (datasetId: string, offset = 0, limit = 50) =>
+    req<{ rows: { id: string; data: Record<string, unknown>; created_at: string }[]; total: number; offset: number; limit: number }>(
+      `/api/datasets/${datasetId}/rows?offset=${offset}&limit=${limit}`
+    ),
+  addDatasetRow: (datasetId: string, data: Record<string, unknown>) =>
+    req<{ id: string; data: Record<string, unknown>; created_at: string }>(`/api/datasets/${datasetId}/rows/manual`, {
+      method: "POST",
+      body: JSON.stringify({ data }),
+    }),
+  updateDatasetRow: (datasetId: string, rowId: string, data: Record<string, unknown>) =>
+    req<{ id: string; data: Record<string, unknown> }>(`/api/datasets/${datasetId}/rows/${rowId}`, { method: "PATCH", body: JSON.stringify({ data }) }),
+  deleteDatasetRow: (datasetId: string, rowId: string) => req<void>(`/api/datasets/${datasetId}/rows/${rowId}`, { method: "DELETE" }),
   deleteDataset: (id: string) => req<void>(`/api/datasets/${id}`, { method: "DELETE" }),
   getDatasetBreakdown: (datasetId: string, field: string) =>
     req<{ value: string; count: number }[]>(`/api/datasets/${datasetId}/breakdown?field=${encodeURIComponent(field)}`),
