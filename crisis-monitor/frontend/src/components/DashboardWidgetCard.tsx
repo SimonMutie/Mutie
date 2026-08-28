@@ -25,7 +25,8 @@ import {
   Sankey,
 } from "recharts";
 import { hierarchy, pack } from "d3-hierarchy";
-import { MapContainer, TileLayer, CircleMarker } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
+import { HeatmapLayer } from "./IncidentsMap";
 import { ComposableMap, Geographies, Geography } from "react-simple-maps";
 import worldTopology from "world-atlas/countries-110m.json?url";
 
@@ -366,7 +367,7 @@ function statValue(widget: DashboardWidget, stats: NormalizedDashboardStats, dat
 interface Props {
   widget: DashboardWidget;
   stats: NormalizedDashboardStats;
-  incidents?: { latitude: number; longitude: number; severity?: string | null }[];
+  incidents?: { latitude: number; longitude: number; severity?: string | null; actor?: string | null; sector?: string | null; tactic?: string | null; occurred_date?: string | null; city?: string | null; province?: string | null }[];
   /** Keyed "primaryColumn|secondaryColumn" — only present for widgets that
    *  actually have a secondaryField set; see crosstabKeyFor(). */
   crosstabs?: Record<string, CrosstabRow[]>;
@@ -672,17 +673,40 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
         {widget.type === "bubble" && <BubbleChart series={series} colors={paletteFor(widget, series.length)} />}
 
         {widget.type === "map" && (
-          <div style={{ height: "100%", borderRadius: 6, overflow: "hidden" }}>
-            <MapContainer center={[1, 20]} zoom={2.2} style={{ width: "100%", height: "100%" }} scrollWheelZoom={false} dragging={showFullControls} zoomControl={false}>
+          <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
+            <MapContainer
+              center={widget.mapView ? [widget.mapView.lat, widget.mapView.lng] : [1, 20]}
+              zoom={widget.mapView?.zoom ?? 2.2}
+              style={{ width: "100%", height: "100%" }}
+              scrollWheelZoom={false}
+              dragging={showFullControls}
+              zoomControl={false}
+            >
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
-              {(incidents ?? []).slice(0, 3000).map((i, idx) => (
-                <CircleMarker
-                  key={idx}
-                  center={[i.latitude, i.longitude]}
-                  radius={2.5}
-                  pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 0.5 }}
-                />
-              ))}
+              {(widget.mapViewMode ?? "markers") === "heatmap" ? (
+                <HeatmapLayer points={(incidents ?? []).slice(0, 5000).map((i) => [i.latitude, i.longitude, 1] as [number, number, number])} />
+              ) : (
+                (incidents ?? []).slice(0, 3000).map((i, idx) => (
+                  <CircleMarker key={idx} center={[i.latitude, i.longitude]} radius={2.5} pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 0.5 }}>
+                    <LeafletTooltip direction="top" offset={[0, -2]} opacity={0.95}>
+                      <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                        <div style={{ fontWeight: 700 }}>{[i.city, i.province].filter(Boolean).join(", ") || "Unknown location"}</div>
+                        {i.actor && <div>Actor: {i.actor}</div>}
+                        {i.sector && <div>Sector: {i.sector}</div>}
+                        {i.tactic && <div>Tactic: {i.tactic}</div>}
+                        {i.severity && <div>Severity: {i.severity}</div>}
+                        {i.occurred_date && <div style={{ color: "#888" }}>{i.occurred_date}</div>}
+                      </div>
+                    </LeafletTooltip>
+                  </CircleMarker>
+                ))
+              )}
+              {onUpdate && (
+                <>
+                  <MapViewLockButton locked={!!widget.mapView} onLock={(view) => onUpdate({ mapView: view })} onUnlock={() => onUpdate({ mapView: undefined })} />
+                  <MapModeToggle mode={widget.mapViewMode ?? "markers"} onChange={(mode) => onUpdate({ mapViewMode: mode })} />
+                </>
+              )}
             </MapContainer>
           </div>
         )}
@@ -1696,6 +1720,82 @@ const KNOWN_COUNTRY_NAMES = [
   "Uganda", "Ukraine", "United Arab Emirates", "United Kingdom", "United States of America", "Uruguay",
   "Uzbekistan", "Vanuatu", "Venezuela", "Vietnam", "W. Sahara", "Yemen", "Zambia", "Zimbabwe", "eSwatini",
 ];
+
+/** Reads the map's live center/zoom directly from Leaflet (via useMap,
+ *  which only works as a descendant of MapContainer) and persists it onto
+ *  the widget — so the next person to load this dashboard, or view it on a
+ *  public share link, sees the same framing instead of the default world
+ *  view they'd have to zoom in from manually. */
+function MapViewLockButton({
+  locked,
+  onLock,
+  onUnlock,
+}: {
+  locked: boolean;
+  onLock: (view: { lat: number; lng: number; zoom: number }) => void;
+  onUnlock: () => void;
+}) {
+  const map = useMap();
+  return (
+    <button
+      onClick={() => {
+        if (locked) {
+          onUnlock();
+        } else {
+          const center = map.getCenter();
+          onLock({ lat: center.lat, lng: center.lng, zoom: map.getZoom() });
+        }
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      title={locked ? "Unlock — allow the view to reset to default" : "Lock the current pan/zoom position for everyone who opens this"}
+      style={{
+        position: "absolute",
+        top: 6,
+        right: 6,
+        zIndex: 1000,
+        width: 24,
+        height: 24,
+        lineHeight: "22px",
+        padding: 0,
+        fontSize: 12,
+        borderRadius: 4,
+        border: "1px solid rgba(255,255,255,0.3)",
+        background: locked ? "rgba(13,148,136,0.85)" : "rgba(0,0,0,0.45)",
+        color: "#fff",
+        cursor: "pointer",
+      }}
+    >
+      {locked ? "🔒" : "🔓"}
+    </button>
+  );
+}
+
+/** Markers vs. heatmap density — the same choice already available on the
+ *  standalone incidents map, now available per dashboard widget too. */
+function MapModeToggle({ mode, onChange }: { mode: "markers" | "heatmap"; onChange: (mode: "markers" | "heatmap") => void }) {
+  return (
+    <button
+      onClick={() => onChange(mode === "markers" ? "heatmap" : "markers")}
+      onMouseDown={(e) => e.stopPropagation()}
+      title={mode === "markers" ? "Switch to heatmap density view" : "Switch to individual incident markers"}
+      style={{
+        position: "absolute",
+        top: 34,
+        right: 6,
+        zIndex: 1000,
+        padding: "3px 7px",
+        fontSize: 10.5,
+        borderRadius: 4,
+        border: "1px solid rgba(255,255,255,0.3)",
+        background: "rgba(0,0,0,0.45)",
+        color: "#fff",
+        cursor: "pointer",
+      }}
+    >
+      {mode === "markers" ? "🔥 Heatmap" : "📍 Markers"}
+    </button>
+  );
+}
 
 function EmptyState({ message }: { message: string }) {
   return (
