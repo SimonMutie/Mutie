@@ -27,7 +27,8 @@ import {
 import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
 import { HeatmapLayer } from "./IncidentsMap";
-import { ComposableMap, Geographies, Geography } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
+import { geoCentroid } from "d3-geo";
 import worldTopology from "world-atlas/countries-110m.json?url";
 
 // Dynamically imported, not statically — this is the whole point: Three.js
@@ -644,6 +645,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
             baseColor={widget.color || "#0d9488"}
             field={widget.dataField === "by_province" ? "by_province" : "by_country"}
             manualData={widget.manualCountryData}
+            showLabels={widget.showDataLabels}
           />
         )}
 
@@ -1131,10 +1133,10 @@ function WidgetEditPopover({
           Show legend
         </label>
       )}
-      {(type === "bar" || type === "pie" || type === "funnel") && (
+      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth") && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
           <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
-          Show values on chart
+          {type === "choropleth" ? "Show region name labels on the map" : "Show values on chart"}
         </label>
       )}
       {type === "stat" && (
@@ -1189,11 +1191,13 @@ function ChoroplethMap({
   baseColor,
   field,
   manualData,
+  showLabels,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
   field: "by_country" | "by_province";
   manualData?: { country: string; value: number; color?: string }[];
+  showLabels?: boolean;
 }) {
   const usingManualData = !!manualData;
   const countByName = new Map<string, number>();
@@ -1213,25 +1217,43 @@ function ChoroplethMap({
     <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)" }}>
       <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
         <Geographies geography={topologyUrl}>
-          {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) =>
-            geographies.map((geo) => {
-              const name = geo.properties?.name;
-              const key = name?.trim().toLowerCase();
-              const count = key ? countByName.get(key) : undefined;
-              const explicitColor = key ? colorByName.get(key) : undefined;
-              const intensity = count ? Math.max(0.18, count / maxCount) : 0;
-              return (
-                <Geography
-                  key={geo.rsmKey}
-                  geography={geo}
-                  fill={explicitColor ?? (count ? hexToRgba(baseColor, intensity) : "var(--panel)")}
-                  stroke="var(--border)"
-                  strokeWidth={field === "by_province" ? 0.2 : 0.4}
-                  style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.8 }, pressed: { outline: "none" } }}
-                />
-              );
-            })
-          }
+          {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) => (
+            <>
+              {geographies.map((geo) => {
+                const name = geo.properties?.name;
+                const key = name?.trim().toLowerCase();
+                const count = key ? countByName.get(key) : undefined;
+                const explicitColor = key ? colorByName.get(key) : undefined;
+                const intensity = count ? Math.max(0.18, count / maxCount) : 0;
+                return (
+                  <Geography
+                    key={geo.rsmKey}
+                    geography={geo}
+                    fill={explicitColor ?? (count ? hexToRgba(baseColor, intensity) : "var(--panel)")}
+                    stroke="var(--border)"
+                    strokeWidth={field === "by_province" ? 0.2 : 0.4}
+                    style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.8 }, pressed: { outline: "none" } }}
+                  />
+                );
+              })}
+              {showLabels &&
+                geographies.map((geo) => {
+                  const name = geo.properties?.name;
+                  const key = name?.trim().toLowerCase();
+                  const count = key ? countByName.get(key) : undefined;
+                  if (!name || !count) return null; // only label regions with actual data, to avoid cluttering every country name on the map
+                  const centroid = geoCentroid(geo as unknown as Parameters<typeof geoCentroid>[0]);
+                  if (!Number.isFinite(centroid[0]) || !Number.isFinite(centroid[1])) return null;
+                  return (
+                    <Marker key={`label-${geo.rsmKey}`} coordinates={centroid}>
+                      <text textAnchor="middle" style={{ fontSize: field === "by_province" ? 5 : 7, fill: "var(--text-primary)", pointerEvents: "none" }}>
+                        {name}
+                      </text>
+                    </Marker>
+                  );
+                })}
+            </>
+          )}
         </Geographies>
       </ComposableMap>
     </div>
