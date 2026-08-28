@@ -53,7 +53,7 @@ function cellToDatasetValue(value: unknown, type: DatasetColumnType): string | n
   return String(value).trim() || null;
 }
 
-type Stage = "list" | "upload-pick" | "upload-preview" | "uploading" | "done" | "viewing";
+type Stage = "list" | "upload-pick" | "detecting-schema" | "upload-preview" | "uploading" | "done" | "viewing";
 
 export default function DatasetsPanel() {
   const [stage, setStage] = useState<Stage>("list");
@@ -80,6 +80,16 @@ export default function DatasetsPanel() {
     if (stage === "list") loadDatasets();
   }, [stage]);
 
+  /** Yields back to the browser periodically during a large synchronous
+   *  pass — without this, detecting types for many columns across tens of
+   *  thousands of rows (a full re-scan of every row, once per column) can
+   *  block the main thread long enough to trigger the browser's own
+   *  "page unresponsive" warning, the same issue this fixed on the
+   *  Incidents upload side. */
+  async function yieldPeriodically(i: number, every = 1000) {
+    if (i > 0 && i % every === 0) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   async function handleFile(file: File) {
     setParseError(null);
     setFileName(file.name);
@@ -93,17 +103,21 @@ export default function DatasetsPanel() {
       const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null });
       if (rawRows.length === 0) throw new Error("No rows found in the first sheet.");
 
+      setStage("detecting-schema");
       const headers = Object.keys(rawRows[0]);
-      const schema: DatasetColumn[] = headers.map((name) => ({
-        name,
-        type: detectColumnType(rawRows.map((r) => r[name])),
-      }));
+      const schema: DatasetColumn[] = [];
+      for (let h = 0; h < headers.length; h++) {
+        const name = headers[h];
+        schema.push({ name, type: detectColumnType(rawRows.map((r) => r[name])) });
+        await yieldPeriodically(h, 3); // each header's own pass is O(rows), so yield after every few headers rather than every row
+      }
 
       setDetectedSchema(schema);
       setParsedRows(rawRows);
       setStage("upload-preview");
     } catch (err) {
       setParseError(err instanceof Error ? err.message : "Couldn't read this file.");
+      setStage("upload-pick");
     }
   }
 
@@ -117,11 +131,14 @@ export default function DatasetsPanel() {
     setUploadError(null);
     try {
       const dataset = await api.createDataset(datasetName.trim(), detectedSchema);
-      const converted = parsedRows.map((raw) => {
+      const converted: Record<string, unknown>[] = [];
+      for (let i = 0; i < parsedRows.length; i++) {
+        const raw = parsedRows[i];
         const row: Record<string, unknown> = {};
         for (const col of detectedSchema) row[col.name] = cellToDatasetValue(raw[col.name], col.type);
-        return row;
-      });
+        converted.push(row);
+        await yieldPeriodically(i);
+      }
 
       const CHUNK = 500;
       let done = 0;
@@ -216,6 +233,16 @@ export default function DatasetsPanel() {
           setStage("list");
         }}
       />
+    );
+  }
+
+  if (stage === "detecting-schema") {
+    return (
+      <div style={{ flex: 1, padding: 24 }}>
+        <div className="panel" style={{ marginTop: 16, padding: 32, textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
+          Reading {fileName}… this can take a moment for a large file, and the tab stays responsive while it works.
+        </div>
+      </div>
     );
   }
 
