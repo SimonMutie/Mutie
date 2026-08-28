@@ -86,6 +86,7 @@ const widgetSchema = z.object({
         label: z.string().optional(),
         color: z.string().optional(),
         vehicle: z.enum(["plane", "commercial-ship", "warship", "drone", "none"]).optional(),
+        strokeWidth: z.number().positive().optional(),
       })
     )
     .optional(),
