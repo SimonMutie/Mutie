@@ -287,6 +287,21 @@ export interface DashboardWidget {
   locked?: boolean;
   /** Stat cards only — shows a small monthly trend line beneath the number. */
   showSparkline?: boolean;
+  /** Font styling for whichever text labels this widget type renders — bar
+   *  value labels, pie slice labels, funnel stage labels, choropleth region
+   *  names, bubble category names, network node/link labels. Sankey's node
+   *  labels are recharts' own internal rendering and aren't covered by this —
+   *  that component doesn't expose the same level of control the others do. */
+  labelFontFamily?: string;
+  labelFontSize?: number;
+  /** Manually-dragged label positions, keyed by the label's own text (a
+   *  category name, a node name) since that's stable across re-renders and
+   *  re-fetches in a way an array index isn't. Only meaningful for bubble
+   *  and network charts currently — the ones with hand-rolled SVG rendering
+   *  where an arbitrary per-label offset is actually straightforward to
+   *  apply; bar/pie/funnel/choropleth's labels are positioned by recharts
+   *  or the projection library respectively, not free-form. */
+  labelOffsets?: Record<string, { dx: number; dy: number }>;
   /** Choropleth/globe only — bypasses Incidents and any dataset entirely:
    *  values you type in yourself, per country, with an optional specific
    *  color per entry (rather than one base color varying only by intensity).
