@@ -78,8 +78,17 @@ const widgetSchema = z.object({
    *  against a fixed list — an unmatched name just renders unshaded on the
    *  frontend rather than breaking anything. */
   manualCountryData: z.array(z.object({ country: z.string(), value: z.number(), color: z.string().optional() })).optional(),
-  /** Globe only — arcs between two named locations. */
-  manualRoutes: z.array(z.object({ from: z.string(), to: z.string(), label: z.string().optional(), color: z.string().optional() })).optional(),
+  /** Globe only — bendable multi-waypoint paths. */
+  manualRoutes: z
+    .array(
+      z.object({
+        waypoints: z.array(z.string()).min(2),
+        label: z.string().optional(),
+        color: z.string().optional(),
+        vehicle: z.enum(["plane", "commercial-ship", "warship", "drone", "none"]).optional(),
+      })
+    )
+    .optional(),
 });
 
 const createSchema = z.object({
