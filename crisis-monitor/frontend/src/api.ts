@@ -293,6 +293,10 @@ export interface DashboardWidget {
    *  Presence of this array (even empty) means "manual mode" for that
    *  widget; countries not listed here just render unshaded. */
   manualCountryData?: { country: string; value: number; color?: string }[];
+  /** Globe only — free-standing text labels (checkpoints, ports, chokepoints,
+   *  anything worth naming directly on the map) at a country name or precise
+   *  "lat,lng", independent of country shading and routes. */
+  manualLabels?: { location: string; text: string; color?: string }[];
   /** Globe only — a path through 2 or more named locations, for showing
    *  routes, trajectories, or cross-border/cross-group linkages. A country
    *  name (matched the same way as country shading) or a precise "lat,lng"
