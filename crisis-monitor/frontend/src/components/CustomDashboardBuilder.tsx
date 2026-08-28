@@ -20,6 +20,12 @@ export default function CustomDashboardBuilder() {
     if (view === "list") loadList();
   }, [view]);
 
+  async function handleDelete(id: string, name: string) {
+    if (!window.confirm(`Delete "${name}"? This can't be undone.`)) return;
+    await api.deleteCustomDashboard(id);
+    setDashboards((prev) => prev.filter((d) => d.id !== id));
+  }
+
   if (view === "list") {
     return (
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
@@ -70,6 +76,24 @@ export default function CustomDashboardBuilder() {
                     Live shared
                   </span>
                 )}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(d.id, d.name);
+                  }}
+                  title="Delete this dashboard"
+                  style={{
+                    fontSize: 12,
+                    padding: "4px 8px",
+                    background: "transparent",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    color: "var(--critical)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Delete
+                </button>
                 <span style={{ color: "var(--text-faint)", fontSize: 16 }}>→</span>
               </div>
             ))}
