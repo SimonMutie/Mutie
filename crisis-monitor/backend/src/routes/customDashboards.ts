@@ -84,6 +84,9 @@ const widgetSchema = z.object({
    *  anything worth naming directly on the map) at a country name or precise
    *  "lat,lng", independent of country shading and routes. */
   manualLabels: z.array(z.object({ location: z.string(), text: z.string(), color: z.string().optional() })).optional(),
+  labelFontFamily: z.string().optional(),
+  labelFontSize: z.number().positive().optional(),
+  labelOffsets: z.record(z.object({ dx: z.number(), dy: z.number() })).optional(),
   manualRoutes: z
     .array(
       z.object({
