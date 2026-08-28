@@ -698,6 +698,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             margin={[16, 16]}
             onLayoutChange={handleLayoutChange}
             draggableCancel=".no-drag"
+            draggableHandle=".widget-drag-handle"
             isDraggable={!locked}
             isResizable={!locked}
           >
