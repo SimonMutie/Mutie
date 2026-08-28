@@ -654,7 +654,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
               </div>
             }
           >
-            <GlobeWidget series={series} baseColor={widget.color || "#0d9488"} manualData={widget.manualCountryData} routes={widget.manualRoutes} />
+            <GlobeWidget series={series} baseColor={widget.color || "#0d9488"} manualData={widget.manualCountryData} routes={widget.manualRoutes} labels={widget.manualLabels} />
           </Suspense>
         )}
 
@@ -737,7 +737,10 @@ function WidgetEditPopover({
   const [showSparkline, setShowSparkline] = useState(!!widget.showSparkline);
   const [useManualData, setUseManualData] = useState(!!widget.manualCountryData);
   const [manualCountryData, setManualCountryData] = useState<{ country: string; value: number; color?: string }[]>(widget.manualCountryData ?? []);
-  const [manualRoutes, setManualRoutes] = useState<{ waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none" }[]>(widget.manualRoutes ?? []);
+  const [manualRoutes, setManualRoutes] = useState<
+    { waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none"; strokeWidth?: number }[]
+  >(widget.manualRoutes ?? []);
+  const [manualLabels, setManualLabels] = useState<{ location: string; text: string; color?: string }[]>(widget.manualLabels ?? []);
 
   const supportsManualData = type === "choropleth" || type === "globe";
 
@@ -825,6 +828,7 @@ function WidgetEditPopover({
       showSparkline,
       manualCountryData: manualActive ? manualCountryData : undefined,
       manualRoutes: type === "globe" && manualRoutes.length > 0 ? manualRoutes : undefined,
+      manualLabels: type === "globe" && manualLabels.length > 0 ? manualLabels : undefined,
     });
   }
 
@@ -892,6 +896,8 @@ function WidgetEditPopover({
       )}
 
       {type === "globe" && <ManualRoutesEditor routes={manualRoutes} onChange={setManualRoutes} />}
+
+      {type === "globe" && <ManualLabelsEditor labels={manualLabels} onChange={setManualLabels} />}
 
       {type !== "map" && !(supportsManualData && useManualData) && (
         <div>
@@ -1462,6 +1468,64 @@ function ManualCountryDataEditor({
           style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", color: "var(--signal)" }}
         >
           + Add country
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Repeatable-row form for free-standing text labels — checkpoints, ports,
+ *  chokepoints, anything worth naming directly on the map, independent of
+ *  country shading and routes. */
+function ManualLabelsEditor({
+  labels,
+  onChange,
+}: {
+  labels: { location: string; text: string; color?: string }[];
+  onChange: (labels: { location: string; text: string; color?: string }[]) => void;
+}) {
+  function update(idx: number, patch: Partial<{ location: string; text: string; color?: string }>) {
+    onChange(labels.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  }
+  function remove(idx: number) {
+    onChange(labels.filter((_, i) => i !== idx));
+  }
+  return (
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 4 }}>LABELS (CHECKPOINTS, PORTS, ETC.)</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {labels.map((label, idx) => (
+          <div key={idx} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <input
+              value={label.location}
+              onChange={(e) => update(idx, { location: e.target.value })}
+              placeholder="Country or lat,lng"
+              list="known-country-names"
+              style={{ ...selectStyle, flex: 1, minWidth: 0 }}
+            />
+            <input
+              value={label.text}
+              onChange={(e) => update(idx, { text: e.target.value })}
+              placeholder="Label text, e.g. Port of Mombasa"
+              style={{ ...selectStyle, flex: 1.4, minWidth: 0 }}
+            />
+            <input
+              type="color"
+              value={label.color ?? "#0d9488"}
+              onChange={(e) => update(idx, { color: e.target.value })}
+              title="Label color"
+              style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", flexShrink: 0 }}
+            />
+            <button onClick={() => remove(idx)} title="Remove" style={miniBtnStyle}>
+              ×
+            </button>
+          </div>
+        ))}
+        <button
+          onClick={() => onChange([...labels, { location: "", text: "" }])}
+          style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", color: "var(--signal)" }}
+        >
+          + Add label
         </button>
       </div>
     </div>
