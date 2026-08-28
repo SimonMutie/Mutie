@@ -307,6 +307,8 @@ export interface DashboardWidget {
     /** An icon animates along the path when set — "none" (or omitted) is
      *  just the line itself. */
     vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none";
+    /** Line thickness — same units as react-globe.gl's pathStroke. */
+    strokeWidth?: number;
   }[];
   /** Bar/line only — a second dimension to break the primary field down by,
    *  turning a single-variable chart into a genuine two-variable pivot
