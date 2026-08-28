@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, setToken, type AuthUser } from "../api";
+import Logo from "./Logo";
 
 interface Props {
   mode: "bootstrap" | "login";
@@ -46,10 +47,15 @@ export default function AuthScreen({ mode, onAuthenticated }: Props) {
         className="panel"
         style={{ width: 360, padding: "28px 28px 24px", display: "flex", flexDirection: "column", gap: 12 }}
       >
-        <div style={{ marginBottom: 8 }}>
-          <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700 }}>SENTINEL</h1>
-          <div className="eyebrow" style={{ marginTop: 4 }}>
-            {mode === "bootstrap" ? "SET UP YOUR ADMIN ACCOUNT" : "SIGN IN"}
+        <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
+          <Logo size={30} />
+          <div>
+            <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700 }}>
+              Globa<span style={{ color: "var(--signal)" }}>Lens</span>
+            </h1>
+            <div className="eyebrow" style={{ marginTop: 4 }}>
+              {mode === "bootstrap" ? "SET UP YOUR ADMIN ACCOUNT" : "SIGN IN"}
+            </div>
           </div>
         </div>
 
