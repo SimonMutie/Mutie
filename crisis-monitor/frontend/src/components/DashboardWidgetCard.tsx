@@ -698,7 +698,17 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
           />
         )}
 
-        {widget.type === "sankey" && <RelationshipSankey data={relationshipData(widget, stats, crosstabs)} baseColor={widget.color || "#0d9488"} />}
+        {widget.type === "sankey" && (
+          <RelationshipSankey
+            data={relationshipData(widget, stats, crosstabs)}
+            baseColor={widget.color || "#0d9488"}
+            showLabels={widget.showDataLabels}
+            fontFamily={widget.labelFontFamily}
+            fontSize={widget.labelFontSize}
+            offsets={widget.labelOffsets}
+            onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
+          />
+        )}
 
         {widget.type === "network" && (
           <RelationshipNetwork
@@ -1187,20 +1197,20 @@ function WidgetEditPopover({
           Show legend
         </label>
       )}
-      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network") && (
+      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network" || type === "sankey") && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
           <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
           {type === "choropleth"
             ? "Show region name labels on the map"
             : type === "bubble"
               ? "Show category names (not just counts)"
-              : type === "network"
-                ? "Show counts on each link"
+              : type === "network" || type === "sankey"
+                ? "Show node names and counts on each link"
                 : "Show values on chart"}
         </label>
       )}
       {showDataLabels &&
-        (type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network") && (
+        (type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network" || type === "sankey") && (
           <div style={{ display: "flex", gap: 6, alignItems: "center", paddingLeft: 20 }}>
             <select value={labelFontFamily} onChange={(e) => setLabelFontFamily(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
               <option value="">Default font</option>
@@ -1222,7 +1232,7 @@ function WidgetEditPopover({
             />
           </div>
         )}
-      {(type === "bubble" || type === "network") && showDataLabels && (
+      {(type === "bubble" || type === "network" || type === "sankey") && showDataLabels && (
         <div style={{ fontSize: 10, color: "var(--text-faint)", paddingLeft: 20 }}>Drag any label directly on the chart to reposition it.</div>
       )}
       {type === "stat" && (
@@ -1430,22 +1440,115 @@ function sankeyDataFrom(rows: CrosstabRow[]) {
   return { nodes, links };
 }
 
-function RelationshipSankey({ data, baseColor }: { data: CrosstabRow[]; baseColor: string }) {
+function RelationshipSankey({
+  data,
+  baseColor,
+  showLabels,
+  fontFamily,
+  fontSize,
+  offsets,
+  onCommitOffset,
+}: {
+  data: CrosstabRow[];
+  baseColor: string;
+  showLabels?: boolean;
+  fontFamily?: string;
+  fontSize?: number;
+  offsets?: Record<string, { dx: number; dy: number }>;
+  onCommitOffset?: (key: string, dx: number, dy: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // Sankey's own layout is recharts' internal computation, not something
+  // this file controls — unlike the hand-rolled bubble/network SVGs, there's
+  // no viewBox set here at all (recharts re-renders at exact pixel
+  // dimensions on resize instead), which DraggableLabel's scale-factor
+  // logic accounts for directly. What custom node/link render functions
+  // *do* give access to is each node/link's actual computed position, which
+  // is enough to inject a draggable label at the right spot without needing
+  // to reimplement the Sankey layout algorithm by hand.
+  useEffect(() => {
+    const svg = containerRef.current?.querySelector("svg");
+    if (svg) svgRef.current = svg as unknown as SVGSVGElement;
+  }, [data]);
+
   if (data.length === 0) {
     return <EmptyState message="No data for this pair of fields yet." />;
   }
   const sankeyData = sankeyDataFrom(data);
+  const nodeFontSize = fontSize ?? 11;
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <Sankey
-        data={sankeyData}
-        nodePadding={20}
-        node={{ fill: baseColor, fillOpacity: 0.85 } as never}
-        link={{ stroke: baseColor, strokeOpacity: 0.25 } as never}
-      >
-        <Tooltip contentStyle={TOOLTIP_STYLE} />
-      </Sankey>
-    </ResponsiveContainer>
+    <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <Sankey
+          data={sankeyData}
+          nodePadding={20}
+          node={(nodeProps: { x: number; y: number; width: number; height: number; payload: { name: string } }) => (
+            <g>
+              <rect x={nodeProps.x} y={nodeProps.y} width={nodeProps.width} height={nodeProps.height} fill={baseColor} fillOpacity={0.85} />
+              {showLabels && (
+                <DraggableLabel
+                  x={nodeProps.x + nodeProps.width / 2}
+                  y={nodeProps.y - 6}
+                  text={nodeProps.payload.name}
+                  fontSize={nodeFontSize}
+                  fontFamily={fontFamily}
+                  fill="var(--text-primary)"
+                  textAnchor="middle"
+                  offsetKey={`node:${nodeProps.payload.name}`}
+                  offsets={offsets}
+                  onCommitOffset={onCommitOffset}
+                  svgRef={svgRef}
+                />
+              )}
+            </g>
+          )}
+          link={(linkProps: {
+            sourceX: number;
+            sourceY: number;
+            targetX: number;
+            targetY: number;
+            sourceControlX: number;
+            targetControlX: number;
+            linkWidth: number;
+            payload: { source: number; target: number; value: number };
+          }) => {
+            const midX = (linkProps.sourceX + linkProps.targetX) / 2;
+            const midY = (linkProps.sourceY + linkProps.targetY) / 2;
+            return (
+              <g>
+                <path
+                  d={`M${linkProps.sourceX},${linkProps.sourceY} C${linkProps.sourceControlX},${linkProps.sourceY} ${linkProps.targetControlX},${linkProps.targetY} ${linkProps.targetX},${linkProps.targetY}`}
+                  fill="none"
+                  stroke={baseColor}
+                  strokeOpacity={0.25}
+                  strokeWidth={linkProps.linkWidth}
+                />
+                {showLabels && (
+                  <DraggableLabel
+                    x={midX}
+                    y={midY}
+                    text={linkProps.payload.value}
+                    fontSize={Math.max(8, nodeFontSize - 1)}
+                    fontFamily={fontFamily}
+                    fill="var(--text-muted)"
+                    textAnchor="middle"
+                    offsetKey={`link:${linkProps.payload.source}-${linkProps.payload.target}`}
+                    offsets={offsets}
+                    onCommitOffset={onCommitOffset}
+                    svgRef={svgRef}
+                  />
+                )}
+              </g>
+            );
+          }}
+        >
+          <Tooltip contentStyle={TOOLTIP_STYLE} />
+        </Sankey>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -2077,7 +2180,23 @@ function DraggableLabel({
       const rect = svg.getBoundingClientRect();
       const viewBox = svg.viewBox.baseVal;
       if (rect.width === 0 || rect.height === 0) return null;
-      return { scaleX: viewBox.width / rect.width, scaleY: viewBox.height / rect.height };
+      // Some SVGs (this file's own hand-rolled ones) use a fixed viewBox
+      // stretched via CSS to fill their container responsively, where the
+      // ratio between viewBox size and actual rendered size is exactly the
+      // scale factor needed. Others (recharts' own Sankey, notably) render
+      // with no viewBox at all and instead re-render at exact pixel
+      // dimensions whenever their container resizes — direct 1:1 pixel
+      // coordinates, no CSS scaling layer to account for. Detecting which
+      // case this is by checking whether a viewBox was actually set, rather
+      // than assuming one convention everywhere, is what makes this one
+      // component correctly support both instead of silently computing a
+      // zero scale factor (and therefore a label that visually never moves)
+      // in whichever case wasn't originally anticipated.
+      const hasViewBox = viewBox.width > 0 && viewBox.height > 0;
+      return {
+        scaleX: hasViewBox ? viewBox.width / rect.width : 1,
+        scaleY: hasViewBox ? viewBox.height / rect.height : 1,
+      };
     }
 
     function handleMove(ev: MouseEvent) {
