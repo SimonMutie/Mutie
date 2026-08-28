@@ -293,6 +293,12 @@ export interface DashboardWidget {
    *  Presence of this array (even empty) means "manual mode" for that
    *  widget; countries not listed here just render unshaded. */
   manualCountryData?: { country: string; value: number; color?: string }[];
+  /** Incident map only — a locked center/zoom, so it opens already framed on
+   *  reload or for a public share viewer instead of defaulting to a
+   *  world view they'd have to manually zoom in from. */
+  mapView?: { lat: number; lng: number; zoom: number };
+  /** Incident map only — markers (default) or heatmap density view. */
+  mapViewMode?: "markers" | "heatmap";
   /** Globe only — free-standing text labels (checkpoints, ports, chokepoints,
    *  anything worth naming directly on the map) at a country name or precise
    *  "lat,lng", independent of country shading and routes. */
