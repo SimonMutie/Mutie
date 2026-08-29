@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, ScaleControl, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet-draw";
@@ -568,6 +568,103 @@ function ClickCapture({ active, onClick }: { active: boolean; onClick: (lat: num
  *  the route after everything else disappears from view. */
 /** Grabs the underlying Leaflet map's DOM container once mounted, for the PNG
  *  export (html2canvas needs a real element, not the React component). */
+export type CompassStyle = "arrow" | "rose4" | "rose8" | "circle";
+
+/** Purely decorative, always pointing "up" — this map never rotates, so
+ *  there's no bearing to actually track. Four distinct designs since
+ *  people have real preferences here and it costs little to offer a
+ *  choice. Rendered as a plain absolutely-positioned overlay (not a
+ *  Leaflet control) since it needs zero interaction with the map itself. */
+function Compass({ style, size = 56 }: { style: CompassStyle; size?: number }) {
+  const stroke = "var(--text-primary)";
+  const accent = "var(--signal)";
+  const bg = "var(--panel)";
+  const wrapperStyle: React.CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: "50%",
+    background: bg,
+    border: "1px solid var(--border)",
+    boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
+
+  if (style === "arrow") {
+    return (
+      <div style={wrapperStyle}>
+        <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 24 24">
+          <text x="12" y="7" textAnchor="middle" fontSize="7" fontWeight="700" fill={stroke}>
+            N
+          </text>
+          <path d="M12 9 L16 20 L12 17 L8 20 Z" fill={accent} stroke={stroke} strokeWidth="0.5" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (style === "rose4") {
+    return (
+      <div style={wrapperStyle}>
+        <svg width={size * 0.75} height={size * 0.75} viewBox="0 0 24 24">
+          <path d="M12 2 L15 12 L12 11 L9 12 Z" fill={accent} />
+          <path d="M12 22 L9 12 L12 13 L15 12 Z" fill={stroke} opacity={0.4} />
+          <path d="M2 12 L12 9 L11 12 L12 15 Z" fill={stroke} opacity={0.4} />
+          <path d="M22 12 L12 15 L13 12 L12 9 Z" fill={stroke} opacity={0.4} />
+          <text x="12" y="1.5" textAnchor="middle" dominantBaseline="hanging" fontSize="4.5" fontWeight="700" fill={stroke}>
+            N
+          </text>
+        </svg>
+      </div>
+    );
+  }
+
+  if (style === "rose8") {
+    return (
+      <div style={wrapperStyle}>
+        <svg width={size * 0.8} height={size * 0.8} viewBox="0 0 24 24">
+          <path d="M12 1 L14 12 L12 10.5 L10 12 Z" fill={accent} />
+          <path d="M12 23 L10 12 L12 13.5 L14 12 Z" fill={stroke} opacity={0.35} />
+          <path d="M1 12 L12 10 L10.5 12 L12 14 Z" fill={stroke} opacity={0.35} />
+          <path d="M23 12 L12 14 L13.5 12 L12 10 Z" fill={stroke} opacity={0.35} />
+          <path d="M4.2 4.2 L12 11.3 L10.5 11.5 L10.3 13 Z" fill={stroke} opacity={0.25} />
+          <path d="M19.8 4.2 L13 10.3 L12.8 8.8 L11.3 8.6 Z" fill={stroke} opacity={0.25} />
+          <path d="M4.2 19.8 L11 13 L11.2 14.5 L12.7 14.7 Z" fill={stroke} opacity={0.25} />
+          <path d="M19.8 19.8 L13 13 L14.5 12.8 L14.7 11.3 Z" fill={stroke} opacity={0.25} />
+          <circle cx="12" cy="12" r="1.3" fill={stroke} />
+          <text x="12" y="0.5" textAnchor="middle" dominantBaseline="hanging" fontSize="4" fontWeight="700" fill={stroke}>
+            N
+          </text>
+        </svg>
+      </div>
+    );
+  }
+
+  // "circle" — a ringed badge with N/E/S/W around the edge and a simple needle.
+  return (
+    <div style={wrapperStyle}>
+      <svg width={size * 0.8} height={size * 0.8} viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10.5" fill="none" stroke={stroke} strokeWidth="0.6" opacity={0.4} />
+        <text x="12" y="3" textAnchor="middle" fontSize="4.2" fontWeight="700" fill={stroke}>
+          N
+        </text>
+        <text x="21" y="12.5" textAnchor="middle" fontSize="3.6" fill={stroke} opacity={0.6}>
+          E
+        </text>
+        <text x="12" y="22" textAnchor="middle" fontSize="3.6" fill={stroke} opacity={0.6}>
+          S
+        </text>
+        <text x="3" y="12.5" textAnchor="middle" fontSize="3.6" fill={stroke} opacity={0.6}>
+          W
+        </text>
+        <path d="M12 5.5 L13.6 12 L12 10.8 L10.4 12 Z" fill={accent} />
+        <path d="M12 18.5 L10.4 12 L12 13.2 L13.6 12 Z" fill={stroke} opacity={0.4} />
+      </svg>
+    </div>
+  );
+}
+
 function MapContainerRefCapture({ onReady }: { onReady: (el: HTMLElement) => void }) {
   const map = useMap();
   useEffect(() => {
@@ -577,27 +674,45 @@ function MapContainerRefCapture({ onReady }: { onReady: (el: HTMLElement) => voi
   return null;
 }
 
-/** Admin-only button, rendered as a child of MapContainer so it can read
- *  the live Leaflet instance via useMap() — this is how you actually
- *  capture "wherever the map is panned/zoomed to right now" rather than
- *  needing the admin to type in raw coordinates by hand. Persists directly
- *  via the API rather than going through the settings popover, since
- *  that's a separate component that doesn't have (and doesn't need) live
- *  map access itself. */
+/** Captures the live Leaflet instance itself (not just its DOM container)
+ *  up to the parent, so controls that need it — like the lock button below
+ *  — can be rendered outside MapContainer as ordinary siblings of the
+ *  other icon buttons, in the same fixed screen-coordinate space as all of
+ *  them, rather than nested inside Leaflet's own DOM tree. */
+function MapInstanceCapture({ onReady }: { onReady: (map: L.Map) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    onReady(map);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+  return null;
+}
+
+/** Admin-only button. Takes the live Leaflet instance as a prop (captured
+ *  by MapInstanceCapture below) rather than calling useMap() itself, so it
+ *  can render as a sibling of the other icon buttons outside MapContainer
+ *  — same fixed screen-coordinate space as all of them, not nested inside
+ *  Leaflet's own DOM tree where panning-related transforms on internal
+ *  panes could otherwise drift a naively-positioned child out of line with
+ *  everything else pinned to the corner. */
 function MapDefaultsLockButton({
+  map,
+  top,
   locked,
   onLock,
   onUnlock,
 }: {
+  map: L.Map | null;
+  top: number;
   locked: boolean;
   onLock: (pos: { lat: number; lng: number; zoom: number }) => void;
   onUnlock: () => void;
 }) {
-  const map = useMap();
   const [saving, setSaving] = useState(false);
   return (
     <button
       onClick={async () => {
+        if (!map) return;
         setSaving(true);
         try {
           if (locked) {
@@ -618,11 +733,11 @@ function MapDefaultsLockButton({
           setSaving(false);
         }
       }}
-      disabled={saving}
+      disabled={saving || !map}
       title={locked ? "Unlock — Mapping goes back to centering on the data" : "Lock this exact position as the default everyone starts with"}
       style={{
         position: "absolute",
-        bottom: 90,
+        top,
         right: 12,
         zIndex: 1000,
         width: 34,
@@ -634,7 +749,7 @@ function MapDefaultsLockButton({
         border: `1px solid ${locked ? "var(--signal)" : "var(--border)"}`,
         borderRadius: 8,
         boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
-        cursor: saving ? "default" : "pointer",
+        cursor: saving || !map ? "default" : "pointer",
         fontSize: 15,
       }}
     >
@@ -690,6 +805,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   const [showRoutesOverlays, setShowRoutesOverlays] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const mapContainerRef = useRef<HTMLElement | null>(null);
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingPng, setExportingPng] = useState(false);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
@@ -774,6 +890,10 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   const [showSearch, setShowSearch] = useState(false);
   const [showMapDefaults, setShowMapDefaults] = useState(false);
   const [showIncidentLog, setShowIncidentLog] = useState(false);
+  const [showMapAids, setShowMapAids] = useState(false);
+  const [scaleEnabled, setScaleEnabled] = useState(false);
+  const [compassEnabled, setCompassEnabled] = useState(false);
+  const [compassStyle, setCompassStyle] = useState<CompassStyle>("arrow");
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
   // Isolating one route OR one shape hides every other overlay and filters
@@ -1608,10 +1728,11 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
         zoomControl={false}
       >
         <ZoomControl position="bottomright" />
+        {scaleEnabled && <ScaleControl position="bottomleft" />}
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
-        {isAdmin && <MapDefaultsLockButton locked={!!lockedPosition} onLock={(pos) => setLockedPosition(pos)} onUnlock={() => setLockedPosition(null)} />}
+        <MapInstanceCapture onReady={setMapInstance} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
         {focusedShape && <FitBounds positions={shapeGeometryToPositions(focusedShape.geometry)} />}
 
@@ -1708,6 +1829,12 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
           ))
         )}
       </MapContainer>
+
+      {compassEnabled && (
+        <div style={{ position: "absolute", bottom: 40, left: 12, zIndex: 1000 }}>
+          <Compass style={compassStyle} />
+        </div>
+      )}
 
       {/* right-edge icon toggles — each panel/overlay only shows when asked for,
           rather than permanently taking up map space */}
@@ -1966,6 +2093,78 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
               {item.label}
             </button>
           ))}
+        </div>
+      )}
+      {isAdmin && (
+        <MapDefaultsLockButton
+          map={mapInstance}
+          top={306}
+          locked={!!lockedPosition}
+          onLock={(pos) => setLockedPosition(pos)}
+          onUnlock={() => setLockedPosition(null)}
+        />
+      )}
+      <IconToggleButton
+        active={showMapAids}
+        top={348}
+        title="Compass & Scale"
+        onClick={() => setShowMapAids((v) => !v)}
+        icon={
+          <>
+            <circle cx="12" cy="12" r="10" />
+            <path d="M16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88z" />
+          </>
+        }
+      />
+      {showMapAids && (
+        <div
+          style={{
+            position: "absolute",
+            top: 348,
+            right: 54,
+            zIndex: 1000,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: 12,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+            width: 240,
+            display: "flex",
+            flexDirection: "column",
+            gap: 12,
+          }}
+        >
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer" }}>
+            <input type="checkbox" checked={scaleEnabled} onChange={(e) => setScaleEnabled(e.target.checked)} />
+            Show scale line
+          </label>
+
+          <div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, cursor: "pointer", marginBottom: compassEnabled ? 10 : 0 }}>
+              <input type="checkbox" checked={compassEnabled} onChange={(e) => setCompassEnabled(e.target.checked)} />
+              Show compass
+            </label>
+            {compassEnabled && (
+              <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                {(["arrow", "rose4", "rose8", "circle"] as CompassStyle[]).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setCompassStyle(s)}
+                    title={s}
+                    style={{
+                      padding: 0,
+                      background: "transparent",
+                      border: `2px solid ${compassStyle === s ? "var(--signal)" : "transparent"}`,
+                      borderRadius: "50%",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <Compass style={s} size={40} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
       {showExport && (
