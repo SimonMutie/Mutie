@@ -166,8 +166,7 @@ incidentsRouter.post("/bulk", async (c) => {
 const MAX_LIST_LIMIT = 250000; // effectively uncapped for any realistic dataset size here — was 5000, which silently truncated real exports
 
 incidentsRouter.get("/", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
+  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
 
   const country = c.req.query("country");
   const province = c.req.query("province");
@@ -181,9 +180,9 @@ incidentsRouter.get("/", async (c) => {
 
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (!isAdmin) {
+  if (scopeOwnerId) {
     conditions.push("owner_id = ?");
-    params.push(ownerId);
+    params.push(scopeOwnerId);
   }
   if (country) {
     conditions.push("country = ?");
@@ -232,10 +231,9 @@ incidentsRouter.get("/", async (c) => {
 /** Distinct values for each filterable field, so the frontend can populate filter
  *  dropdowns from real data rather than a hardcoded guess at what values exist. */
 incidentsRouter.get("/filters", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const ownerClause = isAdmin ? "" : "WHERE owner_id = ?";
-  const ownerParams = isAdmin ? [] : [ownerId];
+  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
+  const ownerClause = scopeOwnerId ? "WHERE owner_id = ?" : "";
+  const ownerParams = scopeOwnerId ? [scopeOwnerId] : [];
 
   const fields = ["country", "province", "sector", "actor", "tactic", "severity"] as const;
   const results: Record<string, string[]> = {};
@@ -280,6 +278,28 @@ export type PivotableField = (typeof PIVOTABLE_FIELDS)[number];
  *  by hand in each one is exactly how they'd quietly drift apart over time.
  *  `andClause` is for queries that already have their own WHERE (e.g.
  *  `sector IS NOT NULL`); `whereClause` is for ones that don't. */
+/** The "ownerId" to scope a READ query by — null means "see everything",
+ *  same convention as the existing isAdmin checks throughout this file.
+ *  Used ONLY by this file's GET endpoints (list, stats, breakdown,
+ *  crosstab, uploads) — never by anything that writes or deletes. A client
+ *  granted visibility into the shared incidents pool must still only be
+ *  able to edit or delete their *own* incidents; conflating "can view
+ *  everything" with "can modify everything" here would be a genuine
+ *  access-control bug, not just a UX inconsistency, so this is
+ *  deliberately not a drop-in replacement for every isAdmin check in this
+ *  file — only the read ones. */
+export async function effectiveReadScope(db: D1Database, role: string, userId: string): Promise<string | null> {
+  if (role === "admin") return null;
+  const row = await first<{ client_id: string | null; can_view_all_incidents: number | null }>(
+    db,
+    `SELECT u.client_id AS client_id, c.can_view_all_incidents AS can_view_all_incidents
+     FROM users u LEFT JOIN clients c ON u.client_id = c.id
+     WHERE u.id = ?`,
+    [userId]
+  );
+  return row?.client_id && row.can_view_all_incidents ? null : userId;
+}
+
 export function buildScopeClause(ownerId: string | null, dateFrom?: string, dateTo?: string): { whereClause: string; andClause: string; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -351,35 +371,32 @@ export async function fetchIncidentsCrosstab(
 }
 
 incidentsRouter.get("/breakdown", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const field = c.req.query("field");
   if (!isPivotable(field)) {
     return c.json({ error: "field must be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
-  return c.json(await fetchIncidentsBreakdown(c.env.DB, isAdmin ? null : ownerId, field, c.req.query("from"), c.req.query("to")));
+  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
+  return c.json(await fetchIncidentsBreakdown(c.env.DB, scopeOwnerId, field, c.req.query("from"), c.req.query("to")));
 });
 
 /** Genuine joint counts for any two of the pivotable fields — the general
  *  version of the one-off actor×tactic cross-tab already computed for
  *  Sankey/network widgets, now usable for any pair a chart actually needs. */
 incidentsRouter.get("/crosstab", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const primary = c.req.query("primary");
   const secondary = c.req.query("secondary");
   if (!isPivotable(primary) || !isPivotable(secondary)) {
     return c.json({ error: "primary and secondary must each be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
-  return c.json(await fetchIncidentsCrosstab(c.env.DB, isAdmin ? null : ownerId, primary, secondary, c.req.query("from"), c.req.query("to")));
+  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
+  return c.json(await fetchIncidentsCrosstab(c.env.DB, scopeOwnerId, primary, secondary, c.req.query("from"), c.req.query("to")));
 });
 
 incidentsRouter.get("/stats", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const dateFrom = c.req.query("from");
   const dateTo = c.req.query("to");
-  const { whereClause, andClause, params: scopeParams } = buildScopeClause(isAdmin ? null : ownerId, dateFrom, dateTo);
+  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, dateFrom, dateTo);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
@@ -622,11 +639,10 @@ incidentsRouter.patch("/:id", async (c) => {
  *  can see and delete a whole file in one click, regardless of how many rows
  *  it contained or how many chunk calls it took to insert. */
 incidentsRouter.get("/uploads", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
-  const rows = isAdmin
-    ? await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`)
-    : await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id = ? ORDER BY created_at DESC`, [ownerId]);
+  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
+  const rows = scopeOwnerId
+    ? await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id = ? ORDER BY created_at DESC`, [scopeOwnerId])
+    : await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`);
   return c.json(rows);
 });
 
