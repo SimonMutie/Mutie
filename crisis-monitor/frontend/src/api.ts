@@ -282,7 +282,8 @@ export type WidgetType =
   | "network"
   | "bubble"
   | "globe"
-  | "heatmap_table";
+  | "heatmap_table"
+  | "bullet";
 
 /** Bar/line charts only — one of the pivotable columns the /crosstab
  *  endpoint accepts, matching the backend's PIVOTABLE_FIELDS allowlist
@@ -385,6 +386,13 @@ export interface DashboardWidget {
    *  apply; bar/pie/funnel/choropleth's labels are positioned by recharts
    *  or the projection library respectively, not free-form. */
   labelOffsets?: Record<string, { dx: number; dy: number }>;
+  /** Bullet chart only — the actual value comes from dataField (same
+   *  total/deaths/injuries/kidnappings_ngo or dataset-sum mechanism as a
+   *  stat widget), but the warning/critical/target markers are judgment
+   *  calls an analyst sets, not anything derivable from the data itself. */
+  bulletWarningThreshold?: number;
+  bulletCriticalThreshold?: number;
+  bulletTarget?: number;
   /** Choropleth/globe only — bypasses Incidents and any dataset entirely:
    *  values you type in yourself, per country, with an optional specific
    *  color per entry (rather than one base color varying only by intensity).
