@@ -109,12 +109,36 @@ function rowToDashboard(row: Record<string, unknown>) {
   return { ...row, widgets: JSON.parse(String(row.widgets ?? "[]")), is_public: !!row.is_public, is_auto: !!row.is_auto, locked: !!row.locked };
 }
 
+/** Which dashboard ids the caller's client organization has been explicitly
+ *  granted access to — empty for the platform admin (who already sees
+ *  everything via the isAdmin branches below) and for any caller not part
+ *  of a client org. Read-only visibility only, same principle as
+ *  effectiveReadScope in incidents.ts: being granted access to view a
+ *  shared dashboard never implies any right to edit or delete it — those
+ *  endpoints below are untouched by this and still check ownership alone. */
+async function grantedDashboardIds(db: D1Database, userId: string): Promise<string[]> {
+  const user = await first<{ client_id: string | null }>(db, `SELECT client_id FROM users WHERE id = ?`, [userId]);
+  if (!user?.client_id) return [];
+  const rows = await all<{ dashboard_id: string }>(db, `SELECT dashboard_id FROM client_dashboard_access WHERE client_id = ?`, [user.client_id]);
+  return rows.map((r) => r.dashboard_id);
+}
+
 customDashboardsRouter.get("/", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
-  const rows = isAdmin
-    ? await all(c.env.DB, `SELECT * FROM custom_dashboards ORDER BY updated_at DESC`)
-    : await all(c.env.DB, `SELECT * FROM custom_dashboards WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
+  if (isAdmin) {
+    const rows = await all(c.env.DB, `SELECT * FROM custom_dashboards ORDER BY updated_at DESC`);
+    return c.json(rows.map(rowToDashboard));
+  }
+  const granted = await grantedDashboardIds(c.env.DB, ownerId);
+  const rows =
+    granted.length > 0
+      ? await all(
+          c.env.DB,
+          `SELECT * FROM custom_dashboards WHERE owner_id = ? OR id IN (${granted.map(() => "?").join(",")}) ORDER BY updated_at DESC`,
+          [ownerId, ...granted]
+        )
+      : await all(c.env.DB, `SELECT * FROM custom_dashboards WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
   return c.json(rows.map(rowToDashboard));
 });
 
@@ -178,7 +202,10 @@ customDashboardsRouter.get("/:id", async (c) => {
   const ownerId = c.get("userId");
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [c.req.param("id")]);
   if (!row) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && row.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && row.owner_id !== ownerId) {
+    const granted = await grantedDashboardIds(c.env.DB, ownerId);
+    if (!granted.includes(c.req.param("id"))) return c.json({ error: "Not found" }, 404);
+  }
   return c.json(rowToDashboard(row));
 });
 
