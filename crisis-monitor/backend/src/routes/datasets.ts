@@ -4,6 +4,7 @@ import { all, first, batchRun, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
+import { teamOwnerIds } from "./incidents";
 
 export const datasetsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 datasetsRouter.use("*", requireAuth);
@@ -148,11 +149,16 @@ async function grantedDatasetIds(db: D1Database, userId: string): Promise<string
 }
 
 /** True if the caller may READ this dataset (metadata, breakdown, crosstab,
- *  summary, daily) — owns it, is the platform admin, or their client has
- *  been explicitly granted access to it. */
+ *  summary, daily) — owns it (or a teammate under the same client does —
+ *  see teamOwnerIds in incidents.ts), is the platform admin, or their
+ *  client has been explicitly granted access to it. */
 async function canReadDataset(db: D1Database, role: string, userId: string, dataset: { owner_id: string | null }, datasetId: string): Promise<boolean> {
   if (role === "admin") return true;
   if (dataset.owner_id === userId) return true;
+  if (dataset.owner_id) {
+    const team = await teamOwnerIds(db, userId);
+    if (team.includes(dataset.owner_id)) return true;
+  }
   const granted = await grantedDatasetIds(db, userId);
   return granted.includes(datasetId);
 }
@@ -164,11 +170,13 @@ datasetsRouter.get("/", async (c) => {
     const rows = await all(c.env.DB, `SELECT * FROM datasets ORDER BY updated_at DESC`);
     return c.json(rows.map(rowToDataset));
   }
+  const team = await teamOwnerIds(c.env.DB, ownerId);
   const granted = await grantedDatasetIds(c.env.DB, ownerId);
+  const teamPlaceholders = team.map(() => "?").join(",");
   const rows =
     granted.length > 0
-      ? await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id = ? OR id IN (${granted.map(() => "?").join(",")}) ORDER BY updated_at DESC`, [ownerId, ...granted])
-      : await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
+      ? await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id IN (${teamPlaceholders}) OR id IN (${granted.map(() => "?").join(",")}) ORDER BY updated_at DESC`, [...team, ...granted])
+      : await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id IN (${teamPlaceholders}) ORDER BY updated_at DESC`, team);
   return c.json(rows.map(rowToDataset));
 });
 
@@ -250,7 +258,17 @@ datasetsRouter.get("/:id/rows", async (c) => {
   const datasetId = c.req.param("id");
   const dataset = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM datasets WHERE id = ?`, [datasetId]);
   if (!dataset) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && dataset.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && dataset.owner_id !== ownerId) {
+    // Teammates (same client) can view each other's raw rows — that's core
+    // shared-team-workspace behavior. Deliberately NOT extended to
+    // externally-granted datasets here, unlike canReadDataset elsewhere in
+    // this file: being granted chart-level access to another client's
+    // dataset is a much narrower thing than being able to browse or edit
+    // its individual rows, and conflating the two would hand out more than
+    // was actually granted.
+    const team = dataset.owner_id ? await teamOwnerIds(c.env.DB, ownerId) : [];
+    if (!dataset.owner_id || !team.includes(dataset.owner_id)) return c.json({ error: "Not found" }, 404);
+  }
 
   const offset = Math.max(0, Number(c.req.query("offset") ?? 0) || 0);
   const limit = Math.min(MAX_ROWS_PAGE, Math.max(1, Number(c.req.query("limit") ?? 50) || 50));
