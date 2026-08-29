@@ -17,7 +17,7 @@ export default function AdminPanel({ user, onBack }: Props) {
   // detail view, with the "delete this client" / "change its limits"
   // controls hidden there (see ClientDetail below), keeps this reachable
   // for them at all without exposing platform-level decisions that should
-  // stay with whoever's actually running GlobaLens for every client, not
+  // stay with whoever's actually running The Lens for every client, not
   // any one client's own team lead.
   if (!isPlatformAdmin && user.client_id) {
     return <ClientDetail clientId={user.client_id} isPlatformAdmin={false} onBack={onBack} onClientChanged={() => {}} />;
