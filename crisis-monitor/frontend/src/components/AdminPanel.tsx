@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type ClientOrg, type AuthUser } from "../api";
+import { api, type ClientOrg, type ClientSharedItem, type AuthUser } from "../api";
 
 interface Props {
   user: AuthUser;
@@ -333,6 +333,62 @@ function ClientDetail({
           </button>
         )}
       </div>
+
+      {isPlatformAdmin && (
+        <>
+          <div className="eyebrow" style={{ marginTop: 28, marginBottom: 10 }}>
+            DATA ACCESS
+          </div>
+          <label
+            className="panel"
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
+          >
+            <input
+              type="checkbox"
+              checked={client.can_view_all_incidents}
+              onChange={async () => {
+                setError(null);
+                try {
+                  await api.updateClient(clientId, { can_view_all_incidents: !client.can_view_all_incidents });
+                  await load();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
+                }
+              }}
+            />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>See the full shared incidents pool</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                View-only — this client's accounts still can't edit or delete anyone else's incidents, only their own.
+              </div>
+            </div>
+          </label>
+
+          <SharedItemsSection
+            title="SHARED DASHBOARDS"
+            clientId={clientId}
+            listGranted={api.listClientDashboards}
+            listAvailable={async () => (await api.getCustomDashboards()).filter((d) => !d.is_auto).map((d) => ({ id: d.id, name: d.name }))}
+            grant={api.grantClientDashboard}
+            revoke={api.revokeClientDashboard}
+            idKey="dashboard_id"
+            emptyLabel="No dashboards shared with this client yet."
+            pickerLabel="Share a dashboard…"
+          />
+
+          <SharedItemsSection
+            title="SHARED DATASETS"
+            clientId={clientId}
+            listGranted={api.listClientDatasets}
+            listAvailable={async () => (await api.getDatasets()).map((d) => ({ id: d.id, name: d.name }))}
+            grant={api.grantClientDataset}
+            revoke={api.revokeClientDataset}
+            idKey="dataset_id"
+            emptyLabel="No datasets shared with this client yet."
+            pickerLabel="Share a dataset…"
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -371,6 +427,128 @@ function EditClientLimits({ client, onSaved, onClose }: { client: ClientOrg; onS
         {saving ? "Saving…" : "Save"}
       </button>
       {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>{error}</div>}
+    </div>
+  );
+}
+
+/** Reusable for both dashboards and datasets — same shape of "here's what's
+ *  already shared, here's a picker of everything else you own that isn't
+ *  shared yet" for either kind of item. */
+function SharedItemsSection({
+  title,
+  clientId,
+  listGranted,
+  listAvailable,
+  grant,
+  revoke,
+  idKey,
+  emptyLabel,
+  pickerLabel,
+}: {
+  title: string;
+  clientId: string;
+  listGranted: (clientId: string) => Promise<ClientSharedItem[]>;
+  listAvailable: () => Promise<{ id: string; name: string }[]>;
+  grant: (clientId: string, itemId: string) => Promise<{ ok: boolean }>;
+  revoke: (clientId: string, itemId: string) => Promise<void>;
+  idKey: "dashboard_id" | "dataset_id";
+  emptyLabel: string;
+  pickerLabel: string;
+}) {
+  const [granted, setGranted] = useState<ClientSharedItem[]>([]);
+  const [available, setAvailable] = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selecting, setSelecting] = useState(false);
+  const [selectedId, setSelectedId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    const [g, a] = await Promise.all([listGranted(clientId), listAvailable()]);
+    setGranted(g);
+    setAvailable(a);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  const grantedIds = new Set(granted.map((g) => g[idKey]));
+  const pickableItems = available.filter((a) => !grantedIds.has(a.id));
+
+  async function handleGrant() {
+    if (!selectedId) return;
+    setError(null);
+    try {
+      await grant(clientId, selectedId);
+      setSelectedId("");
+      setSelecting(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't share that.");
+    }
+  }
+
+  async function handleRevoke(itemId: string) {
+    setError(null);
+    try {
+      await revoke(clientId, itemId);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove that.");
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div className="eyebrow" style={{ marginBottom: 8 }}>
+        {title}
+      </div>
+      {error && <div style={{ color: "var(--critical)", fontSize: 12, marginBottom: 8 }}>{error}</div>}
+      {loading ? (
+        <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Loading…</div>
+      ) : (
+        <>
+          {granted.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: "var(--text-faint)", marginBottom: 8 }}>{emptyLabel}</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+              {granted.map((item) => (
+                <div key={item[idKey] ?? item.name} className="panel" style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px" }}>
+                  <div style={{ flex: 1, fontSize: 13 }}>{item.name}</div>
+                  <button onClick={() => handleRevoke(item[idKey]!)} style={dangerBtnStyle}>
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {selecting ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} style={inputStyle}>
+                <option value="">Choose…</option>
+                {pickableItems.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+              <button onClick={handleGrant} disabled={!selectedId} style={primaryBtnStyle}>
+                Share
+              </button>
+              <button onClick={() => setSelecting(false)} style={backBtnStyle}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button onClick={() => setSelecting(true)} disabled={pickableItems.length === 0} title={pickableItems.length === 0 ? "Nothing left to share" : undefined} style={backBtnStyle}>
+              {pickerLabel}
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }
