@@ -55,6 +55,12 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           </h1>
           <span className="eyebrow" style={{ fontSize: 9.5, lineHeight: 1.2 }}>CRISIS MONITORING</span>
         </div>
+        {user.client_logo && (
+          <>
+            <div style={{ width: 1, height: 26, background: "var(--border-soft)" }} />
+            <img src={user.client_logo} alt="" style={{ width: 26, height: 26, objectFit: "contain", borderRadius: 4 }} />
+          </>
+        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
