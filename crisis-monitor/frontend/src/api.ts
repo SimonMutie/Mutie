@@ -22,7 +22,20 @@ export interface AuthUser {
   username: string;
   display_name: string | null;
   role: UserRole;
+  /** Which client organization this login belongs to — null for the
+   *  platform admin and any standalone login not part of a client org. */
+  client_id: string | null;
+  /** Whether this login can manage its own client's other logins. */
+  is_client_admin: boolean;
   created_at?: string;
+}
+
+export interface ClientOrg {
+  id: string;
+  name: string;
+  max_accounts: number;
+  account_count: number;
+  created_at: string;
 }
 
 export interface EventItem {
@@ -491,6 +504,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ username, password, display_name, role }),
     }),
+
+  listClients: () => req<ClientOrg[]>("/api/clients"),
+  getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
+  createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string }) =>
+    req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
+  updateClient: (id: string, data: { name?: string; max_accounts?: number }) =>
+    req<{ id: string; name: string; max_accounts: number }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
+  listClientAccounts: (clientId: string) => req<AuthUser[]>(`/api/clients/${clientId}/accounts`),
+  createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string }) =>
+    req<AuthUser>(`/api/clients/${clientId}/accounts`, { method: "POST", body: JSON.stringify(data) }),
+  updateClientAccount: (clientId: string, userId: string, data: { is_client_admin?: boolean; display_name?: string }) =>
+    req<AuthUser>(`/api/clients/${clientId}/accounts/${userId}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteClientAccount: (clientId: string, userId: string) => req<void>(`/api/clients/${clientId}/accounts/${userId}`, { method: "DELETE" }),
 
   getEvents: (params: { limit?: number; source_type?: string; query_id?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
