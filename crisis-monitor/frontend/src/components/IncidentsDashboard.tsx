@@ -7,9 +7,8 @@ import IncidentManualEntry from "./IncidentManualEntry";
 import IncidentManageTable from "./IncidentManageTable";
 import CustomDashboardBuilder from "./CustomDashboardBuilder";
 import DashboardEditor from "./DashboardEditor";
-import MapDefaultsPanel from "./MapDefaultsPanel";
 
-type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage" | "mapdefaults";
+type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage";
 type DashboardMode = "auto" | "bespoke";
 
 export default function IncidentsDashboard({ user }: { user: AuthUser }) {
@@ -51,11 +50,6 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
         <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
           Mapping
         </button>
-        {user.role === "admin" && (
-          <button onClick={() => setTab("mapdefaults")} style={tabBtnStyle(tab === "mapdefaults")} title="What everyone sees by default when they open Mapping">
-            Map Defaults
-          </button>
-        )}
 
         <div ref={logMenuRef} style={{ position: "relative" }}>
           <button onClick={() => setLogMenuOpen((v) => !v)} style={tabBtnStyle(isLogTabActive)}>
@@ -118,12 +112,6 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
       {tab === "map" && (
         <div style={{ flex: 1, minHeight: 0 }}>
           <IncidentsMap incidents={[]} isAdmin={user.role === "admin"} />
-        </div>
-      )}
-
-      {tab === "mapdefaults" && user.role === "admin" && (
-        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          <MapDefaultsPanel />
         </div>
       )}
 
