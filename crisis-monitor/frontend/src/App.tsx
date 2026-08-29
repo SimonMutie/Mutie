@@ -136,7 +136,7 @@ export default function App() {
 
       {view === "settings" && <SettingsPanel onBack={() => setView("list")} />}
 
-      {view === "incidents" && <IncidentsDashboard />}
+      {view === "incidents" && <IncidentsDashboard user={user} />}
 
       {view === "datasets" && <DatasetsPanel />}
 
