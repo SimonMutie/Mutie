@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
-import { api, type IncidentRow } from "../api";
+import { api, ApiError, type IncidentRow } from "../api";
 
 interface Props {
   onUploaded: () => void;
@@ -179,9 +179,16 @@ export default function IncidentUpload({ onUploaded }: Props) {
         return result.inserted;
       } catch (err) {
         lastError = err;
-        if (attempt < maxAttempts) {
-          await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
-        }
+        // A 4xx here means the server understood the request and rejected
+        // it on purpose (e.g. rows outside a country-restricted account's
+        // allowed countries) — retrying won't change that outcome, it just
+        // delays showing the actual reason by a few seconds for nothing.
+        // Only genuinely transient failures (network drop, 5xx, timeout)
+        // are worth retrying.
+        const status = err instanceof ApiError ? err.status : undefined;
+        const isClientError = typeof status === "number" && status >= 400 && status < 500;
+        if (isClientError || attempt >= maxAttempts) break;
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
       }
     }
     throw lastError;
