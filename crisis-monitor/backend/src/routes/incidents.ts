@@ -180,9 +180,9 @@ incidentsRouter.get("/", async (c) => {
 
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (scopeOwnerId) {
-    conditions.push("owner_id = ?");
-    params.push(scopeOwnerId);
+  if (scopeOwnerId && scopeOwnerId.length > 0) {
+    conditions.push(`owner_id IN (${scopeOwnerId.map(() => "?").join(",")})`);
+    params.push(...scopeOwnerId);
   }
   if (country) {
     conditions.push("country = ?");
@@ -232,8 +232,8 @@ incidentsRouter.get("/", async (c) => {
  *  dropdowns from real data rather than a hardcoded guess at what values exist. */
 incidentsRouter.get("/filters", async (c) => {
   const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
-  const ownerClause = scopeOwnerId ? "WHERE owner_id = ?" : "";
-  const ownerParams = scopeOwnerId ? [scopeOwnerId] : [];
+  const ownerClause = scopeOwnerId && scopeOwnerId.length > 0 ? `WHERE owner_id IN (${scopeOwnerId.map(() => "?").join(",")})` : "";
+  const ownerParams = scopeOwnerId ?? [];
 
   const fields = ["country", "province", "sector", "actor", "tactic", "severity"] as const;
   const results: Record<string, string[]> = {};
@@ -278,17 +278,32 @@ export type PivotableField = (typeof PIVOTABLE_FIELDS)[number];
  *  by hand in each one is exactly how they'd quietly drift apart over time.
  *  `andClause` is for queries that already have their own WHERE (e.g.
  *  `sector IS NOT NULL`); `whereClause` is for ones that don't. */
-/** The "ownerId" to scope a READ query by — null means "see everything",
- *  same convention as the existing isAdmin checks throughout this file.
- *  Used ONLY by this file's GET endpoints (list, stats, breakdown,
- *  crosstab, uploads) — never by anything that writes or deletes. A client
- *  granted visibility into the shared incidents pool must still only be
- *  able to edit or delete their *own* incidents; conflating "can view
- *  everything" with "can modify everything" here would be a genuine
- *  access-control bug, not just a UX inconsistency, so this is
- *  deliberately not a drop-in replacement for every isAdmin check in this
- *  file — only the read ones. */
-export async function effectiveReadScope(db: D1Database, role: string, userId: string): Promise<string | null> {
+/** Every owner_id whose data the caller should see as "their own" — their
+ *  own login, plus any teammates sharing the same client organization. A
+ *  client with 3 logins is meant to work as one shared team, not 3 people
+ *  silently siloed from each other's uploads; without this, "each client
+ *  sees the data they've uploaded" would only be true for a client with
+ *  exactly one login. Standalone accounts (no client_id) just get their
+ *  own single id back, unchanged from the original single-owner behavior. */
+export async function teamOwnerIds(db: D1Database, userId: string): Promise<string[]> {
+  const caller = await first<{ client_id: string | null }>(db, `SELECT client_id FROM users WHERE id = ?`, [userId]);
+  if (!caller?.client_id) return [userId];
+  const teammates = await all<{ id: string }>(db, `SELECT id FROM users WHERE client_id = ?`, [caller.client_id]);
+  return teammates.map((t) => t.id);
+}
+
+/** The owner_ids to scope a READ query by — null means "see everything",
+ *  same convention as the existing isAdmin checks throughout this file; an
+ *  array means "any of these" (see teamOwnerIds above). Used ONLY by this
+ *  file's GET endpoints (list, stats, breakdown, crosstab, uploads) — never
+ *  by anything that writes or deletes. A client granted visibility into the
+ *  shared incidents pool, or into their own teammates' uploads, must still
+ *  only be able to edit or delete their *own* individual incidents;
+ *  conflating "can view" with "can modify" here would be a genuine
+ *  access-control bug, not just a UX inconsistency, so this is deliberately
+ *  not a drop-in replacement for every isAdmin/ownerId check in this file —
+ *  only the read ones. */
+export async function effectiveReadScope(db: D1Database, role: string, userId: string): Promise<string[] | null> {
   if (role === "admin") return null;
   const row = await first<{ client_id: string | null; can_view_all_incidents: number | null }>(
     db,
@@ -297,15 +312,16 @@ export async function effectiveReadScope(db: D1Database, role: string, userId: s
      WHERE u.id = ?`,
     [userId]
   );
-  return row?.client_id && row.can_view_all_incidents ? null : userId;
+  if (row?.client_id && row.can_view_all_incidents) return null;
+  return teamOwnerIds(db, userId);
 }
 
-export function buildScopeClause(ownerId: string | null, dateFrom?: string, dateTo?: string): { whereClause: string; andClause: string; params: unknown[] } {
+export function buildScopeClause(ownerIds: string[] | null, dateFrom?: string, dateTo?: string): { whereClause: string; andClause: string; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
-  if (ownerId) {
-    conditions.push("owner_id = ?");
-    params.push(ownerId);
+  if (ownerIds && ownerIds.length > 0) {
+    conditions.push(`owner_id IN (${ownerIds.map(() => "?").join(",")})`);
+    params.push(...ownerIds);
   }
   if (dateFrom) {
     conditions.push("occurred_at >= ?");
@@ -338,9 +354,9 @@ export function isPivotable(v: string | undefined): v is PivotableField {
  *  anonymous viewer's, since there isn't one). Exported so that route and
  *  the authed /breakdown endpoint below share one query path instead of two
  *  that could quietly drift apart. */
-export async function fetchIncidentsBreakdown(db: D1Database, ownerId: string | null, field: string | undefined, dateFrom?: string, dateTo?: string): Promise<{ value: string; count: number }[]> {
+export async function fetchIncidentsBreakdown(db: D1Database, ownerIds: string[] | null, field: string | undefined, dateFrom?: string, dateTo?: string): Promise<{ value: string; count: number }[]> {
   if (!isPivotable(field)) return [];
-  const { andClause, params } = buildScopeClause(ownerId, dateFrom, dateTo);
+  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo);
   return all<{ value: string; count: number }>(
     db,
     `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andClause} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
@@ -350,14 +366,14 @@ export async function fetchIncidentsBreakdown(db: D1Database, ownerId: string | 
 
 export async function fetchIncidentsCrosstab(
   db: D1Database,
-  ownerId: string | null,
+  ownerIds: string[] | null,
   primary: string | undefined,
   secondary: string | undefined,
   dateFrom?: string,
   dateTo?: string
 ): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
   if (!isPivotable(primary) || !isPivotable(secondary)) return [];
-  const { andClause, params } = buildScopeClause(ownerId, dateFrom, dateTo);
+  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo);
   return all<{ primary_value: string; secondary_value: string; count: number }>(
     db,
     `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
@@ -640,9 +656,10 @@ incidentsRouter.patch("/:id", async (c) => {
  *  it contained or how many chunk calls it took to insert. */
 incidentsRouter.get("/uploads", async (c) => {
   const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
-  const rows = scopeOwnerId
-    ? await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id = ? ORDER BY created_at DESC`, [scopeOwnerId])
-    : await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`);
+  const rows =
+    scopeOwnerId && scopeOwnerId.length > 0
+      ? await all(c.env.DB, `SELECT * FROM incident_uploads WHERE owner_id IN (${scopeOwnerId.map(() => "?").join(",")}) ORDER BY created_at DESC`, scopeOwnerId)
+      : await all(c.env.DB, `SELECT * FROM incident_uploads ORDER BY created_at DESC`);
   return c.json(rows);
 });
 
