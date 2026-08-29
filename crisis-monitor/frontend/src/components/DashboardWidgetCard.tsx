@@ -449,6 +449,17 @@ export default function DashboardWidgetCard({
   // should look clickable in the first place).
   const crossFilterField: PivotableField | undefined = !widget.datasetId ? DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField] : undefined;
   const handleCrossFilterClick = crossFilterField && onCrossFilter ? (value: string) => onCrossFilter(crossFilterField, value) : undefined;
+  // For two-field crosstab widgets (network, sankey) — a click on the
+  // secondary side filters by the secondary field instead of the primary
+  // one. Only valid for Incidents-sourced widgets whose secondaryField is
+  // genuinely one of the real categorical columns, not a dataset's own
+  // column name (PivotableField | string covers both).
+  const secondaryCrossFilterField: PivotableField | undefined =
+    !widget.datasetId && widget.secondaryField && (PIVOTABLE_FIELD_OPTIONS as string[]).includes(widget.secondaryField)
+      ? (widget.secondaryField as PivotableField)
+      : undefined;
+  const handleSecondaryCrossFilterClick =
+    secondaryCrossFilterField && onCrossFilter ? (value: string) => onCrossFilter(secondaryCrossFilterField, value) : undefined;
 
   // A pivoted, two-variable breakdown only kicks in when the widget actually
   // has a secondaryField set and the matching crosstab data has arrived —
@@ -665,7 +676,35 @@ export default function DashboardWidgetCard({
               <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
-              <Line type="monotone" dataKey="count" name={fieldLabel(widget.dataField)} stroke={color} strokeWidth={2} dot={false} />
+              <Line
+                type="monotone"
+                dataKey="count"
+                name={fieldLabel(widget.dataField)}
+                stroke={color}
+                strokeWidth={2}
+                dot={
+                  handleCrossFilterClick
+                    ? (dotProps: { cx: number; cy: number; payload: { value: string } }) => {
+                        const isSelected = activeCrossFilters?.[crossFilterField!] === dotProps.payload.value;
+                        const isFiltered = activeCrossFilters?.[crossFilterField!] !== undefined;
+                        return (
+                          <circle
+                            key={dotProps.payload.value}
+                            cx={dotProps.cx}
+                            cy={dotProps.cy}
+                            r={isSelected ? 5 : 3}
+                            fill={color}
+                            fillOpacity={isFiltered && !isSelected ? 0.35 : 1}
+                            stroke={isSelected ? "var(--text-primary)" : "none"}
+                            strokeWidth={1.5}
+                            onClick={() => handleCrossFilterClick(dotProps.payload.value)}
+                            cursor="pointer"
+                          />
+                        );
+                      }
+                    : false
+                }
+              />
             </LineChart>
           </ResponsiveContainer>
         )}
@@ -704,7 +743,31 @@ export default function DashboardWidgetCard({
               <PolarGrid stroke="var(--border-soft)" />
               <PolarAngleAxis dataKey="value" tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
               <PolarRadiusAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} allowDecimals={false} />
-              <Radar name={fieldLabel(widget.dataField)} dataKey="count" stroke={color} fill={color} fillOpacity={0.35} />
+              <Radar
+                name={fieldLabel(widget.dataField)}
+                dataKey="count"
+                stroke={color}
+                fill={color}
+                fillOpacity={0.35}
+                dot={(dotProps: { cx: number; cy: number; payload: { value: string } }) => {
+                  const isSelected = crossFilterField && activeCrossFilters?.[crossFilterField] === dotProps.payload.value;
+                  const isFiltered = crossFilterField && activeCrossFilters?.[crossFilterField] !== undefined;
+                  return (
+                    <circle
+                      key={dotProps.payload.value}
+                      cx={dotProps.cx}
+                      cy={dotProps.cy}
+                      r={isSelected ? 5 : 3.5}
+                      fill={color}
+                      fillOpacity={isFiltered && !isSelected ? 0.35 : 1}
+                      stroke={isSelected ? "var(--text-primary)" : "none"}
+                      strokeWidth={1.5}
+                      onClick={handleCrossFilterClick ? () => handleCrossFilterClick(dotProps.payload.value) : undefined}
+                      cursor={handleCrossFilterClick ? "pointer" : undefined}
+                    />
+                  );
+                }}
+              />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
             </RadarChart>
@@ -754,6 +817,8 @@ export default function DashboardWidgetCard({
             showLabels={widget.showDataLabels}
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
+            selectedValue={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
+            onSelect={handleCrossFilterClick}
           />
         )}
 
@@ -785,6 +850,10 @@ export default function DashboardWidgetCard({
             fontSize={widget.labelFontSize}
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
+            selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
+            selectedSecondary={secondaryCrossFilterField ? activeCrossFilters?.[secondaryCrossFilterField] : undefined}
+            onSelectPrimary={handleCrossFilterClick}
+            onSelectSecondary={handleSecondaryCrossFilterClick}
           />
         )}
 
@@ -797,6 +866,10 @@ export default function DashboardWidgetCard({
             fontSize={widget.labelFontSize}
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
+            selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
+            selectedSecondary={secondaryCrossFilterField ? activeCrossFilters?.[secondaryCrossFilterField] : undefined}
+            onSelectPrimary={handleCrossFilterClick}
+            onSelectSecondary={handleSecondaryCrossFilterClick}
           />
         )}
 
@@ -809,6 +882,8 @@ export default function DashboardWidgetCard({
             fontSize={widget.labelFontSize}
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
+            selectedValue={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
+            onSelect={handleCrossFilterClick}
           />
         )}
 
@@ -1368,6 +1443,8 @@ function ChoroplethMap({
   showLabels,
   fontFamily,
   fontSize,
+  selectedValue,
+  onSelect,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
@@ -1376,17 +1453,30 @@ function ChoroplethMap({
   showLabels?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  selectedValue?: string;
+  onSelect?: (value: string) => void;
 }) {
   const usingManualData = !!manualData;
   const countByName = new Map<string, number>();
   const colorByName = new Map<string, string>();
+  // What to actually send as the filter value when a region is clicked —
+  // the backend matches category filters case-sensitively (unlike the
+  // client's own country-restriction check, which is deliberately
+  // case-insensitive), so this needs to be the value exactly as it's
+  // stored in the incidents data, not the map topology's own casing for
+  // the same place name, which can easily differ.
+  const originalCaseByName = new Map<string, string>();
   if (usingManualData) {
     for (const d of manualData!) {
       countByName.set(d.country.trim().toLowerCase(), d.value);
       if (d.color) colorByName.set(d.country.trim().toLowerCase(), d.color);
     }
   } else {
-    for (const s of series) countByName.set(s.value.trim().toLowerCase(), s.count);
+    for (const s of series) {
+      const key = s.value.trim().toLowerCase();
+      countByName.set(key, s.count);
+      originalCaseByName.set(key, s.value);
+    }
   }
   const maxCount = Math.max(1, ...Array.from(countByName.values()));
   const topologyUrl = field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
@@ -1403,14 +1493,24 @@ function ChoroplethMap({
                 const count = key ? countByName.get(key) : undefined;
                 const explicitColor = key ? colorByName.get(key) : undefined;
                 const intensity = count ? Math.max(0.18, count / maxCount) : 0;
+                const originalCaseValue = key ? originalCaseByName.get(key) : undefined;
+                const isSelected = selectedValue !== undefined && key === selectedValue.trim().toLowerCase();
+                const isDimmed = selectedValue !== undefined && !isSelected;
+                const clickable = !usingManualData && originalCaseValue && onSelect;
                 return (
                   <Geography
                     key={geo.rsmKey}
                     geography={geo}
                     fill={explicitColor ?? (count ? hexToRgba(baseColor, intensity) : "var(--panel)")}
-                    stroke="var(--border)"
-                    strokeWidth={field === "by_province" ? 0.2 : 0.4}
-                    style={{ default: { outline: "none" }, hover: { outline: "none", opacity: 0.8 }, pressed: { outline: "none" } }}
+                    fillOpacity={isDimmed ? 0.3 : 1}
+                    stroke={isSelected ? "var(--text-primary)" : "var(--border)"}
+                    strokeWidth={isSelected ? 1.2 : field === "by_province" ? 0.2 : 0.4}
+                    onClick={clickable ? () => onSelect(originalCaseValue) : undefined}
+                    style={{
+                      default: { outline: "none", cursor: clickable ? "pointer" : undefined },
+                      hover: { outline: "none", opacity: 0.8, cursor: clickable ? "pointer" : undefined },
+                      pressed: { outline: "none" },
+                    }}
                   />
                 );
               })}
@@ -1526,6 +1626,10 @@ function RelationshipSankey({
   fontSize,
   offsets,
   onCommitOffset,
+  selectedPrimary,
+  selectedSecondary,
+  onSelectPrimary,
+  onSelectSecondary,
 }: {
   data: CrosstabRow[];
   baseColor: string;
@@ -1534,6 +1638,10 @@ function RelationshipSankey({
   fontSize?: number;
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
+  selectedPrimary?: string;
+  selectedSecondary?: string;
+  onSelectPrimary?: (value: string) => void;
+  onSelectSecondary?: (value: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1556,6 +1664,7 @@ function RelationshipSankey({
   }
   const sankeyData = sankeyDataFrom(data);
   const nodeFontSize = fontSize ?? 11;
+  const primariesSet = new Set(data.map((d) => d.primary_value));
 
   return (
     <div ref={containerRef} style={{ width: "100%", height: "100%" }}>
@@ -1563,26 +1672,43 @@ function RelationshipSankey({
         <Sankey
           data={sankeyData}
           nodePadding={20}
-          node={(nodeProps: { x: number; y: number; width: number; height: number; payload: { name: string } }) => (
-            <g>
-              <rect x={nodeProps.x} y={nodeProps.y} width={nodeProps.width} height={nodeProps.height} fill={baseColor} fillOpacity={0.85} />
-              {showLabels && (
-                <DraggableLabel
-                  x={nodeProps.x + nodeProps.width / 2}
-                  y={nodeProps.y - 6}
-                  text={nodeProps.payload.name}
-                  fontSize={nodeFontSize}
-                  fontFamily={fontFamily}
-                  fill="var(--text-primary)"
-                  textAnchor="middle"
-                  offsetKey={`node:${nodeProps.payload.name}`}
-                  offsets={offsets}
-                  onCommitOffset={onCommitOffset}
-                  svgRef={svgRef}
+          node={(nodeProps: { x: number; y: number; width: number; height: number; payload: { name: string } }) => {
+            const isPrimary = primariesSet.has(nodeProps.payload.name);
+            const selected = isPrimary ? selectedPrimary : selectedSecondary;
+            const isDimmed = selected !== undefined && selected !== nodeProps.payload.name;
+            const handleClick = isPrimary ? onSelectPrimary : onSelectSecondary;
+            return (
+              <g>
+                <rect
+                  x={nodeProps.x}
+                  y={nodeProps.y}
+                  width={nodeProps.width}
+                  height={nodeProps.height}
+                  fill={baseColor}
+                  fillOpacity={isDimmed ? 0.25 : 0.85}
+                  stroke={selected === nodeProps.payload.name ? "var(--text-primary)" : "none"}
+                  strokeWidth={1.5}
+                  onClick={handleClick ? () => handleClick(nodeProps.payload.name) : undefined}
+                  cursor={handleClick ? "pointer" : undefined}
                 />
-              )}
-            </g>
-          )}
+                {showLabels && (
+                  <DraggableLabel
+                    x={nodeProps.x + nodeProps.width / 2}
+                    y={nodeProps.y - 6}
+                    text={nodeProps.payload.name}
+                    fontSize={nodeFontSize}
+                    fontFamily={fontFamily}
+                    fill="var(--text-primary)"
+                    textAnchor="middle"
+                    offsetKey={`node:${nodeProps.payload.name}`}
+                    offsets={offsets}
+                    onCommitOffset={onCommitOffset}
+                    svgRef={svgRef}
+                  />
+                )}
+              </g>
+            );
+          }}
           link={(linkProps: {
             sourceX: number;
             sourceY: number;
@@ -1595,13 +1721,16 @@ function RelationshipSankey({
           }) => {
             const midX = (linkProps.sourceX + linkProps.targetX) / 2;
             const midY = (linkProps.sourceY + linkProps.targetY) / 2;
+            const sourceName = sankeyData.nodes[linkProps.payload.source]?.name;
+            const targetName = sankeyData.nodes[linkProps.payload.target]?.name;
+            const isDimmed = (selectedPrimary && sourceName !== selectedPrimary) || (selectedSecondary && targetName !== selectedSecondary);
             return (
               <g>
                 <path
                   d={`M${linkProps.sourceX},${linkProps.sourceY} C${linkProps.sourceControlX},${linkProps.sourceY} ${linkProps.targetControlX},${linkProps.targetY} ${linkProps.targetX},${linkProps.targetY}`}
                   fill="none"
                   stroke={baseColor}
-                  strokeOpacity={0.25}
+                  strokeOpacity={isDimmed ? 0.06 : 0.25}
                   strokeWidth={linkProps.linkWidth}
                 />
                 {showLabels && (
@@ -1643,6 +1772,10 @@ function RelationshipNetwork({
   fontSize,
   offsets,
   onCommitOffset,
+  selectedPrimary,
+  selectedSecondary,
+  onSelectPrimary,
+  onSelectSecondary,
 }: {
   data: CrosstabRow[];
   baseColor: string;
@@ -1651,6 +1784,10 @@ function RelationshipNetwork({
   fontSize?: number;
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
+  selectedPrimary?: string;
+  selectedSecondary?: string;
+  onSelectPrimary?: (value: string) => void;
+  onSelectSecondary?: (value: string) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   if (data.length === 0) {
@@ -1678,9 +1815,16 @@ function RelationshipNetwork({
           const midX = width / 2;
           const midY = (y1 + y2) / 2;
           const linkKey = `${d.primary_value}→${d.secondary_value}`;
+          const isDimmed = (selectedPrimary && d.primary_value !== selectedPrimary) || (selectedSecondary && d.secondary_value !== selectedSecondary);
           return (
             <g key={i}>
-              <path d={`M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`} stroke={baseColor} strokeWidth={strokeWidth} fill="none" opacity={0.35}>
+              <path
+                d={`M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`}
+                stroke={baseColor}
+                strokeWidth={strokeWidth}
+                fill="none"
+                opacity={isDimmed ? 0.08 : 0.35}
+              >
                 <title>{`${d.primary_value} × ${d.secondary_value}: ${d.count}`}</title>
               </path>
               {showLabels && (
@@ -1703,7 +1847,17 @@ function RelationshipNetwork({
         })}
         {primaries.map((a) => (
           <g key={`a-${a}`}>
-            <circle cx={leftX} cy={leftY.get(a)} r={4} fill={baseColor} />
+            <circle
+              cx={leftX}
+              cy={leftY.get(a)}
+              r={selectedPrimary === a ? 6 : 4}
+              fill={baseColor}
+              fillOpacity={selectedPrimary && selectedPrimary !== a ? 0.3 : 1}
+              stroke={selectedPrimary === a ? "var(--text-primary)" : "none"}
+              strokeWidth={1.5}
+              onClick={onSelectPrimary ? () => onSelectPrimary(a) : undefined}
+              cursor={onSelectPrimary ? "pointer" : undefined}
+            />
             <DraggableLabel
               x={leftX - 8}
               y={leftY.get(a)!}
@@ -1722,7 +1876,17 @@ function RelationshipNetwork({
         ))}
         {secondaries.map((t) => (
           <g key={`t-${t}`}>
-            <circle cx={rightX} cy={rightY.get(t)} r={4} fill={baseColor} />
+            <circle
+              cx={rightX}
+              cy={rightY.get(t)}
+              r={selectedSecondary === t ? 6 : 4}
+              fill={baseColor}
+              fillOpacity={selectedSecondary && selectedSecondary !== t ? 0.3 : 1}
+              stroke={selectedSecondary === t ? "var(--text-primary)" : "none"}
+              strokeWidth={1.5}
+              onClick={onSelectSecondary ? () => onSelectSecondary(t) : undefined}
+              cursor={onSelectSecondary ? "pointer" : undefined}
+            />
             <DraggableLabel
               x={rightX + 8}
               y={rightY.get(t)!}
@@ -1754,6 +1918,8 @@ function BubbleChart({
   fontSize,
   offsets,
   onCommitOffset,
+  selectedValue,
+  onSelect,
 }: {
   series: { value: string; count: number }[];
   colors: string[];
@@ -1762,6 +1928,8 @@ function BubbleChart({
   fontSize?: number;
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
+  selectedValue?: string;
+  onSelect?: (value: string) => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   if (series.length === 0) {
@@ -1780,9 +1948,21 @@ function BubbleChart({
         {leaves.map((leaf, i) => {
           const datum = leaf.data as unknown as { value: string; count: number };
           const baseFontSize = fontSize ?? Math.min(11, leaf.r / 3);
+          const isSelected = selectedValue === datum.value;
+          const isFiltered = selectedValue !== undefined;
           return (
             <g key={i}>
-              <circle cx={leaf.x} cy={leaf.y} r={leaf.r} fill={colors[i % colors.length]} fillOpacity={0.85}>
+              <circle
+                cx={leaf.x}
+                cy={leaf.y}
+                r={leaf.r}
+                fill={colors[i % colors.length]}
+                fillOpacity={isFiltered && !isSelected ? 0.35 : 0.85}
+                stroke={isSelected ? "var(--text-primary)" : "none"}
+                strokeWidth={2}
+                onClick={onSelect ? () => onSelect(datum.value) : undefined}
+                cursor={onSelect ? "pointer" : undefined}
+              >
                 <title>{`${datum.value}: ${datum.count}`}</title>
               </circle>
               {leaf.r > 18 && !showLabels && (
