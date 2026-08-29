@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
+import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
@@ -83,6 +83,14 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [locked, setLocked] = useState(false);
   const [dateRangeFrom, setDateRangeFrom] = useState<string | undefined>(undefined);
   const [dateRangeTo, setDateRangeTo] = useState<string | undefined>(undefined);
+  // Session-scoped, not persisted with the dashboard the way date range is —
+  // date range already has a saved column on the dashboard record; giving
+  // these the same treatment would need a schema change for what's
+  // intentionally a lighter-weight, exploratory "let me look at this slice
+  // right now" filter rather than a fixed dashboard setting.
+  const [categoryFilters, setCategoryFilters] = useState<Partial<Record<PivotableField, string>>>({});
+  const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -117,22 +125,26 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
 
   useEffect(() => {
     api.getDatasets().then(setDatasets);
+    api.getIncidentFilters().then(setFilterOptions).catch(() => {});
   }, []);
 
   useEffect(() => {
-    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo }).then((s) => setStats(normalizeStats(s)));
-    api.getIncidents({ limit: 3000, from: dateRangeFrom, to: dateRangeTo }).then(setIncidents);
-  }, [dateRangeFrom, dateRangeTo]);
+    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then((s) => setStats(normalizeStats(s)));
+    api.getIncidents({ limit: 3000, from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then(setIncidents);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
 
-  // A changed date range invalidates every previously-fetched breakdown and
-  // crosstab (they were computed under the *old* range) — clearing them
-  // lets the fetch effects below, which only fetch keys they don't already
-  // have, naturally treat everything as needing a fresh fetch.
+  // A changed date range or category filter invalidates every previously-
+  // fetched breakdown and crosstab (they were computed under the old
+  // filters) — clearing them lets the fetch effects below, which only fetch
+  // keys they don't already have, naturally treat everything as needing a
+  // fresh fetch.
   useEffect(() => {
     setBreakdowns({});
     setCrosstabs({});
     setDailyBreakdowns({});
-  }, [dateRangeFrom, dateRangeTo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
 
   // Fetches only the specific (primary, secondary) cross-tabs the current set
   // of widgets actually need, and only the ones not already fetched — adding
@@ -163,12 +175,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         return;
       }
       const [primary, secondary] = key.split("|") as [PivotableField, PivotableField];
-      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo }).then((rows) => {
+      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then((rows) => {
         setCrosstabs((prev) => ({ ...prev, [key]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets, dateRangeFrom, dateRangeTo]);
+  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
 
   // Same idea, one dimension instead of two — for widgets whose primary
   // field is one of the newer by_X fields not precomputed on stats, or any
@@ -192,12 +204,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         });
         return;
       }
-      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo }).then((rows) => {
+      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then((rows) => {
         setBreakdowns((prev) => ({ ...prev, [field]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets, dateRangeFrom, dateRangeTo]);
+  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
 
   // Stat cards sourced from a dataset need that dataset's row count / column
   // sums — fetched once per dataset actually in use, not once per widget.
@@ -442,6 +454,18 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     await api.updateCustomDashboard(backendId, { date_range_from: from ?? null, date_range_to: to ?? null });
   }
 
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!filterPanelOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) setFilterPanelOpen(false);
+    }
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [filterPanelOpen]);
+
+  const activeFilterCount = (dateRangeFrom ? 1 : 0) + (dateRangeTo ? 1 : 0) + Object.values(categoryFilters).filter(Boolean).length;
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
@@ -462,26 +486,138 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
           />
         )}
         {!locked && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>DATE RANGE</span>
-            <input
-              type="date"
-              value={dateRangeFrom ?? ""}
-              onChange={(e) => updateDateRange(e.target.value || undefined, dateRangeTo)}
-              title="Only affects Incidents-sourced widgets — dataset-sourced widgets have no single date column to filter by"
-              style={{ ...secondaryBtnStyle, padding: "6px 8px", fontSize: 12 }}
-            />
-            <span style={{ color: "var(--text-faint)", fontSize: 11 }}>to</span>
-            <input
-              type="date"
-              value={dateRangeTo ?? ""}
-              onChange={(e) => updateDateRange(dateRangeFrom, e.target.value || undefined)}
-              style={{ ...secondaryBtnStyle, padding: "6px 8px", fontSize: 12 }}
-            />
-            {(dateRangeFrom || dateRangeTo) && (
-              <button onClick={() => updateDateRange(undefined, undefined)} title="Clear the date filter — show all time" style={secondaryBtnStyle}>
-                ×
-              </button>
+          <div ref={filterPanelRef} style={{ position: "relative" }}>
+            <button
+              onClick={() => setFilterPanelOpen((v) => !v)}
+              style={{
+                ...secondaryBtnStyle,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                background: filterPanelOpen || activeFilterCount > 0 ? "var(--signal-dim)" : undefined,
+                borderColor: filterPanelOpen || activeFilterCount > 0 ? "var(--signal)" : undefined,
+              }}
+            >
+              Filter
+              {activeFilterCount > 0 && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minWidth: 16,
+                    height: 16,
+                    padding: "0 4px",
+                    borderRadius: 999,
+                    background: "var(--signal)",
+                    color: "var(--panel)",
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {filterPanelOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 6px)",
+                  left: 0,
+                  zIndex: 1000,
+                  width: 320,
+                  maxHeight: "70vh",
+                  overflowY: "auto",
+                  background: "var(--panel)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  padding: 14,
+                  boxShadow: "0 8px 24px rgba(19,23,34,0.18)",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div style={{ fontSize: 10.5, color: "var(--text-faint)" }}>
+                  Only affects Incidents-sourced widgets — dataset-sourced widgets have no matching columns to filter by.
+                </div>
+
+                <div>
+                  <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>DATE OF OCCURRENCE</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input
+                      type="date"
+                      value={dateRangeFrom ?? ""}
+                      onChange={(e) => updateDateRange(e.target.value || undefined, dateRangeTo)}
+                      style={{ ...secondaryBtnStyle, flex: 1, padding: "6px 8px", fontSize: 12 }}
+                    />
+                    <input
+                      type="date"
+                      value={dateRangeTo ?? ""}
+                      onChange={(e) => updateDateRange(dateRangeFrom, e.target.value || undefined)}
+                      style={{ ...secondaryBtnStyle, flex: 1, padding: "6px 8px", fontSize: 12 }}
+                    />
+                  </div>
+                </div>
+
+                {filterOptions && (
+                  <>
+                    <div>
+                      <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>LOCATION</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(["country", "province", "county", "district", "city", "suburb"] as const).map((field) => (
+                          <DashboardFilterSelect
+                            key={field}
+                            label={PIVOT_FIELD_LABELS[field] ?? field}
+                            value={categoryFilters[field]}
+                            options={filterOptions[field]}
+                            onChange={(v) => setCategoryFilters((f) => ({ ...f, [field]: v }))}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>CATEGORY</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(
+                          ["sector", "actor", "tactic", "severity", "operation", "target", "interest_group", "actual_main_victim", "intended_primary_target"] as const
+                        ).map((field) => (
+                          <DashboardFilterSelect
+                            key={field}
+                            label={PIVOT_FIELD_LABELS[field] ?? field}
+                            value={categoryFilters[field]}
+                            options={filterOptions[field]}
+                            onChange={(v) => setCategoryFilters((f) => ({ ...f, [field]: v }))}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                <div style={{ display: "flex", gap: 6 }}>
+                  {activeFilterCount > 0 && (
+                    <button
+                      onClick={() => {
+                        updateDateRange(undefined, undefined);
+                        setCategoryFilters({});
+                      }}
+                      style={{ ...secondaryBtnStyle, flex: 1 }}
+                    >
+                      Clear all
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setFilterPanelOpen(false)}
+                    style={{ ...secondaryBtnStyle, flex: 1, background: "var(--signal-dim)", borderColor: "var(--signal)", fontWeight: 600 }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -828,6 +964,23 @@ const primaryBtnStyle: React.CSSProperties = {
   fontWeight: 600,
   fontSize: 13,
 };
+
+function DashboardFilterSelect({ label, value, options, onChange }: { label: string; value?: string; options?: string[]; onChange: (v: string | undefined) => void }) {
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      style={{ fontSize: 12, padding: "6px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--panel)", color: "var(--text-primary)", width: "100%" }}
+    >
+      <option value="">{label}: All</option>
+      {(options ?? []).map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 const secondaryBtnStyle: React.CSSProperties = {
   padding: "8px 14px",
