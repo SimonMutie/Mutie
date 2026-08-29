@@ -23,6 +23,13 @@ interface Props {
    *  everyone's Mapping view starts with) should show at all — platform
    *  admin only, same gating as the separate "Map Defaults" tab. */
   isAdmin?: boolean;
+  /** Switches the parent IncidentsDashboard's own tab — used by the
+   *  Incident Log icon below to open Search/Manual Entry/Upload/Manage,
+   *  the same navigation the old top-nav dropdown used to trigger, just
+   *  from an icon here instead. Undefined on any context that doesn't
+   *  have a parent tab to switch (there currently isn't one, but this
+   *  keeps the prop optional rather than assuming one always exists). */
+  onNavigate?: (tab: "search" | "manual" | "upload" | "manage") => void;
 }
 
 // Imported for this file's own internal use, and re-exported separately so
@@ -676,7 +683,7 @@ function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCol
   return positions;
 }
 
-export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: Props) {
+export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onNavigate }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
   const [showLegend, setShowLegend] = useState(false);
   const [showMapTypes, setShowMapTypes] = useState(false);
@@ -766,6 +773,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
   }>({});
   const [showSearch, setShowSearch] = useState(false);
   const [showMapDefaults, setShowMapDefaults] = useState(false);
+  const [showIncidentLog, setShowIncidentLog] = useState(false);
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
   // Isolating one route OR one shape hides every other overlay and filters
@@ -1897,6 +1905,67 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
           }}
         >
           <MapDefaultsPanel compact />
+        </div>
+      )}
+      {onNavigate && (
+        <IconToggleButton
+          active={showIncidentLog}
+          top={264}
+          title="Incident Log"
+          onClick={() => setShowIncidentLog((v) => !v)}
+          icon={
+            <>
+              <path d="M4 4h16v4H4z" />
+              <path d="M4 10h16v4H4z" />
+              <path d="M4 16h16v4H4z" />
+            </>
+          }
+        />
+      )}
+      {onNavigate && showIncidentLog && (
+        <div
+          style={{
+            position: "absolute",
+            top: 264,
+            right: 54,
+            zIndex: 1000,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+            minWidth: 180,
+            overflow: "hidden",
+          }}
+        >
+          {(
+            [
+              { value: "search", label: "Search Incidents" },
+              { value: "manual", label: "Enter Manually" },
+              { value: "upload", label: "Upload Bulk" },
+              { value: "manage", label: "Manage (Edit/Delete)" },
+            ] as { value: "search" | "manual" | "upload" | "manage"; label: string }[]
+          ).map((item) => (
+            <button
+              key={item.value}
+              onClick={() => {
+                onNavigate(item.value);
+                setShowIncidentLog(false);
+              }}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "9px 14px",
+                fontSize: 12.5,
+                background: "transparent",
+                border: "none",
+                color: "var(--text-primary)",
+                cursor: "pointer",
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       )}
       {showExport && (
