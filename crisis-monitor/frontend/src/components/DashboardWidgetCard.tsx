@@ -391,6 +391,17 @@ interface Props {
    *  edit popover — only needed where editing happens, so undefined/empty
    *  on the read-only public view is fine. */
   datasets?: Dataset[];
+  /** The dashboard-wide category filter currently in effect (see
+   *  DashboardEditor's categoryFilters) — used only to visually highlight a
+   *  clicked bar/slice as "selected" until it's cleared, not to actually
+   *  filter this widget's own data (every widget already gets pre-filtered
+   *  data from the parent, this is purely about which bar looks active). */
+  activeCrossFilters?: Partial<Record<PivotableField, string>>;
+  /** Called when the user clicks a specific value within this widget (a bar,
+   *  a pie slice, a funnel stage) on an Incidents-sourced widget — sets that
+   *  as a dashboard-wide filter so every other widget reacts to it too.
+   *  Undefined on the read-only public view, where nothing is clickable. */
+  onCrossFilter?: (field: PivotableField, value: string) => void;
   onRemove?: () => void;
   onRename?: (title: string) => void;
   /** Applies a partial patch to just this widget — editing lives entirely
@@ -405,7 +416,21 @@ interface Props {
  *  Fills 100% of whatever size its container gives it (a react-grid-layout
  *  cell in the editors, a plain CSS grid cell on the public view) rather than
  *  a fixed pixel height, so real drag-resize actually changes the chart size. */
-export default function DashboardWidgetCard({ widget, stats, incidents, crosstabs, breakdowns, dailyBreakdowns, datasetSummaries, datasets, onRemove, onRename, onUpdate }: Props) {
+export default function DashboardWidgetCard({
+  widget,
+  stats,
+  incidents,
+  crosstabs,
+  breakdowns,
+  dailyBreakdowns,
+  datasetSummaries,
+  datasets,
+  activeCrossFilters,
+  onCrossFilter,
+  onRemove,
+  onRename,
+  onUpdate,
+}: Props) {
   // "Dashboard editable" = the editor gave us handlers at all (it withholds
   // them entirely when the whole dashboard is locked). "Widget locked" is a
   // second, per-widget flag that can be toggled independently — locking one
@@ -416,6 +441,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
   const color = widget.color || "var(--signal)";
   const series = seriesFor(widget, stats, breakdowns);
 
+  // Cross-filtering only makes sense for Incidents-sourced widgets whose
+  // primary dimension is one of the real categorical columns — a
+  // dataset-sourced widget has no matching field in categoryFilters at all,
+  // and only bother wiring click handlers when a parent actually gave us
+  // onCrossFilter (never on the read-only public view, where nothing
+  // should look clickable in the first place).
+  const crossFilterField: PivotableField | undefined = !widget.datasetId ? DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField] : undefined;
+  const handleCrossFilterClick = crossFilterField && onCrossFilter ? (value: string) => onCrossFilter(crossFilterField, value) : undefined;
+
   // A pivoted, two-variable breakdown only kicks in when the widget actually
   // has a secondaryField set and the matching crosstab data has arrived —
   // otherwise every bar/line chart renders exactly as it always has.
@@ -424,6 +458,18 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
   const pivoted = crosstabRows ? pivotCrosstab(crosstabRows, widget.topN) : null;
 
   const [showEditor, setShowEditor] = useState(false);
+  // Recharts has a confirmed, currently-unresolved bug where its internal
+  // hover/tooltip tracking can get stuck highlighting the last-hovered bar
+  // or slice even after the mouse has genuinely left the chart — see
+  // https://github.com/recharts/recharts/issues/4466 and #6946. Recharts
+  // doesn't expose a public way to reset that internal state directly, but
+  // forcing a remount does: incrementing this key on mouseleave (a plain
+  // DOM event, handled reliably by React — unlike recharts' own SVG-based
+  // mouse tracking, which is where the actual bug lives) tears down and
+  // rebuilds the chart with fresh internal state. This only fires once the
+  // mouse has already left, so the brief remount isn't visually noticeable —
+  // nothing on screen is changing at that moment.
+  const [chartResetKey, setChartResetKey] = useState(0);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -527,7 +573,7 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
         {widget.label && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{widget.label}</div>}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div key={chartResetKey} onMouseLeave={() => setChartResetKey((k) => k + 1)} style={{ flex: 1, minHeight: 0 }}>
         {widget.type === "stat" && (
           <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
             <div style={{ fontSize: 32, fontWeight: 700, color }}>{statValue(widget, stats, datasetSummaries).toLocaleString()}</div>
@@ -567,8 +613,23 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
               <YAxis type="category" dataKey="value" width={100} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
               {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
-              <Bar dataKey="count" name={fieldLabel(widget.dataField)} fill={color} radius={[0, 3, 3, 0]}>
-                {widget.palette && widget.palette.length > 0 && paletteFor(widget, series.length).map((c, idx) => <Cell key={idx} fill={c} />)}
+              <Bar
+                dataKey="count"
+                name={fieldLabel(widget.dataField)}
+                fill={color}
+                radius={[0, 3, 3, 0]}
+                onClick={handleCrossFilterClick ? (data: { value: string }) => handleCrossFilterClick(data.value) : undefined}
+                cursor={handleCrossFilterClick ? "pointer" : undefined}
+              >
+                {(widget.palette && widget.palette.length > 0) || crossFilterField
+                  ? series.map((s, idx) => (
+                      <Cell
+                        key={idx}
+                        fill={widget.palette && widget.palette.length > 0 ? paletteFor(widget, series.length)[idx] : color}
+                        fillOpacity={crossFilterField && activeCrossFilters?.[crossFilterField] && activeCrossFilters[crossFilterField] !== s.value ? 0.3 : 1}
+                      />
+                    ))
+                  : null}
                 {widget.showDataLabels && (
                   <LabelList
                     dataKey="count"
@@ -620,9 +681,15 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
                 cy="50%"
                 outerRadius="75%"
                 label={widget.showDataLabels ? { fontSize: widget.labelFontSize ?? 10, fontFamily: widget.labelFontFamily } : false}
+                onClick={handleCrossFilterClick ? (data: { value: string }) => handleCrossFilterClick(data.value) : undefined}
+                cursor={handleCrossFilterClick ? "pointer" : undefined}
               >
                 {paletteFor(widget, series.length).map((c, idx) => (
-                  <Cell key={idx} fill={c} />
+                  <Cell
+                    key={idx}
+                    fill={c}
+                    fillOpacity={crossFilterField && activeCrossFilters?.[crossFilterField] && activeCrossFilters[crossFilterField] !== series[idx]?.value ? 0.3 : 1}
+                  />
                 ))}
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
@@ -648,9 +715,20 @@ export default function DashboardWidgetCard({ widget, stats, incidents, crosstab
           <ResponsiveContainer width="100%" height="100%">
             <FunnelChart>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              <Funnel dataKey="count" data={series} nameKey="value" isAnimationActive={false}>
+              <Funnel
+                dataKey="count"
+                data={series}
+                nameKey="value"
+                isAnimationActive={false}
+                onClick={(handleCrossFilterClick ? (data: { value: string }) => handleCrossFilterClick(data.value) : undefined) as never}
+                cursor={handleCrossFilterClick ? "pointer" : undefined}
+              >
                 {paletteFor(widget, series.length).map((c, idx) => (
-                  <Cell key={idx} fill={c} />
+                  <Cell
+                    key={idx}
+                    fill={c}
+                    fillOpacity={crossFilterField && activeCrossFilters?.[crossFilterField] && activeCrossFilters[crossFilterField] !== series[idx]?.value ? 0.3 : 1}
+                  />
                 ))}
                 {widget.showDataLabels && (
                   <LabelList
