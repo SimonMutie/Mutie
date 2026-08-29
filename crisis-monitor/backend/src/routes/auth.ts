@@ -118,3 +118,35 @@ authRouter.post("/users", requireAuth, requireAdmin, async (c) => {
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE id = ?", [id]);
   return c.json(rowToUser(rows[0]), 201);
 });
+
+const changePasswordSchema = z.object({
+  current_password: z.string().min(1),
+  new_password: z.string().min(8),
+});
+
+/** Any authenticated user — platform admin or client, including a client's
+ *  own teammates — changing their own password. Requires the current
+ *  password, not just a valid session: without that check, anyone who got
+ *  hold of an unattended, still-logged-in browser tab could silently lock
+ *  the real owner out by setting a new password without ever knowing the
+ *  old one. This is deliberately separate from the admin-only user-creation
+ *  endpoint above — that one sets an initial password without needing to
+ *  know a previous one, which is correct there but would be a real gap
+ *  here. */
+authRouter.post("/change-password", requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = changePasswordSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const userId = c.get("userId");
+  const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE id = ?", [userId]);
+  const row = rows[0];
+  if (!row) return c.json({ error: "User not found" }, 404);
+
+  const valid = await verifyPassword(parsed.data.current_password, String(row.password_hash));
+  if (!valid) return c.json({ error: "Current password is incorrect" }, 401);
+
+  const newHash = await hashPassword(parsed.data.new_password);
+  await run(c.env.DB, "UPDATE users SET password_hash = ? WHERE id = ?", [newHash, userId]);
+  return c.json({ ok: true });
+});
