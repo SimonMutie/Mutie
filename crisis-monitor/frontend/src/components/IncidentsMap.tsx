@@ -12,32 +12,25 @@ import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import "leaflet/dist/leaflet.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
+import MapDefaultsPanel from "./MapDefaultsPanel";
 
 interface Props {
   /** Used as the initial dataset before the map's own category filters take
    *  over — keeps this component self-sufficient without needing the parent
    *  dashboard to change how it fetches/passes incidents. */
   incidents: IncidentItem[];
+  /** Whether the Map Defaults icon (platform-wide settings for what
+   *  everyone's Mapping view starts with) should show at all — platform
+   *  admin only, same gating as the separate "Map Defaults" tab. */
+  isAdmin?: boolean;
 }
 
-export const BASEMAPS = {
-  osm: {
-    label: "OpenStreetMap",
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  },
-  esriStreet: {
-    label: "Esri Streets",
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-    attribution: "Tiles &copy; Esri",
-  },
-  esriImagery: {
-    label: "Esri Satellite",
-    url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attribution: "Tiles &copy; Esri",
-  },
-} as const;
-export type BasemapKey = keyof typeof BASEMAPS;
+// Imported for this file's own internal use, and re-exported separately so
+// every existing `import { BASEMAPS } from "./IncidentsMap"` elsewhere in
+// the app keeps working unchanged — a plain re-export alone wouldn't give
+// this file itself a usable local binding.
+import { BASEMAPS, type BasemapKey } from "./mapConstants";
+export { BASEMAPS, type BasemapKey };
 
 const ROUTE_COLORS = [
   "#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777",
@@ -617,7 +610,7 @@ function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCol
   return positions;
 }
 
-export default function IncidentsMap({ incidents: initialIncidents }: Props) {
+export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: Props) {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
   const [showLegend, setShowLegend] = useState(false);
   const [showMapTypes, setShowMapTypes] = useState(false);
@@ -699,6 +692,7 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     to?: string;
   }>({});
   const [showSearch, setShowSearch] = useState(false);
+  const [showMapDefaults, setShowMapDefaults] = useState(false);
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
   // Isolating one route OR one shape hides every other overlay and filters
@@ -1791,6 +1785,40 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           </div>
 
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{geoIncidents.length.toLocaleString()} incidents match</div>
+        </div>
+      )}
+      {isAdmin && (
+        <IconToggleButton
+          active={showMapDefaults}
+          top={222}
+          title="Map Defaults"
+          onClick={() => setShowMapDefaults((v) => !v)}
+          icon={
+            <>
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </>
+          }
+        />
+      )}
+      {isAdmin && showMapDefaults && (
+        <div
+          style={{
+            position: "absolute",
+            top: 222,
+            right: 54,
+            zIndex: 1000,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: 12,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+            width: 300,
+            maxHeight: "calc(100% - 24px)",
+            overflowY: "auto",
+          }}
+        >
+          <MapDefaultsPanel compact />
         </div>
       )}
       {showExport && (
