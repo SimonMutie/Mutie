@@ -47,6 +47,7 @@ clientsRouter.get("/", async (c) => {
       id: String(row.id),
       name: String(row.name),
       max_accounts: Number(row.max_accounts),
+      can_view_all_incidents: !!row.can_view_all_incidents,
       account_count: countByClient.get(String(row.id)) ?? 0,
       created_at: String(row.created_at),
     }))
@@ -111,12 +112,16 @@ clientsRouter.post("/", async (c) => {
 const updateClientSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   max_accounts: z.number().int().min(1).max(50).optional(),
+  can_view_all_incidents: z.boolean().optional(),
 });
 
-/** Platform-admin only: rename a client or change its account limit. Lowering
- *  max_accounts below the current account count is allowed — it just blocks
- *  *new* accounts until some are removed, rather than force-deleting
- *  existing ones as a side effect of a limit change. */
+/** Platform-admin only: rename a client, change its account limit, or
+ *  toggle whether its accounts can see the full shared incidents pool
+ *  (not just what they've personally uploaded) — read-only visibility, see
+ *  effectiveReadScope in incidents.ts for exactly what this does and
+ *  doesn't grant. Lowering max_accounts below the current account count is
+ *  allowed — it just blocks *new* accounts until some are removed, rather
+ *  than force-deleting existing ones as a side effect of a limit change. */
 clientsRouter.patch("/:id", async (c) => {
   if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
   const id = c.req.param("id");
@@ -137,12 +142,21 @@ clientsRouter.patch("/:id", async (c) => {
     updates.push("max_accounts = ?");
     params.push(parsed.data.max_accounts);
   }
+  if (parsed.data.can_view_all_incidents !== undefined) {
+    updates.push("can_view_all_incidents = ?");
+    params.push(parsed.data.can_view_all_incidents ? 1 : 0);
+  }
   if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
   params.push(id);
   await run(c.env.DB, `UPDATE clients SET ${updates.join(", ")} WHERE id = ?`, params);
 
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [id]);
-  return c.json({ id: String(row!.id), name: String(row!.name), max_accounts: Number(row!.max_accounts) });
+  return c.json({
+    id: String(row!.id),
+    name: String(row!.name),
+    max_accounts: Number(row!.max_accounts),
+    can_view_all_incidents: !!row!.can_view_all_incidents,
+  });
 });
 
 /** Platform-admin only: delete a client org — removes its logins too, since
@@ -171,6 +185,7 @@ clientsRouter.get("/:id", async (c) => {
     id: String(row.id),
     name: String(row.name),
     max_accounts: Number(row.max_accounts),
+    can_view_all_incidents: !!row.can_view_all_incidents,
     account_count: countRow?.count ?? 0,
     created_at: String(row.created_at),
   });
@@ -282,5 +297,98 @@ clientsRouter.delete("/:id/accounts/:userId", async (c) => {
   if ((countRow?.count ?? 0) <= 1) return c.json({ error: "Can't remove the last account on a client — delete the client instead." }, 400);
 
   await run(c.env.DB, `DELETE FROM users WHERE id = ?`, [targetId]);
+  return c.json({ ok: true });
+});
+
+/** Platform-admin only: which dashboards a client has been explicitly
+ *  granted access to. Sharing is a platform-level decision, not something
+ *  a client's own client-admin can do for themselves — unlike the
+ *  team-management endpoints above, these use requireAdmin directly rather
+ *  than canManageClient. */
+clientsRouter.get("/:id/dashboards", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const rows = await all<{ dashboard_id: string; name: string; created_at: string }>(
+    c.env.DB,
+    `SELECT a.dashboard_id, d.name, a.created_at
+     FROM client_dashboard_access a JOIN custom_dashboards d ON a.dashboard_id = d.id
+     WHERE a.client_id = ? ORDER BY a.created_at DESC`,
+    [clientId]
+  );
+  return c.json(rows);
+});
+
+const grantDashboardSchema = z.object({ dashboard_id: z.string().min(1) });
+
+clientsRouter.post("/:id/dashboards", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const client = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [clientId]);
+  if (!client) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = grantDashboardSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const dashboard = await first<{ id: string }>(c.env.DB, `SELECT id FROM custom_dashboards WHERE id = ?`, [parsed.data.dashboard_id]);
+  if (!dashboard) return c.json({ error: "That dashboard doesn't exist" }, 404);
+
+  await run(
+    c.env.DB,
+    `INSERT INTO client_dashboard_access (client_id, dashboard_id, created_at) VALUES (?,?,?)
+     ON CONFLICT (client_id, dashboard_id) DO NOTHING`,
+    [clientId, parsed.data.dashboard_id, nowIso()]
+  );
+  return c.json({ ok: true }, 201);
+});
+
+clientsRouter.delete("/:id/dashboards/:dashboardId", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  await run(c.env.DB, `DELETE FROM client_dashboard_access WHERE client_id = ? AND dashboard_id = ?`, [c.req.param("id"), c.req.param("dashboardId")]);
+  return c.json({ ok: true });
+});
+
+/** Platform-admin only: which datasets a client has been explicitly granted
+ *  access to — same reasoning as the dashboard endpoints above. */
+clientsRouter.get("/:id/datasets", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const rows = await all<{ dataset_id: string; name: string; created_at: string }>(
+    c.env.DB,
+    `SELECT a.dataset_id, d.name, a.created_at
+     FROM client_dataset_access a JOIN datasets d ON a.dataset_id = d.id
+     WHERE a.client_id = ? ORDER BY a.created_at DESC`,
+    [clientId]
+  );
+  return c.json(rows);
+});
+
+const grantDatasetSchema = z.object({ dataset_id: z.string().min(1) });
+
+clientsRouter.post("/:id/datasets", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const client = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [clientId]);
+  if (!client) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = grantDatasetSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const dataset = await first<{ id: string }>(c.env.DB, `SELECT id FROM datasets WHERE id = ?`, [parsed.data.dataset_id]);
+  if (!dataset) return c.json({ error: "That dataset doesn't exist" }, 404);
+
+  await run(
+    c.env.DB,
+    `INSERT INTO client_dataset_access (client_id, dataset_id, created_at) VALUES (?,?,?)
+     ON CONFLICT (client_id, dataset_id) DO NOTHING`,
+    [clientId, parsed.data.dataset_id, nowIso()]
+  );
+  return c.json({ ok: true }, 201);
+});
+
+clientsRouter.delete("/:id/datasets/:datasetId", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  await run(c.env.DB, `DELETE FROM client_dataset_access WHERE client_id = ? AND dataset_id = ?`, [c.req.param("id"), c.req.param("datasetId")]);
   return c.json({ ok: true });
 });
