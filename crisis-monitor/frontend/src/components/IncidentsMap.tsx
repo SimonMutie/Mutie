@@ -656,7 +656,26 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   // --- incident overlay filters ---
   const [incidents, setIncidents] = useState<IncidentItem[]>(initialIncidents);
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
-  const [filters, setFilters] = useState<{ country?: string; province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string }>({});
+  const [filters, setFilters] = useState<{
+    country?: string;
+    province?: string;
+    sector?: string;
+    actor?: string;
+    tactic?: string;
+    severity?: string;
+    county?: string;
+    district?: string;
+    city?: string;
+    suburb?: string;
+    operation?: string;
+    target?: string;
+    interest_group?: string;
+    actual_main_victim?: string;
+    intended_primary_target?: string;
+    from?: string;
+    to?: string;
+  }>({});
+  const [showSearch, setShowSearch] = useState(false);
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
   // Isolating one route OR one shape hides every other overlay and filters
@@ -1637,6 +1656,111 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
           </>
         }
       />
+      <IconToggleButton
+        active={showSearch}
+        top={180}
+        title="Search Incidents"
+        onClick={() => setShowSearch((v) => !v)}
+        icon={
+          <>
+            <circle cx="10" cy="10" r="6.5" />
+            <line x1="14.8" y1="14.8" x2="20" y2="20" />
+          </>
+        }
+      />
+      {showSearch && (
+        <div
+          style={{
+            position: "absolute",
+            top: 180,
+            right: 54,
+            zIndex: 1000,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: 12,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+            width: 280,
+            maxHeight: "calc(100% - 24px)",
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div className="eyebrow">SEARCH INCIDENTS</div>
+
+          {filterOptions && (
+            <>
+              <div>
+                <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>LOCATION</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <FilterSelect label="Country" value={filters.country} options={filterOptions.country} onChange={(v) => setFilters((f) => ({ ...f, country: v }))} />
+                  <FilterSelect label="Province" value={filters.province} options={filterOptions.province} onChange={(v) => setFilters((f) => ({ ...f, province: v }))} />
+                  <FilterSelect label="County" value={filters.county} options={filterOptions.county} onChange={(v) => setFilters((f) => ({ ...f, county: v }))} />
+                  <FilterSelect label="District" value={filters.district} options={filterOptions.district} onChange={(v) => setFilters((f) => ({ ...f, district: v }))} />
+                  <FilterSelect label="City" value={filters.city} options={filterOptions.city} onChange={(v) => setFilters((f) => ({ ...f, city: v }))} />
+                  <FilterSelect label="Suburb" value={filters.suburb} options={filterOptions.suburb} onChange={(v) => setFilters((f) => ({ ...f, suburb: v }))} />
+                </div>
+              </div>
+
+              <div>
+                <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>CATEGORY</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <FilterSelect label="Sector" value={filters.sector} options={filterOptions.sector} onChange={(v) => setFilters((f) => ({ ...f, sector: v }))} />
+                  <FilterSelect label="Actor" value={filters.actor} options={filterOptions.actor} onChange={(v) => setFilters((f) => ({ ...f, actor: v }))} />
+                  <FilterSelect label="Tactic" value={filters.tactic} options={filterOptions.tactic} onChange={(v) => setFilters((f) => ({ ...f, tactic: v }))} />
+                  <FilterSelect label="Severity" value={filters.severity} options={filterOptions.severity} onChange={(v) => setFilters((f) => ({ ...f, severity: v }))} />
+                  <FilterSelect label="Operation" value={filters.operation} options={filterOptions.operation} onChange={(v) => setFilters((f) => ({ ...f, operation: v }))} />
+                  <FilterSelect label="Target" value={filters.target} options={filterOptions.target} onChange={(v) => setFilters((f) => ({ ...f, target: v }))} />
+                  <FilterSelect
+                    label="Interest Group"
+                    value={filters.interest_group}
+                    options={filterOptions.interest_group}
+                    onChange={(v) => setFilters((f) => ({ ...f, interest_group: v }))}
+                  />
+                  <FilterSelect
+                    label="Main Victim"
+                    value={filters.actual_main_victim}
+                    options={filterOptions.actual_main_victim}
+                    onChange={(v) => setFilters((f) => ({ ...f, actual_main_victim: v }))}
+                  />
+                  <FilterSelect
+                    label="Intended Target"
+                    value={filters.intended_primary_target}
+                    options={filterOptions.intended_primary_target}
+                    onChange={(v) => setFilters((f) => ({ ...f, intended_primary_target: v }))}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          <div>
+            <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>DATE OF OCCURRENCE</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <input type="date" value={filters.from ?? ""} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))} style={dateInputStyle} />
+              <input type="date" value={filters.to ?? ""} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))} style={dateInputStyle} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 6 }}>
+            {Object.values(filters).some(Boolean) && (
+              <button onClick={() => setFilters({})} style={{ ...secondaryChipStyle, flex: 1 }}>
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => setShowSearch(false)}
+              style={{ ...secondaryChipStyle, flex: 1, background: "var(--signal-dim)", borderColor: "var(--signal)", fontWeight: 600 }}
+            >
+              Search
+            </button>
+          </div>
+
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{geoIncidents.length.toLocaleString()} incidents match</div>
+        </div>
+      )}
       {showExport && (
         <div
           style={{
