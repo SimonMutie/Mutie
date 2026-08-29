@@ -570,6 +570,72 @@ function MapContainerRefCapture({ onReady }: { onReady: (el: HTMLElement) => voi
   return null;
 }
 
+/** Admin-only button, rendered as a child of MapContainer so it can read
+ *  the live Leaflet instance via useMap() — this is how you actually
+ *  capture "wherever the map is panned/zoomed to right now" rather than
+ *  needing the admin to type in raw coordinates by hand. Persists directly
+ *  via the API rather than going through the settings popover, since
+ *  that's a separate component that doesn't have (and doesn't need) live
+ *  map access itself. */
+function MapDefaultsLockButton({
+  locked,
+  onLock,
+  onUnlock,
+}: {
+  locked: boolean;
+  onLock: (pos: { lat: number; lng: number; zoom: number }) => void;
+  onUnlock: () => void;
+}) {
+  const map = useMap();
+  const [saving, setSaving] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        setSaving(true);
+        try {
+          if (locked) {
+            await api.updateMapSettings({ position_locked: false });
+            onUnlock();
+          } else {
+            const center = map.getCenter();
+            const pos = { lat: center.lat, lng: center.lng, zoom: map.getZoom() };
+            await api.updateMapSettings({ map_center_lat: pos.lat, map_center_lng: pos.lng, map_zoom: pos.zoom, position_locked: true });
+            onLock(pos);
+          }
+        } catch {
+          // Silently no-ops on failure — the button's own pressed state
+          // (locked/unlocked) only flips once the API call actually
+          // succeeds, so a failed save just leaves it as it was rather
+          // than claiming a lock that didn't really persist.
+        } finally {
+          setSaving(false);
+        }
+      }}
+      disabled={saving}
+      title={locked ? "Unlock — Mapping goes back to centering on the data" : "Lock this exact position as the default everyone starts with"}
+      style={{
+        position: "absolute",
+        bottom: 90,
+        right: 12,
+        zIndex: 1000,
+        width: 34,
+        height: 34,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: locked ? "var(--signal-dim)" : "var(--panel)",
+        border: `1px solid ${locked ? "var(--signal)" : "var(--border)"}`,
+        borderRadius: 8,
+        boxShadow: "0 4px 16px rgba(19,23,34,0.12)",
+        cursor: saving ? "default" : "pointer",
+        fontSize: 15,
+      }}
+    >
+      {locked ? "🔒" : "🔓"}
+    </button>
+  );
+}
+
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
@@ -633,6 +699,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
   // real default kicked in, which defeats the point of a "start hidden"
   // default entirely.
   const [mapSettingsLoaded, setMapSettingsLoaded] = useState(false);
+  const [lockedPosition, setLockedPosition] = useState<{ lat: number; lng: number; zoom: number } | null>(null);
 
   useEffect(() => {
     api
@@ -641,6 +708,12 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
         setBasemap((settings.default_basemap as BasemapKey) in BASEMAPS ? (settings.default_basemap as BasemapKey) : "osm");
         setViewMode(settings.default_view_mode);
         setIncidentsVisible(settings.show_incidents_by_default);
+        if (Object.keys(settings.default_filters).length > 0) {
+          setFilters(settings.default_filters);
+        }
+        if (settings.position_locked && settings.map_center_lat != null && settings.map_center_lng != null && settings.map_zoom != null) {
+          setLockedPosition({ lat: settings.map_center_lat, lng: settings.map_center_lng, zoom: settings.map_zoom });
+        }
       })
       .catch(() => {})
       .finally(() => setMapSettingsLoaded(true));
@@ -714,7 +787,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
           distanceKm: r.distance_km,
           durationMin: r.duration_min,
           color: r.color ?? ROUTE_COLORS[colorIndex.current++ % ROUTE_COLORS.length],
-          visible: true,
+          visible: r.visible,
           saving: false,
         }))
       );
@@ -730,7 +803,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
           color: s.style.color ?? ROUTE_COLORS[shapeColorIndex.current++ % ROUTE_COLORS.length],
           fillOpacity: s.style.fillOpacity ?? 0.25,
           weight: s.style.weight ?? 2,
-          visible: true,
+          visible: s.visible,
           saving: false,
         }))
       );
@@ -901,6 +974,8 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
   }
   function toggleVisible(id: string) {
     setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, visible: !r.visible } : r)));
+    const sim = routes.find((r) => r.id === id);
+    if (sim?.backendId) api.updateMapRoute(sim.backendId, { visible: !sim.visible }).catch(() => {});
   }
   function setRouteColor(id: string, color: string) {
     setRoutes((rs) => rs.map((r) => (r.id === id ? { ...r, color } : r)));
@@ -986,6 +1061,8 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
 
   function toggleShapeVisible(id: string) {
     setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, visible: !s.visible } : s)));
+    const sim = shapes.find((s) => s.id === id);
+    if (sim?.backendId) api.updateMapShape(sim.backendId, { visible: !sim.visible }).catch(() => {});
   }
   function renameShape(id: string, name: string) {
     setShapes((ss) => ss.map((s) => (s.id === id ? { ...s, name } : s)));
@@ -1516,8 +1593,8 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
       )}
 
       <MapContainer
-        center={initialCenter}
-        zoom={geoIncidents.length ? 6 : 2}
+        center={lockedPosition ? [lockedPosition.lat, lockedPosition.lng] : initialCenter}
+        zoom={lockedPosition ? lockedPosition.zoom : geoIncidents.length ? 6 : 2}
         style={{ width: "100%", height: "100%" }}
         scrollWheelZoom
         zoomControl={false}
@@ -1526,6 +1603,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin }: P
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
+        {isAdmin && <MapDefaultsLockButton locked={!!lockedPosition} onLock={(pos) => setLockedPosition(pos)} onUnlock={() => setLockedPosition(null)} />}
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
         {focusedShape && <FitBounds positions={shapeGeometryToPositions(focusedShape.geometry)} />}
 
