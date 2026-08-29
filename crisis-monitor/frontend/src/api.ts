@@ -176,6 +176,15 @@ export interface IncidentFilters {
   actor: string[];
   tactic: string[];
   severity: string[];
+  county: string[];
+  district: string[];
+  city: string[];
+  suburb: string[];
+  operation: string[];
+  target: string[];
+  interest_group: string[];
+  actual_main_victim: string[];
+  intended_primary_target: string[];
 }
 
 export interface IncidentStats {
@@ -604,23 +613,55 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ rows, batch_label: batchLabel, batch_id: batchId }),
     }),
-  getIncidents: (params: { country?: string; province?: string; sector?: string; actor?: string; tactic?: string; severity?: string; from?: string; to?: string; limit?: number } = {}) => {
+  getIncidents: (
+    params: {
+      country?: string;
+      province?: string;
+      sector?: string;
+      actor?: string;
+      tactic?: string;
+      severity?: string;
+      county?: string;
+      district?: string;
+      city?: string;
+      suburb?: string;
+      operation?: string;
+      target?: string;
+      interest_group?: string;
+      actual_main_victim?: string;
+      intended_primary_target?: string;
+      from?: string;
+      to?: string;
+      limit?: number;
+    } = {}
+  ) => {
     const qs = new URLSearchParams(
       Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))
     ).toString();
     return req<IncidentItem[]>(`/api/incidents${qs ? `?${qs}` : ""}`);
   },
   getIncidentFilters: () => req<IncidentFilters>("/api/incidents/filters"),
-  getIncidentStats: (range: { from?: string; to?: string } = {}) => {
-    const qs = new URLSearchParams(Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined))).toString();
+  getIncidentStats: (range: { from?: string; to?: string } & Partial<Record<PivotableField, string>> = {}) => {
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) as Record<string, string>).toString();
     return req<IncidentStats>(`/api/incidents/stats${qs ? `?${qs}` : ""}`);
   },
-  getCrosstab: (primary: PivotableField, secondary: PivotableField, range: { from?: string; to?: string } = {}) => {
-    const qs = new URLSearchParams({ primary, secondary, ...Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) }).toString();
+  getCrosstab: (
+    primary: PivotableField,
+    secondary: PivotableField,
+    range: { from?: string; to?: string } & Partial<Record<PivotableField, string>> = {}
+  ) => {
+    const qs = new URLSearchParams({
+      primary,
+      secondary,
+      ...(Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) as Record<string, string>),
+    }).toString();
     return req<CrosstabRow[]>(`/api/incidents/crosstab?${qs}`);
   },
-  getBreakdown: (field: PivotableField, range: { from?: string; to?: string } = {}) => {
-    const qs = new URLSearchParams({ field, ...Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) }).toString();
+  getBreakdown: (field: PivotableField, range: { from?: string; to?: string } & Partial<Record<PivotableField, string>> = {}) => {
+    const qs = new URLSearchParams({
+      field,
+      ...(Object.fromEntries(Object.entries(range).filter(([, v]) => v !== undefined)) as Record<string, string>),
+    }).toString();
     return req<{ value: string; count: number }[]>(`/api/incidents/breakdown?${qs}`);
   },
   getIncidentUploads: () => req<SavedUpload[]>("/api/incidents/uploads"),
