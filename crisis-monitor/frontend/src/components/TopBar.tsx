@@ -68,9 +68,9 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           <button onClick={() => onNavigate("datasets")} style={navBtnStyle(view === "datasets")}>
             Datasets
           </button>
-          {user.role === "admin" && (
+          {(user.role === "admin" || user.is_client_admin) && (
             <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
-              Clients
+              {user.role === "admin" ? "Clients" : "My Team"}
             </button>
           )}
         </nav>
