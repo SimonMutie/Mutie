@@ -516,6 +516,8 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   me: () => req<AuthUser>("/api/auth/me"),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok: boolean }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
   listUsers: () => req<AuthUser[]>("/api/auth/users"),
   createUser: (username: string, password: string, display_name?: string, role: UserRole = "client") =>
     req<AuthUser>("/api/auth/users", {
