@@ -1,0 +1,286 @@
+import { Hono, type Context } from "hono";
+import { z } from "zod";
+import { all, first, run, nowIso } from "../db";
+import { newId } from "../ids";
+import { hashPassword } from "../auth";
+import { rowToUser } from "../mappers";
+import { requireAuth, type AuthedVariables } from "../middleware";
+import type { Env } from "../bindings";
+
+export const clientsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
+clientsRouter.use("*", requireAuth);
+
+type ClientsContext = Context<{ Bindings: Env; Variables: AuthedVariables }>;
+
+/** True if the caller can manage accounts under `clientId` — either the
+ *  platform admin, or a login that belongs to that same client and has been
+ *  marked as able to manage its own client's other logins. Looked up fresh
+ *  from the database on every call rather than trusted from the session
+ *  token (which is long-lived and stateless — see auth.ts), so revoking
+ *  someone's client-admin rights takes effect on their very next request
+ *  instead of staying valid for up to the token's full 30-day lifetime. */
+async function canManageClient(c: ClientsContext, clientId: string): Promise<boolean> {
+  if (c.get("role") === "admin") return true;
+  const caller = await first<{ client_id: string | null; is_client_admin: number }>(
+    c.env.DB,
+    `SELECT client_id, is_client_admin FROM users WHERE id = ?`,
+    [c.get("userId")]
+  );
+  return !!caller && caller.client_id === clientId && !!caller.is_client_admin;
+}
+
+function requireAdmin(c: ClientsContext): boolean {
+  return c.get("role") === "admin";
+}
+
+/** Platform-admin only: list every client org with its current account count. */
+clientsRouter.get("/", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clients = await all<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients ORDER BY created_at DESC`);
+  const counts = await all<{ client_id: string; count: number }>(
+    c.env.DB,
+    `SELECT client_id, COUNT(*) AS count FROM users WHERE client_id IS NOT NULL GROUP BY client_id`
+  );
+  const countByClient = new Map(counts.map((r) => [r.client_id, r.count]));
+  return c.json(
+    clients.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      max_accounts: Number(row.max_accounts),
+      account_count: countByClient.get(String(row.id)) ?? 0,
+      created_at: String(row.created_at),
+    }))
+  );
+});
+
+const createClientSchema = z.object({
+  name: z.string().min(1).max(200),
+  max_accounts: z.number().int().min(1).max(50).default(3),
+  username: z.string().min(3).max(64),
+  password: z.string().min(8),
+  display_name: z.string().max(120).optional(),
+});
+
+/** Platform-admin only: create a client org plus its first login in one step. */
+clientsRouter.post("/", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const body = await c.req.json().catch(() => null);
+  const parsed = createClientSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const existingUsername = await first<{ id: string }>(c.env.DB, `SELECT id FROM users WHERE username = ?`, [parsed.data.username]);
+  if (existingUsername) return c.json({ error: "Username already taken" }, 409);
+
+  const clientId = newId();
+  const now = nowIso();
+  await run(c.env.DB, `INSERT INTO clients (id, name, max_accounts, created_by, created_at) VALUES (?,?,?,?,?)`, [
+    clientId,
+    parsed.data.name,
+    parsed.data.max_accounts,
+    c.get("userId"),
+    now,
+  ]);
+
+  const userId = newId();
+  const passwordHash = await hashPassword(parsed.data.password);
+  // The first login under a fresh client org is automatically its own
+  // client-admin — someone has to be able to invite teammates, and handing
+  // over a brand-new account that can't manage its own team without
+  // immediately looping back to the platform admin would be an odd first
+  // experience for exactly the capability this feature exists to provide.
+  await run(
+    c.env.DB,
+    `INSERT INTO users (id, username, password_hash, display_name, role, client_id, is_client_admin, created_at) VALUES (?,?,?,?,'client',?,1,?)`,
+    [userId, parsed.data.username, passwordHash, parsed.data.display_name ?? null, clientId, now]
+  );
+
+  const userRow = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [userId]);
+  return c.json(
+    {
+      id: clientId,
+      name: parsed.data.name,
+      max_accounts: parsed.data.max_accounts,
+      account_count: 1,
+      created_at: now,
+      first_account: rowToUser(userRow!),
+    },
+    201
+  );
+});
+
+const updateClientSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  max_accounts: z.number().int().min(1).max(50).optional(),
+});
+
+/** Platform-admin only: rename a client or change its account limit. Lowering
+ *  max_accounts below the current account count is allowed — it just blocks
+ *  *new* accounts until some are removed, rather than force-deleting
+ *  existing ones as a side effect of a limit change. */
+clientsRouter.patch("/:id", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const id = c.req.param("id");
+  const existing = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = updateClientSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  if (parsed.data.name !== undefined) {
+    updates.push("name = ?");
+    params.push(parsed.data.name);
+  }
+  if (parsed.data.max_accounts !== undefined) {
+    updates.push("max_accounts = ?");
+    params.push(parsed.data.max_accounts);
+  }
+  if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
+  params.push(id);
+  await run(c.env.DB, `UPDATE clients SET ${updates.join(", ")} WHERE id = ?`, params);
+
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [id]);
+  return c.json({ id: String(row!.id), name: String(row!.name), max_accounts: Number(row!.max_accounts) });
+});
+
+/** Platform-admin only: delete a client org — removes its logins too, since
+ *  an orphaned login with no client and no elevated rights would be a dead
+ *  end rather than a meaningful standalone account worth keeping. */
+clientsRouter.delete("/:id", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const id = c.req.param("id");
+  const existing = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  await run(c.env.DB, `DELETE FROM users WHERE client_id = ?`, [id]);
+  await run(c.env.DB, `DELETE FROM clients WHERE id = ?`, [id]);
+  return c.json({ ok: true });
+});
+
+/** Admin, or that client's own client-admin: this one client's own metadata
+ *  (name, limit, current count) — the list endpoint above is platform-admin
+ *  only, so a client-admin managing their own team needs this instead. */
+clientsRouter.get("/:id", async (c) => {
+  const clientId = c.req.param("id");
+  if (!(await canManageClient(c, clientId))) return c.json({ error: "Not found" }, 404);
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [clientId]);
+  if (!row) return c.json({ error: "Not found" }, 404);
+  const countRow = await first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM users WHERE client_id = ?`, [clientId]);
+  return c.json({
+    id: String(row.id),
+    name: String(row.name),
+    max_accounts: Number(row.max_accounts),
+    account_count: countRow?.count ?? 0,
+    created_at: String(row.created_at),
+  });
+});
+
+/** Admin, or that client's own client-admin: list this client's accounts.
+ *  404 rather than 403 for an unauthorized client-scoped caller — same
+ *  reasoning used throughout this app's other ownership checks: a client
+ *  shouldn't be able to distinguish "exists but isn't yours" from "doesn't
+ *  exist" by probing arbitrary ids. */
+clientsRouter.get("/:id/accounts", async (c) => {
+  const clientId = c.req.param("id");
+  if (!(await canManageClient(c, clientId))) return c.json({ error: "Not found" }, 404);
+  const rows = await all<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE client_id = ? ORDER BY created_at ASC`, [clientId]);
+  return c.json(rows.map(rowToUser));
+});
+
+const accountSchema = z.object({
+  username: z.string().min(3).max(64),
+  password: z.string().min(8),
+  display_name: z.string().max(120).optional(),
+});
+
+/** Admin, or that client's own client-admin: add a teammate login, capped at
+ *  the client's max_accounts. */
+clientsRouter.post("/:id/accounts", async (c) => {
+  const clientId = c.req.param("id");
+  if (!(await canManageClient(c, clientId))) return c.json({ error: "Not found" }, 404);
+
+  const client = await first<{ max_accounts: number }>(c.env.DB, `SELECT max_accounts FROM clients WHERE id = ?`, [clientId]);
+  if (!client) return c.json({ error: "Not found" }, 404);
+  const countRow = await first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM users WHERE client_id = ?`, [clientId]);
+  if ((countRow?.count ?? 0) >= client.max_accounts) {
+    return c.json({ error: `This client is already at its limit of ${client.max_accounts} account${client.max_accounts === 1 ? "" : "s"}.` }, 409);
+  }
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = accountSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const existingUsername = await first<{ id: string }>(c.env.DB, `SELECT id FROM users WHERE username = ?`, [parsed.data.username]);
+  if (existingUsername) return c.json({ error: "Username already taken" }, 409);
+
+  const id = newId();
+  const passwordHash = await hashPassword(parsed.data.password);
+  await run(
+    c.env.DB,
+    `INSERT INTO users (id, username, password_hash, display_name, role, client_id, is_client_admin, created_at) VALUES (?,?,?,?,'client',?,0,?)`,
+    [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, clientId, nowIso()]
+  );
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [id]);
+  return c.json(rowToUser(row!), 201);
+});
+
+const updateAccountSchema = z.object({
+  is_client_admin: z.boolean().optional(),
+  display_name: z.string().max(120).optional(),
+});
+
+/** Admin, or that client's own client-admin: toggle whether a teammate can
+ *  also manage the client's other logins, or update their display name. */
+clientsRouter.patch("/:id/accounts/:userId", async (c) => {
+  const clientId = c.req.param("id");
+  if (!(await canManageClient(c, clientId))) return c.json({ error: "Not found" }, 404);
+
+  const targetId = c.req.param("userId");
+  const target = await first<{ client_id: string | null }>(c.env.DB, `SELECT client_id FROM users WHERE id = ?`, [targetId]);
+  if (!target || target.client_id !== clientId) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = updateAccountSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+  if (parsed.data.is_client_admin !== undefined) {
+    updates.push("is_client_admin = ?");
+    params.push(parsed.data.is_client_admin ? 1 : 0);
+  }
+  if (parsed.data.display_name !== undefined) {
+    updates.push("display_name = ?");
+    params.push(parsed.data.display_name);
+  }
+  if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
+  params.push(targetId);
+  await run(c.env.DB, `UPDATE users SET ${updates.join(", ")} WHERE id = ?`, params);
+
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [targetId]);
+  return c.json(rowToUser(row!));
+});
+
+/** Admin, or that client's own client-admin: remove a teammate login. Can't
+ *  remove your own login through this endpoint — that's a more deliberate
+ *  action than routine team management, and not something to fold into the
+ *  same click. Can't leave a client with zero accounts either, since
+ *  there'd be nothing left to log in as and no way back in without the
+ *  platform admin stepping in. */
+clientsRouter.delete("/:id/accounts/:userId", async (c) => {
+  const clientId = c.req.param("id");
+  if (!(await canManageClient(c, clientId))) return c.json({ error: "Not found" }, 404);
+
+  const targetId = c.req.param("userId");
+  if (targetId === c.get("userId")) return c.json({ error: "You can't remove your own login from here." }, 400);
+
+  const target = await first<{ client_id: string | null }>(c.env.DB, `SELECT client_id FROM users WHERE id = ?`, [targetId]);
+  if (!target || target.client_id !== clientId) return c.json({ error: "Not found" }, 404);
+
+  const countRow = await first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM users WHERE client_id = ?`, [clientId]);
+  if ((countRow?.count ?? 0) <= 1) return c.json({ error: "Can't remove the last account on a client — delete the client instead." }, 400);
+
+  await run(c.env.DB, `DELETE FROM users WHERE id = ?`, [targetId]);
+  return c.json({ ok: true });
+});
