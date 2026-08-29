@@ -80,6 +80,33 @@ incidentsRouter.post("/bulk", async (c) => {
   }
 
   const ownerId = c.get("userId");
+
+  // A country-restricted client (see effectiveCountryScope) can only ever
+  // upload incidents for countries they're actually allowed — checked
+  // against every row before inserting any of them, so a batch either goes
+  // in entirely or is rejected with a clear reason, never partially
+  // inserted with some rows silently dropped. A missing country on a
+  // restricted client's row is rejected too — an incident with no country
+  // at all can't be verified as compliant, and letting it through would
+  // undermine the whole point of the restriction.
+  const allowedCountries = await effectiveCountryScope(c.env.DB, c.get("role"), ownerId);
+  if (allowedCountries) {
+    const allowedLower = new Set(allowedCountries.map((s) => s.toLowerCase()));
+    const disallowed = new Set<string>();
+    for (const row of parsed.data.rows) {
+      const country = row.country?.trim();
+      if (!country || !allowedLower.has(country.toLowerCase())) disallowed.add(country || "(no country specified)");
+    }
+    if (disallowed.size > 0) {
+      return c.json(
+        {
+          error: `Your account is restricted to: ${allowedCountries.join(", ")}. This upload includes rows outside that: ${Array.from(disallowed).join(", ")}. Remove those rows, or fix their country field, and try again.`,
+        },
+        403
+      );
+    }
+  }
+
   const batchId = parsed.data.batch_id ?? newId();
   const now = nowIso();
 
@@ -166,7 +193,7 @@ incidentsRouter.post("/bulk", async (c) => {
 const MAX_LIST_LIMIT = 250000; // effectively uncapped for any realistic dataset size here — was 5000, which silently truncated real exports
 
 incidentsRouter.get("/", async (c) => {
-  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
+  const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
 
   const country = c.req.query("country");
   const province = c.req.query("province");
@@ -183,6 +210,15 @@ incidentsRouter.get("/", async (c) => {
   if (scopeOwnerId && scopeOwnerId.length > 0) {
     conditions.push(`owner_id IN (${scopeOwnerId.map(() => "?").join(",")})`);
     params.push(...scopeOwnerId);
+  }
+  // A country-restricted client's own chosen ?country= filter (if any) is
+  // ANDed with their allowed-countries restriction below, not replaced by
+  // it — asking for a country outside their access just correctly returns
+  // nothing, rather than either silently ignoring their restriction or
+  // ignoring their filter.
+  if (scopeCountries && scopeCountries.length > 0) {
+    conditions.push(`LOWER(country) IN (${scopeCountries.map(() => "LOWER(?)").join(",")})`);
+    params.push(...scopeCountries);
   }
   if (country) {
     conditions.push("country = ?");
@@ -231,17 +267,16 @@ incidentsRouter.get("/", async (c) => {
 /** Distinct values for each filterable field, so the frontend can populate filter
  *  dropdowns from real data rather than a hardcoded guess at what values exist. */
 incidentsRouter.get("/filters", async (c) => {
-  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
-  const ownerClause = scopeOwnerId && scopeOwnerId.length > 0 ? `WHERE owner_id IN (${scopeOwnerId.map(() => "?").join(",")})` : "";
-  const ownerParams = scopeOwnerId ?? [];
+  const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, undefined, undefined, scopeCountries);
 
   const fields = ["country", "province", "sector", "actor", "tactic", "severity"] as const;
   const results: Record<string, string[]> = {};
   for (const field of fields) {
     const rows = await all<{ value: string }>(
       c.env.DB,
-      `SELECT DISTINCT ${field} AS value FROM incidents ${ownerClause} ${ownerClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`,
-      ownerParams
+      `SELECT DISTINCT ${field} AS value FROM incidents ${whereClause} ${whereClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`,
+      scopeParams
     );
     results[field] = rows.map((r) => r.value);
   }
@@ -316,7 +351,40 @@ export async function effectiveReadScope(db: D1Database, role: string, userId: s
   return teamOwnerIds(db, userId);
 }
 
-export function buildScopeClause(ownerIds: string[] | null, dateFrom?: string, dateTo?: string): { whereClause: string; andClause: string; params: unknown[] } {
+/** The countries a client-scoped caller is restricted to, for BOTH reading
+ *  and writing incidents — null means unrestricted (admin, a standalone
+ *  account with no client, or a client the platform admin hasn't opted
+ *  into this at all). A client with zero configured countries is
+ *  deliberately unrestricted rather than locked out of everything, so
+ *  turning this on is opt-in per client — existing clients keep working
+ *  exactly as before until the admin explicitly adds countries for them.
+ *  Matched case-insensitively (see buildScopeClause and the upload
+ *  validation below) since incident data is free-text, uploaded from
+ *  spreadsheets with no fixed casing convention. */
+export async function effectiveCountryScope(db: D1Database, role: string, userId: string): Promise<string[] | null> {
+  if (role === "admin") return null;
+  const caller = await first<{ client_id: string | null }>(db, `SELECT client_id FROM users WHERE id = ?`, [userId]);
+  if (!caller?.client_id) return null;
+  const rows = await all<{ country: string }>(db, `SELECT country FROM client_country_access WHERE client_id = ?`, [caller.client_id]);
+  if (rows.length === 0) return null;
+  return rows.map((r) => r.country);
+}
+
+/** Fetches both scoping dimensions together — one extra query beyond just
+ *  calling effectiveReadScope alone, but every endpoint that needs one of
+ *  these needs the other too, so bundling them avoids repeating the same
+ *  two-call pattern at every call site. */
+export async function effectiveScope(db: D1Database, role: string, userId: string): Promise<{ ownerIds: string[] | null; countries: string[] | null }> {
+  const [ownerIds, countries] = await Promise.all([effectiveReadScope(db, role, userId), effectiveCountryScope(db, role, userId)]);
+  return { ownerIds, countries };
+}
+
+export function buildScopeClause(
+  ownerIds: string[] | null,
+  dateFrom?: string,
+  dateTo?: string,
+  countries?: string[] | null
+): { whereClause: string; andClause: string; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
   if (ownerIds && ownerIds.length > 0) {
@@ -330,6 +398,10 @@ export function buildScopeClause(ownerIds: string[] | null, dateFrom?: string, d
   if (dateTo) {
     conditions.push("occurred_at <= ?");
     params.push(dateTo);
+  }
+  if (countries && countries.length > 0) {
+    conditions.push(`LOWER(country) IN (${countries.map(() => "LOWER(?)").join(",")})`);
+    params.push(...countries);
   }
   return {
     whereClause: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
@@ -354,9 +426,16 @@ export function isPivotable(v: string | undefined): v is PivotableField {
  *  anonymous viewer's, since there isn't one). Exported so that route and
  *  the authed /breakdown endpoint below share one query path instead of two
  *  that could quietly drift apart. */
-export async function fetchIncidentsBreakdown(db: D1Database, ownerIds: string[] | null, field: string | undefined, dateFrom?: string, dateTo?: string): Promise<{ value: string; count: number }[]> {
+export async function fetchIncidentsBreakdown(
+  db: D1Database,
+  ownerIds: string[] | null,
+  field: string | undefined,
+  dateFrom?: string,
+  dateTo?: string,
+  countries?: string[] | null
+): Promise<{ value: string; count: number }[]> {
   if (!isPivotable(field)) return [];
-  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo);
+  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries);
   return all<{ value: string; count: number }>(
     db,
     `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andClause} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
@@ -370,10 +449,11 @@ export async function fetchIncidentsCrosstab(
   primary: string | undefined,
   secondary: string | undefined,
   dateFrom?: string,
-  dateTo?: string
+  dateTo?: string,
+  countries?: string[] | null
 ): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
   if (!isPivotable(primary) || !isPivotable(secondary)) return [];
-  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo);
+  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries);
   return all<{ primary_value: string; secondary_value: string; count: number }>(
     db,
     `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
@@ -391,8 +471,8 @@ incidentsRouter.get("/breakdown", async (c) => {
   if (!isPivotable(field)) {
     return c.json({ error: "field must be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
-  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
-  return c.json(await fetchIncidentsBreakdown(c.env.DB, scopeOwnerId, field, c.req.query("from"), c.req.query("to")));
+  const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  return c.json(await fetchIncidentsBreakdown(c.env.DB, scopeOwnerId, field, c.req.query("from"), c.req.query("to"), scopeCountries));
 });
 
 /** Genuine joint counts for any two of the pivotable fields — the general
@@ -404,15 +484,15 @@ incidentsRouter.get("/crosstab", async (c) => {
   if (!isPivotable(primary) || !isPivotable(secondary)) {
     return c.json({ error: "primary and secondary must each be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
-  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
-  return c.json(await fetchIncidentsCrosstab(c.env.DB, scopeOwnerId, primary, secondary, c.req.query("from"), c.req.query("to")));
+  const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  return c.json(await fetchIncidentsCrosstab(c.env.DB, scopeOwnerId, primary, secondary, c.req.query("from"), c.req.query("to"), scopeCountries));
 });
 
 incidentsRouter.get("/stats", async (c) => {
   const dateFrom = c.req.query("from");
   const dateTo = c.req.query("to");
-  const scopeOwnerId = await effectiveReadScope(c.env.DB, c.get("role"), c.get("userId"));
-  const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, dateFrom, dateTo);
+  const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, dateFrom, dateTo, scopeCountries);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
@@ -613,6 +693,19 @@ incidentsRouter.patch("/:id", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = updateIncidentSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  // Same restriction as uploading — a country-restricted client can't move
+  // an incident to a country outside their access by editing it either.
+  if ("country" in parsed.data) {
+    const allowedCountries = await effectiveCountryScope(c.env.DB, c.get("role"), ownerId);
+    if (allowedCountries) {
+      const newCountry = (parsed.data as { country?: string | null }).country?.trim();
+      const allowedLower = new Set(allowedCountries.map((s) => s.toLowerCase()));
+      if (!newCountry || !allowedLower.has(newCountry.toLowerCase())) {
+        return c.json({ error: `Your account is restricted to: ${allowedCountries.join(", ")}.` }, 403);
+      }
+    }
+  }
 
   const updates: string[] = [];
   const params: unknown[] = [];
