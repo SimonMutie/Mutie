@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { api, type MapDefaultSettings } from "../api";
-import { BASEMAPS, type BasemapKey } from "./IncidentsMap";
+import { BASEMAPS, type BasemapKey } from "./mapConstants";
 
 /** Platform-admin only (enforced both here via the parent tab's own gating,
  *  and server-side on the PATCH endpoint) — a single, platform-wide default
  *  for what the Mapping view starts with. Not a personal preference: this
  *  is what every client's own Mapping view also starts with, until they
  *  change something within their own session. */
-export default function MapDefaultsPanel() {
+export default function MapDefaultsPanel({ compact }: { compact?: boolean } = {}) {
   const [settings, setSettings] = useState<MapDefaultSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -50,13 +50,14 @@ export default function MapDefaultsPanel() {
   }
 
   return (
-    <div style={{ maxWidth: 480 }}>
+    <div style={compact ? undefined : { maxWidth: 480 }}>
       <div className="eyebrow" style={{ marginBottom: 4 }}>
         MAP DEFAULTS
       </div>
-      <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 20 }}>
-        What every Mapping view — yours and every client's — starts with when first opened. Anyone can still change what they see within their own
-        session; this only controls the starting point.
+      <div style={{ fontSize: compact ? 11 : 12.5, color: "var(--text-muted)", marginBottom: compact ? 12 : 20 }}>
+        {compact
+          ? "The starting point for every Mapping view — yours and every client's."
+          : "What every Mapping view — yours and every client's — starts with when first opened. Anyone can still change what they see within their own session; this only controls the starting point."}
       </div>
 
       {error && (
