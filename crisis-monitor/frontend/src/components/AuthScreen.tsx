@@ -51,7 +51,7 @@ export default function AuthScreen({ mode, onAuthenticated }: Props) {
           <Logo size={30} />
           <div>
             <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700 }}>
-              Globa<span style={{ color: "var(--signal)" }}>Lens</span>
+              The <span style={{ color: "var(--signal)" }}>Lens</span>
             </h1>
             <div className="eyebrow" style={{ marginTop: 4 }}>
               {mode === "bootstrap" ? "SET UP YOUR ADMIN ACCOUNT" : "SIGN IN"}
