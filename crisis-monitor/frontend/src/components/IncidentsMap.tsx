@@ -627,8 +627,31 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingPng, setExportingPng] = useState(false);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
+  // Separate from viewMode — viewMode only chooses *which way* incidents are
+  // shown, it was never able to hide them entirely on its own. This is what
+  // lets the admin-configured "show incidents by default" setting actually
+  // start the map with nothing plotted, not just default to whichever mode.
+  const [incidentsVisible, setIncidentsVisible] = useState(true);
   const [iconMode, setIconMode] = useState<"actor" | "tactic">("actor");
   const [heatWeighted, setHeatWeighted] = useState(false);
+  // Applied once, from the admin-configured platform-wide defaults, before
+  // the map's own layers render at all — fetching then setting state after
+  // the fact would flash incidents/a different basemap briefly before the
+  // real default kicked in, which defeats the point of a "start hidden"
+  // default entirely.
+  const [mapSettingsLoaded, setMapSettingsLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .getMapSettings()
+      .then((settings) => {
+        setBasemap((settings.default_basemap as BasemapKey) in BASEMAPS ? (settings.default_basemap as BasemapKey) : "osm");
+        setViewMode(settings.default_view_mode);
+        setIncidentsVisible(settings.show_incidents_by_default);
+      })
+      .catch(() => {})
+      .finally(() => setMapSettingsLoaded(true));
+  }, []);
 
   // --- route drafting ---
   const [draftMode, setDraftMode] = useState<"road" | "freehand">("road");
@@ -1111,6 +1134,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
     }
   }
 
+  if (!mapSettingsLoaded) {
+    return <div style={{ width: "100%", height: "100%", background: "var(--panel-raised)" }} />;
+  }
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {(showMapTypes || showRoutesOverlays) && (
@@ -1146,6 +1173,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
 
             {/* incident view mode */}
             <div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, marginBottom: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={incidentsVisible} onChange={(e) => setIncidentsVisible(e.target.checked)} />
+                Show incidents on the map
+              </label>
               <div className="eyebrow" style={{ marginBottom: 6 }}>VIEW</div>
               <div style={{ display: "flex", gap: 4 }}>
                 <button onClick={() => setViewMode("markers")} style={chipStyle(viewMode === "markers")}>
@@ -1531,9 +1562,10 @@ export default function IncidentsMap({ incidents: initialIncidents }: Props) {
             />
           ))}
 
-        {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
+        {incidentsVisible && viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
 
-        {viewMode === "markers" &&
+        {incidentsVisible &&
+          viewMode === "markers" &&
           displayIncidents.map((i) => {
           const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
           const actorCategory = classifyActor(i.actor);
