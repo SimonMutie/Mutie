@@ -4,7 +4,7 @@ import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab } from "./incidents";
+import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, teamOwnerIds } from "./incidents";
 import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -130,15 +130,17 @@ customDashboardsRouter.get("/", async (c) => {
     const rows = await all(c.env.DB, `SELECT * FROM custom_dashboards ORDER BY updated_at DESC`);
     return c.json(rows.map(rowToDashboard));
   }
+  const team = await teamOwnerIds(c.env.DB, ownerId);
   const granted = await grantedDashboardIds(c.env.DB, ownerId);
+  const teamPlaceholders = team.map(() => "?").join(",");
   const rows =
     granted.length > 0
       ? await all(
           c.env.DB,
-          `SELECT * FROM custom_dashboards WHERE owner_id = ? OR id IN (${granted.map(() => "?").join(",")}) ORDER BY updated_at DESC`,
-          [ownerId, ...granted]
+          `SELECT * FROM custom_dashboards WHERE owner_id IN (${teamPlaceholders}) OR id IN (${granted.map(() => "?").join(",")}) ORDER BY updated_at DESC`,
+          [...team, ...granted]
         )
-      : await all(c.env.DB, `SELECT * FROM custom_dashboards WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
+      : await all(c.env.DB, `SELECT * FROM custom_dashboards WHERE owner_id IN (${teamPlaceholders}) ORDER BY updated_at DESC`, team);
   return c.json(rows.map(rowToDashboard));
 });
 
@@ -202,9 +204,13 @@ customDashboardsRouter.get("/:id", async (c) => {
   const ownerId = c.get("userId");
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [c.req.param("id")]);
   if (!row) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && row.owner_id !== ownerId) {
-    const granted = await grantedDashboardIds(c.env.DB, ownerId);
-    if (!granted.includes(c.req.param("id"))) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin) {
+    const team = await teamOwnerIds(c.env.DB, ownerId);
+    const isTeammatesOwn = team.includes(String(row.owner_id));
+    if (!isTeammatesOwn) {
+      const granted = await grantedDashboardIds(c.env.DB, ownerId);
+      if (!granted.includes(c.req.param("id"))) return c.json({ error: "Not found" }, 404);
+    }
   }
   return c.json(rowToDashboard(row));
 });
@@ -297,7 +303,7 @@ customDashboardsRouter.delete("/:id", async (c) => {
  *  Uses the exact same clause-building helper as the authenticated route, so
  *  the two can't quietly drift into different date-filtering behavior. */
 async function computeStatsForOwner(db: D1Database, ownerId: string | null, dateFrom?: string | null, dateTo?: string | null) {
-  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerId, dateFrom ?? undefined, dateTo ?? undefined);
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
@@ -454,9 +460,9 @@ publicDashboardsRouter.get("/:token", async (c) => {
     const primary = w.dataField ? DATA_FIELD_TO_COLUMN[w.dataField] : undefined;
     if (primary && isPivotable(primary) && isPivotable(w.secondaryField)) {
       const key = `${primary}|${w.secondaryField}`;
-      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined);
+      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId ? [ownerId] : null, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined);
     } else if (primary && isPivotable(primary) && !("by_" + primary in stats)) {
-      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId, primary, dateFrom ?? undefined, dateTo ?? undefined);
+      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId ? [ownerId] : null, primary, dateFrom ?? undefined, dateTo ?? undefined);
     }
   }
 
