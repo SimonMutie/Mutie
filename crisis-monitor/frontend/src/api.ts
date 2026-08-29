@@ -548,6 +548,11 @@ export const api = {
     req<{ ok: boolean }>(`/api/clients/${clientId}/datasets`, { method: "POST", body: JSON.stringify({ dataset_id: datasetId }) }),
   revokeClientDataset: (clientId: string, datasetId: string) =>
     req<void>(`/api/clients/${clientId}/datasets/${datasetId}`, { method: "DELETE" }),
+  listClientCountries: (clientId: string) => req<{ country: string; created_at: string }[]>(`/api/clients/${clientId}/countries`),
+  grantClientCountry: (clientId: string, country: string) =>
+    req<{ ok: boolean }>(`/api/clients/${clientId}/countries`, { method: "POST", body: JSON.stringify({ country }) }),
+  revokeClientCountry: (clientId: string, country: string) =>
+    req<void>(`/api/clients/${clientId}/countries?country=${encodeURIComponent(country)}`, { method: "DELETE" }),
 
   getEvents: (params: { limit?: number; source_type?: string; query_id?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
