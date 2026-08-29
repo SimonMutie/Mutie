@@ -195,12 +195,6 @@ const MAX_LIST_LIMIT = 250000; // effectively uncapped for any realistic dataset
 incidentsRouter.get("/", async (c) => {
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
 
-  const country = c.req.query("country");
-  const province = c.req.query("province");
-  const sector = c.req.query("sector");
-  const actor = c.req.query("actor");
-  const tactic = c.req.query("tactic");
-  const severity = c.req.query("severity");
   const from = c.req.query("from");
   const to = c.req.query("to");
   const limit = Math.min(Number(c.req.query("limit") ?? 2000) || 2000, MAX_LIST_LIMIT);
@@ -220,29 +214,16 @@ incidentsRouter.get("/", async (c) => {
     conditions.push(`LOWER(country) IN (${scopeCountries.map(() => "LOWER(?)").join(",")})`);
     params.push(...scopeCountries);
   }
-  if (country) {
-    conditions.push("country = ?");
-    params.push(country);
-  }
-  if (province) {
-    conditions.push("province = ?");
-    params.push(province);
-  }
-  if (sector) {
-    conditions.push("sector = ?");
-    params.push(sector);
-  }
-  if (actor) {
-    conditions.push("actor = ?");
-    params.push(actor);
-  }
-  if (tactic) {
-    conditions.push("tactic = ?");
-    params.push(tactic);
-  }
-  if (severity) {
-    conditions.push("severity = ?");
-    params.push(severity);
+  // All 15 categorical fields, not a hand-picked subset — same allowlist
+  // (PIVOTABLE_FIELDS) already relied on elsewhere in this file to keep
+  // column-name interpolation safe from injection, since these field names
+  // end up directly in the SQL text rather than as bound parameters.
+  for (const field of PIVOTABLE_FIELDS) {
+    const value = c.req.query(field);
+    if (value) {
+      conditions.push(`${field} = ?`);
+      params.push(value);
+    }
   }
   if (from) {
     conditions.push("occurred_at >= ?");
@@ -270,7 +251,13 @@ incidentsRouter.get("/filters", async (c) => {
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
   const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, undefined, undefined, scopeCountries);
 
-  const fields = ["country", "province", "sector", "actor", "tactic", "severity"] as const;
+  // The full set of categorical fields, not just a hand-picked subset — this
+  // used to be a hardcoded 6-field list that quietly fell out of sync with
+  // PIVOTABLE_FIELDS below (which already covers 15). Referencing that
+  // constant here is safe even though it's declared later in this file:
+  // this handler doesn't run until an actual request comes in, well after
+  // the whole module has finished loading top to bottom.
+  const fields = PIVOTABLE_FIELDS;
   const results: Record<string, string[]> = {};
   for (const field of fields) {
     const rows = await all<{ value: string }>(
@@ -383,7 +370,8 @@ export function buildScopeClause(
   ownerIds: string[] | null,
   dateFrom?: string,
   dateTo?: string,
-  countries?: string[] | null
+  countries?: string[] | null,
+  fieldFilters?: Partial<Record<PivotableField, string>>
 ): { whereClause: string; andClause: string; params: unknown[] } {
   const conditions: string[] = [];
   const params: unknown[] = [];
@@ -403,11 +391,37 @@ export function buildScopeClause(
     conditions.push(`LOWER(country) IN (${countries.map(() => "LOWER(?)").join(",")})`);
     params.push(...countries);
   }
+  // A dashboard-wide (or map search) filter on any of the 15 categorical
+  // fields — e.g. sector = 'Criminal'. Keys are only ever populated from
+  // PIVOTABLE_FIELDS by callers (see parsePivotableFilters below), the same
+  // allowlist already relied on elsewhere in this file, so interpolating
+  // them directly as column names here is safe.
+  if (fieldFilters) {
+    for (const [field, value] of Object.entries(fieldFilters)) {
+      if (value) {
+        conditions.push(`${field} = ?`);
+        params.push(value);
+      }
+    }
+  }
   return {
     whereClause: conditions.length ? `WHERE ${conditions.join(" AND ")}` : "",
     andClause: conditions.length ? `AND ${conditions.join(" AND ")}` : "",
     params,
   };
+}
+
+/** Reads every PIVOTABLE_FIELDS query param present on this request into a
+ *  single filter object — the shared way /stats, /breakdown, and /crosstab
+ *  all pick up a dashboard-wide (or map search) category filter without
+ *  each one re-implementing the same validate-and-collect loop. */
+export function parsePivotableFilters(c: { req: { query: (key: string) => string | undefined } }): Partial<Record<PivotableField, string>> {
+  const result: Partial<Record<PivotableField, string>> = {};
+  for (const field of PIVOTABLE_FIELDS) {
+    const value = c.req.query(field);
+    if (value) result[field] = value;
+  }
+  return result;
 }
 
 export function isPivotable(v: string | undefined): v is PivotableField {
@@ -432,10 +446,11 @@ export async function fetchIncidentsBreakdown(
   field: string | undefined,
   dateFrom?: string,
   dateTo?: string,
-  countries?: string[] | null
+  countries?: string[] | null,
+  fieldFilters?: Partial<Record<PivotableField, string>>
 ): Promise<{ value: string; count: number }[]> {
   if (!isPivotable(field)) return [];
-  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries);
+  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   return all<{ value: string; count: number }>(
     db,
     `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andClause} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
@@ -450,10 +465,11 @@ export async function fetchIncidentsCrosstab(
   secondary: string | undefined,
   dateFrom?: string,
   dateTo?: string,
-  countries?: string[] | null
+  countries?: string[] | null,
+  fieldFilters?: Partial<Record<PivotableField, string>>
 ): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
   if (!isPivotable(primary) || !isPivotable(secondary)) return [];
-  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries);
+  const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   return all<{ primary_value: string; secondary_value: string; count: number }>(
     db,
     `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
@@ -472,7 +488,9 @@ incidentsRouter.get("/breakdown", async (c) => {
     return c.json({ error: "field must be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
-  return c.json(await fetchIncidentsBreakdown(c.env.DB, scopeOwnerId, field, c.req.query("from"), c.req.query("to"), scopeCountries));
+  return c.json(
+    await fetchIncidentsBreakdown(c.env.DB, scopeOwnerId, field, c.req.query("from"), c.req.query("to"), scopeCountries, parsePivotableFilters(c))
+  );
 });
 
 /** Genuine joint counts for any two of the pivotable fields — the general
@@ -485,14 +503,16 @@ incidentsRouter.get("/crosstab", async (c) => {
     return c.json({ error: "primary and secondary must each be one of: " + PIVOTABLE_FIELDS.join(", ") }, 400);
   }
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
-  return c.json(await fetchIncidentsCrosstab(c.env.DB, scopeOwnerId, primary, secondary, c.req.query("from"), c.req.query("to"), scopeCountries));
+  return c.json(
+    await fetchIncidentsCrosstab(c.env.DB, scopeOwnerId, primary, secondary, c.req.query("from"), c.req.query("to"), scopeCountries, parsePivotableFilters(c))
+  );
 });
 
 incidentsRouter.get("/stats", async (c) => {
   const dateFrom = c.req.query("from");
   const dateTo = c.req.query("to");
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
-  const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, dateFrom, dateTo, scopeCountries);
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, dateFrom, dateTo, scopeCountries, parsePivotableFilters(c));
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
