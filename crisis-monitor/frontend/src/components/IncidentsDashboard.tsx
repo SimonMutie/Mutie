@@ -10,10 +10,12 @@ import DashboardEditor from "./DashboardEditor";
 
 type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage";
 type DashboardMode = "auto" | "bespoke";
+type MappingMode = "map" | "search";
 
 export default function IncidentsDashboard() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [dashboardMode, setDashboardMode] = useState<DashboardMode>("auto");
+  const [mappingMode, setMappingMode] = useState<MappingMode>("map");
   const [stats, setStats] = useState<IncidentStats | null>(null);
   const [manageRefreshKey, setManageRefreshKey] = useState(0);
   const [logMenuOpen, setLogMenuOpen] = useState(false);
@@ -110,8 +112,23 @@ export default function IncidentsDashboard() {
       {tab === "search" && <IncidentSearch />}
 
       {tab === "map" && (
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <IncidentsMap incidents={[]} />
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+          <div style={{ display: "flex", gap: 6, padding: "10px 24px 0" }}>
+            <button onClick={() => setMappingMode("map")} style={subTabBtnStyle(mappingMode === "map")}>
+              Map
+            </button>
+            <button onClick={() => setMappingMode("search")} style={subTabBtnStyle(mappingMode === "search")}>
+              Search
+            </button>
+          </div>
+
+          {mappingMode === "map" && (
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <IncidentsMap incidents={[]} />
+            </div>
+          )}
+
+          {mappingMode === "search" && <IncidentSearch />}
         </div>
       )}
 
