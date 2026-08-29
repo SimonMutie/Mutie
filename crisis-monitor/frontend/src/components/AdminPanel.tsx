@@ -267,10 +267,15 @@ function ClientDetail({
       </button>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0" }}>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 700 }}>{client.name}</div>
-          <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-            {accounts.length} of {client.max_accounts} account{client.max_accounts === 1 ? "" : "s"} used
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {client.logo_data && (
+            <img src={client.logo_data} alt={`${client.name} logo`} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "contain", background: "var(--panel-raised)" }} />
+          )}
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>{client.name}</div>
+            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+              {accounts.length} of {client.max_accounts} account{client.max_accounts === 1 ? "" : "s"} used
+            </div>
           </div>
         </div>
         {isPlatformAdmin && (
@@ -292,6 +297,8 @@ function ClientDetail({
           {error}
         </div>
       )}
+
+      <ClientLogoSection client={client} onSaved={load} />
 
       <div className="eyebrow" style={{ marginBottom: 10 }}>
         TEAM
@@ -389,6 +396,104 @@ function ClientDetail({
           />
         </>
       )}
+    </div>
+  );
+}
+
+/** Visible to both the platform admin and that client's own client-admin —
+ *  unlike renaming a client or changing its account limit (platform-only
+ *  decisions), a client's own branding is naturally theirs to set for
+ *  themselves. Checked client-side against the same size limit the backend
+ *  enforces (290KB raw file, comfortably under the 400KB base64-encoded
+ *  cap — see MAX_LOGO_DATA_URL_LENGTH in clients.ts) so a too-large file is
+ *  rejected immediately rather than after a full upload round-trip. */
+function ClientLogoSection({ client, onSaved }: { client: ClientOrg; onSaved: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const MAX_RAW_BYTES = 290_000;
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // lets picking the same file again re-trigger onChange
+    if (!file) return;
+    setError(null);
+
+    if (!file.type.startsWith("image/")) {
+      setError("Please choose an image file.");
+      return;
+    }
+    if (file.size > MAX_RAW_BYTES) {
+      setError(`That image is too large (${Math.round(file.size / 1024)}KB) — please use one under ${Math.round(MAX_RAW_BYTES / 1024)}KB.`);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setSaving(true);
+      try {
+        await api.updateClientLogo(client.id, String(reader.result));
+        await onSaved();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Couldn't save that logo.");
+      } finally {
+        setSaving(false);
+      }
+    };
+    reader.onerror = () => setError("Couldn't read that file.");
+    reader.readAsDataURL(file);
+  }
+
+  async function handleRemove() {
+    setError(null);
+    setSaving(true);
+    try {
+      await api.updateClientLogo(client.id, null);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove that logo.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ padding: "14px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 14 }}>
+      {client.logo_data ? (
+        <img src={client.logo_data} alt="Current logo" style={{ width: 48, height: 48, borderRadius: 8, objectFit: "contain", background: "var(--panel-raised)" }} />
+      ) : (
+        <div
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: 8,
+            background: "var(--panel-raised)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 10,
+            color: "var(--text-faint)",
+            textAlign: "center",
+          }}
+        >
+          No logo
+        </div>
+      )}
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 4 }}>Client logo</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ ...backBtnStyle, display: "inline-block", cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>
+            {saving ? "Saving…" : client.logo_data ? "Change" : "Upload"}
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" onChange={handleFileChange} disabled={saving} style={{ display: "none" }} />
+          </label>
+          {client.logo_data && (
+            <button onClick={handleRemove} disabled={saving} style={dangerBtnStyle}>
+              Remove
+            </button>
+          )}
+        </div>
+        {error && <div style={{ color: "var(--critical)", fontSize: 11.5, marginTop: 6 }}>{error}</div>}
+      </div>
     </div>
   );
 }
