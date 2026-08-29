@@ -33,6 +33,16 @@ export interface AuthUser {
   created_at?: string;
 }
 
+export interface MapDefaultSettings {
+  /** Whether incident markers/heatmap show at all when Mapping first opens
+   *  — the platform-wide default everyone (admin and every client alike)
+   *  starts with, admin-configurable. Not a per-user preference. */
+  show_incidents_by_default: boolean;
+  default_view_mode: "markers" | "heatmap";
+  default_basemap: string;
+  updated_at: string | null;
+}
+
 export interface ClientOrg {
   id: string;
   name: string;
@@ -543,6 +553,9 @@ export const api = {
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
   updateClientLogo: (clientId: string, logoData: string | null) =>
     req<{ ok: boolean }>(`/api/clients/${clientId}/logo`, { method: "PATCH", body: JSON.stringify({ logo_data: logoData }) }),
+  getMapSettings: () => req<MapDefaultSettings>("/api/map-settings"),
+  updateMapSettings: (data: Partial<Pick<MapDefaultSettings, "show_incidents_by_default" | "default_view_mode" | "default_basemap">>) =>
+    req<MapDefaultSettings>("/api/map-settings", { method: "PATCH", body: JSON.stringify(data) }),
   listClientAccounts: (clientId: string) => req<AuthUser[]>(`/api/clients/${clientId}/accounts`),
   createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string }) =>
     req<AuthUser>(`/api/clients/${clientId}/accounts`, { method: "POST", body: JSON.stringify(data) }),
