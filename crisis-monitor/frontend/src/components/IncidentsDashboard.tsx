@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type IncidentStats } from "../api";
+import { api, type AuthUser, type IncidentStats } from "../api";
 import IncidentsMap from "./IncidentsMap";
 import IncidentSearch from "./IncidentSearch";
 import IncidentUpload from "./IncidentUpload";
@@ -7,15 +7,14 @@ import IncidentManualEntry from "./IncidentManualEntry";
 import IncidentManageTable from "./IncidentManageTable";
 import CustomDashboardBuilder from "./CustomDashboardBuilder";
 import DashboardEditor from "./DashboardEditor";
+import MapDefaultsPanel from "./MapDefaultsPanel";
 
-type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage";
+type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage" | "mapdefaults";
 type DashboardMode = "auto" | "bespoke";
-type MappingMode = "map" | "search";
 
-export default function IncidentsDashboard() {
+export default function IncidentsDashboard({ user }: { user: AuthUser }) {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [dashboardMode, setDashboardMode] = useState<DashboardMode>("auto");
-  const [mappingMode, setMappingMode] = useState<MappingMode>("map");
   const [stats, setStats] = useState<IncidentStats | null>(null);
   const [manageRefreshKey, setManageRefreshKey] = useState(0);
   const [logMenuOpen, setLogMenuOpen] = useState(false);
@@ -52,6 +51,11 @@ export default function IncidentsDashboard() {
         <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
           Mapping
         </button>
+        {user.role === "admin" && (
+          <button onClick={() => setTab("mapdefaults")} style={tabBtnStyle(tab === "mapdefaults")} title="What everyone sees by default when they open Mapping">
+            Map Defaults
+          </button>
+        )}
 
         <div ref={logMenuRef} style={{ position: "relative" }}>
           <button onClick={() => setLogMenuOpen((v) => !v)} style={tabBtnStyle(isLogTabActive)}>
@@ -112,23 +116,14 @@ export default function IncidentsDashboard() {
       {tab === "search" && <IncidentSearch />}
 
       {tab === "map" && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-          <div style={{ display: "flex", gap: 6, padding: "10px 24px 0" }}>
-            <button onClick={() => setMappingMode("map")} style={subTabBtnStyle(mappingMode === "map")}>
-              Map
-            </button>
-            <button onClick={() => setMappingMode("search")} style={subTabBtnStyle(mappingMode === "search")}>
-              Search
-            </button>
-          </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <IncidentsMap incidents={[]} />
+        </div>
+      )}
 
-          {mappingMode === "map" && (
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <IncidentsMap incidents={[]} />
-            </div>
-          )}
-
-          {mappingMode === "search" && <IncidentSearch />}
+      {tab === "mapdefaults" && user.role === "admin" && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          <MapDefaultsPanel />
         </div>
       )}
 
