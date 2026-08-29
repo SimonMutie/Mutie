@@ -102,6 +102,7 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   network: CATEGORY_FIELDS,
   bubble: CATEGORY_FIELDS,
   globe: ["by_country"],
+  heatmap_table: CATEGORY_FIELDS,
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
@@ -117,6 +118,7 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "network", label: "Network (links between 2 fields)" },
   { value: "bubble", label: "Packed-circle bubbles" },
   { value: "map", label: "Incident map" },
+  { value: "heatmap_table", label: "Heatmap table (2 fields)" },
 ];
 
 /** Only these types' rendering actually reads from a dataset when
@@ -125,10 +127,10 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
  *  which a generic spreadsheet can be assumed to have. Offering those against
  *  an uploaded dataset would silently show nothing (or incidents data)
  *  regardless of which dataset was picked, so they're left off the list here
- *  rather than offered and quietly wrong. Sankey/network read from the same
- *  generic two-field crosstab bar/line already use, so they work for either
- *  source just fine. */
-export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble", "sankey", "network", "calendar"];
+ *  rather than offered and quietly wrong. Sankey/network/heatmap_table read
+ *  from the same generic two-field crosstab bar/line already use, so they
+ *  work for either source just fine. */
+export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble", "sankey", "network", "calendar", "heatmap_table"];
 
 /** Web-safe system fonts only — no webfont loading, so every option here is
  *  guaranteed to actually render as chosen rather than silently falling back
@@ -977,6 +979,22 @@ export default function DashboardWidgetCard({
           />
         )}
 
+        {widget.type === "heatmap_table" && (
+          <HeatmapTable
+            data={relationshipData(widget, stats, crosstabs)}
+            baseColor={widget.color || "#0d9488"}
+            fontFamily={widget.labelFontFamily}
+            fontSize={widget.labelFontSize}
+            selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
+            selectedSecondary={secondaryCrossFilterField ? activeCrossFilters?.[secondaryCrossFilterField] : undefined}
+            onHoverStartPrimary={handleCrossFilterHover}
+            onHoverStartSecondary={handleSecondaryCrossFilterHover}
+            onHoverEnd={onCrossFilterHoverEnd}
+            onClickPrimary={handleCrossFilterClick}
+            onClickSecondary={handleSecondaryCrossFilterClick}
+          />
+        )}
+
         {widget.type === "bubble" && (
           <BubbleChart
             series={series}
@@ -1091,8 +1109,8 @@ function WidgetEditPopover({
 
   const supportsManualData = type === "choropleth" || type === "globe";
 
-  const supportsBreakdown = type === "bar" || type === "line" || type === "sankey" || type === "network";
-  const requiresSecondary = type === "sankey" || type === "network";
+  const supportsBreakdown = type === "bar" || type === "line" || type === "sankey" || type === "network" || type === "heatmap_table";
+  const requiresSecondary = type === "sankey" || type === "network" || type === "heatmap_table";
   const activeDataset = datasetId ? datasets?.find((d) => d.id === datasetId) : undefined;
 
   /** Sankey/network need two *different* fields to mean anything — unlike
@@ -1140,7 +1158,7 @@ function WidgetEditPopover({
     } else if (FIELDS_FOR_TYPE[newType].length > 0 && !(FIELDS_FOR_TYPE[newType] as string[]).includes(field)) {
       setField(FIELDS_FOR_TYPE[newType][0]);
     }
-    if (newType === "sankey" || newType === "network") {
+    if (newType === "sankey" || newType === "network" || newType === "heatmap_table") {
       if (!secondaryField || secondaryField === field) setSecondaryField(defaultSecondary(field, activeDataset));
     } else if (newType !== "bar" && newType !== "line") {
       setSecondaryField(undefined);
@@ -1156,7 +1174,11 @@ function WidgetEditPopover({
     if (effectiveType !== type) setType(effectiveType);
     const newField = defaultFieldFor(effectiveType, dataset);
     setField(newField);
-    setSecondaryField(requiresSecondary || effectiveType === "sankey" || effectiveType === "network" ? defaultSecondary(newField, dataset) : undefined);
+    setSecondaryField(
+      requiresSecondary || effectiveType === "sankey" || effectiveType === "network" || effectiveType === "heatmap_table"
+        ? defaultSecondary(newField, dataset)
+        : undefined
+    );
   }
 
   function handleSave() {
@@ -1312,7 +1334,8 @@ function WidgetEditPopover({
               {type === "bar" && "Stacked bars"}
               {type === "line" && "Multiple lines"}
               {type === "sankey" && "Flow"}
-              {type === "network" && "Links"}, one per {activeDataset ? secondaryField : PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
+              {type === "network" && "Links"}
+              {type === "heatmap_table" && "Cells"}, one per {activeDataset ? secondaryField : PIVOT_FIELD_LABELS[secondaryField as PivotableField].toLowerCase()}
             </div>
           )}
         </div>
@@ -2036,6 +2059,180 @@ function RelationshipNetwork({
           </g>
         ))}
       </svg>
+    </div>
+  );
+}
+
+/** Highlight table / matrix heatmap — rows are one field's values, columns
+ *  the other's, and each cell's background intensity encodes the count at
+ *  that intersection. Reuses the exact same two-field crosstab data as
+ *  Sankey/Network (see relationshipData), just laid out as a grid instead
+ *  of a flow diagram — no new backend endpoint or fetch logic needed.
+ *  Capped to the top 10 primary values and top 8 secondary values so the
+ *  table stays legible rather than growing into an unreadable wall of
+ *  cells; both caps match the same conventions used elsewhere (topN,
+ *  pivotCrosstab's maxSeries). */
+function HeatmapTable({
+  data,
+  baseColor,
+  fontFamily,
+  fontSize,
+  selectedPrimary,
+  selectedSecondary,
+  onHoverStartPrimary,
+  onHoverStartSecondary,
+  onHoverEnd,
+  onClickPrimary,
+  onClickSecondary,
+}: {
+  data: CrosstabRow[];
+  baseColor: string;
+  fontFamily?: string;
+  fontSize?: number;
+  selectedPrimary?: string;
+  selectedSecondary?: string;
+  onHoverStartPrimary?: (value: string) => void;
+  onHoverStartSecondary?: (value: string) => void;
+  onHoverEnd?: () => void;
+  onClickPrimary?: (value: string) => void;
+  onClickSecondary?: (value: string) => void;
+}) {
+  if (data.length === 0) {
+    return <EmptyState message="No data for this pair of fields yet." />;
+  }
+
+  const primaryTotals = new Map<string, number>();
+  const secondaryTotals = new Map<string, number>();
+  for (const d of data) {
+    primaryTotals.set(d.primary_value, (primaryTotals.get(d.primary_value) ?? 0) + d.count);
+    secondaryTotals.set(d.secondary_value, (secondaryTotals.get(d.secondary_value) ?? 0) + d.count);
+  }
+  const primaries = [...primaryTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([v]) => v);
+  const secondaries = [...secondaryTotals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([v]) => v);
+
+  const cellByKey = new Map<string, number>();
+  let maxCount = 1;
+  for (const d of data) {
+    if (!primaries.includes(d.primary_value) || !secondaries.includes(d.secondary_value)) continue;
+    cellByKey.set(`${d.primary_value}\u0000${d.secondary_value}`, d.count);
+    if (d.count > maxCount) maxCount = d.count;
+  }
+
+  const cellSize = 34;
+  const rowLabelWidth = 110;
+  const isDimmedRow = (p: string) => (selectedPrimary && selectedPrimary !== p) || false;
+  const isDimmedCol = (s: string) => (selectedSecondary && selectedSecondary !== s) || false;
+
+  return (
+    <div style={{ width: "100%", height: "100%", overflow: "auto" }}>
+      <table style={{ borderCollapse: "collapse", fontFamily, fontSize: fontSize ?? 11 }}>
+        <thead>
+          <tr>
+            <th style={{ width: rowLabelWidth }} />
+            {secondaries.map((s) => (
+              <th
+                key={s}
+                onMouseEnter={onHoverStartSecondary ? () => onHoverStartSecondary(s) : undefined}
+                onMouseLeave={onHoverEnd}
+                onClick={onClickSecondary ? () => onClickSecondary(s) : undefined}
+                title={s}
+                style={{
+                  width: cellSize,
+                  maxWidth: cellSize,
+                  padding: "4px 2px",
+                  fontWeight: selectedSecondary === s ? 700 : 500,
+                  opacity: isDimmedCol(s) ? 0.4 : 1,
+                  color: "var(--text-muted)",
+                  cursor: onHoverStartSecondary ? "pointer" : undefined,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  writingMode: "vertical-rl",
+                  transform: "rotate(180deg)",
+                  textAlign: "left",
+                }}
+              >
+                {s}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {primaries.map((p) => (
+            <tr key={p}>
+              <th
+                onMouseEnter={onHoverStartPrimary ? () => onHoverStartPrimary(p) : undefined}
+                onMouseLeave={onHoverEnd}
+                onClick={onClickPrimary ? () => onClickPrimary(p) : undefined}
+                title={p}
+                style={{
+                  width: rowLabelWidth,
+                  maxWidth: rowLabelWidth,
+                  textAlign: "right",
+                  padding: "2px 8px 2px 2px",
+                  fontWeight: selectedPrimary === p ? 700 : 500,
+                  opacity: isDimmedRow(p) ? 0.4 : 1,
+                  color: "var(--text-muted)",
+                  cursor: onHoverStartPrimary ? "pointer" : undefined,
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {p}
+              </th>
+              {secondaries.map((s) => {
+                const count = cellByKey.get(`${p}\u0000${s}`) ?? 0;
+                const intensity = count / maxCount;
+                const isSelected = selectedPrimary === p && selectedSecondary === s;
+                const dimmed = isDimmedRow(p) || isDimmedCol(s);
+                return (
+                  <td
+                    key={s}
+                    onMouseEnter={
+                      onHoverStartPrimary && onHoverStartSecondary
+                        ? () => {
+                            onHoverStartPrimary(p);
+                            onHoverStartSecondary(s);
+                          }
+                        : undefined
+                    }
+                    onMouseLeave={onHoverEnd}
+                    onClick={
+                      onClickPrimary && onClickSecondary
+                        ? () => {
+                            onClickPrimary(p);
+                            onClickSecondary(s);
+                          }
+                        : undefined
+                    }
+                    title={`${p} × ${s}: ${count}`}
+                    style={{
+                      width: cellSize,
+                      height: cellSize,
+                      textAlign: "center",
+                      background: count > 0 ? hexToRgba(baseColor, Math.max(0.12, intensity)) : "transparent",
+                      border: `1px solid ${isSelected ? "var(--text-primary)" : "var(--border-soft)"}`,
+                      opacity: dimmed ? 0.35 : 1,
+                      color: intensity > 0.55 ? "#fff" : "var(--text-primary)",
+                      cursor: onClickPrimary ? "pointer" : undefined,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {count > 0 ? count : ""}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
