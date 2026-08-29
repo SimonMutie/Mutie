@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { AuthUser } from "../api";
 import Logo from "./Logo";
 
@@ -74,27 +75,9 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           <button onClick={() => onNavigate("datasets")} style={navBtnStyle(view === "datasets")}>
             Datasets
           </button>
-          {(user.role === "admin" || user.is_client_admin) && (
-            <button onClick={() => onNavigate("admin")} style={navBtnStyle(view === "admin")}>
-              {user.role === "admin" ? "Clients" : "My Team"}
-            </button>
-          )}
         </nav>
 
-        <div style={{ textAlign: "right" }}>
-          <div className="eyebrow">{user.role === "admin" ? "ADMIN" : "SIGNED IN"}</div>
-          <div className="mono" style={{ fontSize: 13, color: "var(--text-primary)" }}>
-            {user.display_name || user.username}
-          </div>
-        </div>
-
-        <button onClick={() => onNavigate("settings")} style={navBtnStyle(view === "settings")} title="Change your password">
-          Settings
-        </button>
-
-        <button onClick={onLogout} style={logoutBtnStyle}>
-          Log out
-        </button>
+        <AccountMenu user={user} view={view} onNavigate={onNavigate} onLogout={onLogout} />
       </div>
 
       <style>{`
@@ -104,6 +87,105 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
         }
       `}</style>
     </header>
+  );
+}
+
+/** The account name/role block doubles as the dropdown's trigger — clicking
+ *  it (rather than a separate caret icon) opens Settings, the client/team
+ *  management link (only for whoever actually has that right), and Log
+ *  out. Closes on an outside click or Escape, same expected behavior as
+ *  any other dropdown menu. */
+function AccountMenu({
+  user,
+  view,
+  onNavigate,
+  onLogout,
+}: {
+  user: AuthUser;
+  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets";
+  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets") => void;
+  onLogout: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const canManageTeam = user.role === "admin" || user.is_client_admin;
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  function go(target: "admin" | "settings") {
+    onNavigate(target);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={containerRef} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          background: open ? "var(--panel-raised)" : "transparent",
+          border: `1px solid ${open ? "var(--border)" : "transparent"}`,
+          borderRadius: 8,
+          padding: "5px 10px",
+          cursor: "pointer",
+        }}
+      >
+        <div style={{ textAlign: "right" }}>
+          <div className="eyebrow">{user.role === "admin" ? "ADMIN" : "SIGNED IN"}</div>
+          <div className="mono" style={{ fontSize: 13, color: "var(--text-primary)" }}>
+            {user.display_name || user.username}
+          </div>
+        </div>
+        <span style={{ color: "var(--text-faint)", fontSize: 10, transform: open ? "rotate(180deg)" : undefined, transition: "transform 0.15s" }}>▼</span>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            minWidth: 180,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+            overflow: "hidden",
+            zIndex: 50,
+          }}
+        >
+          {canManageTeam && (
+            <button role="menuitem" onClick={() => go("admin")} style={menuItemStyle(view === "admin")}>
+              {user.role === "admin" ? "Clients" : "My Team"}
+            </button>
+          )}
+          <button role="menuitem" onClick={() => go("settings")} style={menuItemStyle(view === "settings")}>
+            Settings
+          </button>
+          <div style={{ height: 1, background: "var(--border-soft)" }} />
+          <button role="menuitem" onClick={onLogout} style={{ ...menuItemStyle(false), color: "var(--critical)" }}>
+            Log out
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -120,12 +202,17 @@ function navBtnStyle(active: boolean): React.CSSProperties {
   };
 }
 
-const logoutBtnStyle: React.CSSProperties = {
-  fontSize: 12.5,
-  padding: "6px 12px",
-  background: "transparent",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  color: "var(--text-muted)",
-  cursor: "pointer",
-};
+function menuItemStyle(active: boolean): React.CSSProperties {
+  return {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    fontSize: 13,
+    padding: "9px 14px",
+    background: active ? "var(--signal-dim)" : "transparent",
+    border: "none",
+    color: active ? "var(--text-primary)" : "var(--text-muted)",
+    fontWeight: active ? 600 : 400,
+    cursor: "pointer",
+  };
+}
