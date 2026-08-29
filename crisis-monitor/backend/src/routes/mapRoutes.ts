@@ -26,6 +26,7 @@ function rowToRoute(row: Record<string, unknown>) {
     ...row,
     waypoints: JSON.parse(String(row.waypoints ?? "[]")),
     geometry: JSON.parse(String(row.geometry ?? "[]")),
+    visible: !!row.visible,
   };
 }
 
@@ -73,6 +74,7 @@ mapRoutesRouter.post("/", async (c) => {
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   color: z.string().optional(),
+  visible: z.boolean().optional(),
 });
 
 mapRoutesRouter.patch("/:id", async (c) => {
@@ -96,6 +98,10 @@ mapRoutesRouter.patch("/:id", async (c) => {
   if (parsed.data.color !== undefined) {
     updates.push("color = ?");
     params.push(parsed.data.color);
+  }
+  if (parsed.data.visible !== undefined) {
+    updates.push("visible = ?");
+    params.push(parsed.data.visible ? 1 : 0);
   }
   updates.push("updated_at = ?");
   params.push(nowIso());
