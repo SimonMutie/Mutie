@@ -5,7 +5,7 @@ interface Props {
   standalone?: boolean;
 }
 
-/** The GlobaLens mark: an eye watching over a globe rendered as its iris, with a
+/** The Lens mark: an eye watching over a globe rendered as its iris, with a
  *  bright pupil/lens-flare highlight at the center — "an eye on the world" and
  *  "a lens focused on it" at once. */
 export default function Logo({ size = 28, standalone = false }: Props) {
