@@ -103,6 +103,10 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   bubble: CATEGORY_FIELDS,
   globe: ["by_country"],
   heatmap_table: CATEGORY_FIELDS,
+  // Same value fields as stat — a bullet chart is the same single-value
+  // mechanism, just displayed against threshold markers instead of as a
+  // plain number.
+  bullet: ["total", "deaths", "injuries", "kidnappings_ngo"],
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
@@ -119,6 +123,7 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "bubble", label: "Packed-circle bubbles" },
   { value: "map", label: "Incident map" },
   { value: "heatmap_table", label: "Heatmap table (2 fields)" },
+  { value: "bullet", label: "Bullet chart (value vs. thresholds)" },
 ];
 
 /** Only these types' rendering actually reads from a dataset when
@@ -129,8 +134,22 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
  *  regardless of which dataset was picked, so they're left off the list here
  *  rather than offered and quietly wrong. Sankey/network/heatmap_table read
  *  from the same generic two-field crosstab bar/line already use, so they
- *  work for either source just fine. */
-export const DATASET_COMPATIBLE_TYPES: WidgetType[] = ["stat", "bar", "line", "pie", "radar", "funnel", "bubble", "sankey", "network", "calendar", "heatmap_table"];
+ *  work for either source just fine. Bullet reuses the same
+ *  dataset-sum mechanism as stat. */
+export const DATASET_COMPATIBLE_TYPES: WidgetType[] = [
+  "stat",
+  "bar",
+  "line",
+  "pie",
+  "radar",
+  "funnel",
+  "bubble",
+  "sankey",
+  "network",
+  "calendar",
+  "heatmap_table",
+  "bullet",
+];
 
 /** Web-safe system fonts only — no webfont loading, so every option here is
  *  guaranteed to actually render as chosen rather than silently falling back
@@ -665,6 +684,17 @@ export default function DashboardWidgetCard({
           </div>
         )}
 
+        {widget.type === "bullet" && (
+          <BulletChart
+            value={statValue(widget, stats, datasetSummaries)}
+            warning={widget.bulletWarningThreshold}
+            critical={widget.bulletCriticalThreshold}
+            target={widget.bulletTarget}
+            color={color}
+            label={fieldLabel(widget.dataField)}
+          />
+        )}
+
         {widget.type === "bar" && pivoted && (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={pivoted.data} layout="vertical" margin={{ left: 8, right: 8 }}>
@@ -1106,6 +1136,9 @@ function WidgetEditPopover({
     { waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none"; strokeWidth?: number }[]
   >(widget.manualRoutes ?? []);
   const [manualLabels, setManualLabels] = useState<{ location: string; text: string; color?: string }[]>(widget.manualLabels ?? []);
+  const [bulletWarningThreshold, setBulletWarningThreshold] = useState<number | undefined>(widget.bulletWarningThreshold);
+  const [bulletCriticalThreshold, setBulletCriticalThreshold] = useState<number | undefined>(widget.bulletCriticalThreshold);
+  const [bulletTarget, setBulletTarget] = useState<number | undefined>(widget.bulletTarget);
 
   const supportsManualData = type === "choropleth" || type === "globe";
 
@@ -1200,6 +1233,9 @@ function WidgetEditPopover({
       manualCountryData: manualActive ? manualCountryData : undefined,
       manualRoutes: type === "globe" && manualRoutes.length > 0 ? manualRoutes : undefined,
       manualLabels: type === "globe" && manualLabels.length > 0 ? manualLabels : undefined,
+      bulletWarningThreshold: type === "bullet" ? bulletWarningThreshold : undefined,
+      bulletCriticalThreshold: type === "bullet" ? bulletCriticalThreshold : undefined,
+      bulletTarget: type === "bullet" ? bulletTarget : undefined,
     });
   }
 
@@ -1522,6 +1558,44 @@ function WidgetEditPopover({
           <input type="checkbox" checked={showSparkline} onChange={(e) => setShowSparkline(e.target.checked)} />
           Show trend line (overall incident volume by month)
         </label>
+      )}
+
+      {type === "bullet" && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 6 }}>THRESHOLDS</div>
+          <div style={{ fontSize: 10.5, color: "var(--text-faint)", marginBottom: 8 }}>
+            Judgment calls you set — leave any blank to skip that band or marker entirely.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+              <span style={{ width: 60, color: "var(--text-muted)" }}>Warning</span>
+              <input
+                type="number"
+                value={bulletWarningThreshold ?? ""}
+                onChange={(e) => setBulletWarningThreshold(e.target.value ? Number(e.target.value) : undefined)}
+                style={{ ...selectStyle, flex: 1 }}
+              />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+              <span style={{ width: 60, color: "var(--text-muted)" }}>Critical</span>
+              <input
+                type="number"
+                value={bulletCriticalThreshold ?? ""}
+                onChange={(e) => setBulletCriticalThreshold(e.target.value ? Number(e.target.value) : undefined)}
+                style={{ ...selectStyle, flex: 1 }}
+              />
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5 }}>
+              <span style={{ width: 60, color: "var(--text-muted)" }}>Target</span>
+              <input
+                type="number"
+                value={bulletTarget ?? ""}
+                onChange={(e) => setBulletTarget(e.target.value ? Number(e.target.value) : undefined)}
+                style={{ ...selectStyle, flex: 1 }}
+              />
+            </label>
+          </div>
+        </div>
       )}
 
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
@@ -2233,6 +2307,109 @@ function HeatmapTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** Classic bullet graph (Stephen Few's design): qualitative background bands
+ *  from good (0→warning) through caution (warning→critical) to danger
+ *  (critical→max), the actual value overlaid as a bold central bar, and an
+ *  optional target shown as a vertical tick. Unlike every other chart type
+ *  here, this isn't a category breakdown — it's a single value (same
+ *  statValue() mechanism as the stat widget) evaluated against thresholds
+ *  an analyst sets, so there's no cross-filtering to wire up here, same as
+ *  stat widgets don't have any either. */
+function BulletChart({
+  value,
+  warning,
+  critical,
+  target,
+  color,
+  label,
+}: {
+  value: number;
+  warning?: number;
+  critical?: number;
+  target?: number;
+  color: string;
+  label: string;
+}) {
+  const definedMax = Math.max(value, warning ?? 0, critical ?? 0, target ?? 0);
+  // Some headroom past the highest reference point so the actual-value bar
+  // never touches the very edge of the track, which would read as "off the
+  // scale" even when it's actually right at the danger threshold.
+  const max = definedMax > 0 ? definedMax * 1.15 : 1;
+  const pct = (n: number) => Math.min(100, (n / max) * 100);
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, padding: "0 20px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span className="eyebrow">{label.toUpperCase()}</span>
+        <span style={{ fontSize: 20, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>{value.toLocaleString()}</span>
+      </div>
+      <div style={{ position: "relative", height: 22, background: "var(--panel-raised)", borderRadius: 3, overflow: "visible" }}>
+        {/* Qualitative bands — only drawn where thresholds are actually
+            set; with neither warning nor critical defined, the track is
+            just a plain neutral background rather than a fabricated
+            three-zone split with nothing to base it on. */}
+        {warning !== undefined && (
+          <div
+            style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct(warning)}%`, background: "var(--signal-dim)", borderRadius: "3px 0 0 3px" }}
+          />
+        )}
+        {warning !== undefined && critical !== undefined && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${pct(warning)}%`,
+              top: 0,
+              bottom: 0,
+              width: `${pct(critical) - pct(warning)}%`,
+              background: "color-mix(in srgb, var(--critical) 25%, var(--panel-raised))",
+            }}
+          />
+        )}
+        {critical !== undefined && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${pct(critical)}%`,
+              top: 0,
+              bottom: 0,
+              right: 0,
+              background: "color-mix(in srgb, var(--critical) 45%, var(--panel-raised))",
+              borderRadius: "0 3px 3px 0",
+            }}
+          />
+        )}
+        {/* The actual value — a bold, narrower bar centered vertically over
+            the qualitative bands, exactly the "thick central bar over a
+            thin background track" bullet-graph convention. */}
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: "35%",
+            bottom: "35%",
+            width: `${pct(value)}%`,
+            background: color,
+            borderRadius: 2,
+          }}
+        />
+        {target !== undefined && (
+          <div
+            title={`Target: ${target.toLocaleString()}`}
+            style={{ position: "absolute", left: `${pct(target)}%`, top: -3, bottom: -3, width: 2, background: "var(--text-primary)" }}
+          />
+        )}
+      </div>
+      {(warning !== undefined || critical !== undefined || target !== undefined) && (
+        <div style={{ display: "flex", gap: 12, fontSize: 10, color: "var(--text-faint)" }}>
+          {warning !== undefined && <span>Warning: {warning.toLocaleString()}</span>}
+          {critical !== undefined && <span>Critical: {critical.toLocaleString()}</span>}
+          {target !== undefined && <span>Target: {target.toLocaleString()}</span>}
+        </div>
+      )}
     </div>
   );
 }
