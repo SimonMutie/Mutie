@@ -119,7 +119,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {view === "admin" && <AdminPanel onBack={() => setView("list")} />}
+      {view === "admin" && <AdminPanel user={user} onBack={() => setView("list")} />}
 
       {view === "incidents" && <IncidentsDashboard />}
 
