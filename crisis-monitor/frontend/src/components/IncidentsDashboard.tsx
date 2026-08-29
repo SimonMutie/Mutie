@@ -117,7 +117,7 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
 
       {tab === "map" && (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <IncidentsMap incidents={[]} />
+          <IncidentsMap incidents={[]} isAdmin={user.role === "admin"} />
         </div>
       )}
 
