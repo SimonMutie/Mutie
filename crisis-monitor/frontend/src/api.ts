@@ -27,6 +27,9 @@ export interface AuthUser {
   client_id: string | null;
   /** Whether this login can manage its own client's other logins. */
   is_client_admin: boolean;
+  /** This login's client organization's logo, if any and if set — a base64
+   *  data URL, ready to use directly as an <img src>. */
+  client_logo: string | null;
   created_at?: string;
 }
 
@@ -37,6 +40,11 @@ export interface ClientOrg {
   /** Whether this client's accounts can see the full shared incidents pool,
    *  not just what they've personally uploaded — read-only visibility. */
   can_view_all_incidents: boolean;
+  /** This client's logo, if set — a base64 data URL. Only present on the
+   *  single-client GET/PATCH responses, not the platform-admin list (kept
+   *  off that one to avoid bloating a list of many clients with full image
+   *  data none of them are being displayed for in that view). */
+  logo_data?: string | null;
   account_count: number;
   created_at: string;
 }
@@ -522,6 +530,8 @@ export const api = {
   updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean }) =>
     req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
+  updateClientLogo: (clientId: string, logoData: string | null) =>
+    req<{ ok: boolean }>(`/api/clients/${clientId}/logo`, { method: "PATCH", body: JSON.stringify({ logo_data: logoData }) }),
   listClientAccounts: (clientId: string) => req<AuthUser[]>(`/api/clients/${clientId}/accounts`),
   createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string }) =>
     req<AuthUser>(`/api/clients/${clientId}/accounts`, { method: "POST", body: JSON.stringify(data) }),
