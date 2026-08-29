@@ -53,6 +53,12 @@ export default function AuthScreen({ mode, onAuthenticated }: Props) {
             <h1 style={{ margin: 0, fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 700 }}>
               The <span style={{ color: "var(--signal)" }}>Lens</span>
             </h1>
+            <div className="eyebrow" style={{ marginTop: 2, fontSize: 9.5, color: "var(--text-faint)", lineHeight: 1.3 }}>
+              Monitor. Investigate. Connect. Analyse. Understand.
+            </div>
+            <div className="eyebrow" style={{ fontSize: 9.5, color: "var(--text-faint)", opacity: 0.75, lineHeight: 1.3 }}>
+              Turning Signals into Insight and Foresight
+            </div>
             <div className="eyebrow" style={{ marginTop: 4 }}>
               {mode === "bootstrap" ? "SET UP YOUR ADMIN ACCOUNT" : "SIGN IN"}
             </div>
