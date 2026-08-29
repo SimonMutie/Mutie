@@ -422,3 +422,54 @@ clientsRouter.patch("/:id/logo", async (c) => {
   await run(c.env.DB, `UPDATE clients SET logo_data = ? WHERE id = ?`, [parsed.data.logo_data, clientId]);
   return c.json({ ok: true });
 });
+
+/** Platform-admin only: which countries a client is restricted to for
+ *  incidents (both viewing and uploading — see effectiveCountryScope and
+ *  the upload/edit validation in incidents.ts). Empty means unrestricted —
+ *  this is a business decision (what a client is actually paying for
+ *  access to), not something a client's own client-admin can grant
+ *  themselves, same reasoning as renaming a client or changing its account
+ *  limit. */
+clientsRouter.get("/:id/countries", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const rows = await all<{ country: string; created_at: string }>(
+    c.env.DB,
+    `SELECT country, created_at FROM client_country_access WHERE client_id = ? ORDER BY country ASC`,
+    [c.req.param("id")]
+  );
+  return c.json(rows);
+});
+
+const grantCountrySchema = z.object({ country: z.string().min(1).max(100) });
+
+clientsRouter.post("/:id/countries", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const client = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [clientId]);
+  if (!client) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = grantCountrySchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  await run(
+    c.env.DB,
+    `INSERT INTO client_country_access (client_id, country, created_at) VALUES (?,?,?)
+     ON CONFLICT (client_id, country) DO NOTHING`,
+    [clientId, parsed.data.country.trim(), nowIso()]
+  );
+  return c.json({ ok: true }, 201);
+});
+
+// A query param, not a path segment, for the country being removed — real
+// country names can contain spaces and punctuation ("Côte d'Ivoire",
+// "S. Sudan") that are awkward and error-prone to round-trip through a URL
+// path segment reliably; a properly encoded query string handles that
+// cleanly instead.
+clientsRouter.delete("/:id/countries", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const country = c.req.query("country");
+  if (!country) return c.json({ error: "country query param is required" }, 400);
+  await run(c.env.DB, `DELETE FROM client_country_access WHERE client_id = ? AND country = ?`, [c.req.param("id"), country]);
+  return c.json({ ok: true });
+});
