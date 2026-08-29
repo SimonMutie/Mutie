@@ -23,6 +23,8 @@ export function rowToUser(row: Record<string, unknown>): UserRecord {
     username: String(row.username),
     display_name: row.display_name != null ? String(row.display_name) : null,
     role: row.role === "admin" ? "admin" : "client",
+    client_id: row.client_id != null ? String(row.client_id) : null,
+    is_client_admin: Boolean(row.is_client_admin),
     created_at: String(row.created_at),
   };
 }
