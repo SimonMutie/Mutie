@@ -481,6 +481,17 @@ export default function DashboardWidgetCard({
   // mouse has already left, so the brief remount isn't visually noticeable —
   // nothing on screen is changing at that moment.
   const [chartResetKey, setChartResetKey] = useState(0);
+  // A second trigger for the same remount, beyond onMouseLeave below: when
+  // cross-filtering (clicking a bar) changes what's selected, every other
+  // widget's underlying data changes and re-renders — including, possibly,
+  // whichever chart the mouse happens to still be hovering at that exact
+  // moment. No mouseleave event fires in that case (the mouse never
+  // actually left), so the fix below alone wouldn't catch it; this covers
+  // that gap by also resetting whenever the selection itself changes.
+  useEffect(() => {
+    setChartResetKey((k) => k + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(activeCrossFilters)]);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -629,7 +640,11 @@ export default function DashboardWidgetCard({
                 name={fieldLabel(widget.dataField)}
                 fill={color}
                 radius={[0, 3, 3, 0]}
-                onClick={handleCrossFilterClick ? (data: { value: string }) => handleCrossFilterClick(data.value) : undefined}
+                onClick={
+                  handleCrossFilterClick
+                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterClick(data.payload.value)
+                    : undefined
+                }
                 cursor={handleCrossFilterClick ? "pointer" : undefined}
               >
                 {(widget.palette && widget.palette.length > 0) || crossFilterField
@@ -720,7 +735,11 @@ export default function DashboardWidgetCard({
                 cy="50%"
                 outerRadius="75%"
                 label={widget.showDataLabels ? { fontSize: widget.labelFontSize ?? 10, fontFamily: widget.labelFontFamily } : false}
-                onClick={handleCrossFilterClick ? (data: { value: string }) => handleCrossFilterClick(data.value) : undefined}
+                onClick={
+                  handleCrossFilterClick
+                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterClick(data.payload.value)
+                    : undefined
+                }
                 cursor={handleCrossFilterClick ? "pointer" : undefined}
               >
                 {paletteFor(widget, series.length).map((c, idx) => (
@@ -783,7 +802,11 @@ export default function DashboardWidgetCard({
                 data={series}
                 nameKey="value"
                 isAnimationActive={false}
-                onClick={(handleCrossFilterClick ? (data: { value: string }) => handleCrossFilterClick(data.value) : undefined) as never}
+                onClick={
+                  (handleCrossFilterClick
+                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterClick(data.payload.value)
+                    : undefined) as never
+                }
                 cursor={handleCrossFilterClick ? "pointer" : undefined}
               >
                 {paletteFor(widget, series.length).map((c, idx) => (
