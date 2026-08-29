@@ -268,7 +268,21 @@ export interface SavedRoute {
   updated_at: string;
 }
 
-export type WidgetType = "stat" | "bar" | "line" | "pie" | "map" | "radar" | "funnel" | "choropleth" | "calendar" | "sankey" | "network" | "bubble" | "globe";
+export type WidgetType =
+  | "stat"
+  | "bar"
+  | "line"
+  | "pie"
+  | "map"
+  | "radar"
+  | "funnel"
+  | "choropleth"
+  | "calendar"
+  | "sankey"
+  | "network"
+  | "bubble"
+  | "globe"
+  | "heatmap_table";
 
 /** Bar/line charts only — one of the pivotable columns the /crosstab
  *  endpoint accepts, matching the backend's PIVOTABLE_FIELDS allowlist
