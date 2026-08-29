@@ -40,6 +40,19 @@ export interface MapDefaultSettings {
   show_incidents_by_default: boolean;
   default_view_mode: "markers" | "heatmap";
   default_basemap: string;
+  /** Date range plus any of the 15 categorical fields (sector, country,
+   *  etc.), pre-applied when Mapping first opens. Keys match PivotableField
+   *  names, plus "from"/"to" for the date range. */
+  default_filters: Record<string, string>;
+  /** The starting camera position — null means no fixed position is set,
+   *  falling back to the map's natural auto-centering on the data instead. */
+  map_center_lat: number | null;
+  map_center_lng: number | null;
+  map_zoom: number | null;
+  /** Whether the saved position above is actually the one being applied —
+   *  kept separate from the lat/lng/zoom themselves so an admin can capture
+   *  a position without immediately forcing it on everyone. */
+  position_locked: boolean;
   updated_at: string | null;
 }
 
@@ -231,6 +244,9 @@ export interface SavedShape {
   source: "drawn" | "shapefile" | "geojson";
   geometry: GeoJSON.Feature | GeoJSON.FeatureCollection;
   style: ShapeStyle;
+  /** Persisted per-shape, per-owner — whether this shape shows on the map
+   *  by default. Sticks across sessions instead of always resetting to on. */
+  visible: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -245,6 +261,9 @@ export interface SavedRoute {
   distance_km: number | null;
   duration_min: number | null;
   color: string | null;
+  /** Persisted per-route, per-owner — whether this route shows on the map
+   *  by default. Sticks across sessions instead of always resetting to on. */
+  visible: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -554,8 +573,14 @@ export const api = {
   updateClientLogo: (clientId: string, logoData: string | null) =>
     req<{ ok: boolean }>(`/api/clients/${clientId}/logo`, { method: "PATCH", body: JSON.stringify({ logo_data: logoData }) }),
   getMapSettings: () => req<MapDefaultSettings>("/api/map-settings"),
-  updateMapSettings: (data: Partial<Pick<MapDefaultSettings, "show_incidents_by_default" | "default_view_mode" | "default_basemap">>) =>
-    req<MapDefaultSettings>("/api/map-settings", { method: "PATCH", body: JSON.stringify(data) }),
+  updateMapSettings: (
+    data: Partial<
+      Pick<
+        MapDefaultSettings,
+        "show_incidents_by_default" | "default_view_mode" | "default_basemap" | "map_center_lat" | "map_center_lng" | "map_zoom" | "position_locked"
+      >
+    > & { default_filters?: Record<string, string> | null }
+  ) => req<MapDefaultSettings>("/api/map-settings", { method: "PATCH", body: JSON.stringify(data) }),
   listClientAccounts: (clientId: string) => req<AuthUser[]>(`/api/clients/${clientId}/accounts`),
   createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string }) =>
     req<AuthUser>(`/api/clients/${clientId}/accounts`, { method: "POST", body: JSON.stringify(data) }),
@@ -686,16 +711,16 @@ export const api = {
     req<{ ok: boolean; deleted: number }>("/api/incidents/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }),
 
   getMapRoutes: () => req<SavedRoute[]>("/api/map-routes"),
-  createMapRoute: (data: Omit<SavedRoute, "id" | "owner_id" | "created_at" | "updated_at">) =>
+  createMapRoute: (data: Omit<SavedRoute, "id" | "owner_id" | "created_at" | "updated_at" | "visible">) =>
     req<SavedRoute>("/api/map-routes", { method: "POST", body: JSON.stringify(data) }),
-  updateMapRoute: (id: string, data: { name?: string; color?: string }) =>
+  updateMapRoute: (id: string, data: { name?: string; color?: string; visible?: boolean }) =>
     req<SavedRoute>(`/api/map-routes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteMapRoute: (id: string) => req<void>(`/api/map-routes/${id}`, { method: "DELETE" }),
 
   getMapShapes: () => req<SavedShape[]>("/api/map-shapes"),
-  createMapShape: (data: Omit<SavedShape, "id" | "owner_id" | "created_at" | "updated_at">) =>
+  createMapShape: (data: Omit<SavedShape, "id" | "owner_id" | "created_at" | "updated_at" | "visible">) =>
     req<SavedShape>("/api/map-shapes", { method: "POST", body: JSON.stringify(data) }),
-  updateMapShape: (id: string, data: { name?: string; style?: ShapeStyle; geometry?: GeoJSON.Feature | GeoJSON.FeatureCollection }) =>
+  updateMapShape: (id: string, data: { name?: string; style?: ShapeStyle; geometry?: GeoJSON.Feature | GeoJSON.FeatureCollection; visible?: boolean }) =>
     req<SavedShape>(`/api/map-shapes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteMapShape: (id: string) => req<void>(`/api/map-shapes/${id}`, { method: "DELETE" }),
 
