@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
-import { api, type MapDefaultSettings } from "../api";
+import { api, type IncidentFilters, type MapDefaultSettings } from "../api";
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
+
+const LOCATION_FIELDS = ["country", "province", "county", "district", "city", "suburb"] as const;
+const CATEGORY_FIELDS = [
+  "sector",
+  "actor",
+  "tactic",
+  "severity",
+  "operation",
+  "target",
+  "interest_group",
+  "actual_main_victim",
+  "intended_primary_target",
+] as const;
 
 /** Platform-admin only (enforced both here via the parent tab's own gating,
  *  and server-side on the PATCH endpoint) — a single, platform-wide default
@@ -9,19 +22,31 @@ import { BASEMAPS, type BasemapKey } from "./mapConstants";
  *  change something within their own session. */
 export default function MapDefaultsPanel({ compact }: { compact?: boolean } = {}) {
   const [settings, setSettings] = useState<MapDefaultSettings | null>(null);
+  const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  // Filters are edited as a local draft with an explicit Save action, unlike
+  // the other settings here which save on every click — a dropdown-heavy
+  // form with 17 fields firing a save request on every single change would
+  // be excessive, and there's no harm in batching these together.
+  const [draftFilters, setDraftFilters] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api
       .getMapSettings()
-      .then(setSettings)
+      .then((s) => {
+        setSettings(s);
+        setDraftFilters(s.default_filters);
+      })
       .finally(() => setLoading(false));
+    api.getIncidentFilters().then(setFilterOptions).catch(() => {});
   }, []);
 
-  async function save(patch: Partial<Pick<MapDefaultSettings, "show_incidents_by_default" | "default_view_mode" | "default_basemap">>) {
+  async function save(
+    patch: Partial<Pick<MapDefaultSettings, "show_incidents_by_default" | "default_view_mode" | "default_basemap" | "position_locked">>
+  ) {
     if (!settings) return;
     setError(null);
     setSaving(true);
@@ -37,6 +62,23 @@ export default function MapDefaultsPanel({ compact }: { compact?: boolean } = {}
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save that setting.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveFilters() {
+    setError(null);
+    setSaving(true);
+    try {
+      const cleaned = Object.fromEntries(Object.entries(draftFilters).filter(([, v]) => v));
+      const updated = await api.updateMapSettings({ default_filters: cleaned });
+      setSettings(updated);
+      setDraftFilters(updated.default_filters);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save those filters.");
     } finally {
       setSaving(false);
     }
@@ -110,11 +152,103 @@ export default function MapDefaultsPanel({ compact }: { compact?: boolean } = {}
           </div>
         </div>
 
+        <div style={{ height: 1, background: "var(--border-soft)" }} />
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>Default filters</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Pre-applied when Mapping first opens — dates, country, and every data category.</div>
+
+          <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+            <input
+              type="date"
+              value={draftFilters.from ?? ""}
+              onChange={(e) => setDraftFilters((f) => ({ ...f, from: e.target.value }))}
+              style={{ ...dropdownStyle, flex: 1 }}
+            />
+            <input
+              type="date"
+              value={draftFilters.to ?? ""}
+              onChange={(e) => setDraftFilters((f) => ({ ...f, to: e.target.value }))}
+              style={{ ...dropdownStyle, flex: 1 }}
+            />
+          </div>
+
+          {filterOptions && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: compact ? 220 : 320, overflowY: "auto" }}>
+              {[...LOCATION_FIELDS, ...CATEGORY_FIELDS].map((field) => (
+                <select
+                  key={field}
+                  value={draftFilters[field] ?? ""}
+                  onChange={(e) => setDraftFilters((f) => ({ ...f, [field]: e.target.value }))}
+                  style={dropdownStyle}
+                >
+                  <option value="">{fieldLabel(field)}: any</option>
+                  {(filterOptions[field as keyof IncidentFilters] ?? []).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button onClick={saveFilters} disabled={saving} style={{ ...chipStyle(false), flex: 1, textAlign: "center" }}>
+              Save filters
+            </button>
+            {Object.values(draftFilters).some(Boolean) && (
+              <button onClick={() => setDraftFilters({})} disabled={saving} style={{ ...chipStyle(false), color: "var(--critical)" }}>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ height: 1, background: "var(--border-soft)" }} />
+
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>Starting position</div>
+          {settings.map_center_lat != null && settings.map_center_lng != null ? (
+            <>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 8 }}>
+                Saved: {settings.map_center_lat.toFixed(3)}, {settings.map_center_lng.toFixed(3)} at zoom {settings.map_zoom}. Pan/zoom the map itself and use
+                the lock icon there to capture a new position.
+              </div>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, cursor: "pointer" }}>
+                <input type="checkbox" checked={settings.position_locked} onChange={(e) => save({ position_locked: e.target.checked })} disabled={saving} />
+                Enforce this position (otherwise it's just a suggestion — Mapping still centers on the data)
+              </label>
+            </>
+          ) : (
+            <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+              No position saved yet — pan/zoom the map itself to where you want, then use the lock icon there to capture it.
+            </div>
+          )}
+        </div>
+
         {saved && <div style={{ fontSize: 12, color: "var(--signal)" }}>Saved.</div>}
       </div>
     </div>
   );
 }
+
+function fieldLabel(field: string): string {
+  return field
+    .split("_")
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+const dropdownStyle: React.CSSProperties = {
+  fontSize: 12,
+  padding: "6px 8px",
+  borderRadius: 5,
+  border: "1px solid var(--border)",
+  background: "var(--panel)",
+  color: "var(--text-primary)",
+  width: "100%",
+};
 
 function chipStyle(active: boolean): React.CSSProperties {
   return {
