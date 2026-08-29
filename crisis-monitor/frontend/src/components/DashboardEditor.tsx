@@ -867,6 +867,41 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         </div>
       )}
 
+      {Object.entries(categoryFilters).some(([, v]) => v) && (
+        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "8px 24px", borderBottom: "1px solid var(--border-soft)" }}>
+          <span style={{ fontSize: 11, color: "var(--text-faint)" }}>Filtered by:</span>
+          {(Object.entries(categoryFilters) as [PivotableField, string | undefined][])
+            .filter(([, v]) => v)
+            .map(([field, value]) => (
+              <span
+                key={field}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  padding: "3px 6px 3px 10px",
+                  borderRadius: 999,
+                  background: "var(--signal-dim)",
+                  border: "1px solid var(--signal)",
+                }}
+              >
+                {PIVOT_FIELD_LABELS[field]}: {value}
+                <button
+                  onClick={() => setCategoryFilters((f) => ({ ...f, [field]: undefined }))}
+                  title={`Remove ${PIVOT_FIELD_LABELS[field]} filter`}
+                  style={{ background: "transparent", border: "none", color: "var(--text-primary)", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          <button onClick={() => setCategoryFilters({})} style={{ ...secondaryBtnStyle, fontSize: 11.5, padding: "3px 8px" }}>
+            Clear all
+          </button>
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
         {!loaded || !stats ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
@@ -908,6 +943,13 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   dailyBreakdowns={dailyBreakdowns}
                   datasets={datasets}
                   datasetSummaries={datasetSummaries}
+                  activeCrossFilters={categoryFilters}
+                  onCrossFilter={
+                    locked
+                      ? undefined
+                      : (field, value) =>
+                          setCategoryFilters((f) => (f[field] === value ? { ...f, [field]: undefined } : { ...f, [field]: value }))
+                  }
                   onRemove={locked ? undefined : () => removeWidget(w.id)}
                   onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
                   onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
