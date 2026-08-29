@@ -34,7 +34,17 @@ export interface ClientOrg {
   id: string;
   name: string;
   max_accounts: number;
+  /** Whether this client's accounts can see the full shared incidents pool,
+   *  not just what they've personally uploaded — read-only visibility. */
+  can_view_all_incidents: boolean;
   account_count: number;
+  created_at: string;
+}
+
+export interface ClientSharedItem {
+  dashboard_id?: string;
+  dataset_id?: string;
+  name: string;
   created_at: string;
 }
 
@@ -509,8 +519,8 @@ export const api = {
   getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
   createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string }) =>
     req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
-  updateClient: (id: string, data: { name?: string; max_accounts?: number }) =>
-    req<{ id: string; name: string; max_accounts: number }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean }) =>
+    req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
   listClientAccounts: (clientId: string) => req<AuthUser[]>(`/api/clients/${clientId}/accounts`),
   createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string }) =>
@@ -518,6 +528,16 @@ export const api = {
   updateClientAccount: (clientId: string, userId: string, data: { is_client_admin?: boolean; display_name?: string }) =>
     req<AuthUser>(`/api/clients/${clientId}/accounts/${userId}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClientAccount: (clientId: string, userId: string) => req<void>(`/api/clients/${clientId}/accounts/${userId}`, { method: "DELETE" }),
+  listClientDashboards: (clientId: string) => req<ClientSharedItem[]>(`/api/clients/${clientId}/dashboards`),
+  grantClientDashboard: (clientId: string, dashboardId: string) =>
+    req<{ ok: boolean }>(`/api/clients/${clientId}/dashboards`, { method: "POST", body: JSON.stringify({ dashboard_id: dashboardId }) }),
+  revokeClientDashboard: (clientId: string, dashboardId: string) =>
+    req<void>(`/api/clients/${clientId}/dashboards/${dashboardId}`, { method: "DELETE" }),
+  listClientDatasets: (clientId: string) => req<ClientSharedItem[]>(`/api/clients/${clientId}/datasets`),
+  grantClientDataset: (clientId: string, datasetId: string) =>
+    req<{ ok: boolean }>(`/api/clients/${clientId}/datasets`, { method: "POST", body: JSON.stringify({ dataset_id: datasetId }) }),
+  revokeClientDataset: (clientId: string, datasetId: string) =>
+    req<void>(`/api/clients/${clientId}/datasets/${datasetId}`, { method: "DELETE" }),
 
   getEvents: (params: { limit?: number; source_type?: string; query_id?: string; from?: string; to?: string } = {}) => {
     const qs = new URLSearchParams(params as Record<string, string>).toString();
