@@ -89,6 +89,37 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   // intentionally a lighter-weight, exploratory "let me look at this slice
   // right now" filter rather than a fixed dashboard setting.
   const [categoryFilters, setCategoryFilters] = useState<Partial<Record<PivotableField, string>>>({});
+  // Hovering a bar/slice temporarily overlays one field's value on top of
+  // the persistent filters above, live only while the mouse is actually
+  // over it — a preview, not something that sticks around or gets
+  // remembered. Debounced on entry (150ms) since mouseenter fires on every
+  // single bar as the cursor sweeps across a chart; without that, moving
+  // the mouse across ten bars would fire ten full-dashboard refetches in
+  // well under a second. No debounce on leaving — that should revert
+  // immediately, not lag behind the mouse.
+  const [hoverCrossFilter, setHoverCrossFilter] = useState<{ field: PivotableField; value: string } | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function handleCrossFilterHoverStart(field: PivotableField, value: string) {
+    // Cancels whatever was pending — including a leave from the previously
+    // hovered bar — so quickly sweeping across several bars only ever
+    // settles on wherever the mouse actually stops, rather than firing a
+    // refetch for every bar swept past along the way.
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setHoverCrossFilter({ field, value }), 150);
+  }
+  function handleCrossFilterHoverEnd() {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => setHoverCrossFilter(null), 100);
+  }
+  // What every widget's data should actually be fetched/filtered by — the
+  // persistent filters with the live hover value (if any) layered on top
+  // for that one field. The Filter popover itself still reads and edits
+  // categoryFilters directly, not this — the hover preview shouldn't leak
+  // into what looks like a saved, deliberate filter choice.
+  const effectiveFilters = useMemo(
+    () => (hoverCrossFilter ? { ...categoryFilters, [hoverCrossFilter.field]: hoverCrossFilter.value } : categoryFilters),
+    [categoryFilters, hoverCrossFilter]
+  );
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
@@ -129,10 +160,10 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   }, []);
 
   useEffect(() => {
-    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then((s) => setStats(normalizeStats(s)));
-    api.getIncidents({ limit: 3000, from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then(setIncidents);
+    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((s) => setStats(normalizeStats(s)));
+    api.getIncidents({ limit: 3000, from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then(setIncidents);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
+  }, [dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
   // A changed date range or category filter invalidates every previously-
   // fetched breakdown and crosstab (they were computed under the old
@@ -144,7 +175,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setCrosstabs({});
     setDailyBreakdowns({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
+  }, [dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
   // Fetches only the specific (primary, secondary) cross-tabs the current set
   // of widgets actually need, and only the ones not already fetched — adding
@@ -175,12 +206,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         return;
       }
       const [primary, secondary] = key.split("|") as [PivotableField, PivotableField];
-      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then((rows) => {
+      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((rows) => {
         setCrosstabs((prev) => ({ ...prev, [key]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
+  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
   // Same idea, one dimension instead of two — for widgets whose primary
   // field is one of the newer by_X fields not precomputed on stats, or any
@@ -204,12 +235,12 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         });
         return;
       }
-      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo, ...categoryFilters }).then((rows) => {
+      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((rows) => {
         setBreakdowns((prev) => ({ ...prev, [field]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(categoryFilters)]);
+  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
   // Stat cards sourced from a dataset need that dataset's row count / column
   // sums — fetched once per dataset actually in use, not once per widget.
@@ -943,13 +974,9 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   dailyBreakdowns={dailyBreakdowns}
                   datasets={datasets}
                   datasetSummaries={datasetSummaries}
-                  activeCrossFilters={categoryFilters}
-                  onCrossFilter={
-                    locked
-                      ? undefined
-                      : (field, value) =>
-                          setCategoryFilters((f) => (f[field] === value ? { ...f, [field]: undefined } : { ...f, [field]: value }))
-                  }
+                  activeCrossFilters={effectiveFilters}
+                  onCrossFilterHoverStart={locked ? undefined : handleCrossFilterHoverStart}
+                  onCrossFilterHoverEnd={locked ? undefined : handleCrossFilterHoverEnd}
                   onRemove={locked ? undefined : () => removeWidget(w.id)}
                   onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
                   onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
