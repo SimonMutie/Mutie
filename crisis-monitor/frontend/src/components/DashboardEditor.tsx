@@ -111,6 +111,18 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => setHoverCrossFilter(null), 100);
   }
+  // Clicking pins a filter persistently — into categoryFilters itself, not
+  // the temporary hover overlay — so it survives after the mouse moves
+  // away, the same way a filter set via the Filter popover would. Clicking
+  // the same value again un-pins it. Also clears any live hover preview for
+  // that same field, since the click just made it redundant — the pinned
+  // value and the (identical) hovered value would otherwise both be "in
+  // effect" at once for no reason.
+  function handleCrossFilterClick(field: PivotableField, value: string) {
+    setCategoryFilters((f) => (f[field] === value ? { ...f, [field]: undefined } : { ...f, [field]: value }));
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    setHoverCrossFilter(null);
+  }
   // What every widget's data should actually be fetched/filtered by — the
   // persistent filters with the live hover value (if any) layered on top
   // for that one field. The Filter popover itself still reads and edits
@@ -977,6 +989,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   activeCrossFilters={effectiveFilters}
                   onCrossFilterHoverStart={locked ? undefined : handleCrossFilterHoverStart}
                   onCrossFilterHoverEnd={locked ? undefined : handleCrossFilterHoverEnd}
+                  onCrossFilterClick={locked ? undefined : handleCrossFilterClick}
                   onRemove={locked ? undefined : () => removeWidget(w.id)}
                   onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
                   onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
