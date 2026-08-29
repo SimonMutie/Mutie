@@ -50,6 +50,22 @@ authRouter.post("/bootstrap", async (c) => {
   );
 });
 
+/** Attaches the current user's client logo, if any — bundled directly into
+ *  the login/me responses rather than requiring a separate fetch, since the
+ *  frontend needs this on essentially every page load (to show it in the
+ *  top bar) and a client's logo changes rarely enough that fetching it
+ *  fresh on every single request elsewhere isn't worth the extra round trip
+ *  this avoids. */
+async function userWithClientLogo(db: D1Database, row: Record<string, unknown>) {
+  const user = rowToUser(row);
+  let clientLogo: string | null = null;
+  if (user.client_id) {
+    const client = await first<{ logo_data: string | null }>(db, "SELECT logo_data FROM clients WHERE id = ?", [user.client_id]);
+    clientLogo = client?.logo_data ?? null;
+  }
+  return { ...user, client_logo: clientLogo };
+}
+
 authRouter.post("/login", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { username, password } = body as { username?: string; password?: string };
@@ -62,7 +78,7 @@ authRouter.post("/login", async (c) => {
   const valid = await verifyPassword(password, String(row.password_hash));
   if (!valid) return c.json({ error: "Invalid username or password" }, 401);
 
-  const user = rowToUser(row);
+  const user = await userWithClientLogo(c.env.DB, row);
   const token = await createSessionToken(user.id, user.role, c.env.SESSION_SECRET);
   return c.json({ token, user });
 });
@@ -70,7 +86,7 @@ authRouter.post("/login", async (c) => {
 authRouter.get("/me", requireAuth, async (c) => {
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE id = ?", [c.get("userId")]);
   if (!rows[0]) return c.json({ error: "User not found" }, 404);
-  return c.json(rowToUser(rows[0]));
+  return c.json(await userWithClientLogo(c.env.DB, rows[0]));
 });
 
 /** Admin-only: list every client account (for the admin panel). */
