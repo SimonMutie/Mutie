@@ -52,7 +52,7 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
               lineHeight: 1.05,
             }}
           >
-            Globa<span style={{ color: "var(--signal)" }}>Lens</span>
+            The <span style={{ color: "var(--signal)" }}>Lens</span>
           </h1>
           <span className="eyebrow" style={{ fontSize: 9.5, lineHeight: 1.2 }}>CRISIS MONITORING</span>
         </div>
