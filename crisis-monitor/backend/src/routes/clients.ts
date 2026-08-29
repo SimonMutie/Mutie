@@ -156,6 +156,7 @@ clientsRouter.patch("/:id", async (c) => {
     name: String(row!.name),
     max_accounts: Number(row!.max_accounts),
     can_view_all_incidents: !!row!.can_view_all_incidents,
+    logo_data: row!.logo_data != null ? String(row!.logo_data) : null,
   });
 });
 
@@ -186,6 +187,7 @@ clientsRouter.get("/:id", async (c) => {
     name: String(row.name),
     max_accounts: Number(row.max_accounts),
     can_view_all_incidents: !!row.can_view_all_incidents,
+    logo_data: row.logo_data != null ? String(row.logo_data) : null,
     account_count: countRow?.count ?? 0,
     created_at: String(row.created_at),
   });
@@ -390,5 +392,33 @@ clientsRouter.post("/:id/datasets", async (c) => {
 clientsRouter.delete("/:id/datasets/:datasetId", async (c) => {
   if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
   await run(c.env.DB, `DELETE FROM client_dataset_access WHERE client_id = ? AND dataset_id = ?`, [c.req.param("id"), c.req.param("datasetId")]);
+  return c.json({ ok: true });
+});
+
+// A data: URL this size caps the underlying image at roughly 300KB, which
+// keeps a base64-in-D1 logo (see migration_016) comfortably practical
+// without needing real object storage for something this small.
+const MAX_LOGO_DATA_URL_LENGTH = 400_000;
+const logoSchema = z.object({
+  logo_data: z
+    .string()
+    .max(MAX_LOGO_DATA_URL_LENGTH, "That image is too large — try a smaller file (roughly 300KB or less).")
+    .regex(/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/, "Must be a PNG, JPEG, GIF, WebP, or SVG image.")
+    .nullable(),
+});
+
+/** Admin, or that client's own client-admin: set or remove this client's
+ *  logo. Unlike renaming a client or changing its account limit — kept
+ *  platform-admin-only earlier, since those are platform-level decisions —
+ *  a client's own branding is naturally theirs to set for themselves. */
+clientsRouter.patch("/:id/logo", async (c) => {
+  const clientId = c.req.param("id");
+  if (!(await canManageClient(c, clientId))) return c.json({ error: "Not found" }, 404);
+
+  const body = await c.req.json().catch(() => null);
+  const parsed = logoSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  await run(c.env.DB, `UPDATE clients SET logo_data = ? WHERE id = ?`, [parsed.data.logo_data, clientId]);
   return c.json({ ok: true });
 });
