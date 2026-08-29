@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, type AuthUser, type IncidentStats } from "../api";
 import IncidentsMap from "./IncidentsMap";
 import IncidentSearch from "./IncidentSearch";
@@ -16,21 +16,6 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
   const [dashboardMode, setDashboardMode] = useState<DashboardMode>("auto");
   const [stats, setStats] = useState<IncidentStats | null>(null);
   const [manageRefreshKey, setManageRefreshKey] = useState(0);
-  const [logMenuOpen, setLogMenuOpen] = useState(false);
-  const logMenuRef = useRef<HTMLDivElement>(null);
-
-  const LOG_TABS: Tab[] = ["search", "manual", "upload", "manage"];
-  const isLogTabActive = LOG_TABS.includes(tab);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (logMenuRef.current && !logMenuRef.current.contains(e.target as Node)) {
-        setLogMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   async function loadAll() {
     const statsRes = await api.getIncidentStats();
@@ -51,59 +36,6 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
           Mapping
         </button>
 
-        <div ref={logMenuRef} style={{ position: "relative" }}>
-          <button onClick={() => setLogMenuOpen((v) => !v)} style={tabBtnStyle(isLogTabActive)}>
-            Incident Log ▾
-          </button>
-          {logMenuOpen && (
-            <div
-              style={{
-                position: "absolute",
-                top: "calc(100% + 4px)",
-                left: 0,
-                zIndex: 20,
-                background: "var(--panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                boxShadow: "0 8px 24px rgba(19,23,34,0.14)",
-                minWidth: 180,
-                overflow: "hidden",
-              }}
-            >
-              {(
-                [
-                  { value: "search", label: "Search Incidents" },
-                  { value: "manual", label: "Enter Manually" },
-                  { value: "upload", label: "Upload Bulk" },
-                  { value: "manage", label: "Manage (Edit/Delete)" },
-                ] as { value: Tab; label: string }[]
-              ).map((item) => (
-                <button
-                  key={item.value}
-                  onClick={() => {
-                    setTab(item.value);
-                    setLogMenuOpen(false);
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "9px 14px",
-                    fontSize: 12.5,
-                    background: tab === item.value ? "var(--signal-dim)" : "transparent",
-                    border: "none",
-                    color: "var(--text-primary)",
-                    cursor: "pointer",
-                    fontWeight: tab === item.value ? 600 : 400,
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
 
@@ -111,7 +43,7 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
 
       {tab === "map" && (
         <div style={{ flex: 1, minHeight: 0 }}>
-          <IncidentsMap incidents={[]} isAdmin={user.role === "admin"} />
+          <IncidentsMap incidents={[]} isAdmin={user.role === "admin"} onNavigate={setTab} />
         </div>
       )}
 
