@@ -42,6 +42,13 @@ export interface UserRecord {
   username: string;
   display_name: string | null;
   role: UserRole;
+  /** Which client organization this login belongs to — null for the
+   *  platform admin and any standalone login not part of a client org. */
+  client_id: string | null;
+  /** Whether this login can manage its own client's other logins (create,
+   *  remove, toggle this same flag on them) without needing platform-admin
+   *  rights. Meaningless when client_id is null. */
+  is_client_admin: boolean;
   created_at: string;
 }
 
