@@ -32,6 +32,7 @@ function rowToShape(row: Record<string, unknown>) {
     ...row,
     geometry: JSON.parse(String(row.geometry ?? "{}")),
     style: JSON.parse(String(row.style ?? "{}")),
+    visible: !!row.visible,
   };
 }
 
@@ -65,6 +66,7 @@ const updateSchema = z.object({
   name: z.string().min(1).optional(),
   style: styleSchema.optional(),
   geometry: z.object({ type: z.string() }).passthrough().optional(),
+  visible: z.boolean().optional(),
 });
 
 mapShapesRouter.patch("/:id", async (c) => {
@@ -93,6 +95,10 @@ mapShapesRouter.patch("/:id", async (c) => {
   if (parsed.data.geometry !== undefined) {
     updates.push("geometry = ?");
     params.push(JSON.stringify(parsed.data.geometry));
+  }
+  if (parsed.data.visible !== undefined) {
+    updates.push("visible = ?");
+    params.push(parsed.data.visible ? 1 : 0);
   }
   updates.push("updated_at = ?");
   params.push(nowIso());
