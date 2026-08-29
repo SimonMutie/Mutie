@@ -11,6 +11,7 @@ import { mapRoutesRouter } from "./routes/mapRoutes";
 import { mapShapesRouter } from "./routes/mapShapes";
 import { customDashboardsRouter, publicDashboardsRouter } from "./routes/customDashboards";
 import { datasetsRouter } from "./routes/datasets";
+import { clientsRouter } from "./routes/clients";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 
@@ -59,6 +60,7 @@ app.route("/api/map-shapes", mapShapesRouter);
 app.route("/api/custom-dashboards", customDashboardsRouter);
 app.route("/api/public/dashboards", publicDashboardsRouter);
 app.route("/api/datasets", datasetsRouter);
+app.route("/api/clients", clientsRouter);
 
 // Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off
 // this same URL) — forwarding the raw request preserves that query string.
@@ -136,4 +138,3 @@ export default {
     }
   },
 };
-
