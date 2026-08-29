@@ -131,12 +131,44 @@ function rowToDataset(row: Record<string, unknown>) {
   return { ...row, schema: JSON.parse(String(row.schema_json ?? "[]")) };
 }
 
+/** Which dataset ids the caller's client organization has been explicitly
+ *  granted access to — same principle as grantedDashboardIds in
+ *  customDashboards.ts. Read-only visibility, scoped deliberately to just
+ *  what a shared dashboard's widgets need to actually render (metadata,
+ *  breakdown, crosstab, summary, daily) — NOT the raw row list/edit
+ *  endpoints further down, which stay owner-and-admin-only. Being able to
+ *  chart against a dataset on a dashboard someone shared with you is a
+ *  different thing than being handed administration rights over its
+ *  underlying rows. */
+async function grantedDatasetIds(db: D1Database, userId: string): Promise<string[]> {
+  const user = await first<{ client_id: string | null }>(db, `SELECT client_id FROM users WHERE id = ?`, [userId]);
+  if (!user?.client_id) return [];
+  const rows = await all<{ dataset_id: string }>(db, `SELECT dataset_id FROM client_dataset_access WHERE client_id = ?`, [user.client_id]);
+  return rows.map((r) => r.dataset_id);
+}
+
+/** True if the caller may READ this dataset (metadata, breakdown, crosstab,
+ *  summary, daily) — owns it, is the platform admin, or their client has
+ *  been explicitly granted access to it. */
+async function canReadDataset(db: D1Database, role: string, userId: string, dataset: { owner_id: string | null }, datasetId: string): Promise<boolean> {
+  if (role === "admin") return true;
+  if (dataset.owner_id === userId) return true;
+  const granted = await grantedDatasetIds(db, userId);
+  return granted.includes(datasetId);
+}
+
 datasetsRouter.get("/", async (c) => {
   const isAdmin = c.get("role") === "admin";
   const ownerId = c.get("userId");
-  const rows = isAdmin
-    ? await all(c.env.DB, `SELECT * FROM datasets ORDER BY updated_at DESC`)
-    : await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
+  if (isAdmin) {
+    const rows = await all(c.env.DB, `SELECT * FROM datasets ORDER BY updated_at DESC`);
+    return c.json(rows.map(rowToDataset));
+  }
+  const granted = await grantedDatasetIds(c.env.DB, ownerId);
+  const rows =
+    granted.length > 0
+      ? await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id = ? OR id IN (${granted.map(() => "?").join(",")}) ORDER BY updated_at DESC`, [ownerId, ...granted])
+      : await all(c.env.DB, `SELECT * FROM datasets WHERE owner_id = ? ORDER BY updated_at DESC`, [ownerId]);
   return c.json(rows.map(rowToDataset));
 });
 
@@ -163,11 +195,10 @@ datasetsRouter.post("/", async (c) => {
 });
 
 datasetsRouter.get("/:id", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM datasets WHERE id = ?`, [c.req.param("id")]);
   if (!row) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && row.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), { owner_id: row.owner_id as string | null }, c.req.param("id"));
+  if (!allowed) return c.json({ error: "Not found" }, 404);
   return c.json(rowToDataset(row));
 });
 
@@ -323,12 +354,11 @@ datasetsRouter.delete("/:id", async (c) => {
  *  path is built from `field` only after isValidColumn confirms it's one of
  *  this specific dataset's real columns. */
 datasetsRouter.get("/:id/breakdown", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const datasetId = c.req.param("id");
   const loaded = await loadDatasetSchema(c.env.DB, datasetId);
   if (!loaded) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), loaded, datasetId);
+  if (!allowed) return c.json({ error: "Not found" }, 404);
 
   const field = c.req.query("field");
   if (!isValidColumn(loaded.schema, field)) {
@@ -339,12 +369,11 @@ datasetsRouter.get("/:id/breakdown", async (c) => {
 
 /** Two-field cross-tab, general-purpose version of /api/incidents/crosstab. */
 datasetsRouter.get("/:id/crosstab", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const datasetId = c.req.param("id");
   const loaded = await loadDatasetSchema(c.env.DB, datasetId);
   if (!loaded) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), loaded, datasetId);
+  if (!allowed) return c.json({ error: "Not found" }, 404);
 
   const primary = c.req.query("primary");
   const secondary = c.req.query("secondary");
@@ -358,23 +387,21 @@ datasetsRouter.get("/:id/crosstab", async (c) => {
  *  the incidents casualty totals, generalized to whichever numeric columns
  *  this particular dataset actually has. */
 datasetsRouter.get("/:id/summary", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const datasetId = c.req.param("id");
   const loaded = await loadDatasetSchema(c.env.DB, datasetId);
   if (!loaded) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), loaded, datasetId);
+  if (!allowed) return c.json({ error: "Not found" }, 404);
 
   return c.json(await fetchDatasetSummary(c.env.DB, datasetId, loaded.schema));
 });
 
 datasetsRouter.get("/:id/daily", async (c) => {
-  const isAdmin = c.get("role") === "admin";
-  const ownerId = c.get("userId");
   const datasetId = c.req.param("id");
   const loaded = await loadDatasetSchema(c.env.DB, datasetId);
   if (!loaded) return c.json({ error: "Not found" }, 404);
-  if (!isAdmin && loaded.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), loaded, datasetId);
+  if (!allowed) return c.json({ error: "Not found" }, 404);
 
   const field = c.req.query("field");
   if (!isValidColumn(loaded.schema, field)) {
