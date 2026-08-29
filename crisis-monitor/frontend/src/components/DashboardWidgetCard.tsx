@@ -392,16 +392,19 @@ interface Props {
    *  on the read-only public view is fine. */
   datasets?: Dataset[];
   /** The dashboard-wide category filter currently in effect (see
-   *  DashboardEditor's categoryFilters) — used only to visually highlight a
-   *  clicked bar/slice as "selected" until it's cleared, not to actually
-   *  filter this widget's own data (every widget already gets pre-filtered
-   *  data from the parent, this is purely about which bar looks active). */
+   *  DashboardEditor's effectiveFilters) — used only to visually highlight a
+   *  hovered bar/slice as "selected" while the mouse is over it, not to
+   *  actually filter this widget's own data (every widget already gets
+   *  pre-filtered data from the parent, this is purely about which bar
+   *  looks active). */
   activeCrossFilters?: Partial<Record<PivotableField, string>>;
-  /** Called when the user clicks a specific value within this widget (a bar,
-   *  a pie slice, a funnel stage) on an Incidents-sourced widget — sets that
-   *  as a dashboard-wide filter so every other widget reacts to it too.
-   *  Undefined on the read-only public view, where nothing is clickable. */
-  onCrossFilter?: (field: PivotableField, value: string) => void;
+  /** Called when the mouse enters/leaves a specific value within this
+   *  widget (a bar, a pie slice, a funnel stage) on an Incidents-sourced
+   *  widget — sets/clears that as a dashboard-wide filter so every other
+   *  widget reacts live while hovering, reverting once the mouse leaves.
+   *  Undefined on the read-only public view, where nothing reacts to hover. */
+  onCrossFilterHoverStart?: (field: PivotableField, value: string) => void;
+  onCrossFilterHoverEnd?: () => void;
   onRemove?: () => void;
   onRename?: (title: string) => void;
   /** Applies a partial patch to just this widget — editing lives entirely
@@ -426,7 +429,8 @@ export default function DashboardWidgetCard({
   datasetSummaries,
   datasets,
   activeCrossFilters,
-  onCrossFilter,
+  onCrossFilterHoverStart,
+  onCrossFilterHoverEnd,
   onRemove,
   onRename,
   onUpdate,
@@ -443,13 +447,14 @@ export default function DashboardWidgetCard({
 
   // Cross-filtering only makes sense for Incidents-sourced widgets whose
   // primary dimension is one of the real categorical columns — a
-  // dataset-sourced widget has no matching field in categoryFilters at all,
-  // and only bother wiring click handlers when a parent actually gave us
-  // onCrossFilter (never on the read-only public view, where nothing
-  // should look clickable in the first place).
+  // dataset-sourced widget has no matching field in the dashboard's filters
+  // at all, and only bother wiring hover handlers when a parent actually
+  // gave us onCrossFilterHoverStart (never on the read-only public view,
+  // where nothing should react to hover in the first place).
   const crossFilterField: PivotableField | undefined = !widget.datasetId ? DATA_FIELD_TO_COLUMN[widget.dataField as WidgetDataField] : undefined;
-  const handleCrossFilterClick = crossFilterField && onCrossFilter ? (value: string) => onCrossFilter(crossFilterField, value) : undefined;
-  // For two-field crosstab widgets (network, sankey) — a click on the
+  const handleCrossFilterHover =
+    crossFilterField && onCrossFilterHoverStart ? (value: string) => onCrossFilterHoverStart(crossFilterField, value) : undefined;
+  // For two-field crosstab widgets (network, sankey) — hovering the
   // secondary side filters by the secondary field instead of the primary
   // one. Only valid for Incidents-sourced widgets whose secondaryField is
   // genuinely one of the real categorical columns, not a dataset's own
@@ -458,8 +463,8 @@ export default function DashboardWidgetCard({
     !widget.datasetId && widget.secondaryField && (PIVOTABLE_FIELD_OPTIONS as string[]).includes(widget.secondaryField)
       ? (widget.secondaryField as PivotableField)
       : undefined;
-  const handleSecondaryCrossFilterClick =
-    secondaryCrossFilterField && onCrossFilter ? (value: string) => onCrossFilter(secondaryCrossFilterField, value) : undefined;
+  const handleSecondaryCrossFilterHover =
+    secondaryCrossFilterField && onCrossFilterHoverStart ? (value: string) => onCrossFilterHoverStart(secondaryCrossFilterField, value) : undefined;
 
   // A pivoted, two-variable breakdown only kicks in when the widget actually
   // has a secondaryField set and the matching crosstab data has arrived —
@@ -640,12 +645,12 @@ export default function DashboardWidgetCard({
                 name={fieldLabel(widget.dataField)}
                 fill={color}
                 radius={[0, 3, 3, 0]}
-                onClick={
-                  handleCrossFilterClick
-                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterClick(data.payload.value)
+                onMouseEnter={
+                  handleCrossFilterHover
+                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterHover(data.payload.value)
                     : undefined
                 }
-                cursor={handleCrossFilterClick ? "pointer" : undefined}
+                onMouseLeave={onCrossFilterHoverEnd}
               >
                 {(widget.palette && widget.palette.length > 0) || crossFilterField
                   ? series.map((s, idx) => (
@@ -698,7 +703,7 @@ export default function DashboardWidgetCard({
                 stroke={color}
                 strokeWidth={2}
                 dot={
-                  handleCrossFilterClick
+                  handleCrossFilterHover
                     ? (dotProps: { cx: number; cy: number; payload: { value: string } }) => {
                         const isSelected = activeCrossFilters?.[crossFilterField!] === dotProps.payload.value;
                         const isFiltered = activeCrossFilters?.[crossFilterField!] !== undefined;
@@ -712,8 +717,8 @@ export default function DashboardWidgetCard({
                             fillOpacity={isFiltered && !isSelected ? 0.35 : 1}
                             stroke={isSelected ? "var(--text-primary)" : "none"}
                             strokeWidth={1.5}
-                            onClick={() => handleCrossFilterClick(dotProps.payload.value)}
-                            cursor="pointer"
+                            onMouseEnter={() => handleCrossFilterHover(dotProps.payload.value)}
+                            onMouseLeave={onCrossFilterHoverEnd}
                           />
                         );
                       }
@@ -735,12 +740,12 @@ export default function DashboardWidgetCard({
                 cy="50%"
                 outerRadius="75%"
                 label={widget.showDataLabels ? { fontSize: widget.labelFontSize ?? 10, fontFamily: widget.labelFontFamily } : false}
-                onClick={
-                  handleCrossFilterClick
-                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterClick(data.payload.value)
+                onMouseEnter={
+                  handleCrossFilterHover
+                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterHover(data.payload.value)
                     : undefined
                 }
-                cursor={handleCrossFilterClick ? "pointer" : undefined}
+                onMouseLeave={onCrossFilterHoverEnd}
               >
                 {paletteFor(widget, series.length).map((c, idx) => (
                   <Cell
@@ -781,8 +786,8 @@ export default function DashboardWidgetCard({
                       fillOpacity={isFiltered && !isSelected ? 0.35 : 1}
                       stroke={isSelected ? "var(--text-primary)" : "none"}
                       strokeWidth={1.5}
-                      onClick={handleCrossFilterClick ? () => handleCrossFilterClick(dotProps.payload.value) : undefined}
-                      cursor={handleCrossFilterClick ? "pointer" : undefined}
+                      onMouseEnter={handleCrossFilterHover ? () => handleCrossFilterHover(dotProps.payload.value) : undefined}
+                      onMouseLeave={onCrossFilterHoverEnd}
                     />
                   );
                 }}
@@ -802,12 +807,12 @@ export default function DashboardWidgetCard({
                 data={series}
                 nameKey="value"
                 isAnimationActive={false}
-                onClick={
-                  (handleCrossFilterClick
-                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterClick(data.payload.value)
+                onMouseEnter={
+                  (handleCrossFilterHover
+                    ? (data: { value: string; payload: { value: string } }) => handleCrossFilterHover(data.payload.value)
                     : undefined) as never
                 }
-                cursor={handleCrossFilterClick ? "pointer" : undefined}
+                onMouseLeave={onCrossFilterHoverEnd}
               >
                 {paletteFor(widget, series.length).map((c, idx) => (
                   <Cell
@@ -841,7 +846,8 @@ export default function DashboardWidgetCard({
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
             selectedValue={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
-            onSelect={handleCrossFilterClick}
+            onHoverStart={handleCrossFilterHover}
+            onHoverEnd={onCrossFilterHoverEnd}
           />
         )}
 
@@ -875,8 +881,9 @@ export default function DashboardWidgetCard({
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
             selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
             selectedSecondary={secondaryCrossFilterField ? activeCrossFilters?.[secondaryCrossFilterField] : undefined}
-            onSelectPrimary={handleCrossFilterClick}
-            onSelectSecondary={handleSecondaryCrossFilterClick}
+            onHoverStartPrimary={handleCrossFilterHover}
+            onHoverStartSecondary={handleSecondaryCrossFilterHover}
+            onHoverEnd={onCrossFilterHoverEnd}
           />
         )}
 
@@ -891,8 +898,9 @@ export default function DashboardWidgetCard({
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
             selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
             selectedSecondary={secondaryCrossFilterField ? activeCrossFilters?.[secondaryCrossFilterField] : undefined}
-            onSelectPrimary={handleCrossFilterClick}
-            onSelectSecondary={handleSecondaryCrossFilterClick}
+            onHoverStartPrimary={handleCrossFilterHover}
+            onHoverStartSecondary={handleSecondaryCrossFilterHover}
+            onHoverEnd={onCrossFilterHoverEnd}
           />
         )}
 
@@ -906,7 +914,8 @@ export default function DashboardWidgetCard({
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
             selectedValue={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
-            onSelect={handleCrossFilterClick}
+            onHoverStart={handleCrossFilterHover}
+            onHoverEnd={onCrossFilterHoverEnd}
           />
         )}
 
@@ -1467,7 +1476,8 @@ function ChoroplethMap({
   fontFamily,
   fontSize,
   selectedValue,
-  onSelect,
+  onHoverStart,
+  onHoverEnd,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
@@ -1477,7 +1487,8 @@ function ChoroplethMap({
   fontFamily?: string;
   fontSize?: number;
   selectedValue?: string;
-  onSelect?: (value: string) => void;
+  onHoverStart?: (value: string) => void;
+  onHoverEnd?: () => void;
 }) {
   const usingManualData = !!manualData;
   const countByName = new Map<string, number>();
@@ -1519,7 +1530,7 @@ function ChoroplethMap({
                 const originalCaseValue = key ? originalCaseByName.get(key) : undefined;
                 const isSelected = selectedValue !== undefined && key === selectedValue.trim().toLowerCase();
                 const isDimmed = selectedValue !== undefined && !isSelected;
-                const clickable = !usingManualData && originalCaseValue && onSelect;
+                const isHoverable = !usingManualData && originalCaseValue && onHoverStart;
                 return (
                   <Geography
                     key={geo.rsmKey}
@@ -1528,10 +1539,11 @@ function ChoroplethMap({
                     fillOpacity={isDimmed ? 0.3 : 1}
                     stroke={isSelected ? "var(--text-primary)" : "var(--border)"}
                     strokeWidth={isSelected ? 1.2 : field === "by_province" ? 0.2 : 0.4}
-                    onClick={clickable ? () => onSelect(originalCaseValue) : undefined}
+                    onMouseEnter={isHoverable ? () => onHoverStart(originalCaseValue) : undefined}
+                    onMouseLeave={onHoverEnd}
                     style={{
-                      default: { outline: "none", cursor: clickable ? "pointer" : undefined },
-                      hover: { outline: "none", opacity: 0.8, cursor: clickable ? "pointer" : undefined },
+                      default: { outline: "none", cursor: isHoverable ? "pointer" : undefined },
+                      hover: { outline: "none", opacity: 0.8, cursor: isHoverable ? "pointer" : undefined },
                       pressed: { outline: "none" },
                     }}
                   />
@@ -1651,8 +1663,9 @@ function RelationshipSankey({
   onCommitOffset,
   selectedPrimary,
   selectedSecondary,
-  onSelectPrimary,
-  onSelectSecondary,
+  onHoverStartPrimary,
+  onHoverStartSecondary,
+  onHoverEnd,
 }: {
   data: CrosstabRow[];
   baseColor: string;
@@ -1663,8 +1676,9 @@ function RelationshipSankey({
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
   selectedPrimary?: string;
   selectedSecondary?: string;
-  onSelectPrimary?: (value: string) => void;
-  onSelectSecondary?: (value: string) => void;
+  onHoverStartPrimary?: (value: string) => void;
+  onHoverStartSecondary?: (value: string) => void;
+  onHoverEnd?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1699,7 +1713,7 @@ function RelationshipSankey({
             const isPrimary = primariesSet.has(nodeProps.payload.name);
             const selected = isPrimary ? selectedPrimary : selectedSecondary;
             const isDimmed = selected !== undefined && selected !== nodeProps.payload.name;
-            const handleClick = isPrimary ? onSelectPrimary : onSelectSecondary;
+            const handleHover = isPrimary ? onHoverStartPrimary : onHoverStartSecondary;
             return (
               <g>
                 <rect
@@ -1711,8 +1725,9 @@ function RelationshipSankey({
                   fillOpacity={isDimmed ? 0.25 : 0.85}
                   stroke={selected === nodeProps.payload.name ? "var(--text-primary)" : "none"}
                   strokeWidth={1.5}
-                  onClick={handleClick ? () => handleClick(nodeProps.payload.name) : undefined}
-                  cursor={handleClick ? "pointer" : undefined}
+                  onMouseEnter={handleHover ? () => handleHover(nodeProps.payload.name) : undefined}
+                  onMouseLeave={onHoverEnd}
+                  cursor={handleHover ? "pointer" : undefined}
                 />
                 {showLabels && (
                   <DraggableLabel
@@ -1797,8 +1812,9 @@ function RelationshipNetwork({
   onCommitOffset,
   selectedPrimary,
   selectedSecondary,
-  onSelectPrimary,
-  onSelectSecondary,
+  onHoverStartPrimary,
+  onHoverStartSecondary,
+  onHoverEnd,
 }: {
   data: CrosstabRow[];
   baseColor: string;
@@ -1809,8 +1825,9 @@ function RelationshipNetwork({
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
   selectedPrimary?: string;
   selectedSecondary?: string;
-  onSelectPrimary?: (value: string) => void;
-  onSelectSecondary?: (value: string) => void;
+  onHoverStartPrimary?: (value: string) => void;
+  onHoverStartSecondary?: (value: string) => void;
+  onHoverEnd?: () => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   if (data.length === 0) {
@@ -1878,8 +1895,9 @@ function RelationshipNetwork({
               fillOpacity={selectedPrimary && selectedPrimary !== a ? 0.3 : 1}
               stroke={selectedPrimary === a ? "var(--text-primary)" : "none"}
               strokeWidth={1.5}
-              onClick={onSelectPrimary ? () => onSelectPrimary(a) : undefined}
-              cursor={onSelectPrimary ? "pointer" : undefined}
+              onMouseEnter={onHoverStartPrimary ? () => onHoverStartPrimary(a) : undefined}
+              onMouseLeave={onHoverEnd}
+              cursor={onHoverStartPrimary ? "pointer" : undefined}
             />
             <DraggableLabel
               x={leftX - 8}
@@ -1907,8 +1925,9 @@ function RelationshipNetwork({
               fillOpacity={selectedSecondary && selectedSecondary !== t ? 0.3 : 1}
               stroke={selectedSecondary === t ? "var(--text-primary)" : "none"}
               strokeWidth={1.5}
-              onClick={onSelectSecondary ? () => onSelectSecondary(t) : undefined}
-              cursor={onSelectSecondary ? "pointer" : undefined}
+              onMouseEnter={onHoverStartSecondary ? () => onHoverStartSecondary(t) : undefined}
+              onMouseLeave={onHoverEnd}
+              cursor={onHoverStartSecondary ? "pointer" : undefined}
             />
             <DraggableLabel
               x={rightX + 8}
@@ -1942,7 +1961,8 @@ function BubbleChart({
   offsets,
   onCommitOffset,
   selectedValue,
-  onSelect,
+  onHoverStart,
+  onHoverEnd,
 }: {
   series: { value: string; count: number }[];
   colors: string[];
@@ -1952,7 +1972,8 @@ function BubbleChart({
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
   selectedValue?: string;
-  onSelect?: (value: string) => void;
+  onHoverStart?: (value: string) => void;
+  onHoverEnd?: () => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   if (series.length === 0) {
@@ -1983,8 +2004,9 @@ function BubbleChart({
                 fillOpacity={isFiltered && !isSelected ? 0.35 : 0.85}
                 stroke={isSelected ? "var(--text-primary)" : "none"}
                 strokeWidth={2}
-                onClick={onSelect ? () => onSelect(datum.value) : undefined}
-                cursor={onSelect ? "pointer" : undefined}
+                onMouseEnter={onHoverStart ? () => onHoverStart(datum.value) : undefined}
+                onMouseLeave={onHoverEnd}
+                cursor={onHoverStart ? "pointer" : undefined}
               >
                 <title>{`${datum.value}: ${datum.count}`}</title>
               </circle>
