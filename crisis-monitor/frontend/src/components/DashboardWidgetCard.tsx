@@ -627,7 +627,17 @@ export default function DashboardWidgetCard({
       </div>
 
       <div
-        key={chartResetKey}
+        // Stable (never changes) for globe/map — neither is a recharts
+        // component, so neither has the stuck-tooltip bug this remount
+        // mechanism exists to work around, and neither participates in
+        // cross-filtering, so there's no reason for either to ever react to
+        // activeCrossFilters changing. Force-remounting the globe
+        // specifically is real risk for no benefit: it means tearing down
+        // and rebuilding an entire Three.js/WebGL scene every time any
+        // *other* widget on the same dashboard is hovered or clicked for
+        // cross-filtering, which is exactly the kind of repeated
+        // teardown/rebuild cycle that can crash a WebGL context.
+        key={widget.type === "globe" || widget.type === "map" ? "stable" : chartResetKey}
         onMouseEnter={() => {
           isMouseOverRef.current = true;
         }}
