@@ -371,6 +371,8 @@ function ClientDetail({
             </div>
           </label>
 
+          <CountryAccessSection clientId={clientId} />
+
           <SharedItemsSection
             title="SHARED DASHBOARDS"
             clientId={clientId}
@@ -539,6 +541,116 @@ function EditClientLimits({ client, onSaved, onClose }: { client: ClientOrg; onS
 /** Reusable for both dashboards and datasets — same shape of "here's what's
  *  already shared, here's a picker of everything else you own that isn't
  *  shared yet" for either kind of item. */
+/** A client with no countries listed here is unrestricted — this section
+ *  turning restriction ON is additive, not a required setup step. Plain
+ *  text input rather than a fixed dropdown: incident data's country field
+ *  comes from whatever a spreadsheet actually says, which won't
+ *  necessarily match any single fixed naming convention, so the admin
+ *  needs to be able to type exactly what that client's own data uses. */
+function CountryAccessSection({ clientId }: { clientId: string }) {
+  const [countries, setCountries] = useState<{ country: string; created_at: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newCountry, setNewCountry] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setCountries(await api.listClientCountries(clientId));
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newCountry.trim()) return;
+    setError(null);
+    setAdding(true);
+    try {
+      await api.grantClientCountry(clientId, newCountry.trim());
+      setNewCountry("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't add that country.");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleRemove(country: string) {
+    setError(null);
+    try {
+      await api.revokeClientCountry(clientId, country);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove that country.");
+    }
+  }
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div className="eyebrow" style={{ marginBottom: 6 }}>
+        COUNTRY ACCESS (INCIDENTS)
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginBottom: 8 }}>
+        {countries.length === 0
+          ? "Unrestricted — this client can view and upload incidents for any country. Add one below to restrict them to specific countries only."
+          : "Restricted to the countries below, for both viewing and uploading — type the country exactly as it appears in this client's own data."}
+      </div>
+      {error && <div style={{ color: "var(--critical)", fontSize: 12, marginBottom: 8 }}>{error}</div>}
+      {loading ? (
+        <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Loading…</div>
+      ) : (
+        <>
+          {countries.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {countries.map((c) => (
+                <span
+                  key={c.country}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: 12,
+                    padding: "4px 8px 4px 10px",
+                    borderRadius: 999,
+                    background: "var(--panel-raised)",
+                    border: "1px solid var(--border)",
+                  }}
+                >
+                  {c.country}
+                  <button
+                    onClick={() => handleRemove(c.country)}
+                    title={`Remove ${c.country}`}
+                    style={{ background: "transparent", border: "none", color: "var(--text-faint)", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <form onSubmit={handleAdd} style={{ display: "flex", gap: 8 }}>
+            <input
+              value={newCountry}
+              onChange={(e) => setNewCountry(e.target.value)}
+              placeholder="Country name, e.g. Kenya"
+              style={{ ...inputStyle, flex: 1, maxWidth: 240 }}
+            />
+            <button type="submit" disabled={adding || !newCountry.trim()} style={backBtnStyle}>
+              {adding ? "Adding…" : "+ Add country"}
+            </button>
+          </form>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SharedItemsSection({
   title,
   clientId,
