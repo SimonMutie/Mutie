@@ -59,7 +59,7 @@ export class LiveFeedHub implements DurableObject {
       const [client, server] = Object.values(pair);
       this.state.acceptWebSocket(server);
       server.serializeAttachment({ userId: session.userId, role: session.role } satisfies SocketIdentity);
-      server.send(JSON.stringify({ type: "hello", payload: { message: "connected to GlobaLens live feed" } }));
+      server.send(JSON.stringify({ type: "hello", payload: { message: "connected to The Lens live feed" } }));
       return new Response(null, { status: 101, webSocket: client });
     }
 
