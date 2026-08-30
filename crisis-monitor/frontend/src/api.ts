@@ -805,6 +805,10 @@ export const api = {
   deleteDataset: (id: string) => req<void>(`/api/datasets/${id}`, { method: "DELETE" }),
   getDatasetBreakdown: (datasetId: string, field: string) =>
     req<{ value: string; count: number }[]>(`/api/datasets/${datasetId}/breakdown?field=${encodeURIComponent(field)}`),
+  getDatasetValueMap: (datasetId: string, location: string, value: string) =>
+    req<{ value: string; count: number }[]>(
+      `/api/datasets/${datasetId}/value-map?location=${encodeURIComponent(location)}&value=${encodeURIComponent(value)}`
+    ),
   getDatasetCrosstab: (datasetId: string, primary: string, secondary: string) =>
     req<CrosstabRow[]>(`/api/datasets/${datasetId}/crosstab?primary=${encodeURIComponent(primary)}&secondary=${encodeURIComponent(secondary)}`),
   getDatasetSummary: (datasetId: string) => req<DatasetSummary>(`/api/datasets/${datasetId}/summary`),
