@@ -41,6 +41,8 @@ import { LABEL_TYPE_META, LABEL_TYPES, labelIconSvg, type LabelType } from "./la
 import * as XLSX from "xlsx";
 import "leaflet/dist/leaflet.css";
 import { api } from "../api";
+import html2canvas from "html2canvas";
+import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import type { CrosstabRow, Dataset, DatasetColumn, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
 import { detectColumnType } from "./DatasetsPanel";
 
@@ -597,6 +599,67 @@ export default function DashboardWidgetCard({
   }, [JSON.stringify(activeCrossFilters)]);
   const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const [downloadingImage, setDownloadingImage] = useState(false);
+  const [gifProgress, setGifProgress] = useState<GifCaptureProgress | null>(null);
+  const [gifError, setGifError] = useState<string | null>(null);
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showDownloadMenu) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) setShowDownloadMenu(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDownloadMenu]);
+
+  /** Captures this one widget as a standalone image — same html2canvas
+   *  approach used for the map and whole-dashboard exports, just scoped to
+   *  cardRef instead of a bigger container. Available regardless of
+   *  editability (unlike the edit/remove controls right below), including
+   *  on the read-only public dashboard view — downloading isn't an edit
+   *  action, there's no reason to gate it the way those are. */
+  async function downloadWidgetImage() {
+    setShowDownloadMenu(false);
+    if (!cardRef.current) return;
+    setDownloadingImage(true);
+    try {
+      const canvas = await html2canvas(cardRef.current, { useCORS: true, allowTaint: false, logging: false });
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${widget.title.replace(/[^a-z0-9]+/gi, "_").toLowerCase() || "widget"}_${new Date().toISOString().slice(0, 10)}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    } finally {
+      setDownloadingImage(false);
+    }
+  }
+
+  /** Same capture target as the PNG export above, animated instead of a
+   *  single frame — worth having per-widget specifically for something
+   *  like a globe (rotating/animated routes) or a hover-flashing label,
+   *  where a static image alone wouldn't show the motion that's often the
+   *  actual point of that widget. */
+  async function downloadWidgetGif() {
+    setShowDownloadMenu(false);
+    if (!cardRef.current) return;
+    setGifError(null);
+    setGifProgress({ phase: "capturing", current: 0, total: 24 });
+    try {
+      const blob = await captureElementAsGif(cardRef.current, setGifProgress);
+      downloadBlob(blob, `${widget.title.replace(/[^a-z0-9]+/gi, "_").toLowerCase() || "widget"}_${new Date().toISOString().slice(0, 10)}.gif`);
+    } catch (err) {
+      setGifError(err instanceof Error ? err.message : "Couldn't create the GIF.");
+    } finally {
+      setGifProgress(null);
+    }
+  }
+
   const gearRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -687,11 +750,35 @@ export default function DashboardWidgetCard({
                   ⚙
                 </button>
               )}
+              <DownloadMenu
+                show={showDownloadMenu}
+                onToggle={() => setShowDownloadMenu((v) => !v)}
+                menuRef={downloadMenuRef}
+                onDownloadPng={downloadWidgetImage}
+                onDownloadGif={downloadWidgetGif}
+                downloadingImage={downloadingImage}
+                gifProgress={gifProgress}
+                gifError={gifError}
+              />
               {showFullControls && onRemove && (
                 <button onClick={onRemove} title="Remove widget" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
                   ×
                 </button>
               )}
+            </div>
+          )}
+          {!dashboardEditable && (
+            <div onMouseDown={(e) => e.stopPropagation()}>
+              <DownloadMenu
+                show={showDownloadMenu}
+                onToggle={() => setShowDownloadMenu((v) => !v)}
+                menuRef={downloadMenuRef}
+                onDownloadPng={downloadWidgetImage}
+                onDownloadGif={downloadWidgetGif}
+                downloadingImage={downloadingImage}
+                gifProgress={gifProgress}
+                gifError={gifError}
+              />
             </div>
           )}
         </div>
@@ -3282,6 +3369,80 @@ function DraggableLabel({
     </text>
   );
 }
+
+/** A compact PNG/GIF download dropdown, shared by both the editable and
+ *  read-only widget header variants — two separate always-visible buttons
+ *  would clutter an already-busy header row, especially on small widgets
+ *  like a stat card. */
+function DownloadMenu({
+  show,
+  onToggle,
+  menuRef,
+  onDownloadPng,
+  onDownloadGif,
+  downloadingImage,
+  gifProgress,
+  gifError,
+  style,
+}: {
+  show: boolean;
+  onToggle: () => void;
+  menuRef: React.RefObject<HTMLDivElement>;
+  onDownloadPng: () => void;
+  onDownloadGif: () => void;
+  downloadingImage: boolean;
+  gifProgress: { phase: "capturing" | "encoding"; current: number; total: number } | null;
+  gifError: string | null;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div ref={menuRef} style={{ position: "relative", flexShrink: 0, ...style }}>
+      <button onClick={onToggle} disabled={downloadingImage || !!gifProgress} title="Download this widget" style={miniBtnStyle}>
+        ⭳
+      </button>
+      {show && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 20,
+            background: "var(--panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            boxShadow: "0 4px 16px rgba(19,23,34,0.14)",
+            minWidth: 170,
+            overflow: "hidden",
+          }}
+        >
+          <button onClick={onDownloadPng} style={downloadMenuItemStyle}>
+            Download as image
+          </button>
+          <button onClick={onDownloadGif} style={downloadMenuItemStyle}>
+            Download as GIF (animated)
+          </button>
+          {gifProgress && (
+            <div style={{ fontSize: 10, color: "var(--text-faint)", padding: "5px 10px" }}>
+              {gifProgress.phase === "capturing" ? `Capturing ${gifProgress.current}/${gifProgress.total}…` : `Encoding ${Math.round(gifProgress.current * 100)}%…`}
+            </div>
+          )}
+          {gifError && <div style={{ fontSize: 10, color: "var(--critical)", padding: "5px 10px" }}>{gifError}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+const downloadMenuItemStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  textAlign: "left",
+  padding: "7px 10px",
+  fontSize: 11.5,
+  background: "transparent",
+  border: "none",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+};
 
 function EmptyState({ message }: { message: string }) {
   return (
