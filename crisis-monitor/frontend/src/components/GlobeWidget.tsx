@@ -5,6 +5,7 @@ import { feature } from "topojson-client";
 import { geoCentroid } from "d3-geo";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import worldTopology from "world-atlas/countries-110m.json?url";
+import { LABEL_TYPE_META, type LabelType } from "./labelTypes";
 
 type Vehicle = "plane" | "commercial-ship" | "warship" | "drone" | "none";
 
@@ -25,9 +26,12 @@ interface Props {
   /** Bendable multi-waypoint paths, each optionally with an animated vehicle
    *  icon travelling along it. */
   routes?: Route[];
-  /** Free-standing text labels — checkpoints, ports, chokepoints, anything
-   *  worth naming directly on the map. */
-  labels?: { location: string; text: string; color?: string }[];
+  /** Free-standing labeled points — checkpoints, ports, chokepoints, or any
+   *  of the other categories in LABEL_TYPE_META, worth marking directly on
+   *  the globe. An unset/unrecognized type falls back to "other" rather
+   *  than being dropped, so labels created before this categorization
+   *  existed keep rendering exactly as they always did. */
+  labels?: { location: string; text: string; color?: string; type?: LabelType }[];
 }
 
 /** This file is dynamically imported (see DashboardWidgetCard's React.lazy
@@ -167,7 +171,8 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
     .map((l) => {
       const point = resolveLocation(l.location, centroidByCountry);
       if (!point) return null;
-      return { lat: point[1], lng: point[0], text: l.text, color: l.color || baseColor };
+      const meta = LABEL_TYPE_META[l.type ?? "other"];
+      return { lat: point[1], lng: point[0], text: `${meta.symbol} ${l.text}`, color: l.color || meta.color };
     })
     .filter((l): l is NonNullable<typeof l> => l !== null);
 
