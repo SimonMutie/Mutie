@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import html2canvas from "html2canvas";
+import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -149,6 +151,51 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   // widget needs to autosave right away rather than have that one change
   // silently consumed as the "skip".
   const skipNextAutoSave = useRef(!(mode.kind === "bespoke" && mode.id === null));
+  const dashboardCaptureRef = useRef<HTMLDivElement>(null);
+  const [downloadingImage, setDownloadingImage] = useState(false);
+
+  /** Captures every widget currently on screen as one image — same
+   *  html2canvas approach already proven for the incidents map's own PNG
+   *  export, applied to the dashboard's whole grid container instead of
+   *  just the map. Only what's actually rendered/visible is captured;
+   *  scrolled-off widgets outside the current viewport aren't included,
+   *  same limitation html2canvas has everywhere else it's used here. */
+  async function downloadDashboardImage() {
+    if (!dashboardCaptureRef.current) return;
+    setDownloadingImage(true);
+    try {
+      const canvas = await html2canvas(dashboardCaptureRef.current, { useCORS: true, allowTaint: false, logging: false, backgroundColor: null });
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `dashboard_${new Date().toISOString().slice(0, 10)}.png`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }, "image/png");
+    } finally {
+      setDownloadingImage(false);
+    }
+  }
+
+  const [gifProgress, setGifProgress] = useState<GifCaptureProgress | null>(null);
+  const [gifError, setGifError] = useState<string | null>(null);
+
+  async function downloadDashboardGif() {
+    if (!dashboardCaptureRef.current) return;
+    setGifError(null);
+    setGifProgress({ phase: "capturing", current: 0, total: 24 });
+    try {
+      const blob = await captureElementAsGif(dashboardCaptureRef.current, setGifProgress);
+      downloadBlob(blob, `dashboard_${new Date().toISOString().slice(0, 10)}.gif`);
+    } catch (err) {
+      setGifError(err instanceof Error ? err.message : "Couldn't create the GIF.");
+    } finally {
+      setGifProgress(null);
+    }
+  }
+
   const [addingWidget, setAddingWidget] = useState(false);
   const [draftType, setDraftType] = useState<WidgetType>("bar");
   const [draftField, setDraftField] = useState<WidgetDataField>("by_sector");
@@ -726,6 +773,17 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             {linkCopied ? "Copied!" : "Copy link"}
           </button>
         )}
+        <button onClick={downloadDashboardImage} disabled={downloadingImage} style={secondaryBtnStyle}>
+          {downloadingImage ? "Capturing…" : "⭳ Download as image"}
+        </button>
+        <button onClick={downloadDashboardGif} disabled={!!gifProgress} style={secondaryBtnStyle}>
+          {gifProgress
+            ? gifProgress.phase === "capturing"
+              ? `Capturing ${gifProgress.current}/${gifProgress.total}…`
+              : `Encoding ${Math.round(gifProgress.current * 100)}%…`
+            : "⭳ Download as GIF"}
+        </button>
+        {gifError && <div style={{ fontSize: 11, color: "var(--critical)", alignSelf: "center" }}>{gifError}</div>}
       </div>
 
       {addingWidget && (
@@ -977,7 +1035,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+      <div ref={dashboardCaptureRef} style={{ flex: 1, overflowY: "auto", padding: 24 }}>
         {!loaded || !stats ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
         ) : widgets.length === 0 ? (
