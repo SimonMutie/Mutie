@@ -1,3 +1,5 @@
+import type { LabelType } from "./components/labelTypes";
+
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:4000";
 
@@ -416,10 +418,10 @@ export interface DashboardWidget {
   mapView?: { lat: number; lng: number; zoom: number };
   /** Incident map only — markers (default) or heatmap density view. */
   mapViewMode?: "markers" | "heatmap";
-  /** Globe only — free-standing text labels (checkpoints, ports, chokepoints,
-   *  anything worth naming directly on the map) at a country name or precise
-   *  "lat,lng", independent of country shading and routes. */
-  manualLabels?: { location: string; text: string; color?: string }[];
+  /** Globe only — free-standing labeled points (checkpoints, ports,
+   *  chokepoints, or any of the LABEL_TYPE_META categories) at a country
+   *  name or precise "lat,lng", independent of country shading and routes. */
+  manualLabels?: { location: string; text: string; color?: string; type?: LabelType }[];
   /** Globe only — a path through 2 or more named locations, for showing
    *  routes, trajectories, or cross-border/cross-group linkages. A country
    *  name (matched the same way as country shading) or a precise "lat,lng"
