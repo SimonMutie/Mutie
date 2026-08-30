@@ -10,6 +10,7 @@ import buffer from "@turf/buffer";
 import { lineString } from "@turf/helpers";
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
+import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import "leaflet/dist/leaflet.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
@@ -808,6 +809,8 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const [exportingExcel, setExportingExcel] = useState(false);
   const [exportingPng, setExportingPng] = useState(false);
+  const [gifProgress, setGifProgress] = useState<GifCaptureProgress | null>(null);
+  const [gifError, setGifError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"markers" | "heatmap">("markers");
   // Separate from viewMode — viewMode only chooses *which way* incidents are
   // shown, it was never able to hide them entirely on its own. This is what
@@ -1333,6 +1336,23 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
     }
   }
 
+  /** Same cross-origin tile caveat as exportPng above applies to every
+   *  captured frame, not just one. Captures the route "marching ants"
+   *  animation in motion — the whole reason this exists alongside the
+   *  plain PNG export above. */
+  async function exportGif() {
+    if (!mapContainerRef.current) return;
+    setGifProgress({ phase: "capturing", current: 0, total: 24 });
+    try {
+      const blob = await captureElementAsGif(mapContainerRef.current, setGifProgress);
+      downloadBlob(blob, `incidents_map_${new Date().toISOString().slice(0, 10)}.gif`);
+    } catch (err) {
+      setGifError(err instanceof Error ? err.message : "Couldn't create the GIF.");
+    } finally {
+      setGifProgress(null);
+    }
+  }
+
   if (!mapSettingsLoaded) {
     return <div style={{ width: "100%", height: "100%", background: "var(--panel-raised)" }} />;
   }
@@ -1817,7 +1837,11 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
 
         {/* finished route simulations */}
         {visibleRoutes.map((r) => (
-          <Polyline key={r.id} positions={r.geometry} pathOptions={{ color: r.color, weight: 4, opacity: 0.75 }} />
+          <Polyline
+            key={r.id}
+            positions={r.geometry}
+            pathOptions={{ color: r.color, weight: 4, opacity: 0.85, dashArray: "10 8", className: "route-motion-path" }}
+          />
         ))}
         {visibleRoutes.map((r) =>
           r.waypoints.map((pt, idx) => (
@@ -2192,6 +2216,14 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
           <button onClick={exportPng} disabled={exportingPng} style={secondaryChipStyle}>
             {exportingPng ? "Capturing…" : "Export map as PNG"}
           </button>
+          <button onClick={exportGif} disabled={!!gifProgress} style={secondaryChipStyle}>
+            {gifProgress
+              ? gifProgress.phase === "capturing"
+                ? `Capturing frame ${gifProgress.current}/${gifProgress.total}…`
+                : `Encoding… ${Math.round(gifProgress.current * 100)}%`
+              : "Export map as GIF (animated routes)"}
+          </button>
+          {gifError && <div style={{ fontSize: 10.5, color: "var(--critical)" }}>{gifError}</div>}
         </div>
       )}
       {showLegend && <ActorLegend iconMode={iconMode} />}
