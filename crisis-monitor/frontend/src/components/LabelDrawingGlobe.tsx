@@ -4,7 +4,7 @@ import { feature } from "topojson-client";
 import { geoCentroid } from "d3-geo";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import worldTopology from "world-atlas/countries-110m.json?url";
-import { LABEL_TYPE_META, type LabelType } from "./labelTypes";
+import { LABEL_TYPE_META, labelIconSvg, type LabelType } from "./labelTypes";
 
 interface LabelEntry {
   location: string;
@@ -97,14 +97,13 @@ export default function LabelDrawingGlobe({ labels, onChange }: Props) {
     .map((l, idx) => {
       const resolved = resolveLocation(l.location, centroidByCountry);
       if (!resolved) return null;
-      const meta = LABEL_TYPE_META[l.type ?? "other"];
-      return { idx, lat: resolved[1], lng: resolved[0], color: l.color || meta.color, text: `${meta.symbol} ${l.text || meta.name}` };
+      const type = l.type ?? "other";
+      return { idx, lat: resolved[1], lng: resolved[0], color: l.color, type, text: l.text || LABEL_TYPE_META[type].name };
     })
-    .filter((p): p is { idx: number; lat: number; lng: number; color: string; text: string } => p !== null);
+    .filter((p): p is { idx: number; lat: number; lng: number; color: string | undefined; type: LabelType; text: string } => p !== null);
 
-  function handlePointClick(point: object) {
+  function handlePointClick(idx: number) {
     lastPointClickAt.current = Date.now();
-    const idx = (point as { idx: number }).idx;
     setSelectedIdx((current) => (current === idx ? null : idx));
   }
 
@@ -122,7 +121,7 @@ export default function LabelDrawingGlobe({ labels, onChange }: Props) {
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ fontSize: 10, color: "var(--text-faint)" }}>
         {selectedIdx !== null
-          ? `Point ${selectedIdx + 1} selected (white) — click anywhere on the globe to move it there.`
+          ? `Point ${selectedIdx + 1} selected (white ring) — click anywhere on the globe to move it there.`
           : "Click an existing point to select it, or click empty space to place a new label there — fill in its type and text below."}
       </div>
       <div ref={containerRef} style={{ height: 220, width: "100%", borderRadius: 6, overflow: "hidden", background: "#0a0e14" }}>
@@ -143,17 +142,30 @@ export default function LabelDrawingGlobe({ labels, onChange }: Props) {
             polygonStrokeColor={() => "rgba(255,255,255,0.2)"}
             polygonAltitude={0.006}
             onGlobeClick={handleGlobeClick}
-            labelsData={points}
-            labelLat={(p: object) => (p as { lat: number }).lat}
-            labelLng={(p: object) => (p as { lng: number }).lng}
-            labelText={(p: object) => (p as { text: string }).text}
-            labelColor={(p: object) => ((p as { idx: number }).idx === selectedIdx ? "#ffffff" : (p as { color: string }).color)}
-            labelSize={(p: object) => ((p as { idx: number }).idx === selectedIdx ? 1.6 : 1.1)}
-            labelDotRadius={(p: object) => ((p as { idx: number }).idx === selectedIdx ? 0.55 : 0.4)}
-            labelIncludeDot
-            labelAltitude={0.015}
-            labelResolution={2}
-            onLabelClick={handlePointClick}
+            htmlElementsData={points}
+            htmlLat={(p: object) => (p as { lat: number }).lat}
+            htmlLng={(p: object) => (p as { lng: number }).lng}
+            htmlAltitude={0.015}
+            htmlElement={(d: object) => {
+              const item = d as { idx: number; type: LabelType; color?: string; text: string };
+              const isSelected = item.idx === selectedIdx;
+              const el = document.createElement("div");
+              // Deliberately not pointer-events:none here (unlike the
+              // read-only display in GlobeWidget) — this element needs to
+              // actually receive the click below to be selectable, and
+              // since it's a real DOM node layered on top of the globe's
+              // own canvas, a click landing on it naturally doesn't also
+              // reach the canvas underneath — the lastPointClickAt guard on
+              // handleGlobeClick above is a defensive backstop in case that
+              // layering assumption ever doesn't hold.
+              el.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:pointer;transform:translate(-50%,-100%);";
+              el.innerHTML = labelIconSvg(item.type, isSelected ? 26 : 20, isSelected ? "#ffffff" : item.color);
+              el.onclick = (e) => {
+                e.stopPropagation();
+                handlePointClick(item.idx);
+              };
+              return el;
+            }}
           />
         )}
       </div>
