@@ -262,10 +262,18 @@ function relationshipData(widget: DashboardWidget, stats: NormalizedDashboardSta
 function seriesFor(
   widget: DashboardWidget,
   stats: NormalizedDashboardStats,
-  breakdowns?: Record<string, { value: string; count: number }[]>
+  breakdowns?: Record<string, { value: string; count: number }[]>,
+  valueMaps?: Record<string, { value: string; count: number }[]>
 ): { value: string; count: number }[] {
   const series = (() => {
     if (widget.datasetId) {
+      // A choropleth/globe widget with a secondaryField set is asking for
+      // an existing numeric value per location (population, GDP, etc.),
+      // not a count of matching rows — checked and handled first, since
+      // both valueMapKeyFor and breakdownKeyFor would otherwise happily
+      // (but wrongly) both return non-null keys for the same widget here.
+      const valueMapKey = valueMapKeyFor(widget);
+      if (valueMapKey) return (valueMaps?.[valueMapKey]) || [];
       // Reuses the exact same key format breakdownKeyFor builds for
       // fetching, so lookup and fetch can never drift apart.
       const key = breakdownKeyFor(widget);
@@ -347,6 +355,24 @@ export function crosstabKeyFor(widget: DashboardWidget): string | null {
   return `${primary}|${widget.secondaryField}`;
 }
 
+/** Only meaningful for a dataset-sourced choropleth/globe widget with both
+ *  fields set — dataField as the location column, secondaryField as the
+ *  numeric value column. Deliberately a distinct key format from
+ *  crosstabKeyFor above, even though both read dataField+secondaryField
+ *  off the same widget: they mean genuinely different things (a count of
+ *  co-occurrences vs. an existing numeric value per location), fetched
+ *  from a different backend endpoint, so mixing their cached results
+ *  under the same key would silently show the wrong data for whichever
+ *  widget looked it up second. Incidents-sourced choropleth/globe widgets
+ *  never use this — country/province are always precomputed count
+ *  breakdowns for incidents data, there's no equivalent "existing numeric
+ *  value per row" concept there the way an uploaded dataset can have. */
+export function valueMapKeyFor(widget: DashboardWidget): string | null {
+  if (!widget.datasetId || !widget.dataField || !widget.secondaryField) return null;
+  if (widget.type !== "choropleth" && widget.type !== "globe") return null;
+  return `vm:${widget.datasetId}:${widget.dataField}|${widget.secondaryField}`;
+}
+
 /** Reshapes flat (primary, secondary, count) crosstab rows into the
  *  wide/pivoted format recharts needs for stacked bars or multi-series
  *  lines: one row per primary category, one column per secondary category.
@@ -413,6 +439,11 @@ interface Props {
   /** Keyed by bare column name for incidents fields, or "ds:<id>:<column>"
    *  for dataset-sourced fields — see breakdownKeyFor(). */
   breakdowns?: Record<string, { value: string; count: number }[]>;
+  /** Keyed "vm:<datasetId>:<locationField>|<valueField>" — an existing
+   *  numeric value per location (population, GDP, etc.) for a dataset-
+   *  sourced choropleth/globe widget, distinct from breakdowns' row
+   *  counts; see valueMapKeyFor(). */
+  valueMaps?: Record<string, { value: string; count: number }[]>;
   /** Keyed "ds:<id>:<column>" — daily counts for a dataset-sourced calendar
    *  widget's chosen date column; see dailyKeyFor(). Incidents' own calendar
    *  reads stats.daily directly and never needs this. */
@@ -468,6 +499,7 @@ export default function DashboardWidgetCard({
   incidents,
   crosstabs,
   breakdowns,
+  valueMaps,
   dailyBreakdowns,
   datasetSummaries,
   datasets,
@@ -488,7 +520,7 @@ export default function DashboardWidgetCard({
   const widgetLocked = !!widget.locked;
   const showFullControls = dashboardEditable && !widgetLocked;
   const color = widget.color || "var(--signal)";
-  const series = seriesFor(widget, stats, breakdowns);
+  const series = seriesFor(widget, stats, breakdowns, valueMaps);
 
   // Cross-filtering only makes sense for Incidents-sourced widgets whose
   // primary dimension is one of the real categorical columns — a
@@ -1443,6 +1475,26 @@ function WidgetEditPopover({
               ))
             )}
           </select>
+        </div>
+      )}
+
+      {(type === "choropleth" || type === "globe") && activeDataset && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>SHOW</div>
+          <select value={secondaryField ?? ""} onChange={(e) => setSecondaryField(e.target.value || undefined)} style={selectStyle}>
+            <option value="">Count of rows per {field || "location"}</option>
+            {activeDataset.schema
+              .filter((col) => col.type === "number")
+              .map((col) => (
+                <option key={col.name} value={col.name}>
+                  {col.name} (its actual value)
+                </option>
+              ))}
+          </select>
+          <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 3 }}>
+            Pick a numeric column (population, GDP, import volumes, etc.) to show its real value per {field || "location"} — instead of just
+            counting how many rows match.
+          </div>
         </div>
       )}
 
