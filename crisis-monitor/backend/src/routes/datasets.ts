@@ -67,6 +67,44 @@ export async function fetchDatasetBreakdown(
   );
 }
 
+/** Reads an actual numeric value already sitting in a column, grouped by a
+ *  location column — genuinely different from fetchDatasetBreakdown above,
+ *  which counts how many rows match each category. That's the right
+ *  mechanism for "how many incidents happened in Kenya" (counting rows),
+ *  but wrong for "Kenya's population" or "Kenya's GDP" — those are
+ *  specific numbers that already exist in the data, not something to
+ *  count occurrences of. SUM+GROUP BY handles both the common case (one
+ *  row per location, sum is just that row's value) and multiple rows per
+ *  location (sum aggregates them, rather than silently keeping only one
+ *  and dropping the rest) the same way. Returns the same {value, count}
+ *  shape fetchDatasetBreakdown does specifically so the frontend's
+ *  existing choropleth/globe rendering needs no changes to consume
+ *  either. */
+export async function fetchDatasetValueMap(
+  db: D1Database,
+  datasetId: string,
+  schema: { name: string; type: string }[],
+  locationField: string | undefined,
+  valueField: string | undefined
+): Promise<{ value: string; count: number }[]> {
+  if (!isValidColumn(schema, locationField) || !isValidColumn(schema, valueField)) return [];
+  if (schema.find((c) => c.name === valueField)?.type !== "number") return [];
+  const locationPath = jsonPathFor(locationField);
+  const valuePath = jsonPathFor(valueField);
+  return all<{ value: string; count: number }>(
+    db,
+    `SELECT json_extract(row_data, ?) AS value, SUM(CAST(json_extract(row_data, ?) AS REAL)) AS count
+     FROM dataset_rows
+     WHERE dataset_id = ?
+       AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+       AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+     GROUP BY value
+     ORDER BY count DESC
+     LIMIT 300`,
+    [locationPath, valuePath, datasetId, locationPath, locationPath, valuePath, valuePath]
+  );
+}
+
 export async function fetchDatasetCrosstab(
   db: D1Database,
   datasetId: string,
@@ -383,6 +421,30 @@ datasetsRouter.get("/:id/breakdown", async (c) => {
     return c.json({ error: "field must be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
   }
   return c.json(await fetchDatasetBreakdown(c.env.DB, datasetId, loaded.schema, field));
+});
+
+/** For a genuinely different visualization need than /breakdown above: a
+ *  numeric value that already exists per location (population, GDP,
+ *  fertilizer imports by country) rather than a count of matching rows.
+ *  Used by choropleth/globe widgets when their "show an actual value, not
+ *  a count" mode is selected. */
+datasetsRouter.get("/:id/value-map", async (c) => {
+  const datasetId = c.req.param("id");
+  const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+  if (!loaded) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), loaded, datasetId);
+  if (!allowed) return c.json({ error: "Not found" }, 404);
+
+  const locationField = c.req.query("location");
+  const valueField = c.req.query("value");
+  if (!isValidColumn(loaded.schema, locationField)) {
+    return c.json({ error: "location must be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
+  }
+  const numericColumns = loaded.schema.filter((s) => s.type === "number");
+  if (!isValidColumn(loaded.schema, valueField) || loaded.schema.find((s) => s.name === valueField)?.type !== "number") {
+    return c.json({ error: "value must be one of this dataset's own numeric columns: " + numericColumns.map((s) => s.name).join(", ") }, 400);
+  }
+  return c.json(await fetchDatasetValueMap(c.env.DB, datasetId, loaded.schema, locationField, valueField));
 });
 
 /** Two-field cross-tab, general-purpose version of /api/incidents/crosstab. */
