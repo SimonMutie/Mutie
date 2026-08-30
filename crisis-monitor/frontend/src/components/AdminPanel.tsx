@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type ClientOrg, type ClientSharedItem, type AuthUser } from "../api";
+import { api, type AccessRequest, type ClientOrg, type ClientSharedItem, type AuthUser } from "../api";
 
 interface Props {
   user: AuthUser;
@@ -51,6 +51,8 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
         ← All queries
       </button>
 
+      <AccessRequestsSection />
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0" }}>
         <div className="eyebrow">CLIENTS ({clients.length})</div>
       </div>
@@ -82,6 +84,73 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
                 <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-faint)", textTransform: "uppercase" }}>At limit</span>
               )}
               <span style={{ color: "var(--text-faint)", fontSize: 16 }}>→</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The review queue for requests submitted from the sign-in screen's
+ *  "Request Access" tab. Deliberately doesn't create an account when
+ *  approved/denied — those actions here are just marking the request
+ *  reviewed; the actual login still gets created through NewClientForm
+ *  below (or the client-detail team management), since this request only
+ *  carries a name/email/reason, not the username/password/client
+ *  assignment an account actually needs. Collapsed by default and only
+ *  rendered at all once a fetch confirms there's at least one pending
+ *  request, so this doesn't add visual clutter for an admin who never
+ *  gets any. */
+function AccessRequestsSection() {
+  const [requests, setRequests] = useState<AccessRequest[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  async function load() {
+    setRequests(await api.listAccessRequests());
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function review(id: string, status: "approved" | "denied") {
+    await api.reviewAccessRequest(id, status);
+    load();
+  }
+
+  if (!loaded) return null;
+  const pending = requests.filter((r) => r.status === "pending");
+  if (pending.length === 0) return null;
+
+  return (
+    <div className="panel" style={{ padding: "14px 16px", marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => setExpanded((v) => !v)}>
+        <div className="eyebrow">ACCESS REQUESTS ({pending.length} pending)</div>
+        <span style={{ color: "var(--text-faint)", fontSize: 12 }}>{expanded ? "▾" : "▸"}</span>
+      </div>
+      {expanded && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+          {pending.map((r) => (
+            <div key={r.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: "var(--panel-raised)", borderRadius: 6 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>
+                  {r.name} <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>— {r.email}</span>
+                </div>
+                {r.organization && <div style={{ fontSize: 11.5, color: "var(--text-muted)", marginTop: 2 }}>{r.organization}</div>}
+                {r.reason && <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 4, lineHeight: 1.4 }}>{r.reason}</div>}
+                <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 4 }}>{new Date(r.created_at).toLocaleString()}</div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button onClick={() => review(r.id, "approved")} style={{ ...backBtnStyle, borderColor: "var(--signal)" }}>
+                  Approve
+                </button>
+                <button onClick={() => review(r.id, "denied")} style={{ ...backBtnStyle, color: "var(--critical)" }}>
+                  Deny
+                </button>
+              </div>
             </div>
           ))}
         </div>
