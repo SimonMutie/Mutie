@@ -8,7 +8,7 @@ import { api, type Dataset, type DatasetColumn, type DatasetColumnType } from ".
  *  "text" otherwise. Deliberately conservative (80% threshold) since a wrong
  *  guess is easy to fix by hand in the preview step, but a column silently
  *  mis-typed as "number" when it's really mixed text would break charts. */
-function detectColumnType(values: unknown[]): DatasetColumnType {
+export function detectColumnType(values: unknown[]): DatasetColumnType {
   const sample = values.filter((v) => v !== null && v !== undefined && v !== "").slice(0, 50);
   if (sample.length === 0) return "text";
 
