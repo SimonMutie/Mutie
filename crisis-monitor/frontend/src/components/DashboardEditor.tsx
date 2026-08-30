@@ -3,7 +3,7 @@ import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
-import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
+import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, valueMapKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 import ErrorBoundary from "./ErrorBoundary";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
@@ -163,6 +163,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [linkCopied, setLinkCopied] = useState(false);
   const [crosstabs, setCrosstabs] = useState<Record<string, CrosstabRow[]>>({});
   const [breakdowns, setBreakdowns] = useState<Record<string, { value: string; count: number }[]>>({});
+  const [valueMaps, setValueMaps] = useState<Record<string, { value: string; count: number }[]>>({});
   const [dailyBreakdowns, setDailyBreakdowns] = useState<Record<string, { date: string; count: number }[]>>({});
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [datasetSummaries, setDatasetSummaries] = useState<Record<string, DatasetSummary>>({});
@@ -225,6 +226,36 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+
+  // A choropleth/globe widget's "existing value per location" mode
+  // (population, GDP, etc. — see valueMapKeyFor) is always dataset-sourced,
+  // never incidents-sourced, so unlike the crosstab effect right above this
+  // one, it deliberately has no dependency on date range or category
+  // filters — that data can't change based on filters that only apply to
+  // incidents at all.
+  useEffect(() => {
+    const neededKeys = new Set<string>();
+    for (const w of widgets) {
+      const key = valueMapKeyFor(w);
+      if (key) neededKeys.add(key);
+    }
+    const missing = Array.from(neededKeys).filter((k) => !(k in valueMaps));
+    if (missing.length === 0) return;
+    missing.forEach((key) => {
+      // vm:<datasetId>:<locationField>|<valueField>
+      const rest = key.slice(3);
+      const idEnd = rest.indexOf(":");
+      const datasetId = rest.slice(0, idEnd);
+      const fields = rest.slice(idEnd + 1);
+      const sepIdx = fields.indexOf("|");
+      const location = fields.slice(0, sepIdx);
+      const value = fields.slice(sepIdx + 1);
+      api.getDatasetValueMap(datasetId, location, value).then((rows) => {
+        setValueMaps((prev) => ({ ...prev, [key]: rows }));
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [widgets]);
 
   // Same idea, one dimension instead of two — for widgets whose primary
   // field is one of the newer by_X fields not precomputed on stats, or any
@@ -1018,6 +1049,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                     }[]}
                     crosstabs={crosstabs}
                     breakdowns={breakdowns}
+                    valueMaps={valueMaps}
                     dailyBreakdowns={dailyBreakdowns}
                     datasets={datasets}
                     onDatasetCreated={(d) => setDatasets((prev) => [...prev, d])}
