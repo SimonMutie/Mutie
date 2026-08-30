@@ -4,6 +4,7 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
+import ErrorBoundary from "./ErrorBoundary";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 const SIZE_DEFAULTS: Record<DashboardWidget["size"], { w: number; h: number }> = {
@@ -967,33 +968,69 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
           >
             {widgets.map((w) => (
               <div key={w.id}>
-                <DashboardWidgetCard
-                  widget={w}
-                  stats={stats}
-                  incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as {
-                    latitude: number;
-                    longitude: number;
-                    severity?: string | null;
-                    actor?: string | null;
-                    sector?: string | null;
-                    tactic?: string | null;
-                    occurred_date?: string | null;
-                    city?: string | null;
-                    province?: string | null;
-                  }[]}
-                  crosstabs={crosstabs}
-                  breakdowns={breakdowns}
-                  dailyBreakdowns={dailyBreakdowns}
-                  datasets={datasets}
-                  datasetSummaries={datasetSummaries}
-                  activeCrossFilters={effectiveFilters}
-                  onCrossFilterHoverStart={locked ? undefined : handleCrossFilterHoverStart}
-                  onCrossFilterHoverEnd={locked ? undefined : handleCrossFilterHoverEnd}
-                  onCrossFilterClick={locked ? undefined : handleCrossFilterClick}
-                  onRemove={locked ? undefined : () => removeWidget(w.id)}
-                  onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
-                  onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
-                />
+                <ErrorBoundary
+                  fallback={(error, retry) => (
+                    <div
+                      className="panel"
+                      style={{
+                        height: "100%",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                        padding: 16,
+                        textAlign: "center",
+                      }}
+                    >
+                      <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--critical)" }}>This widget couldn't load</div>
+                      <div style={{ fontSize: 10.5, color: "var(--text-faint)", wordBreak: "break-word" }}>{error.message}</div>
+                      <button
+                        onClick={retry}
+                        style={{
+                          fontSize: 11,
+                          padding: "4px 10px",
+                          background: "transparent",
+                          border: "1px solid var(--border)",
+                          color: "var(--text-muted)",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                        }}
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  )}
+                >
+                  <DashboardWidgetCard
+                    widget={w}
+                    stats={stats}
+                    incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as {
+                      latitude: number;
+                      longitude: number;
+                      severity?: string | null;
+                      actor?: string | null;
+                      sector?: string | null;
+                      tactic?: string | null;
+                      occurred_date?: string | null;
+                      city?: string | null;
+                      province?: string | null;
+                    }[]}
+                    crosstabs={crosstabs}
+                    breakdowns={breakdowns}
+                    dailyBreakdowns={dailyBreakdowns}
+                    datasets={datasets}
+                    onDatasetCreated={(d) => setDatasets((prev) => [...prev, d])}
+                    datasetSummaries={datasetSummaries}
+                    activeCrossFilters={effectiveFilters}
+                    onCrossFilterHoverStart={locked ? undefined : handleCrossFilterHoverStart}
+                    onCrossFilterHoverEnd={locked ? undefined : handleCrossFilterHoverEnd}
+                    onCrossFilterClick={locked ? undefined : handleCrossFilterClick}
+                    onRemove={locked ? undefined : () => removeWidget(w.id)}
+                    onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
+                    onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
+                  />
+                </ErrorBoundary>
               </div>
             ))}
           </ResponsiveGridLayout>
