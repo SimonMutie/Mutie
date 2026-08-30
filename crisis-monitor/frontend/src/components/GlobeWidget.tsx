@@ -5,7 +5,7 @@ import { feature } from "topojson-client";
 import { geoCentroid } from "d3-geo";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import worldTopology from "world-atlas/countries-110m.json?url";
-import { LABEL_TYPE_META, type LabelType } from "./labelTypes";
+import { LABEL_TYPE_META, labelIconSvg, type LabelType } from "./labelTypes";
 
 type Vehicle = "plane" | "commercial-ship" | "warship" | "drone" | "none";
 
@@ -32,6 +32,10 @@ interface Props {
    *  than being dropped, so labels created before this categorization
    *  existed keep rendering exactly as they always did. */
   labels?: { location: string; text: string; color?: string; type?: LabelType }[];
+  /** Whether labels render at all — defaults to true when omitted, so
+   *  existing widgets that never had this field keep showing their labels
+   *  exactly as before rather than suddenly going blank. */
+  showLabels?: boolean;
 }
 
 /** This file is dynamically imported (see DashboardWidgetCard's React.lazy
@@ -41,13 +45,22 @@ interface Props {
  *  the flat choropleth widget by default, just projected onto a rotating 3D
  *  sphere — or manually-entered country values/routes instead, independent
  *  of any database or uploaded dataset. */
-export default function GlobeWidget({ series, baseColor, manualData, routes, labels }: Props) {
+export default function GlobeWidget({ series, baseColor, manualData, routes, labels, showLabels = true }: Props) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [features, setFeatures] = useState<GeoJSON.Feature[] | null>(null);
   const [tick, setTick] = useState(0);
   const [rotationLocked, setRotationLocked] = useState(false);
+  // Starts from the persisted, admin-configured default (the showLabels
+  // prop), but toggleable live from here by any viewer within their own
+  // session — the same relationship the rotation lock above has with its
+  // own on-globe button, a session-local override rather than a change to
+  // the saved setting itself.
+  const [labelsVisible, setLabelsVisible] = useState(showLabels);
+  useEffect(() => {
+    setLabelsVisible(showLabels);
+  }, [showLabels]);
 
   const usingManualData = !!manualData;
   const countByCountry = usingManualData
@@ -115,6 +128,18 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
     return () => clearInterval(interval);
   }, [routes]);
 
+  // Drives labels alternating between showing just their icon and showing
+  // the icon with its name — deliberately a much slower, separate clock
+  // from the vehicle animation above (50ms there would make text
+  // unreadable, flickering far too fast to actually read). Only runs when
+  // there's something to flash at all.
+  const [labelFlashOn, setLabelFlashOn] = useState(true);
+  useEffect(() => {
+    if (!labelsVisible || !labels?.length) return;
+    const interval = setInterval(() => setLabelFlashOn((v) => !v), 1800);
+    return () => clearInterval(interval);
+  }, [showLabels, labels?.length]);
+
   // Each country's centroid, computed once features load — lets a route
   // waypoint just name "Kenya" rather than requiring exact coordinates,
   // while a literal "lat,lng" (resolveLocation below) still works for a
@@ -167,14 +192,16 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
 
   const objects = [...arrowheads, ...vehicleObjects];
 
-  const resolvedLabels = (labels ?? [])
-    .map((l) => {
-      const point = resolveLocation(l.location, centroidByCountry);
-      if (!point) return null;
-      const meta = LABEL_TYPE_META[l.type ?? "other"];
-      return { lat: point[1], lng: point[0], text: `${meta.symbol} ${l.text}`, color: l.color || meta.color };
-    })
-    .filter((l): l is NonNullable<typeof l> => l !== null);
+  const resolvedLabels = !labelsVisible
+    ? []
+    : (labels ?? [])
+        .map((l) => {
+          const point = resolveLocation(l.location, centroidByCountry);
+          if (!point) return null;
+          const type = l.type ?? "other";
+          return { lat: point[1], lng: point[0], text: l.text || LABEL_TYPE_META[type].name, type, color: l.color };
+        })
+        .filter((l): l is NonNullable<typeof l> => l !== null);
 
   return (
     <div ref={containerRef} style={{ height: "100%", width: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
@@ -207,6 +234,31 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
           >
             {rotationLocked ? "🔒" : "🔓"}
           </button>
+          {!!labels?.length && (
+            <button
+              onClick={() => setLabelsVisible((v) => !v)}
+              onMouseDown={(e) => e.stopPropagation()}
+              title={labelsVisible ? "Hide labels" : "Show labels"}
+              style={{
+                position: "absolute",
+                top: 32,
+                right: 6,
+                zIndex: 10,
+                width: 22,
+                height: 22,
+                lineHeight: "20px",
+                padding: 0,
+                fontSize: 11,
+                borderRadius: 4,
+                border: "1px solid rgba(255,255,255,0.3)",
+                background: labelsVisible ? "rgba(13,148,136,0.85)" : "rgba(0,0,0,0.45)",
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              {labelsVisible ? "🏷" : "🚫"}
+            </button>
+          )}
           <Globe
             ref={globeRef}
             width={size.width}
@@ -258,16 +310,35 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
           {...({ objectFacesSurface: true } as Record<string, unknown>)}
           objectRotation={(d: object) => ({ z: (d as { bearing: number }).bearing })}
           objectThreeObject={(d: object) => vehicleMesh(d as { kind: "arrow" | "vehicle"; vehicle?: Vehicle; color: string })}
-          labelsData={resolvedLabels}
-          labelLat={(d: object) => (d as { lat: number }).lat}
-          labelLng={(d: object) => (d as { lng: number }).lng}
-          labelText={(d: object) => (d as { text: string }).text}
-          labelColor={(d: object) => (d as { color: string }).color}
-          labelSize={1.4}
-          labelDotRadius={0.4}
-          labelIncludeDot
-          labelAltitude={0.015}
-          labelResolution={3}
+          htmlElementsData={resolvedLabels}
+          htmlLat={(d: object) => (d as { lat: number }).lat}
+          htmlLng={(d: object) => (d as { lng: number }).lng}
+          htmlAltitude={0.015}
+          htmlElement={(d: object) => {
+            const item = d as { text: string; type: LabelType; color?: string };
+            const el = document.createElement("div");
+            el.style.cssText = "display:flex;flex-direction:column;align-items:center;pointer-events:none;transform:translate(-50%,-100%);";
+
+            // Trusted markup — labelIconSvg is built entirely from this
+            // codebase's own fixed shape definitions, never from user input,
+            // so innerHTML here carries no injection risk.
+            const iconWrap = document.createElement("div");
+            iconWrap.innerHTML = labelIconSvg(item.type, 22, item.color);
+            el.appendChild(iconWrap);
+
+            // The name, by contrast, is whatever an admin typed into this
+            // label's text field — textContent (not innerHTML) so it's
+            // always rendered as plain text, never interpreted as markup.
+            if (labelFlashOn) {
+              const nameEl = document.createElement("div");
+              nameEl.textContent = item.text;
+              nameEl.style.cssText =
+                "font-size:10px;color:#fff;background:rgba(0,0,0,0.65);padding:1px 5px;border-radius:3px;margin-top:2px;white-space:nowrap;font-family:sans-serif;";
+              el.appendChild(nameEl);
+            }
+            return el;
+          }}
+          htmlTransitionDuration={300}
         />
         </>
       )}
