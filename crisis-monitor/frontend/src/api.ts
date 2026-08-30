@@ -56,6 +56,17 @@ export interface MapDefaultSettings {
   updated_at: string | null;
 }
 
+export interface AccessRequest {
+  id: string;
+  name: string;
+  email: string;
+  organization: string | null;
+  reason: string | null;
+  status: "pending" | "approved" | "denied";
+  created_at: string;
+  reviewed_at: string | null;
+}
+
 export interface ClientOrg {
   id: string;
   name: string;
@@ -578,6 +589,16 @@ export const api = {
   me: () => req<AuthUser>("/api/auth/me"),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
+  changePasswordPublic: (username: string, currentPassword: string, newPassword: string) =>
+    req<{ ok: boolean }>("/api/auth/change-password-public", {
+      method: "POST",
+      body: JSON.stringify({ username, current_password: currentPassword, new_password: newPassword }),
+    }),
+  requestAccess: (data: { name: string; email: string; organization?: string; reason?: string }) =>
+    req<{ ok: boolean }>("/api/auth/request-access", { method: "POST", body: JSON.stringify(data) }),
+  listAccessRequests: () => req<AccessRequest[]>("/api/auth/access-requests"),
+  reviewAccessRequest: (id: string, status: "approved" | "denied") =>
+    req<{ ok: boolean }>(`/api/auth/access-requests/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   listUsers: () => req<AuthUser[]>("/api/auth/users"),
   createUser: (username: string, password: string, display_name?: string, role: UserRole = "client") =>
     req<AuthUser>("/api/auth/users", {
