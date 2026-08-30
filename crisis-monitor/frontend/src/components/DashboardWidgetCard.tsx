@@ -37,10 +37,12 @@ import worldTopology from "world-atlas/countries-110m.json?url";
 const GlobeWidget = lazy(() => import("./GlobeWidget"));
 const RouteDrawingGlobe = lazy(() => import("./RouteDrawingGlobe"));
 const LabelDrawingGlobe = lazy(() => import("./LabelDrawingGlobe"));
-import { LABEL_TYPE_META, LABEL_TYPES, type LabelType } from "./labelTypes";
+import { LABEL_TYPE_META, LABEL_TYPES, labelIconSvg, type LabelType } from "./labelTypes";
 import * as XLSX from "xlsx";
 import "leaflet/dist/leaflet.css";
-import type { CrosstabRow, Dataset, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
+import { api } from "../api";
+import type { CrosstabRow, Dataset, DatasetColumn, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
+import { detectColumnType } from "./DatasetsPanel";
 
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 const PIE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777", "#ea580c", "#4d7c0f"];
@@ -130,15 +132,21 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
 ];
 
 /** Only these types' rendering actually reads from a dataset when
- *  widget.datasetId is set — choropleth/globe assume real country names,
+ *  widget.datasetId is set — choropleth assumes real country names,
  *  calendar assumes daily incident buckets, and map assumes lat/lng, none of
  *  which a generic spreadsheet can be assumed to have. Offering those against
  *  an uploaded dataset would silently show nothing (or incidents data)
  *  regardless of which dataset was picked, so they're left off the list here
  *  rather than offered and quietly wrong. Sankey/network/heatmap_table read
  *  from the same generic two-field crosstab bar/line already use, so they
- *  work for either source just fine. Bullet reuses the same
- *  dataset-sum mechanism as stat. */
+ *  work for either source just fine. Bullet reuses the same dataset-sum
+ *  mechanism as stat. Globe is included by explicit request — same country-
+ *  name caveat as choropleth applies (the chosen column needs to actually
+ *  contain country names for anything to shade/plot; anything else just
+ *  renders an empty globe rather than crashing), but unlike choropleth,
+ *  globe is also used for hand-placed labels/routes independent of any
+ *  data source at all, so being able to pair those with a dataset's own
+ *  breakdown is a real, common use rather than a mismatch. */
 export const DATASET_COMPATIBLE_TYPES: WidgetType[] = [
   "stat",
   "bar",
@@ -152,6 +160,7 @@ export const DATASET_COMPATIBLE_TYPES: WidgetType[] = [
   "calendar",
   "heatmap_table",
   "bullet",
+  "globe",
 ];
 
 /** Web-safe system fonts only — no webfont loading, so every option here is
@@ -415,6 +424,12 @@ interface Props {
    *  edit popover — only needed where editing happens, so undefined/empty
    *  on the read-only public view is fine. */
   datasets?: Dataset[];
+  /** Notifies the parent when a new dataset is created via the edit
+   *  popover's quick-upload option, so it can add it to the shared
+   *  datasets list every widget's own picker reads from — undefined on the
+   *  read-only public view, where the editor (and this option) never
+   *  renders at all. */
+  onDatasetCreated?: (dataset: Dataset) => void;
   /** The dashboard-wide category filter currently in effect (see
    *  DashboardEditor's effectiveFilters) — used to visually highlight a
    *  value as "selected" whether it's pinned via click or just being
@@ -456,6 +471,7 @@ export default function DashboardWidgetCard({
   dailyBreakdowns,
   datasetSummaries,
   datasets,
+  onDatasetCreated,
   activeCrossFilters,
   onCrossFilterHoverStart,
   onCrossFilterHoverEnd,
@@ -963,7 +979,14 @@ export default function DashboardWidgetCard({
               </div>
             }
           >
-            <GlobeWidget series={series} baseColor={widget.color || "#0d9488"} manualData={widget.manualCountryData} routes={widget.manualRoutes} labels={widget.manualLabels} />
+            <GlobeWidget
+              series={series}
+              baseColor={widget.color || "#0d9488"}
+              manualData={widget.manualCountryData}
+              routes={widget.manualRoutes}
+              labels={widget.manualLabels}
+              showLabels={widget.showDataLabels ?? true}
+            />
           </Suspense>
         )}
 
@@ -1090,6 +1113,7 @@ export default function DashboardWidgetCard({
           position={popoverPos}
           widget={widget}
           datasets={datasets}
+          onDatasetCreated={onDatasetCreated}
           onSave={(patch) => {
             onUpdate(patch);
             setShowEditor(false);
@@ -1112,6 +1136,7 @@ function WidgetEditPopover({
   popoverRef,
   position,
   datasets,
+  onDatasetCreated,
 }: {
   widget: DashboardWidget;
   onSave: (patch: Partial<DashboardWidget>) => void;
@@ -1119,13 +1144,73 @@ function WidgetEditPopover({
   popoverRef: React.RefObject<HTMLDivElement>;
   position: { top: number; left: number };
   datasets?: Dataset[];
+  /** Notifies the parent (which owns the real, shared datasets list) that
+   *  a new one was created here via the quick-upload option, so it shows
+   *  up in every other widget's own dataset picker too — not just this
+   *  one's local state, which the parent has no visibility into
+   *  otherwise. */
+  onDatasetCreated?: (dataset: Dataset) => void;
 }) {
   const [type, setType] = useState<WidgetType>(widget.type);
   const [datasetId, setDatasetId] = useState<string | undefined>(widget.datasetId);
+  const [quickUploading, setQuickUploading] = useState(false);
+  const [quickUploadError, setQuickUploadError] = useState<string | null>(null);
+  const quickUploadInputRef = useRef<HTMLInputElement>(null);
+
+  /** Upload straight from computer, as a third option alongside picking
+   *  Incidents or an existing dataset — parses the file, infers a schema
+   *  the same way the Datasets tab's own upload flow does (same
+   *  detectColumnType), creates a brand new dataset from it, and
+   *  immediately selects that dataset as this widget's data source. Rows
+   *  are capped at 2000 per request server-side (see the backend's
+   *  rowsUploadSchema), so this chunks the same way bulk incident/dataset
+   *  uploads elsewhere in this app already do, rather than assuming a
+   *  quick widget-editor upload will always be small. */
+  async function handleQuickUpload(file: File) {
+    setQuickUploadError(null);
+    setQuickUploading(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error("This file doesn't have any sheets.");
+      const sheet = workbook.Sheets[firstSheetName];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null });
+      if (rawRows.length === 0) throw new Error("No rows found in the first sheet.");
+
+      const columnNames = Object.keys(rawRows[0] ?? {});
+      const schema: DatasetColumn[] = columnNames.map((name) => ({ name, type: detectColumnType(rawRows.map((r) => r[name])) }));
+
+      const datasetName = file.name.replace(/\.(csv|xlsx|xls)$/i, "");
+      const created = await api.createDataset(datasetName, schema);
+
+      const CHUNK = 500;
+      for (let i = 0; i < rawRows.length; i += CHUNK) {
+        await api.uploadDatasetRows(created.id, rawRows.slice(i, i + CHUNK));
+      }
+
+      onDatasetCreated?.(created);
+      handleDatasetChange(created.id);
+    } catch (err) {
+      setQuickUploadError(err instanceof Error ? err.message : "Couldn't read that file.");
+    } finally {
+      setQuickUploading(false);
+      if (quickUploadInputRef.current) quickUploadInputRef.current.value = "";
+    }
+  }
+
   const [field, setField] = useState<string>(widget.dataField ?? (widget.datasetId ? "" : FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [label, setLabel] = useState(widget.label ?? "");
-  const [showDataLabels, setShowDataLabels] = useState(!!widget.showDataLabels);
+  // Defaults to true specifically for globe, not false like every other
+  // widget type here — globe's own rendering treats an unset
+  // showDataLabels as "show labels" (see the widget.showDataLabels ?? true
+  // fallback where GlobeWidget is called below), to keep every globe
+  // widget created before this toggle existed showing its labels exactly
+  // as it always did. Without this, an existing globe widget would render
+  // with labels visible while this checkbox showed unchecked — correct
+  // behavior, but a confusing mismatch to look at.
+  const [showDataLabels, setShowDataLabels] = useState(widget.type === "globe" ? widget.showDataLabels !== false : !!widget.showDataLabels);
   const [labelFontFamily, setLabelFontFamily] = useState(widget.labelFontFamily ?? "");
   const [labelFontSize, setLabelFontSize] = useState<number | undefined>(widget.labelFontSize);
   const [color, setColor] = useState<string | undefined>(widget.color);
@@ -1287,6 +1372,24 @@ function WidgetEditPopover({
           {datasetId && (datasets ?? []).length === 0 && (
             <div style={{ fontSize: 10.5, color: "var(--text-faint)", marginTop: 3 }}>No datasets uploaded yet — see the Datasets tab.</div>
           )}
+          <button
+            onClick={() => quickUploadInputRef.current?.click()}
+            disabled={quickUploading}
+            style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", marginTop: 5, color: "var(--signal)" }}
+          >
+            {quickUploading ? "Uploading…" : "⭱ Upload a new dataset from your computer"}
+          </button>
+          <input
+            ref={quickUploadInputRef}
+            type="file"
+            accept=".csv,.xlsx,.xls"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleQuickUpload(file);
+            }}
+          />
+          {quickUploadError && <div style={{ fontSize: 10.5, color: "var(--critical)", marginTop: 3 }}>{quickUploadError}</div>}
         </div>
       )}
 
@@ -1518,16 +1621,18 @@ function WidgetEditPopover({
           Show legend
         </label>
       )}
-      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network" || type === "sankey") && (
+      {(type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network" || type === "sankey" || type === "globe") && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
           <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
           {type === "choropleth"
             ? "Show region name labels on the map"
             : type === "bubble"
               ? "Show category names (not just counts)"
-              : type === "network" || type === "sankey"
-                ? "Show node names and counts on each link"
-                : "Show values on chart"}
+              : type === "globe"
+                ? "Show labels by default (checkpoints, ports, etc.)"
+                : type === "network" || type === "sankey"
+                  ? "Show node names and counts on each link"
+                  : "Show values on chart"}
         </label>
       )}
       {showDataLabels &&
@@ -2713,9 +2818,11 @@ function ManualLabelsEditor({ labels, onChange }: { labels: ManualLabel[]; onCha
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {labels.map((label, idx) => (
           <div key={idx} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-            <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0 }} title={LABEL_TYPE_META[label.type ?? "other"].name}>
-              {LABEL_TYPE_META[label.type ?? "other"].symbol}
-            </span>
+            <span
+              style={{ width: 18, height: 18, flexShrink: 0 }}
+              title={LABEL_TYPE_META[label.type ?? "other"].name}
+              dangerouslySetInnerHTML={{ __html: labelIconSvg(label.type ?? "other", 18, label.color) }}
+            />
             <select
               value={label.type ?? "other"}
               onChange={(e) => update(idx, { type: e.target.value as LabelType })}
