@@ -36,6 +36,9 @@ import worldTopology from "world-atlas/countries-110m.json?url";
 // widget should never pay for that weight in its initial page load.
 const GlobeWidget = lazy(() => import("./GlobeWidget"));
 const RouteDrawingGlobe = lazy(() => import("./RouteDrawingGlobe"));
+const LabelDrawingGlobe = lazy(() => import("./LabelDrawingGlobe"));
+import { LABEL_TYPE_META, LABEL_TYPES, type LabelType } from "./labelTypes";
+import * as XLSX from "xlsx";
 import "leaflet/dist/leaflet.css";
 import type { CrosstabRow, Dataset, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
 
@@ -1135,7 +1138,7 @@ function WidgetEditPopover({
   const [manualRoutes, setManualRoutes] = useState<
     { waypoints: string[]; label?: string; color?: string; vehicle?: "plane" | "commercial-ship" | "warship" | "drone" | "none"; strokeWidth?: number }[]
   >(widget.manualRoutes ?? []);
-  const [manualLabels, setManualLabels] = useState<{ location: string; text: string; color?: string }[]>(widget.manualLabels ?? []);
+  const [manualLabels, setManualLabels] = useState<{ location: string; text: string; color?: string; type?: LabelType }[]>(widget.manualLabels ?? []);
   const [bulletWarningThreshold, setBulletWarningThreshold] = useState<number | undefined>(widget.bulletWarningThreshold);
   const [bulletCriticalThreshold, setBulletCriticalThreshold] = useState<number | undefined>(widget.bulletCriticalThreshold);
   const [bulletTarget, setBulletTarget] = useState<number | undefined>(widget.bulletTarget);
@@ -2590,25 +2593,140 @@ function ManualCountryDataEditor({
 /** Repeatable-row form for free-standing text labels — checkpoints, ports,
  *  chokepoints, anything worth naming directly on the map, independent of
  *  country shading and routes. */
-function ManualLabelsEditor({
-  labels,
-  onChange,
-}: {
-  labels: { location: string; text: string; color?: string }[];
-  onChange: (labels: { location: string; text: string; color?: string }[]) => void;
-}) {
-  function update(idx: number, patch: Partial<{ location: string; text: string; color?: string }>) {
+type ManualLabel = { location: string; text: string; color?: string; type?: LabelType };
+
+/** Parses a CSV/Excel file for bulk label import — same XLSX.read /
+ *  sheet_to_json pattern already used for bulk incident upload elsewhere in
+ *  this app, just for a much simpler three-column shape. Column names are
+ *  matched case-insensitively and tolerate a few common synonyms (name/label
+ *  for text, country for location) rather than requiring an exact header;
+ *  an unrecognized or missing type falls back to "other" instead of
+ *  rejecting the row outright, since a wrong type is just a wrong color/icon
+ *  choice, not a broken label — always fixable afterward in the list below. */
+async function parseLabelsFile(file: File): Promise<ManualLabel[]> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) throw new Error("This file doesn't have any sheets.");
+  const sheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: null });
+  if (rows.length === 0) throw new Error("No rows found in the first sheet.");
+
+  const typeByLower = new Map<string, LabelType>(LABEL_TYPES.map((t) => [t, t]));
+  for (const t of LABEL_TYPES) typeByLower.set(LABEL_TYPE_META[t].name.toLowerCase(), t);
+
+  function findColumn(row: Record<string, unknown>, candidates: string[]): string | undefined {
+    const keys = Object.keys(row);
+    for (const candidate of candidates) {
+      const key = keys.find((k) => k.trim().toLowerCase() === candidate);
+      if (key && row[key] != null && String(row[key]).trim() !== "") return String(row[key]).trim();
+    }
+    return undefined;
+  }
+
+  return rows
+    .map((row) => {
+      const location = findColumn(row, ["location", "country", "lat,lng", "coordinates"]);
+      const text = findColumn(row, ["text", "name", "label"]);
+      if (!location || !text) return null;
+      const rawType = findColumn(row, ["type", "category"]);
+      const type = rawType ? (typeByLower.get(rawType.toLowerCase()) ?? "other") : "other";
+      const color = findColumn(row, ["color", "colour"]);
+      return { location, text, type, color } as ManualLabel;
+    })
+    .filter((l): l is ManualLabel => l !== null);
+}
+
+function ManualLabelsEditor({ labels, onChange }: { labels: ManualLabel[]; onChange: (labels: ManualLabel[]) => void }) {
+  const [drawing, setDrawing] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function update(idx: number, patch: Partial<ManualLabel>) {
     onChange(labels.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   }
   function remove(idx: number) {
     onChange(labels.filter((_, i) => i !== idx));
   }
+
+  async function handleUpload(file: File) {
+    setUploadError(null);
+    try {
+      const parsed = await parseLabelsFile(file);
+      if (parsed.length === 0) throw new Error("No rows had both a location and a text/name column filled in.");
+      onChange([...labels, ...parsed]);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Couldn't read that file.");
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   return (
     <div>
-      <div className="eyebrow" style={{ marginBottom: 4 }}>LABELS (CHECKPOINTS, PORTS, ETC.)</div>
+      <div className="eyebrow" style={{ marginBottom: 4 }}>
+        LABELS (CHECKPOINTS, PORTS, ETC.)
+      </div>
+      <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 6 }}>
+        Each type gets its own symbol and default color on the globe — override the color per label if you need to.
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+        <button
+          onClick={() => setDrawing((v) => !v)}
+          style={{
+            ...miniBtnStyle,
+            width: "auto",
+            padding: "3px 8px",
+            ...(drawing ? { background: "var(--signal-dim)", borderColor: "var(--signal)", color: "var(--signal)" } : {}),
+          }}
+        >
+          🌐 {drawing ? "Close globe editor" : "Draw / adjust on globe"}
+        </button>
+        <button onClick={() => fileInputRef.current?.click()} style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px" }}>
+          ⭱ Upload CSV / Excel
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleUpload(file);
+          }}
+        />
+      </div>
+      {uploadError && <div style={{ fontSize: 10.5, color: "var(--critical)", marginBottom: 6 }}>{uploadError}</div>}
+      <div style={{ fontSize: 9.5, color: "var(--text-faint)", marginBottom: 8 }}>
+        Columns: location (country name or "lat,lng"), text (or name/label), type (optional — {LABEL_TYPES.map((t) => LABEL_TYPE_META[t].name).join(", ")}), color (optional).
+      </div>
+
+      {drawing && (
+        <div style={{ marginBottom: 8 }}>
+          <Suspense fallback={<div style={{ fontSize: 11, color: "var(--text-faint)", padding: 8 }}>Loading globe…</div>}>
+            <LabelDrawingGlobe labels={labels} onChange={onChange} />
+          </Suspense>
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {labels.map((label, idx) => (
           <div key={idx} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 13, width: 16, textAlign: "center", flexShrink: 0 }} title={LABEL_TYPE_META[label.type ?? "other"].name}>
+              {LABEL_TYPE_META[label.type ?? "other"].symbol}
+            </span>
+            <select
+              value={label.type ?? "other"}
+              onChange={(e) => update(idx, { type: e.target.value as LabelType })}
+              style={{ ...selectStyle, flex: 1, minWidth: 0 }}
+            >
+              {LABEL_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {LABEL_TYPE_META[t].name}
+                </option>
+              ))}
+            </select>
             <input
               value={label.location}
               onChange={(e) => update(idx, { location: e.target.value })}
@@ -2624,7 +2742,7 @@ function ManualLabelsEditor({
             />
             <input
               type="color"
-              value={label.color ?? "#0d9488"}
+              value={label.color ?? LABEL_TYPE_META[label.type ?? "other"].color}
               onChange={(e) => update(idx, { color: e.target.value })}
               title="Label color"
               style={{ width: 22, height: 22, padding: 0, border: "1px solid var(--border)", borderRadius: 4, cursor: "pointer", flexShrink: 0 }}
@@ -2635,7 +2753,7 @@ function ManualLabelsEditor({
           </div>
         ))}
         <button
-          onClick={() => onChange([...labels, { location: "", text: "" }])}
+          onClick={() => onChange([...labels, { location: "", text: "", type: "other" }])}
           style={{ ...miniBtnStyle, width: "auto", padding: "3px 8px", color: "var(--signal)" }}
         >
           + Add label
