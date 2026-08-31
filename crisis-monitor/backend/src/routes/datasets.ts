@@ -37,6 +37,67 @@ export function jsonPathFor(field: string): string {
   return `$."${field.replace(/"/g, '""')}"`;
 }
 
+/** Only field names matching this pattern are eligible for an automatic
+ *  index. CREATE INDEX can't take a bound parameter for the expression
+ *  being indexed — a real, fundamental difference from every other query
+ *  in this file, which all safely pass json_extract's path as a bound `?`
+ *  parameter regardless of what characters the field name contains. Here,
+ *  the field name has to be embedded directly into DDL text instead. This
+ *  allowlist (letters, digits, underscore, space only) is the actual
+ *  safety guarantee, not just the extra quote-doubling below — restricting
+ *  to a known-safe character set is verifiable by inspection in a way that
+ *  "the escaping logic is definitely correct" can't be, in an environment
+ *  with no live database to test the CREATE INDEX statement against
+ *  before it ships. Real column names (Country, Population, unit_price)
+ *  are essentially never affected; a field outside this pattern just
+ *  doesn't get indexed — queries on it still work, only slower, a safe
+ *  degradation rather than a broken feature. */
+const SAFE_INDEX_FIELD_PATTERN = /^[A-Za-z0-9_ ]{1,64}$/;
+
+/** Lazily creates an index for a dataset field the first time it's
+ *  actually queried, benefiting every dataset with a same-named column
+ *  from then on (the index covers (dataset_id, json_extract(...)), not
+ *  one dataset specifically) — rather than trying to guess in advance
+ *  which of a dataset's columns are worth indexing. Tracked in
+ *  dataset_field_indexes so this is a one-time cost per field name, not
+ *  a repeated CREATE INDEX IF NOT EXISTS check on every query (which
+ *  would eventually add up too, and holds the intent explicitly rather
+ *  than relying on SQLite's own IF NOT EXISTS no-op behavior).
+ *
+ *  Deliberately fire-and-forget from callers via waitUntil: the query
+ *  this is meant to eventually speed up still runs and returns
+ *  immediately either way, on the existing (possibly unindexed) data —
+ *  index creation itself can be slow on a large, not-yet-indexed table
+ *  (it requires a full scan to build), so this never blocks or slows
+ *  down the request that triggered it. */
+export async function ensureFieldIndex(db: D1Database, fieldName: string): Promise<void> {
+  if (!SAFE_INDEX_FIELD_PATTERN.test(fieldName)) return;
+
+  const existing = await first<{ field_name: string }>(db, `SELECT field_name FROM dataset_field_indexes WHERE field_name = ?`, [fieldName]);
+  if (existing) return;
+
+  const indexName = `idx_dsrows_${fieldName.replace(/[^A-Za-z0-9_]/g, "_")}`;
+  // Belt-and-suspenders alongside the allowlist above — doubles any single
+  // quote so it can't close the SQL string literal early, the same
+  // doubling principle jsonPathFor already applies for double-quotes
+  // inside the JSON path's own syntax.
+  const path = jsonPathFor(fieldName).replace(/'/g, "''");
+
+  try {
+    await db.prepare(`CREATE INDEX IF NOT EXISTS ${indexName} ON dataset_rows (dataset_id, json_extract(row_data, '${path}'))`).run();
+    await db
+      .prepare(`INSERT OR IGNORE INTO dataset_field_indexes (field_name, index_name, created_at) VALUES (?,?,?)`)
+      .bind(fieldName, indexName, nowIso())
+      .run();
+  } catch {
+    // Index creation is a performance optimization, not a correctness
+    // requirement. If it fails for any reason (e.g. this background task
+    // runs out of execution time), the query it was meant to speed up
+    // still works correctly, just without the speedup — nothing the user
+    // did actually failed, so there's nothing to surface as an error here.
+  }
+}
+
 /** Fetches a dataset row + its parsed schema, or null if it doesn't exist —
  *  callers are responsible for their own ownership check, since the public
  *  route's notion of "authorized" (matches the dashboard's owner) differs
@@ -420,6 +481,7 @@ datasetsRouter.get("/:id/breakdown", async (c) => {
   if (!isValidColumn(loaded.schema, field)) {
     return c.json({ error: "field must be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
   }
+  c.executionCtx.waitUntil(ensureFieldIndex(c.env.DB, field).catch((err) => console.error(`[dataset-index] failed for field ${field}:`, err)));
   return c.json(await fetchDatasetBreakdown(c.env.DB, datasetId, loaded.schema, field));
 });
 
@@ -444,6 +506,7 @@ datasetsRouter.get("/:id/value-map", async (c) => {
   if (!isValidColumn(loaded.schema, valueField) || loaded.schema.find((s) => s.name === valueField)?.type !== "number") {
     return c.json({ error: "value must be one of this dataset's own numeric columns: " + numericColumns.map((s) => s.name).join(", ") }, 400);
   }
+  c.executionCtx.waitUntil(ensureFieldIndex(c.env.DB, locationField).catch((err) => console.error(`[dataset-index] failed for field ${locationField}:`, err)));
   return c.json(await fetchDatasetValueMap(c.env.DB, datasetId, loaded.schema, locationField, valueField));
 });
 
@@ -460,6 +523,12 @@ datasetsRouter.get("/:id/crosstab", async (c) => {
   if (!isValidColumn(loaded.schema, primary) || !isValidColumn(loaded.schema, secondary)) {
     return c.json({ error: "primary and secondary must each be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
   }
+  c.executionCtx.waitUntil(
+    Promise.all([
+      ensureFieldIndex(c.env.DB, primary).catch((err) => console.error(`[dataset-index] failed for field ${primary}:`, err)),
+      ensureFieldIndex(c.env.DB, secondary).catch((err) => console.error(`[dataset-index] failed for field ${secondary}:`, err)),
+    ])
+  );
   return c.json(await fetchDatasetCrosstab(c.env.DB, datasetId, loaded.schema, primary, secondary));
 });
 
