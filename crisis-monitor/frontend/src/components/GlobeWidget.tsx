@@ -80,10 +80,20 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
   }, [showLabels]);
 
   const usingManualData = !!manualData;
+  // String(...) before .trim() throughout below — series comes from a
+  // dataset query (see valueMapKeyFor/breakdownKeyFor), where the
+  // declared {value: string} type is TypeScript's own assumption, not a
+  // runtime guarantee: json_extract returns whatever type was actually
+  // stored in that row, so a numeric column picked as the location field
+  // (by mistake, or because the dataset just has one) hands back an
+  // actual number here, not a string. Calling .trim() on that directly
+  // crashes the whole widget instead of just not matching a country.
   const countByCountry = usingManualData
-    ? new Map(manualData!.map((d) => [d.country.trim().toLowerCase(), d.value]))
-    : new Map(series.map((s) => [s.value.trim().toLowerCase(), s.count]));
-  const colorByCountry = usingManualData ? new Map(manualData!.filter((d) => d.color).map((d) => [d.country.trim().toLowerCase(), d.color!])) : new Map<string, string>();
+    ? new Map(manualData!.map((d) => [String(d.country).trim().toLowerCase(), d.value]))
+    : new Map(series.map((s) => [String(s.value).trim().toLowerCase(), s.count]));
+  const colorByCountry = usingManualData
+    ? new Map(manualData!.filter((d) => d.color).map((d) => [String(d.country).trim().toLowerCase(), d.color!]))
+    : new Map<string, string>();
   const maxCount = Math.max(1, ...Array.from(countByCountry.values()));
 
   // <Globe> is a WebGL canvas, not a percentage-friendly SVG — it needs real
@@ -599,7 +609,10 @@ function interpolateAlongPath(waypoints: [number, number][], progress: number): 
 }
 
 function resolveLocation(text: string, centroidByCountry: Map<string, [number, number]>): [number, number] | null {
-  const trimmed = text.trim();
+  // Same defensive coercion as countByCountry above — text is typed as
+  // string, but a caller passing a value straight from a bulk CSV upload
+  // or dataset column can't actually guarantee that at runtime.
+  const trimmed = String(text).trim();
   // A literal "lat,lng" pair — for a point no country polygon covers, like
   // open water on a shipping route.
   const coordMatch = trimmed.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
