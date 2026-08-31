@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import { feature } from "topojson-client";
@@ -46,6 +46,23 @@ interface Props {
  *  sphere — or manually-entered country values/routes instead, independent
  *  of any database or uploaded dataset. */
 export default function GlobeWidget({ series, baseColor, manualData, routes, labels, showLabels = true }: Props) {
+  /** Hard cap on how many labels can ever be live on screen at once — each
+   *  one is a real DOM element (see htmlElement below), continuously
+   *  re-positioned as the globe rotates, so an unbounded count from a
+   *  bulk-uploaded dataset with thousands of rows could genuinely freeze
+   *  the tab. 250 is a generous amount to actually look at on a globe at
+   *  once regardless of performance — most would overlap into
+   *  unreadability well before that anyway. */
+  const MAX_RENDERED_LABELS = 250;
+  /** Past this many labels, the flash-between-icon-and-name effect turns
+   *  off automatically and every label just shows icon+name together,
+   *  statically. It's a nice touch for a handful of labels; at hundreds,
+   *  it both looks visually chaotic (everything flickering in near-unison)
+   *  and forces every visible label's DOM content to be rebuilt on every
+   *  flash cycle, purely to drive an effect that's stopped being legible
+   *  at that scale anyway. */
+  const FLASH_DISABLE_THRESHOLD = 50;
+
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -132,76 +149,122 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
   // the icon with its name — deliberately a much slower, separate clock
   // from the vehicle animation above (50ms there would make text
   // unreadable, flickering far too fast to actually read). Only runs when
-  // there's something to flash at all.
+  // there's something to flash at all, and skips entirely past
+  // FLASH_DISABLE_THRESHOLD — no point running a timer that forces a
+  // hundreds-strong label set to rebuild its DOM content every 1.8s for an
+  // effect that's already switched off at that scale.
   const [labelFlashOn, setLabelFlashOn] = useState(true);
   useEffect(() => {
-    if (!labelsVisible || !labels?.length) return;
+    if (!labelsVisible || !labels?.length || labels.length > FLASH_DISABLE_THRESHOLD) return;
     const interval = setInterval(() => setLabelFlashOn((v) => !v), 1800);
     return () => clearInterval(interval);
-  }, [showLabels, labels?.length]);
+  }, [showLabels, labelsVisible, labels?.length]);
 
   // Each country's centroid, computed once features load — lets a route
   // waypoint just name "Kenya" rather than requiring exact coordinates,
   // while a literal "lat,lng" (resolveLocation below) still works for a
   // point no country polygon covers, like open water on a shipping route.
-  const centroidByCountry = new Map<string, [number, number]>();
-  if (features) {
-    for (const f of features) {
-      const name = f.properties?.name as string | undefined;
-      if (!name) continue;
-      centroidByCountry.set(name.trim().toLowerCase(), geoCentroid(f) as [number, number]);
+  // Memoized on features specifically (not recomputed on every render) —
+  // this used to rebuild the whole map from scratch on every single
+  // render, including every 50ms vehicle-animation tick, for no reason:
+  // features only actually changes once, when the topology first loads.
+  const centroidByCountry = useMemo(() => {
+    const map = new Map<string, [number, number]>();
+    if (features) {
+      for (const f of features) {
+        const name = f.properties?.name as string | undefined;
+        if (!name) continue;
+        map.set(name.trim().toLowerCase(), geoCentroid(f) as [number, number]);
+      }
     }
-  }
+    return map;
+  }, [features]);
 
-  const resolvedRoutes = (routes ?? [])
-    .map((r) => {
-      const points = r.waypoints.map((w) => resolveLocation(w, centroidByCountry)).filter((p): p is [number, number] => p !== null);
-      if (points.length < 2) return null; // fewer than 2 resolvable waypoints — nothing to draw a path between
-      return { ...r, points, resolvedColor: r.color || baseColor };
-    })
-    .filter((r): r is NonNullable<typeof r> => r !== null);
+  // Route waypoint resolution itself doesn't depend on the animation tick
+  // at all — only vehicleObjects below does. Memoizing this separately
+  // means resolving country names to coordinates for potentially many
+  // routes/waypoints doesn't repeat 20 times a second just because a
+  // vehicle somewhere is animating.
+  const resolvedRoutes = useMemo(
+    () =>
+      (routes ?? [])
+        .map((r) => {
+          const points = r.waypoints.map((w) => resolveLocation(w, centroidByCountry)).filter((p): p is [number, number] => p !== null);
+          if (points.length < 2) return null; // fewer than 2 resolvable waypoints — nothing to draw a path between
+          return { ...r, points, resolvedColor: r.color || baseColor };
+        })
+        .filter((r): r is NonNullable<typeof r> => r !== null),
+    [routes, baseColor, centroidByCountry]
+  );
 
-  const paths = resolvedRoutes.map((r) => ({
-    // [lat, lng] tuples — react-globe.gl's own points, not raw [lng, lat]
-    // geo-coordinate order, hence the swap from resolveLocation's [lng, lat].
-    points: r.points.map(([lng, lat]) => [lat, lng] as [number, number]),
-    color: r.resolvedColor,
-    label: r.label ?? r.waypoints.join(" → "),
-    strokeWidth: r.strokeWidth ?? 2.2,
-  }));
+  const paths = useMemo(
+    () =>
+      resolvedRoutes.map((r) => ({
+        // [lat, lng] tuples — react-globe.gl's own points, not raw [lng, lat]
+        // geo-coordinate order, hence the swap from resolveLocation's [lng, lat].
+        points: r.points.map(([lng, lat]) => [lat, lng] as [number, number]),
+        color: r.resolvedColor,
+        label: r.label ?? r.waypoints.join(" → "),
+        strokeWidth: r.strokeWidth ?? 2.2,
+      })),
+    [resolvedRoutes]
+  );
 
   // Every route gets a fixed arrowhead at its destination showing direction —
   // independent of whether it also has an animated vehicle travelling along it.
-  const arrowheads = resolvedRoutes.map((r) => {
-    const points = r.points.map(([lng, lat]) => [lat, lng] as [number, number]);
-    const [lat1, lng1] = points[points.length - 2];
-    const [lat2, lng2] = points[points.length - 1];
-    return { kind: "arrow" as const, lat: lat2, lng: lng2, bearing: bearingBetween(lat1, lng1, lat2, lng2), color: r.resolvedColor };
-  });
+  const arrowheads = useMemo(
+    () =>
+      resolvedRoutes.map((r) => {
+        const points = r.points.map(([lng, lat]) => [lat, lng] as [number, number]);
+        const [lat1, lng1] = points[points.length - 2];
+        const [lat2, lng2] = points[points.length - 1];
+        return { kind: "arrow" as const, lat: lat2, lng: lng2, bearing: bearingBetween(lat1, lng1, lat2, lng2), color: r.resolvedColor };
+      }),
+    [resolvedRoutes]
+  );
 
-  const vehicleObjects = resolvedRoutes
-    .filter((r) => r.vehicle && r.vehicle !== "none")
-    .map((r, idx) => {
-      // Each route completes its path in ~14s and loops — a fixed, readable
-      // pace rather than one tied to the route's real-world length (a
-      // transoceanic route would otherwise crawl compared to a short one).
-      const progress = ((tick * 0.05 + idx * 1.7) % 14) / 14;
-      const { lat, lng, bearingDeg } = interpolateAlongPath(r.points, progress);
-      return { kind: "vehicle" as const, lat, lng, bearing: bearingDeg, vehicle: r.vehicle as Vehicle, color: r.resolvedColor };
-    });
+  // This one genuinely does need tick in its deps — the animated position
+  // along each route is the entire point of it recomputing every frame.
+  const vehicleObjects = useMemo(
+    () =>
+      resolvedRoutes
+        .filter((r) => r.vehicle && r.vehicle !== "none")
+        .map((r, idx) => {
+          // Each route completes its path in ~14s and loops — a fixed,
+          // readable pace rather than one tied to the route's real-world
+          // length (a transoceanic route would otherwise crawl compared
+          // to a short one).
+          const progress = ((tick * 0.05 + idx * 1.7) % 14) / 14;
+          const { lat, lng, bearingDeg } = interpolateAlongPath(r.points, progress);
+          return { kind: "vehicle" as const, lat, lng, bearing: bearingDeg, vehicle: r.vehicle as Vehicle, color: r.resolvedColor };
+        }),
+    [resolvedRoutes, tick]
+  );
 
-  const objects = [...arrowheads, ...vehicleObjects];
+  const objects = useMemo(() => [...arrowheads, ...vehicleObjects], [arrowheads, vehicleObjects]);
 
-  const resolvedLabels = !labelsVisible
-    ? []
-    : (labels ?? [])
-        .map((l) => {
-          const point = resolveLocation(l.location, centroidByCountry);
-          if (!point) return null;
-          const type = l.type ?? "other";
-          return { lat: point[1], lng: point[0], text: l.text || LABEL_TYPE_META[type].name, type, color: l.color };
-        })
-        .filter((l): l is NonNullable<typeof l> => l !== null);
+  // Memoized on the actual inputs that determine the result — not on tick,
+  // so this doesn't repeat 20 times a second for no reason the way it used
+  // to. This was the actual cause of large label sets freezing the page:
+  // every label was a brand-new object on every single render, which very
+  // plausibly defeated react-globe.gl's own ability to tell "this label is
+  // unchanged" from "this is a new label", forcing it to rebuild every
+  // label's DOM element continuously rather than just repositioning them.
+  const resolvedLabels = useMemo(() => {
+    if (!labelsVisible) return [];
+    const resolved = (labels ?? [])
+      .map((l) => {
+        const point = resolveLocation(l.location, centroidByCountry);
+        if (!point) return null;
+        const type = l.type ?? "other";
+        return { lat: point[1], lng: point[0], text: l.text || LABEL_TYPE_META[type].name, type, color: l.color };
+      })
+      .filter((l): l is NonNullable<typeof l> => l !== null);
+    return resolved.length > MAX_RENDERED_LABELS ? resolved.slice(0, MAX_RENDERED_LABELS) : resolved;
+  }, [labels, labelsVisible, centroidByCountry]);
+
+  const labelCountExceedsCap = (labels?.length ?? 0) > MAX_RENDERED_LABELS;
+  const flashEnabled = resolvedLabels.length <= FLASH_DISABLE_THRESHOLD;
 
   return (
     <div ref={containerRef} style={{ height: "100%", width: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
@@ -258,6 +321,26 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
             >
               {labelsVisible ? "🏷" : "🚫"}
             </button>
+          )}
+          {labelCountExceedsCap && labelsVisible && (
+            <div
+              title={`This globe has ${labels?.length ?? 0} labels; only the first ${MAX_RENDERED_LABELS} are shown to keep the page responsive.`}
+              style={{
+                position: "absolute",
+                top: 58,
+                right: 6,
+                zIndex: 10,
+                fontSize: 9.5,
+                padding: "2px 6px",
+                borderRadius: 4,
+                background: "rgba(0,0,0,0.6)",
+                color: "#fbbf24",
+                border: "1px solid rgba(251,191,36,0.4)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Showing {MAX_RENDERED_LABELS} of {labels?.length}
+            </div>
           )}
           <Globe
             ref={globeRef}
@@ -329,7 +412,10 @@ export default function GlobeWidget({ series, baseColor, manualData, routes, lab
             // The name, by contrast, is whatever an admin typed into this
             // label's text field — textContent (not innerHTML) so it's
             // always rendered as plain text, never interpreted as markup.
-            if (labelFlashOn) {
+            // Shows statically (no flashing) once past FLASH_DISABLE_THRESHOLD
+            // — flashEnabled being false means the animation is off, not
+            // that the name itself should disappear.
+            if (!flashEnabled || labelFlashOn) {
               const nameEl = document.createElement("div");
               nameEl.textContent = item.text;
               nameEl.style.cssText =
