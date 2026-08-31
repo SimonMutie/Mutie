@@ -1922,14 +1922,20 @@ function ChoroplethMap({
   const originalCaseByName = new Map<string, string>();
   if (usingManualData) {
     for (const d of manualData!) {
-      countByName.set(d.country.trim().toLowerCase(), d.value);
-      if (d.color) colorByName.set(d.country.trim().toLowerCase(), d.color);
+      countByName.set(String(d.country).trim().toLowerCase(), d.value);
+      if (d.color) colorByName.set(String(d.country).trim().toLowerCase(), d.color);
     }
   } else {
     for (const s of series) {
-      const key = s.value.trim().toLowerCase();
+      // String(...) before .trim() — series comes from a dataset query
+      // where the declared {value: string} type isn't runtime-guaranteed;
+      // json_extract returns whatever type was actually stored, so a
+      // numeric column picked as the location field hands back an actual
+      // number here, not a string. See the identical comment on
+      // GlobeWidget's own countByCountry for the full explanation.
+      const key = String(s.value).trim().toLowerCase();
       countByName.set(key, s.count);
-      originalCaseByName.set(key, s.value);
+      originalCaseByName.set(key, String(s.value));
     }
   }
   const maxCount = Math.max(1, ...Array.from(countByName.values()));
@@ -1948,7 +1954,7 @@ function ChoroplethMap({
                 const explicitColor = key ? colorByName.get(key) : undefined;
                 const intensity = count ? Math.max(0.18, count / maxCount) : 0;
                 const originalCaseValue = key ? originalCaseByName.get(key) : undefined;
-                const isSelected = selectedValue !== undefined && key === selectedValue.trim().toLowerCase();
+                const isSelected = selectedValue !== undefined && key === String(selectedValue).trim().toLowerCase();
                 const isDimmed = selectedValue !== undefined && !isSelected;
                 const isHoverable = !usingManualData && originalCaseValue && onHoverStart;
                 const isClickable = !usingManualData && originalCaseValue && onClick;
