@@ -125,10 +125,31 @@ export default function DatasetsPanel() {
     setDetectedSchema((s) => s.map((c, i) => (i === index ? { ...c, type } : c)));
   }
 
+  /** Retries a single chunk up to 3 times with a short, increasing pause
+   *  between attempts before actually giving up — for a multi-minute
+   *  upload spanning hundreds of sequential requests, treating any single
+   *  transient failure (a network blip, a momentary D1 hiccup) as fatal
+   *  would make large uploads unreasonably fragile. Only the failing
+   *  chunk retries; every chunk that already succeeded stays inserted. */
+  async function uploadChunkWithRetry(datasetId: string, chunk: Record<string, unknown>[], attempt = 1): Promise<{ inserted: number }> {
+    try {
+      return await api.uploadDatasetRows(datasetId, chunk);
+    } catch (err) {
+      if (attempt >= 3) throw err;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+      return uploadChunkWithRetry(datasetId, chunk, attempt + 1);
+    }
+  }
+
   async function handleUpload() {
     if (parsedRows.length === 0 || !datasetName.trim()) return;
     setStage("uploading");
     setUploadError(null);
+    // Declared here (not inside try) specifically so it's still readable
+    // in catch below — progress (the React state) would be stale there,
+    // captured at whatever it was when this function started rather than
+    // its latest value from inside the loop.
+    let done = 0;
     try {
       const dataset = await api.createDataset(datasetName.trim(), detectedSchema);
       const converted: Record<string, unknown>[] = [];
@@ -141,17 +162,24 @@ export default function DatasetsPanel() {
       }
 
       const CHUNK = 500;
-      let done = 0;
       setProgress({ done: 0, total: converted.length });
       for (let i = 0; i < converted.length; i += CHUNK) {
         const chunk = converted.slice(i, i + CHUNK);
-        const result = await api.uploadDatasetRows(dataset.id, chunk);
+        const result = await uploadChunkWithRetry(dataset.id, chunk);
         done += result.inserted;
         setProgress({ done, total: converted.length });
       }
       setStage("done");
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed partway through.");
+      const message = err instanceof Error ? err.message : "Something went wrong.";
+      // Each chunk that succeeded before this failure is already committed
+      // to the dataset — retrying the whole thing from zero isn't
+      // necessary, so this says as much rather than implying total loss.
+      setUploadError(
+        done > 0
+          ? `${message} — ${done.toLocaleString()} of ${parsedRows.length.toLocaleString()} rows were already saved before this happened; check the dataset's row count, or delete it and try again if it looks incomplete.`
+          : `${message} Nothing was saved yet — safe to try again.`
+      );
       setStage("upload-preview");
     }
   }
@@ -331,6 +359,24 @@ export default function DatasetsPanel() {
                   </div>
                 ))}
               </div>
+              {parsedRows.length > 100_000 && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: parsedRows.length > 500_000 ? "var(--critical)" : "#b45309",
+                    background: parsedRows.length > 500_000 ? "color-mix(in srgb, var(--critical) 10%, transparent)" : "color-mix(in srgb, #b45309 10%, transparent)",
+                    border: `1px solid ${parsedRows.length > 500_000 ? "var(--critical)" : "#b45309"}`,
+                    borderRadius: 6,
+                    padding: "8px 10px",
+                    marginTop: 12,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {parsedRows.length > 500_000
+                    ? `${parsedRows.length.toLocaleString()} rows is a lot — upload could take 30+ minutes, and this shares storage with every other dataset and this app's own incident data on the same database, which has a hard size limit. If this is summarizable (e.g. yearly totals instead of every individual record), a smaller upload will load faster everywhere it's used.`
+                    : `${parsedRows.length.toLocaleString()} rows will take a few minutes to upload. Charts and widgets built on it will still show fast, aggregated summaries — this only affects the one-time import.`}
+                </div>
+              )}
               {uploadError && <div style={{ color: "var(--critical)", fontSize: 12.5, marginTop: 12 }}>{uploadError}</div>}
               <button onClick={handleUpload} disabled={!datasetName.trim()} style={{ ...primaryBtnStyle, marginTop: 16 }}>
                 Import {parsedRows.length.toLocaleString()} rows
