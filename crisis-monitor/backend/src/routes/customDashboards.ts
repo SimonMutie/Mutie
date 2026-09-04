@@ -97,6 +97,7 @@ const widgetSchema = z.object({
     .optional(),
   labelFontFamily: z.string().optional(),
   labelFontSize: z.number().positive().optional(),
+  labelBold: z.boolean().optional(),
   labelOffsets: z.record(z.object({ dx: z.number(), dy: z.number() })).optional(),
   manualRoutes: z
     .array(
