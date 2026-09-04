@@ -170,6 +170,35 @@ export const DATASET_COMPATIBLE_TYPES: WidgetType[] = [
  *  on whatever device someone's viewing the dashboard on. */
 const LABEL_FONT_OPTIONS = ["Arial", "Helvetica", "Georgia", "Times New Roman", "Courier New", "Verdana", "Trebuchet MS", "Impact"];
 
+/** The tick-label style object for a recharts axis (XAxis/YAxis/
+ *  PolarAngleAxis/PolarRadiusAxis) — the category names along an axis
+ *  (bar chart categories, radar's spoke labels like "Agwelek"/"SSPDF",
+ *  etc.), not the data-value labels shown on the bars/slices themselves
+ *  (those go through a separate path gated by showDataLabels). Every
+ *  recharts axis in this file uses this same helper so font size,
+ *  family, and bold apply identically everywhere rather than each axis
+ *  having its own separately-hardcoded style object. baseFontSize is
+ *  each axis's own sensible default when the widget hasn't set one —
+ *  radar's spoke labels default smaller than a bar chart's axis, for
+ *  instance, since there are usually more of them packed into less
+ *  space. */
+function axisTickStyle(widget: DashboardWidget, baseFontSize: number, fill: string = "var(--text-muted)") {
+  return {
+    fontSize: widget.labelFontSize ?? baseFontSize,
+    fontFamily: widget.labelFontFamily,
+    fontWeight: widget.labelBold ? 700 : undefined,
+    fill,
+  };
+}
+
+/** Same idea as axisTickStyle above, for a chart's <Legend> — recharts
+ *  applies this as a wrapper style around the whole legend, not per-item,
+ *  but fontSize/fontFamily/fontWeight there still reach each legend
+ *  entry's text the same way CSS inheritance would. */
+function legendStyle(widget: DashboardWidget) {
+  return { fontSize: widget.labelFontSize ?? 11, fontFamily: widget.labelFontFamily, fontWeight: widget.labelBold ? 700 : undefined };
+}
+
 export const PIVOTABLE_FIELD_OPTIONS: PivotableField[] = [
   "sector",
   "actor",
@@ -837,10 +866,10 @@ export default function DashboardWidgetCard({
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={pivoted.data} layout="vertical" margin={{ left: 8, right: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
-              <YAxis type="category" dataKey="value" width={100} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+              <XAxis type="number" tick={axisTickStyle(widget, 11)} />
+              <YAxis type="category" dataKey="value" width={100} tick={axisTickStyle(widget, 11)} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {widget.showLegend !== false && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {widget.showLegend !== false && <Legend wrapperStyle={legendStyle(widget)} />}
               {pivoted.seriesKeys.map((key, idx) => (
                 <Bar key={key} dataKey={key} stackId="pivot" fill={paletteFor(widget, pivoted.seriesKeys.length)[idx]} />
               ))}
@@ -852,10 +881,10 @@ export default function DashboardWidgetCard({
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={series} layout="vertical" margin={{ left: 8, right: 8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
-              <YAxis type="category" dataKey="value" width={100} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
+              <XAxis type="number" tick={axisTickStyle(widget, 11)} />
+              <YAxis type="category" dataKey="value" width={100} tick={axisTickStyle(widget, 11)} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {widget.showLegend && <Legend wrapperStyle={legendStyle(widget)} />}
               <Bar
                 dataKey="count"
                 name={fieldLabel(widget.dataField)}
@@ -899,10 +928,10 @@ export default function DashboardWidgetCard({
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={pivoted.data} margin={{ left: 8, right: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" />
-              <XAxis dataKey="value" tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
-              <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} allowDecimals={false} />
+              <XAxis dataKey="value" tick={axisTickStyle(widget, 11)} />
+              <YAxis tick={axisTickStyle(widget, 11)} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {widget.showLegend !== false && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {widget.showLegend !== false && <Legend wrapperStyle={legendStyle(widget)} />}
               {pivoted.seriesKeys.map((key, idx) => (
                 <Line key={key} type="monotone" dataKey={key} stroke={paletteFor(widget, pivoted.seriesKeys.length)[idx]} strokeWidth={2} dot={false} />
               ))}
@@ -914,10 +943,10 @@ export default function DashboardWidgetCard({
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={widget.dataField === "time_series" ? stats.time_series : series} margin={{ left: 8, right: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border-soft)" />
-              <XAxis dataKey={widget.dataField === "time_series" ? "bucket" : "value"} tick={{ fontSize: 11, fill: "var(--text-muted)" }} />
-              <YAxis tick={{ fontSize: 11, fill: "var(--text-muted)" }} allowDecimals={false} />
+              <XAxis dataKey={widget.dataField === "time_series" ? "bucket" : "value"} tick={axisTickStyle(widget, 11)} />
+              <YAxis tick={axisTickStyle(widget, 11)} allowDecimals={false} />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {widget.showLegend && <Legend wrapperStyle={legendStyle(widget)} />}
               <Line
                 type="monotone"
                 dataKey="count"
@@ -986,7 +1015,7 @@ export default function DashboardWidgetCard({
                 ))}
               </Pie>
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {widget.showLegend && <Legend wrapperStyle={legendStyle(widget)} />}
             </PieChart>
           </ResponsiveContainer>
         )}
@@ -995,8 +1024,8 @@ export default function DashboardWidgetCard({
           <ResponsiveContainer width="100%" height="100%">
             <RadarChart data={series} outerRadius="75%">
               <PolarGrid stroke="var(--border-soft)" />
-              <PolarAngleAxis dataKey="value" tick={{ fontSize: 10, fill: "var(--text-muted)" }} />
-              <PolarRadiusAxis tick={{ fontSize: 9, fill: "var(--text-faint)" }} allowDecimals={false} />
+              <PolarAngleAxis dataKey="value" tick={axisTickStyle(widget, 10)} />
+              <PolarRadiusAxis tick={axisTickStyle(widget, 9, "var(--text-faint)")} allowDecimals={false} />
               <Radar
                 name={fieldLabel(widget.dataField)}
                 dataKey="count"
@@ -1025,7 +1054,7 @@ export default function DashboardWidgetCard({
                 }}
               />
               <Tooltip contentStyle={TOOLTIP_STYLE} />
-              {widget.showLegend && <Legend wrapperStyle={{ fontSize: 11 }} />}
+              {widget.showLegend && <Legend wrapperStyle={legendStyle(widget)} />}
             </RadarChart>
           </ResponsiveContainer>
         )}
@@ -1083,6 +1112,7 @@ export default function DashboardWidgetCard({
             showLabels={widget.showDataLabels}
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
+            bold={widget.labelBold}
             selectedValue={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
             onHoverStart={handleCrossFilterHover}
             onHoverEnd={onCrossFilterHoverEnd}
@@ -1123,6 +1153,7 @@ export default function DashboardWidgetCard({
             showLabels={widget.showDataLabels}
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
+            bold={widget.labelBold}
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
             selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
@@ -1142,6 +1173,7 @@ export default function DashboardWidgetCard({
             showLabels={widget.showDataLabels}
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
+            bold={widget.labelBold}
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
             selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
@@ -1160,6 +1192,7 @@ export default function DashboardWidgetCard({
             baseColor={widget.color || "#0d9488"}
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
+            bold={widget.labelBold}
             selectedPrimary={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
             selectedSecondary={secondaryCrossFilterField ? activeCrossFilters?.[secondaryCrossFilterField] : undefined}
             onHoverStartPrimary={handleCrossFilterHover}
@@ -1177,6 +1210,7 @@ export default function DashboardWidgetCard({
             showLabels={widget.showDataLabels}
             fontFamily={widget.labelFontFamily}
             fontSize={widget.labelFontSize}
+            bold={widget.labelBold}
             offsets={widget.labelOffsets}
             onCommitOffset={onUpdate ? (key, dx, dy) => onUpdate({ labelOffsets: { ...widget.labelOffsets, [key]: { dx, dy } } }) : undefined}
             selectedValue={crossFilterField ? activeCrossFilters?.[crossFilterField] : undefined}
@@ -1332,6 +1366,7 @@ function WidgetEditPopover({
   const [showDataLabels, setShowDataLabels] = useState(widget.type === "globe" ? widget.showDataLabels !== false : !!widget.showDataLabels);
   const [labelFontFamily, setLabelFontFamily] = useState(widget.labelFontFamily ?? "");
   const [labelFontSize, setLabelFontSize] = useState<number | undefined>(widget.labelFontSize);
+  const [labelBold, setLabelBold] = useState(!!widget.labelBold);
   const [color, setColor] = useState<string | undefined>(widget.color);
   const [palette, setPalette] = useState<string[]>(widget.palette ?? []);
   const [showLegend, setShowLegend] = useState(!!widget.showLegend);
@@ -1432,6 +1467,7 @@ function WidgetEditPopover({
       showDataLabels,
       labelFontFamily: labelFontFamily || undefined,
       labelFontSize,
+      labelBold: labelBold || undefined,
       color,
       palette: palette.length > 0 ? palette : undefined,
       showLegend,
@@ -1774,9 +1810,33 @@ function WidgetEditPopover({
                   : "Show values on chart"}
         </label>
       )}
-      {showDataLabels &&
-        (type === "bar" || type === "pie" || type === "funnel" || type === "choropleth" || type === "bubble" || type === "network" || type === "sankey") && (
-          <div style={{ display: "flex", gap: 6, alignItems: "center", paddingLeft: 20 }}>
+      {(type === "bubble" || type === "network" || type === "sankey") && showDataLabels && (
+        <div style={{ fontSize: 10, color: "var(--text-faint)", paddingLeft: 20 }}>Drag any label directly on the chart to reposition it.</div>
+      )}
+      {/* Font controls for whatever text this chart type actually shows —
+          deliberately not gated on showDataLabels above: an axis's own
+          category labels (a bar chart's category names, radar's spoke
+          labels like "Agwelek"/"SSPDF", a line chart's X/Y ticks) always
+          render regardless of that toggle, which only controls data-VALUE
+          labels (the count shown on/near each bar, slice, or node). Hiding
+          font controls behind a checkbox that has nothing to do with most
+          of these chart types' actual text would mean the controls
+          for a radar or line chart's own labels were invisible unless
+          the person happened to also flip on an unrelated checkbox. */}
+      {(type === "bar" ||
+        type === "line" ||
+        type === "pie" ||
+        type === "radar" ||
+        type === "funnel" ||
+        type === "choropleth" ||
+        type === "bubble" ||
+        type === "network" ||
+        type === "sankey" ||
+        type === "heatmap_table" ||
+        type === "globe") && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>LABEL STYLE</div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <select value={labelFontFamily} onChange={(e) => setLabelFontFamily(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
               <option value="">Default font</option>
               {LABEL_FONT_OPTIONS.map((f) => (
@@ -1795,10 +1855,12 @@ function WidgetEditPopover({
               title="Font size — leave blank for the default"
               style={{ ...selectStyle, width: 56 }}
             />
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "var(--text-muted)", flexShrink: 0 }}>
+              <input type="checkbox" checked={labelBold} onChange={(e) => setLabelBold(e.target.checked)} />
+              Bold
+            </label>
           </div>
-        )}
-      {(type === "bubble" || type === "network" || type === "sankey") && showDataLabels && (
-        <div style={{ fontSize: 10, color: "var(--text-faint)", paddingLeft: 20 }}>Drag any label directly on the chart to reposition it.</div>
+        </div>
       )}
       {type === "stat" && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
@@ -1893,6 +1955,7 @@ function ChoroplethMap({
   showLabels,
   fontFamily,
   fontSize,
+  bold,
   selectedValue,
   onHoverStart,
   onHoverEnd,
@@ -1905,6 +1968,7 @@ function ChoroplethMap({
   showLabels?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  bold?: boolean;
   selectedValue?: string;
   onHoverStart?: (value: string) => void;
   onHoverEnd?: () => void;
@@ -1989,7 +2053,13 @@ function ChoroplethMap({
                     <Marker key={`label-${geo.rsmKey}`} coordinates={centroid}>
                       <text
                         textAnchor="middle"
-                        style={{ fontSize: fontSize ?? (field === "by_province" ? 5 : 7), fontFamily, fill: "var(--text-primary)", pointerEvents: "none" }}
+                        style={{
+                          fontSize: fontSize ?? (field === "by_province" ? 5 : 7),
+                          fontFamily,
+                          fontWeight: bold ? 700 : undefined,
+                          fill: "var(--text-primary)",
+                          pointerEvents: "none",
+                        }}
                       >
                         {name}
                       </text>
@@ -2087,6 +2157,7 @@ function RelationshipSankey({
   showLabels,
   fontFamily,
   fontSize,
+  bold,
   offsets,
   onCommitOffset,
   selectedPrimary,
@@ -2102,6 +2173,7 @@ function RelationshipSankey({
   showLabels?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  bold?: boolean;
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
   selectedPrimary?: string;
@@ -2170,6 +2242,7 @@ function RelationshipSankey({
                     text={nodeProps.payload.name}
                     fontSize={nodeFontSize}
                     fontFamily={fontFamily}
+                    fontWeight={bold ? 700 : undefined}
                     fill="var(--text-primary)"
                     textAnchor="middle"
                     offsetKey={`node:${nodeProps.payload.name}`}
@@ -2212,6 +2285,7 @@ function RelationshipSankey({
                     text={linkProps.payload.value}
                     fontSize={Math.max(8, nodeFontSize - 1)}
                     fontFamily={fontFamily}
+                    fontWeight={bold ? 700 : undefined}
                     fill="var(--text-muted)"
                     textAnchor="middle"
                     offsetKey={`link:${linkProps.payload.source}-${linkProps.payload.target}`}
@@ -2242,6 +2316,7 @@ function RelationshipNetwork({
   showLabels,
   fontFamily,
   fontSize,
+  bold,
   offsets,
   onCommitOffset,
   selectedPrimary,
@@ -2257,6 +2332,7 @@ function RelationshipNetwork({
   showLabels?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  bold?: boolean;
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
   selectedPrimary?: string;
@@ -2312,6 +2388,7 @@ function RelationshipNetwork({
                   text={d.count}
                   fontSize={nodeFontSize - 1}
                   fontFamily={fontFamily}
+                  fontWeight={bold ? 700 : undefined}
                   fill="var(--text-muted)"
                   textAnchor="middle"
                   offsetKey={linkKey}
@@ -2344,6 +2421,7 @@ function RelationshipNetwork({
               text={a}
               fontSize={nodeFontSize}
               fontFamily={fontFamily}
+              fontWeight={bold ? 700 : undefined}
               fill="var(--text-primary)"
               textAnchor="end"
               dominantBaseline="middle"
@@ -2375,6 +2453,7 @@ function RelationshipNetwork({
               text={t}
               fontSize={nodeFontSize}
               fontFamily={fontFamily}
+              fontWeight={bold ? 700 : undefined}
               fill="var(--text-primary)"
               textAnchor="start"
               dominantBaseline="middle"
@@ -2404,6 +2483,7 @@ function HeatmapTable({
   baseColor,
   fontFamily,
   fontSize,
+  bold,
   selectedPrimary,
   selectedSecondary,
   onHoverStartPrimary,
@@ -2416,6 +2496,7 @@ function HeatmapTable({
   baseColor: string;
   fontFamily?: string;
   fontSize?: number;
+  bold?: boolean;
   selectedPrimary?: string;
   selectedSecondary?: string;
   onHoverStartPrimary?: (value: string) => void;
@@ -2473,7 +2554,7 @@ function HeatmapTable({
                   width: cellSize,
                   maxWidth: cellSize,
                   padding: "4px 2px",
-                  fontWeight: selectedSecondary === s ? 700 : 500,
+                  fontWeight: bold || selectedSecondary === s ? 700 : 500,
                   opacity: isDimmedCol(s) ? 0.4 : 1,
                   color: "var(--text-muted)",
                   cursor: onHoverStartSecondary ? "pointer" : undefined,
@@ -2503,7 +2584,7 @@ function HeatmapTable({
                   maxWidth: rowLabelWidth,
                   textAlign: "right",
                   padding: "2px 8px 2px 2px",
-                  fontWeight: selectedPrimary === p ? 700 : 500,
+                  fontWeight: bold || selectedPrimary === p ? 700 : 500,
                   opacity: isDimmedRow(p) ? 0.4 : 1,
                   color: "var(--text-muted)",
                   cursor: onHoverStartPrimary ? "pointer" : undefined,
@@ -2675,6 +2756,7 @@ function BubbleChart({
   showLabels,
   fontFamily,
   fontSize,
+  bold,
   offsets,
   onCommitOffset,
   selectedValue,
@@ -2687,6 +2769,7 @@ function BubbleChart({
   showLabels?: boolean;
   fontFamily?: string;
   fontSize?: number;
+  bold?: boolean;
   offsets?: Record<string, { dx: number; dy: number }>;
   onCommitOffset?: (key: string, dx: number, dy: number) => void;
   selectedValue?: string;
@@ -2731,7 +2814,17 @@ function BubbleChart({
                 <title>{`${datum.value}: ${datum.count}`}</title>
               </circle>
               {leaf.r > 18 && !showLabels && (
-                <text x={leaf.x} y={leaf.y} textAnchor="middle" dy="0.35em" fontSize={baseFontSize} fontFamily={fontFamily} fill="#fff" pointerEvents="none">
+                <text
+                  x={leaf.x}
+                  y={leaf.y}
+                  textAnchor="middle"
+                  dy="0.35em"
+                  fontSize={baseFontSize}
+                  fontFamily={fontFamily}
+                  fontWeight={bold ? 700 : undefined}
+                  fill="#fff"
+                  pointerEvents="none"
+                >
                   {datum.count}
                 </text>
               )}
@@ -2743,6 +2836,7 @@ function BubbleChart({
                     text={datum.value}
                     fontSize={baseFontSize}
                     fontFamily={fontFamily}
+                    fontWeight={bold ? 700 : undefined}
                     fill="#fff"
                     textAnchor="middle"
                     offsetKey={`${datum.value}:name`}
@@ -2756,6 +2850,7 @@ function BubbleChart({
                     text={datum.count}
                     fontSize={baseFontSize}
                     fontFamily={fontFamily}
+                    fontWeight={bold ? 700 : undefined}
                     fill="#fff"
                     textAnchor="middle"
                     offsetKey={`${datum.value}:count`}
@@ -3279,6 +3374,7 @@ function DraggableLabel({
   text,
   fontSize,
   fontFamily,
+  fontWeight,
   fill,
   textAnchor,
   dominantBaseline,
@@ -3292,6 +3388,7 @@ function DraggableLabel({
   text: string | number;
   fontSize: number;
   fontFamily?: string;
+  fontWeight?: number;
   fill: string;
   textAnchor: "start" | "middle" | "end";
   dominantBaseline?: "middle" | "auto" | "hanging";
@@ -3367,6 +3464,7 @@ function DraggableLabel({
       dominantBaseline={dominantBaseline}
       fontSize={fontSize}
       fontFamily={fontFamily}
+      fontWeight={fontWeight}
       fill={fill}
       onMouseDown={handleMouseDown}
       style={{ cursor: onCommitOffset ? "grab" : undefined, userSelect: "none" }}
