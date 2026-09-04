@@ -391,6 +391,7 @@ export interface DashboardWidget {
    *  that component doesn't expose the same level of control the others do. */
   labelFontFamily?: string;
   labelFontSize?: number;
+  labelBold?: boolean;
   /** Manually-dragged label positions, keyed by the label's own text (a
    *  category name, a node name) since that's stable across re-renders and
    *  re-fetches in a way an array index isn't. Only meaningful for bubble
