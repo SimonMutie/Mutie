@@ -60,6 +60,13 @@ const widgetSchema = z.object({
    *  SQL-facing endpoints (/crosstab, /datasets/:id/crosstab) do their own
    *  allowlist checks against real column names at query time regardless. */
   secondaryField: z.string().optional(),
+  /** Choropleth + dataset only — the dataset column holding province/state
+   *  names, used to re-group data when drilled into a country on the map.
+   *  Same free-text handling as dataField/secondaryField above. */
+  geoProvinceColumn: z.string().optional(),
+  /** Choropleth + dataset only — the county/district column for the second
+   *  drill level, meaningful only alongside geoProvinceColumn. */
+  geoCountyColumn: z.string().optional(),
   size: z.enum(["small", "medium", "large"]).default("medium"),
   showDataLabels: z.boolean().optional(),
   color: z.string().optional(),
