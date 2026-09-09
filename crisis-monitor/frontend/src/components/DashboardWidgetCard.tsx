@@ -1356,6 +1356,8 @@ function WidgetEditPopover({
 
   const [field, setField] = useState<string>(widget.dataField ?? (widget.datasetId ? "" : FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
+  const [geoProvinceColumn, setGeoProvinceColumn] = useState<string | undefined>(widget.geoProvinceColumn);
+  const [geoCountyColumn, setGeoCountyColumn] = useState<string | undefined>(widget.geoCountyColumn);
   const [label, setLabel] = useState(widget.label ?? "");
   // Defaults to true specifically for globe, not false like every other
   // widget type here — globe's own rendering treats an unset
@@ -1456,6 +1458,8 @@ function WidgetEditPopover({
         ? defaultSecondary(newField, dataset)
         : undefined
     );
+    setGeoProvinceColumn(undefined);
+    setGeoCountyColumn(undefined);
   }
 
   function handleSave() {
@@ -1464,7 +1468,13 @@ function WidgetEditPopover({
       type,
       datasetId: manualActive ? undefined : datasetId,
       dataField: type === "map" || manualActive ? undefined : field || undefined,
-      secondaryField: supportsBreakdown && !manualActive ? secondaryField : undefined,
+      // secondaryField ("SHOW") is offered for choropleth/globe with a
+      // dataset too, via a separate UI block below that isn't gated by
+      // supportsBreakdown — without including that case here, a chosen
+      // value-map column would silently be discarded on every save.
+      secondaryField: (supportsBreakdown || ((type === "choropleth" || type === "globe") && datasetId)) && !manualActive ? secondaryField : undefined,
+      geoProvinceColumn: type === "choropleth" && datasetId && !manualActive ? geoProvinceColumn : undefined,
+      geoCountyColumn: type === "choropleth" && datasetId && !manualActive && geoProvinceColumn ? geoCountyColumn : undefined,
       label: label || undefined,
       showDataLabels,
       labelFontFamily: labelFontFamily || undefined,
@@ -1620,6 +1630,50 @@ function WidgetEditPopover({
             Pick a numeric column (population, GDP, import volumes, etc.) to show its real value per {field || "location"} — instead of just
             counting how many rows match.
           </div>
+        </div>
+      )}
+
+      {type === "choropleth" && activeDataset && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>PROVINCE/STATE COLUMN (OPTIONAL — FOR DRILL-DOWN)</div>
+          <select
+            value={geoProvinceColumn ?? ""}
+            onChange={(e) => {
+              const v = e.target.value || undefined;
+              setGeoProvinceColumn(v);
+              if (!v) setGeoCountyColumn(undefined);
+            }}
+            style={selectStyle}
+          >
+            <option value="">None — country level only</option>
+            {activeDataset.schema
+              .filter((col) => col.name !== field)
+              .map((col) => (
+                <option key={col.name} value={col.name}>
+                  {col.name}
+                </option>
+              ))}
+          </select>
+          <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 3 }}>
+            When set, drilling into a country with province boundaries available re-groups this dataset by this column, filtered to that
+            country, instead of showing an unshaded map.
+          </div>
+        </div>
+      )}
+
+      {type === "choropleth" && activeDataset && geoProvinceColumn && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>COUNTY/DISTRICT COLUMN (OPTIONAL)</div>
+          <select value={geoCountyColumn ?? ""} onChange={(e) => setGeoCountyColumn(e.target.value || undefined)} style={selectStyle}>
+            <option value="">None — stop at province level</option>
+            {activeDataset.schema
+              .filter((col) => col.name !== field && col.name !== geoProvinceColumn)
+              .map((col) => (
+                <option key={col.name} value={col.name}>
+                  {col.name}
+                </option>
+              ))}
+          </select>
         </div>
       )}
 
