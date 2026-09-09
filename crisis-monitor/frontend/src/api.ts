@@ -444,12 +444,23 @@ export interface DashboardWidget {
    *  turning a single-variable chart into a genuine two-variable pivot
    *  (stacked/grouped bars, multi-series lines). */
   secondaryField?: PivotableField | string;
+  /** Choropleth + dataset only — the dataset column holding the
+   *  province/state name, used to re-group data when drilled into a
+   *  country. Optional: without it, drilling into a country with boundary
+   *  data available still shows the map, just without shading, since
+   *  there's no column to pull province-level values from. */
+  geoProvinceColumn?: string;
+  /** Choropleth + dataset only — the dataset column holding the
+   *  county/district name, for the second drill level. Only meaningful
+   *  alongside geoProvinceColumn — there's no county-only drill path that
+   *  skips province. */
+  geoCountyColumn?: string;
   /** When set, this widget charts an uploaded dataset instead of incidents —
    *  dataField/secondaryField then hold that dataset's own raw column names
    *  directly, not the incidents by_X convention. Widget types that need
-   *  incidents-specific data shapes (choropleth's place names, calendar's
-   *  daily buckets, map's lat/lng, globe) aren't offered once a dataset is
-   *  the source, since a generic dataset can't be assumed to have any of that. */
+   *  incidents-specific data shapes (calendar's daily buckets, map's
+   *  lat/lng) aren't offered once a dataset is the source, since a generic
+   *  dataset can't be assumed to have any of that. */
   datasetId?: string;
 }
 
