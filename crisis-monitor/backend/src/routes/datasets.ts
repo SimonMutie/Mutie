@@ -166,6 +166,53 @@ export async function fetchDatasetValueMap(
   );
 }
 
+/** For choropleth drill-down: the same {value, count} shape as
+ *  fetchDatasetBreakdown/fetchDatasetValueMap above, but filtered to rows
+ *  matching one column's value (e.g. Country = "South Sudan") and grouped
+ *  by a different column (e.g. Province) — the query drilling into a
+ *  country's provinces, or a province's counties, actually needs. Supports
+ *  both of the existing modes: plain row-count per group when valueField
+ *  is omitted, or SUM of a numeric column when it's given, matching
+ *  fetchDatasetBreakdown and fetchDatasetValueMap's own two behaviors
+ *  respectively so the frontend's existing rendering needs no changes to
+ *  consume whichever mode the widget is configured for. */
+export async function fetchDatasetGeoDrilldown(
+  db: D1Database,
+  datasetId: string,
+  schema: { name: string; type: string }[],
+  groupField: string | undefined,
+  filterField: string | undefined,
+  filterValue: string | undefined,
+  valueField: string | undefined
+): Promise<{ value: string; count: number }[]> {
+  if (!isValidColumn(schema, groupField) || !isValidColumn(schema, filterField) || !filterValue) return [];
+  const groupPath = jsonPathFor(groupField);
+  const filterPath = jsonPathFor(filterField);
+  const useSum = valueField !== undefined;
+  if (useSum && (!isValidColumn(schema, valueField) || schema.find((c) => c.name === valueField)?.type !== "number")) return [];
+  const valuePath = useSum ? jsonPathFor(valueField as string) : null;
+
+  const aggregateSql = useSum ? `SUM(CAST(json_extract(row_data, ?) AS REAL))` : `COUNT(*)`;
+  const params: unknown[] = [groupPath];
+  if (useSum) params.push(valuePath);
+  params.push(datasetId, groupPath, groupPath, filterPath, filterValue);
+  if (useSum) params.push(valuePath, valuePath);
+
+  return all<{ value: string; count: number }>(
+    db,
+    `SELECT json_extract(row_data, ?) AS value, ${aggregateSql} AS count
+     FROM dataset_rows
+     WHERE dataset_id = ?
+       AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''
+       AND json_extract(row_data, ?) = ?
+       ${useSum ? "AND json_extract(row_data, ?) IS NOT NULL AND json_extract(row_data, ?) != ''" : ""}
+     GROUP BY value
+     ORDER BY count DESC
+     LIMIT 300`,
+    params
+  );
+}
+
 export async function fetchDatasetCrosstab(
   db: D1Database,
   datasetId: string,
@@ -530,6 +577,39 @@ datasetsRouter.get("/:id/crosstab", async (c) => {
     ])
   );
   return c.json(await fetchDatasetCrosstab(c.env.DB, datasetId, loaded.schema, primary, secondary));
+});
+
+/** Powers choropleth drill-down: re-groups a dataset by a different
+ *  geography column (province, county) filtered to whichever parent
+ *  region was drilled into (a specific country, or a specific province).
+ *  filterValue is free-text — it's whatever place name the map itself
+ *  passes based on what was clicked, not re-validated against a fixed
+ *  list, same tolerance as manualCountryData elsewhere: a filter value
+ *  that matches nothing just yields an empty result rather than an error. */
+datasetsRouter.get("/:id/geo-drilldown", async (c) => {
+  const datasetId = c.req.param("id");
+  const loaded = await loadDatasetSchema(c.env.DB, datasetId);
+  if (!loaded) return c.json({ error: "Not found" }, 404);
+  const allowed = await canReadDataset(c.env.DB, c.get("role"), c.get("userId"), loaded, datasetId);
+  if (!allowed) return c.json({ error: "Not found" }, 404);
+
+  const group = c.req.query("group");
+  const filterField = c.req.query("filterField");
+  const filterValue = c.req.query("filterValue");
+  const value = c.req.query("value") || undefined;
+  if (!isValidColumn(loaded.schema, group) || !isValidColumn(loaded.schema, filterField)) {
+    return c.json({ error: "group and filterField must each be one of this dataset's own columns: " + loaded.schema.map((s) => s.name).join(", ") }, 400);
+  }
+  if (!filterValue) {
+    return c.json({ error: "filterValue is required" }, 400);
+  }
+  c.executionCtx.waitUntil(
+    Promise.all([
+      ensureFieldIndex(c.env.DB, group).catch((err) => console.error(`[dataset-index] failed for field ${group}:`, err)),
+      ensureFieldIndex(c.env.DB, filterField).catch((err) => console.error(`[dataset-index] failed for field ${filterField}:`, err)),
+    ])
+  );
+  return c.json(await fetchDatasetGeoDrilldown(c.env.DB, datasetId, loaded.schema, group, filterField, filterValue, value));
 });
 
 /** Sum of a numeric column, plus total row count — the dataset equivalent of
