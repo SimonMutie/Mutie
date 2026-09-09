@@ -134,21 +134,22 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
 ];
 
 /** Only these types' rendering actually reads from a dataset when
- *  widget.datasetId is set — choropleth assumes real country names,
- *  calendar assumes daily incident buckets, and map assumes lat/lng, none of
- *  which a generic spreadsheet can be assumed to have. Offering those against
- *  an uploaded dataset would silently show nothing (or incidents data)
- *  regardless of which dataset was picked, so they're left off the list here
- *  rather than offered and quietly wrong. Sankey/network/heatmap_table read
- *  from the same generic two-field crosstab bar/line already use, so they
- *  work for either source just fine. Bullet reuses the same dataset-sum
- *  mechanism as stat. Globe is included by explicit request — same country-
- *  name caveat as choropleth applies (the chosen column needs to actually
- *  contain country names for anything to shade/plot; anything else just
- *  renders an empty globe rather than crashing), but unlike choropleth,
- *  globe is also used for hand-placed labels/routes independent of any
- *  data source at all, so being able to pair those with a dataset's own
- *  breakdown is a real, common use rather than a mismatch. */
+ *  widget.datasetId is set — calendar assumes daily incident buckets and
+ *  map assumes lat/lng, neither of which a generic spreadsheet can be
+ *  assumed to have. Offering those against an uploaded dataset would
+ *  silently show nothing (or incidents data) regardless of which dataset
+ *  was picked, so they're left off the list here rather than offered and
+ *  quietly wrong. Sankey/network/heatmap_table read from the same generic
+ *  two-field crosstab bar/line already use, so they work for either source
+ *  just fine. Bullet reuses the same dataset-sum mechanism as stat.
+ *  Choropleth and globe are both included by explicit request — the
+ *  chosen location column needs to actually contain country (or, for
+ *  choropleth, province) names for anything to shade/plot; anything else
+ *  just renders an empty map rather than crashing, so this is a real but
+ *  safe caveat, not a broken feature. Globe is also used for hand-placed
+ *  labels/routes independent of any data source at all, so pairing those
+ *  with a dataset's own breakdown is a real, common use beyond just the
+ *  country-shading case choropleth is limited to. */
 export const DATASET_COMPATIBLE_TYPES: WidgetType[] = [
   "stat",
   "bar",
@@ -163,6 +164,7 @@ export const DATASET_COMPATIBLE_TYPES: WidgetType[] = [
   "heatmap_table",
   "bullet",
   "globe",
+  "choropleth",
 ];
 
 /** Web-safe system fonts only — no webfont loading, so every option here is
@@ -1947,6 +1949,31 @@ const PROVINCE_TOPOLOGY_URL = "/geo/admin1-provinces.json";
  *  incidents actually happened. Known limitation: province names are matched
  *  globally, not scoped to a country, so a name that happens to repeat across
  *  countries (uncommon, but real) could match the wrong one. */
+/** Countries with real province/state (ADM1) and county/district (ADM2)
+ *  boundary data available for drill-down — starts with just South Sudan,
+ *  this app's core focus, verified end-to-end before expanding further.
+ *  Adding another country later is just one more entry here plus its two
+ *  boundary files in public/geo/, not a rebuild of the drill-down
+ *  mechanism itself. adm2's features carry a "parentState" property
+ *  (computed once during data preparation via a one-time spatial join,
+ *  not part of the source data itself) used to filter counties down to
+ *  just the selected state rather than showing the whole country's
+ *  counties at once. */
+const COUNTRY_ADMIN_DATA: Record<string, { adm1Url: string; adm2Url?: string }> = {
+  "South Sudan": { adm1Url: "/geo/SSD-adm1.json", adm2Url: "/geo/SSD-adm2.json" },
+};
+
+const breadcrumbLinkStyle: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: "var(--signal)",
+  cursor: "pointer",
+  padding: 0,
+  fontSize: 10.5,
+  textDecoration: "underline",
+};
+const breadcrumbCurrentStyle: React.CSSProperties = { color: "#333", fontWeight: 600 };
+
 function ChoroplethMap({
   series,
   baseColor,
@@ -1975,7 +2002,11 @@ function ChoroplethMap({
   onClick?: (value: string) => void;
 }) {
   const usingManualData = !!manualData;
-  const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number } | null>(null);
+  const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number; drillable: boolean } | null>(null);
+  // Session-local navigation state, not persisted with the widget — same
+  // relationship the globe's rotation-lock/label-visibility toggles have
+  // to their own widgets: a live view choice, not a saved setting.
+  const [drill, setDrill] = useState<{ country?: string; adm1?: string }>({});
   const containerRef = useRef<HTMLDivElement>(null);
   const countByName = new Map<string, number>();
   const colorByName = new Map<string, string>();
@@ -2006,16 +2037,65 @@ function ChoroplethMap({
   }
   const populatedValues = Array.from(countByName.values()).filter((v) => v > 0);
   const quantileBreaks = computeQuantileBreaks(populatedValues, CHOROPLETH_BIN_OPACITIES.length);
-  const topologyUrl = field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
+  // Drill-down takes priority over the widget's own field setting — once
+  // navigated into a specific country/state, that's what's actually on
+  // screen regardless of which topology the widget was originally
+  // configured to show at the top level.
+  const drillData = drill.country ? COUNTRY_ADMIN_DATA[drill.country] : undefined;
+  const topologyUrl = drill.adm1 && drillData?.adm2Url ? drillData.adm2Url : drillData ? drillData.adm1Url : field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
+  // Only meaningful at the adm2 level, where every county across the whole
+  // country is present in one file and needs filtering down to just the
+  // selected state — adm1 files only ever contain that one country's
+  // states already, nothing to filter out.
+  const filterToParentState = drill.adm1 && drillData?.adm2Url ? drill.adm1 : undefined;
 
   return (
     <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
+      {drill.country && (
+        <div
+          style={{
+            position: "absolute",
+            top: 6,
+            left: 6,
+            zIndex: 10,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            background: "rgba(255,255,255,0.94)",
+            borderRadius: 5,
+            padding: "3px 7px",
+            fontSize: 10.5,
+            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+          }}
+        >
+          <button onClick={() => setDrill({})} style={breadcrumbLinkStyle}>
+            World
+          </button>
+          <span style={{ color: "#999" }}>›</span>
+          <button onClick={() => setDrill({ country: drill.country })} style={drill.adm1 ? breadcrumbLinkStyle : breadcrumbCurrentStyle}>
+            {drill.country}
+          </button>
+          {drill.adm1 && (
+            <>
+              <span style={{ color: "#999" }}>›</span>
+              <span style={breadcrumbCurrentStyle}>{drill.adm1}</span>
+            </>
+          )}
+        </div>
+      )}
       <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
         <Geographies geography={topologyUrl}>
-          {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) => (
+          {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string; shapeName?: string; parentState?: string } }[] }) => (
             <>
-              {geographies.map((geo) => {
-                const name = geo.properties?.name;
+              {geographies
+                .filter((geo) => !filterToParentState || geo.properties?.parentState === filterToParentState)
+                .map((geo) => {
+                // world-atlas/PROVINCE_TOPOLOGY_URL use "name"; the
+                // geoBoundaries-sourced country drill-down files (see
+                // COUNTRY_ADMIN_DATA) use "shapeName" instead — this
+                // component renders either depending on drill state, so
+                // both conventions need handling here.
+                const name = geo.properties?.name ?? geo.properties?.shapeName;
                 const key = name?.trim().toLowerCase();
                 const count = key ? countByName.get(key) : undefined;
                 const explicitColor = key ? colorByName.get(key) : undefined;
@@ -2025,6 +2105,13 @@ function ChoroplethMap({
                 const isDimmed = selectedValue !== undefined && !isSelected;
                 const isHoverable = !usingManualData && originalCaseValue && onHoverStart;
                 const isClickable = !usingManualData && originalCaseValue && onClick;
+                // Whichever level is currently on screen determines what
+                // "drillable" even means here: at the world view, it's
+                // "does this country have boundary data at all"; one level
+                // in, it's "does this specific country also have adm2
+                // data"; two levels in (viewing counties), there's nowhere
+                // further to go.
+                const isDrillable = !drill.country ? !!(name && COUNTRY_ADMIN_DATA[name]) : !drill.adm1 ? !!drillData?.adm2Url : false;
                 return (
                   <Geography
                     key={geo.rsmKey}
@@ -2037,13 +2124,13 @@ function ChoroplethMap({
                       if (isHoverable) onHoverStart(originalCaseValue);
                       if (name && count !== undefined) {
                         const rect = containerRef.current?.getBoundingClientRect();
-                        setTooltip({ name, value: count, x: rect ? evt.clientX - rect.left : 0, y: rect ? evt.clientY - rect.top : 0 });
+                        setTooltip({ name, value: count, x: rect ? evt.clientX - rect.left : 0, y: rect ? evt.clientY - rect.top : 0, drillable: isDrillable });
                       }
                     }}
                     onMouseMove={(evt: React.MouseEvent) => {
                       if (!name || count === undefined) return;
                       const rect = containerRef.current?.getBoundingClientRect();
-                      if (rect) setTooltip({ name, value: count, x: evt.clientX - rect.left, y: evt.clientY - rect.top });
+                      if (rect) setTooltip({ name, value: count, x: evt.clientX - rect.left, y: evt.clientY - rect.top, drillable: isDrillable });
                     }}
                     onMouseLeave={() => {
                       onHoverEnd?.();
@@ -2060,7 +2147,7 @@ function ChoroplethMap({
               })}
               {showLabels &&
                 geographies.map((geo) => {
-                  const name = geo.properties?.name;
+                  const name = geo.properties?.name ?? geo.properties?.shapeName;
                   const key = name?.trim().toLowerCase();
                   const count = key ? countByName.get(key) : undefined;
                   if (!name || !count) return null; // only label regions with actual data, to avoid cluttering every country name on the map
@@ -2099,12 +2186,36 @@ function ChoroplethMap({
             fontSize: 11,
             padding: "4px 8px",
             borderRadius: 4,
-            pointerEvents: "none",
+            pointerEvents: tooltip.drillable ? "auto" : "none",
             zIndex: 10,
             whiteSpace: "nowrap",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
           }}
         >
-          <strong>{tooltip.name}</strong>: {tooltip.value.toLocaleString()}
+          <span>
+            <strong>{tooltip.name}</strong>: {tooltip.value.toLocaleString()}
+          </span>
+          {tooltip.drillable && (
+            <button
+              onClick={() => {
+                setDrill((d) => (d.country ? { ...d, adm1: tooltip.name } : { country: tooltip.name }));
+                setTooltip(null);
+              }}
+              style={{
+                background: "var(--signal-dim)",
+                border: "1px solid var(--signal)",
+                color: "#fff",
+                fontSize: 10,
+                padding: "2px 6px",
+                borderRadius: 3,
+                cursor: "pointer",
+              }}
+            >
+              🔍 {drill.country ? "View counties" : "View provinces"}
+            </button>
+          )}
         </div>
       )}
     </div>
