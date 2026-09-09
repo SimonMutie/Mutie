@@ -29,7 +29,7 @@ import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMa
 import { HeatmapLayer } from "./IncidentsMap";
 import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
-import worldTopology from "world-atlas/countries-110m.json?url";
+import worldTopology from "world-atlas/countries-50m.json?url";
 
 // Dynamically imported, not statically — this is the whole point: Three.js
 // and react-globe.gl are heavy, and every dashboard that never uses a globe
@@ -1975,6 +1975,8 @@ function ChoroplethMap({
   onClick?: (value: string) => void;
 }) {
   const usingManualData = !!manualData;
+  const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const countByName = new Map<string, number>();
   const colorByName = new Map<string, string>();
   // What to actually send as the filter value when a region is clicked —
@@ -2002,11 +2004,12 @@ function ChoroplethMap({
       originalCaseByName.set(key, String(s.value));
     }
   }
-  const maxCount = Math.max(1, ...Array.from(countByName.values()));
+  const populatedValues = Array.from(countByName.values()).filter((v) => v > 0);
+  const quantileBreaks = computeQuantileBreaks(populatedValues, CHOROPLETH_BIN_OPACITIES.length);
   const topologyUrl = field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
 
   return (
-    <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)" }}>
+    <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
       <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
         <Geographies geography={topologyUrl}>
           {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string } }[] }) => (
@@ -2016,7 +2019,7 @@ function ChoroplethMap({
                 const key = name?.trim().toLowerCase();
                 const count = key ? countByName.get(key) : undefined;
                 const explicitColor = key ? colorByName.get(key) : undefined;
-                const intensity = count ? Math.max(0.18, count / maxCount) : 0;
+                const intensity = count ? CHOROPLETH_BIN_OPACITIES[binIndexForValue(count, quantileBreaks)] : 0;
                 const originalCaseValue = key ? originalCaseByName.get(key) : undefined;
                 const isSelected = selectedValue !== undefined && key === String(selectedValue).trim().toLowerCase();
                 const isDimmed = selectedValue !== undefined && !isSelected;
@@ -2030,8 +2033,22 @@ function ChoroplethMap({
                     fillOpacity={isDimmed ? 0.3 : 1}
                     stroke={isSelected ? "var(--text-primary)" : "var(--border)"}
                     strokeWidth={isSelected ? 1.2 : field === "by_province" ? 0.2 : 0.4}
-                    onMouseEnter={isHoverable ? () => onHoverStart(originalCaseValue) : undefined}
-                    onMouseLeave={onHoverEnd}
+                    onMouseEnter={(evt: React.MouseEvent) => {
+                      if (isHoverable) onHoverStart(originalCaseValue);
+                      if (name && count !== undefined) {
+                        const rect = containerRef.current?.getBoundingClientRect();
+                        setTooltip({ name, value: count, x: rect ? evt.clientX - rect.left : 0, y: rect ? evt.clientY - rect.top : 0 });
+                      }
+                    }}
+                    onMouseMove={(evt: React.MouseEvent) => {
+                      if (!name || count === undefined) return;
+                      const rect = containerRef.current?.getBoundingClientRect();
+                      if (rect) setTooltip({ name, value: count, x: evt.clientX - rect.left, y: evt.clientY - rect.top });
+                    }}
+                    onMouseLeave={() => {
+                      onHoverEnd?.();
+                      setTooltip(null);
+                    }}
                     onClick={isClickable ? () => onClick(originalCaseValue) : undefined}
                     style={{
                       default: { outline: "none", cursor: isHoverable || isClickable ? "pointer" : undefined },
@@ -2070,6 +2087,26 @@ function ChoroplethMap({
           )}
         </Geographies>
       </ComposableMap>
+      {populatedValues.length > 0 && <ChoroplethLegend breaks={quantileBreaks} maxValue={Math.max(...populatedValues)} baseColor={baseColor} />}
+      {tooltip && (
+        <div
+          style={{
+            position: "absolute",
+            left: tooltip.x + 12,
+            top: tooltip.y + 12,
+            background: "rgba(20,20,20,0.92)",
+            color: "#fff",
+            fontSize: 11,
+            padding: "4px 8px",
+            borderRadius: 4,
+            pointerEvents: "none",
+            zIndex: 10,
+            whiteSpace: "nowrap",
+          }}
+        >
+          <strong>{tooltip.name}</strong>: {tooltip.value.toLocaleString()}
+        </div>
+      )}
     </div>
   );
 }
@@ -2079,6 +2116,98 @@ function hexToRgba(hex: string, alpha: number): string {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/** Discrete opacity steps for a choropleth's color classes — deliberately
+ *  not a continuous 0-1 gradient, and not evenly spaced from 0. A proper
+ *  choropleth uses distinct visual classes a viewer can name and match to
+ *  a legend ("this shade means 40-89"), not a smooth fade that's
+ *  impossible to read precisely off the map itself. The minimum (0.22)
+ *  keeps the lightest populated class still clearly distinguishable from
+ *  "no data" (which gets no fill at all), and the steps are close enough
+ *  to evenly spaced that no single class visually dominates. */
+const CHOROPLETH_BIN_OPACITIES = [0.22, 0.4, 0.58, 0.76, 1.0];
+
+/** Quantile (equal-count) breakpoints for numBins classes — the standard,
+ *  data-distribution-aware alternative to a plain linear min/max split.
+ *  This is the actual fix for the "one huge outlier crushes every other
+ *  region to near-invisible" problem a plain `count / maxCount` scale has:
+ *  quantile bins are computed from where the real values actually cluster
+ *  (via sorted position, not raw magnitude), so one country with 10,000
+ *  incidents against a field of countries with 50-200 doesn't force nearly
+ *  everything else into the bottom of the scale. Returns numBins-1
+ *  breakpoints — for the boundaries between numBins classes — deduplicated,
+ *  since a real dataset can easily have identical quantile boundaries in
+ *  its lower classes if many regions share very similar (or equal) values,
+ *  and a repeated breakpoint would silently collapse two classes into one
+ *  without a visible distinction between them. */
+function computeQuantileBreaks(values: number[], numBins: number): number[] {
+  if (values.length === 0) return [];
+  const sorted = [...values].sort((a, b) => a - b);
+  const breaks: number[] = [];
+  for (let i = 1; i < numBins; i++) {
+    const idx = Math.floor((sorted.length * i) / numBins);
+    breaks.push(sorted[Math.min(idx, sorted.length - 1)]);
+  }
+  return Array.from(new Set(breaks));
+}
+
+/** Which class (0-indexed) a value falls into, given breakpoints from
+ *  computeQuantileBreaks. The last class (index === breaks.length) is
+ *  "at or above the highest breakpoint" — deliberately inclusive at the
+ *  top so the single highest value in the dataset always lands in the
+ *  darkest class rather than needing a breaks.length+1'th boundary that
+ *  would never be reached. */
+function binIndexForValue(value: number, breaks: number[]): number {
+  for (let i = 0; i < breaks.length; i++) {
+    if (value <= breaks[i]) return i;
+  }
+  return breaks.length;
+}
+
+/** The legend the article's own "Define Legend and Palette Colors" step
+ *  calls out as essential — without this, a color on the map has no way
+ *  to be read back as an actual number, which is the core thing a
+ *  choropleth is supposed to communicate. Ranges are built directly from
+ *  the same quantileBreaks the map's own fill colors use, so the legend
+ *  can never drift out of sync with what's actually drawn — number of
+ *  rows matches breaks.length + 1 exactly, not a hardcoded 5, since
+ *  computeQuantileBreaks can return fewer than 4 breaks when values
+ *  dedupe. */
+function ChoroplethLegend({ breaks, maxValue, baseColor }: { breaks: number[]; maxValue: number; baseColor: string }) {
+  const boundaries = [0, ...breaks, maxValue];
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 8,
+        left: 8,
+        background: "rgba(255,255,255,0.94)",
+        borderRadius: 6,
+        padding: "7px 9px",
+        fontSize: 10,
+        lineHeight: 1.6,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
+        zIndex: 5,
+        pointerEvents: "none",
+      }}
+    >
+      {boundaries.slice(0, -1).map((lo, i) => {
+        const hi = boundaries[i + 1];
+        const label = i === 0 ? `${Math.ceil(lo)}–${Math.floor(hi)}` : `${Math.ceil(lo) + 1}–${Math.floor(hi)}`;
+        return (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 13, height: 13, borderRadius: 2, background: hexToRgba(baseColor, CHOROPLETH_BIN_OPACITIES[i]), border: "1px solid rgba(0,0,0,0.12)" }} />
+            <span style={{ color: "#444" }}>{label}</span>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2, borderTop: "1px solid rgba(0,0,0,0.08)", paddingTop: 2 }}>
+        <div style={{ width: 13, height: 13, borderRadius: 2, background: "var(--panel)", border: "1px solid rgba(0,0,0,0.12)" }} />
+        <span style={{ color: "#888" }}>No data</span>
+      </div>
+    </div>
+  );
 }
 
 /** GitHub-contributions-style grid — a year of days as columns of weeks, rows
