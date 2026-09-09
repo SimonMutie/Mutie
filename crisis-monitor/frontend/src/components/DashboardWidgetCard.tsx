@@ -1119,6 +1119,11 @@ export default function DashboardWidgetCard({
             onHoverStart={handleCrossFilterHover}
             onHoverEnd={onCrossFilterHoverEnd}
             onClick={handleCrossFilterClick}
+            datasetId={widget.datasetId}
+            countryColumn={widget.datasetId ? widget.dataField : undefined}
+            geoProvinceColumn={widget.geoProvinceColumn}
+            geoCountyColumn={widget.geoCountyColumn}
+            valueColumn={widget.secondaryField}
           />
         )}
 
@@ -2074,6 +2079,11 @@ function ChoroplethMap({
   onHoverStart,
   onHoverEnd,
   onClick,
+  datasetId,
+  countryColumn,
+  geoProvinceColumn,
+  geoCountyColumn,
+  valueColumn,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
@@ -2087,6 +2097,19 @@ function ChoroplethMap({
   onHoverStart?: (value: string) => void;
   onHoverEnd?: () => void;
   onClick?: (value: string) => void;
+  /** The four together enable real data at drilled-down levels for a
+   *  dataset-sourced choropleth — without datasetId (an incidents-sourced
+   *  widget) or without geoProvinceColumn (dataset-sourced but the column
+   *  mapping isn't set), drilling still shows the map, just unshaded,
+   *  same as before this feature existed. countryColumn is the same
+   *  column already driving the top-level series (widget.dataField) —
+   *  needed again here specifically as the filter column once drilled one
+   *  level in. */
+  datasetId?: string;
+  countryColumn?: string;
+  geoProvinceColumn?: string;
+  geoCountyColumn?: string;
+  valueColumn?: string;
 }) {
   const usingManualData = !!manualData;
   const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number; drillable: boolean } | null>(null);
@@ -2102,6 +2125,51 @@ function ChoroplethMap({
   useEffect(() => {
     setZoomState({ zoom: 1, center: [0, 0] });
   }, [drill.country, drill.adm1]);
+
+  // Real data at drilled-down levels — only possible for a dataset-sourced
+  // widget with the geography columns actually mapped (see Stage 1's
+  // editor fields). null means "nothing fetched" (top-level view, or a
+  // drilled level with no data mapping available), distinct from an empty
+  // array (fetched successfully, genuinely no matching rows) so the map
+  // can tell "not applicable" apart from "applicable but empty."
+  const [drilledSeries, setDrilledSeries] = useState<{ value: string; count: number }[] | null>(null);
+  const [drillLoading, setDrillLoading] = useState(false);
+  useEffect(() => {
+    if (!drill.country || !datasetId || !countryColumn) {
+      setDrilledSeries(null);
+      return;
+    }
+    const groupColumn = drill.adm1 ? geoCountyColumn : geoProvinceColumn;
+    const filterColumn = drill.adm1 ? geoProvinceColumn : countryColumn;
+    const filterValue = drill.adm1 ?? drill.country;
+    if (!groupColumn || !filterColumn) {
+      setDrilledSeries(null);
+      return;
+    }
+    let cancelled = false;
+    setDrillLoading(true);
+    api
+      .getDatasetGeoDrilldown(datasetId, groupColumn, filterColumn, filterValue, valueColumn)
+      .then((rows) => {
+        if (!cancelled) setDrilledSeries(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDrilledSeries([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDrillLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drill.country, drill.adm1, datasetId, countryColumn, geoProvinceColumn, geoCountyColumn, valueColumn]);
+
+  // The map's actual data source: freshly-fetched drill-level data once
+  // meaningfully drilled in (even an empty array — that's a real "no
+  // matching rows" result, not "fall back to the top-level series"), the
+  // widget's own top-level series otherwise.
+  const effectiveSeries = drill.country && drilledSeries !== null ? drilledSeries : series;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const countByName = new Map<string, number>();
   const colorByName = new Map<string, string>();
@@ -2118,7 +2186,7 @@ function ChoroplethMap({
       if (d.color) colorByName.set(String(d.country).trim().toLowerCase(), d.color);
     }
   } else {
-    for (const s of series) {
+    for (const s of effectiveSeries) {
       // String(...) before .trim() — series comes from a dataset query
       // where the declared {value: string} type isn't runtime-guaranteed;
       // json_extract returns whatever type was actually stored, so a
@@ -2176,6 +2244,7 @@ function ChoroplethMap({
               <span style={breadcrumbCurrentStyle}>{drill.adm1}</span>
             </>
           )}
+          {drillLoading && <span style={{ color: "#999", marginLeft: 2 }}>loading…</span>}
         </div>
       )}
       <div
