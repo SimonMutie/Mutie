@@ -27,7 +27,7 @@ import {
 import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
 import { HeatmapLayer } from "./IncidentsMap";
-import { ComposableMap, Geographies, Geography, Marker } from "react-simple-maps";
+import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
 import worldTopology from "world-atlas/countries-50m.json?url";
 
@@ -1959,9 +1959,27 @@ const PROVINCE_TOPOLOGY_URL = "/geo/admin1-provinces.json";
  *  not part of the source data itself) used to filter counties down to
  *  just the selected state rather than showing the whole country's
  *  counties at once. */
-const COUNTRY_ADMIN_DATA: Record<string, { adm1Url: string; adm2Url?: string }> = {
-  "South Sudan": { adm1Url: "/geo/SSD-adm1.json", adm2Url: "/geo/SSD-adm2.json" },
+const COUNTRY_ADMIN_DATA: Record<string, { adm1Url: string; adm2Url?: string; aliases?: string[] }> = {
+  "South Sudan": { adm1Url: "/geo/SSD-adm1.json", adm2Url: "/geo/SSD-adm2.json", aliases: ["S. Sudan"] },
 };
+
+/** Case/whitespace-normalized lookup across each entry's canonical name and
+ *  its aliases — needed because the world map (world-atlas, via Natural
+ *  Earth) and a person's own incident/dataset data don't necessarily agree
+ *  on a country's exact label. Confirmed directly: world-atlas actually
+ *  labels this country "S. Sudan" (abbreviated for map-label space), not
+ *  "South Sudan" — an exact-match lookup against the full name would
+ *  silently never match anything hovered on the actual map, which is
+ *  exactly the bug this replaced. */
+function findCountryAdminData(name: string | undefined): { canonicalName: string; adm1Url: string; adm2Url?: string } | undefined {
+  if (!name) return undefined;
+  const key = name.trim().toLowerCase();
+  for (const [canonicalName, data] of Object.entries(COUNTRY_ADMIN_DATA)) {
+    if (canonicalName.trim().toLowerCase() === key) return { canonicalName, ...data };
+    if (data.aliases?.some((a) => a.trim().toLowerCase() === key)) return { canonicalName, ...data };
+  }
+  return undefined;
+}
 
 const breadcrumbLinkStyle: React.CSSProperties = {
   background: "transparent",
@@ -1973,6 +1991,21 @@ const breadcrumbLinkStyle: React.CSSProperties = {
   textDecoration: "underline",
 };
 const breadcrumbCurrentStyle: React.CSSProperties = { color: "#333", fontWeight: 600 };
+const zoomBtnStyle: React.CSSProperties = {
+  width: 22,
+  height: 22,
+  background: "var(--panel-raised)",
+  border: "1px solid var(--border)",
+  borderRadius: 3,
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontSize: 13,
+  lineHeight: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0,
+};
 
 function ChoroplethMap({
   series,
@@ -2007,6 +2040,14 @@ function ChoroplethMap({
   // relationship the globe's rotation-lock/label-visibility toggles have
   // to their own widgets: a live view choice, not a saved setting.
   const [drill, setDrill] = useState<{ country?: string; adm1?: string }>({});
+  const [zoomState, setZoomState] = useState<{ zoom: number; center: [number, number] }>({ zoom: 1, center: [0, 0] });
+  // Reset zoom/pan whenever the drill level changes — a freshly-loaded
+  // topology (a different country's extent, or zooming from country-level
+  // to province-level) should start centered and un-zoomed, not inherit
+  // whatever view was set for a completely different map.
+  useEffect(() => {
+    setZoomState({ zoom: 1, center: [0, 0] });
+  }, [drill.country, drill.adm1]);
   const containerRef = useRef<HTMLDivElement>(null);
   const countByName = new Map<string, number>();
   const colorByName = new Map<string, string>();
@@ -2041,7 +2082,7 @@ function ChoroplethMap({
   // navigated into a specific country/state, that's what's actually on
   // screen regardless of which topology the widget was originally
   // configured to show at the top level.
-  const drillData = drill.country ? COUNTRY_ADMIN_DATA[drill.country] : undefined;
+  const drillData = drill.country ? findCountryAdminData(drill.country) : undefined;
   const topologyUrl = drill.adm1 && drillData?.adm2Url ? drillData.adm2Url : drillData ? drillData.adm1Url : field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
   // Only meaningful at the adm2 level, where every county across the whole
   // country is present in one file and needs filtering down to just the
@@ -2083,8 +2124,40 @@ function ChoroplethMap({
           )}
         </div>
       )}
+      <div
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          zIndex: 10,
+          display: "flex",
+          flexDirection: "column",
+          gap: 2,
+          background: "rgba(255,255,255,0.94)",
+          borderRadius: 5,
+          padding: 3,
+          boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+        }}
+      >
+        <button onClick={() => setZoomState((z) => ({ ...z, zoom: Math.min(8, z.zoom * 1.5) }))} style={zoomBtnStyle} title="Zoom in">
+          +
+        </button>
+        <button onClick={() => setZoomState((z) => ({ ...z, zoom: Math.max(1, z.zoom / 1.5) }))} style={zoomBtnStyle} title="Zoom out">
+          −
+        </button>
+        <button onClick={() => setZoomState({ zoom: 1, center: [0, 0] })} style={zoomBtnStyle} title="Reset view">
+          ⟲
+        </button>
+      </div>
       <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
-        <Geographies geography={topologyUrl}>
+        <ZoomableGroup
+          center={zoomState.center}
+          zoom={zoomState.zoom}
+          minZoom={1}
+          maxZoom={8}
+          onMoveEnd={(pos) => setZoomState({ zoom: pos.zoom, center: pos.coordinates })}
+        >
+          <Geographies geography={topologyUrl}>
           {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string; shapeName?: string; parentState?: string } }[] }) => (
             <>
               {geographies
@@ -2111,7 +2184,7 @@ function ChoroplethMap({
                 // in, it's "does this specific country also have adm2
                 // data"; two levels in (viewing counties), there's nowhere
                 // further to go.
-                const isDrillable = !drill.country ? !!(name && COUNTRY_ADMIN_DATA[name]) : !drill.adm1 ? !!drillData?.adm2Url : false;
+                const isDrillable = !drill.country ? !!findCountryAdminData(name) : !drill.adm1 ? !!drillData?.adm2Url : false;
                 return (
                   <Geography
                     key={geo.rsmKey}
@@ -2119,7 +2192,7 @@ function ChoroplethMap({
                     fill={explicitColor ?? (count ? hexToRgba(baseColor, intensity) : "var(--panel)")}
                     fillOpacity={isDimmed ? 0.3 : 1}
                     stroke={isSelected ? "var(--text-primary)" : "var(--border)"}
-                    strokeWidth={isSelected ? 1.2 : field === "by_province" ? 0.2 : 0.4}
+                    strokeWidth={(isSelected ? 1.2 : field === "by_province" ? 0.2 : 0.4) / zoomState.zoom}
                     onMouseEnter={(evt: React.MouseEvent) => {
                       if (isHoverable) onHoverStart(originalCaseValue);
                       if (name && count !== undefined) {
@@ -2173,6 +2246,7 @@ function ChoroplethMap({
             </>
           )}
         </Geographies>
+        </ZoomableGroup>
       </ComposableMap>
       {populatedValues.length > 0 && <ChoroplethLegend breaks={quantileBreaks} maxValue={Math.max(...populatedValues)} baseColor={baseColor} />}
       {tooltip && (
@@ -2200,7 +2274,7 @@ function ChoroplethMap({
           {tooltip.drillable && (
             <button
               onClick={() => {
-                setDrill((d) => (d.country ? { ...d, adm1: tooltip.name } : { country: tooltip.name }));
+                setDrill((d) => (d.country ? { ...d, adm1: tooltip.name } : { country: findCountryAdminData(tooltip.name)?.canonicalName ?? tooltip.name }));
                 setTooltip(null);
               }}
               style={{
