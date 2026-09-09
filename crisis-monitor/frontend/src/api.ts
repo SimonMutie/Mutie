@@ -823,6 +823,10 @@ export const api = {
     ),
   getDatasetCrosstab: (datasetId: string, primary: string, secondary: string) =>
     req<CrosstabRow[]>(`/api/datasets/${datasetId}/crosstab?primary=${encodeURIComponent(primary)}&secondary=${encodeURIComponent(secondary)}`),
+  getDatasetGeoDrilldown: (datasetId: string, group: string, filterField: string, filterValue: string, value?: string) =>
+    req<{ value: string; count: number }[]>(
+      `/api/datasets/${datasetId}/geo-drilldown?group=${encodeURIComponent(group)}&filterField=${encodeURIComponent(filterField)}&filterValue=${encodeURIComponent(filterValue)}${value ? `&value=${encodeURIComponent(value)}` : ""}`
+    ),
   getDatasetSummary: (datasetId: string) => req<DatasetSummary>(`/api/datasets/${datasetId}/summary`),
   getDatasetDaily: (datasetId: string, field: string) =>
     req<{ date: string; count: number }[]>(`/api/datasets/${datasetId}/daily?field=${encodeURIComponent(field)}`),
