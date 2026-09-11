@@ -2499,14 +2499,28 @@ function ChoroplethMap({
   const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number } | null>(null);
   const [showCountryMenu, setShowCountryMenu] = useState(false);
   const [showProvinceMenu, setShowProvinceMenu] = useState(false);
-  const [zoomState, setZoomState] = useState<{ zoom: number; center: [number, number] }>({ zoom: 1, center: [0, 0] });
+  // forKey tags which drill level this zoom/center was actually set for.
+  // Needed because React runs a child's own effects (ZoomableGroup's
+  // internal one, which immediately does projection([lon, lat]) and
+  // crashes on null) before this component's own reset effect below gets
+  // a chance to run — so for at least one render after drill changes,
+  // zoomState here is still whatever the *previous* view left it at. If
+  // that previous view was, say, South Sudan's coordinates and the new
+  // one is the US's geoAlbersUsa projection (which returns null for
+  // anything outside US territory), applying that stale center directly
+  // would crash the whole map. Checking forKey against the view actually
+  // being rendered — not just special-casing "is center exactly [0,0]" —
+  // catches every such mismatch, not only the most common one.
+  const [zoomState, setZoomState] = useState<{ zoom: number; center: [number, number]; forKey: string }>({ zoom: 1, center: [0, 0], forKey: "" });
   // Reset zoom/pan whenever the drill level changes — a freshly-loaded
   // topology (a different country's extent, or zooming from country-level
   // to province-level) should start centered and un-zoomed, not inherit
   // whatever view was set for a completely different map.
+  const drillViewKey = `${drill.country ?? ""}|${drill.adm1 ?? ""}`;
   useEffect(() => {
-    setZoomState({ zoom: 1, center: [0, 0] });
-  }, [drill.country, drill.adm1]);
+    setZoomState({ zoom: 1, center: [0, 0], forKey: drillViewKey });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drillViewKey]);
 
   // Real data at drilled-down levels — only possible for a dataset-sourced
   // widget with the geography columns actually mapped (see Stage 1's
@@ -2728,6 +2742,22 @@ function ChoroplethMap({
   const isUsStateView = drill.country && findCountryAdminData(drill.country)?.canonicalName === "United States" && !drill.adm1;
   const mapProjection = isUsStateView ? "geoAlbersUsa" : "geoEqualEarth";
   const mapProjectionConfig = isUsStateView ? { scale: 1000 } : { scale: 148 };
+  // geoAlbersUsa is a composite projection covering only US territory —
+  // it returns null for any coordinate outside that (confirmed directly:
+  // projecting [0,0], the world view's own default center, this way).
+  // ZoomableGroup's internal effect immediately does coords[0] * zoom on
+  // whatever this returns, so passing a center left over from a
+  // completely different view/projection crashes the whole map the
+  // instant this projection is active. zoomState.forKey (set by the
+  // reset effect below) tags which view a given zoom/center actually
+  // belongs to — if it doesn't match the view being rendered right now
+  // (the race: this component's own reset effect hasn't run yet for
+  // this render, but ZoomableGroup's internal one already has), fall
+  // back to this view's own known-valid default instead of whatever
+  // stale value zoomState still holds.
+  const viewMatchesZoomState = zoomState.forKey === drillViewKey;
+  const safeCenter: [number, number] = viewMatchesZoomState ? zoomState.center : isUsStateView ? [-98.5, 39.8] : [0, 0];
+  const safeZoom = viewMatchesZoomState ? zoomState.zoom : 1;
 
   return (
     <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
@@ -2883,7 +2913,7 @@ function ChoroplethMap({
         <button onClick={() => setZoomState((z) => ({ ...z, zoom: Math.max(1, z.zoom / 1.5) }))} style={zoomBtnStyle} title="Zoom out">
           −
         </button>
-        <button onClick={() => setZoomState({ zoom: 1, center: [0, 0] })} style={zoomBtnStyle} title="Reset view">
+        <button onClick={() => setZoomState({ zoom: 1, center: [0, 0], forKey: drillViewKey })} style={zoomBtnStyle} title="Reset view">
           ⟲
         </button>
         <button onClick={downloadAsSvg} style={zoomBtnStyle} title="Download as editable SVG">
@@ -2892,11 +2922,11 @@ function ChoroplethMap({
       </div>
       <ComposableMap projection={mapProjection} projectionConfig={mapProjectionConfig} style={{ width: "100%", height: "100%" }}>
         <ZoomableGroup
-          center={zoomState.center}
-          zoom={zoomState.zoom}
+          center={safeCenter}
+          zoom={safeZoom}
           minZoom={1}
           maxZoom={8}
-          onMoveEnd={(pos) => setZoomState({ zoom: pos.zoom, center: pos.coordinates })}
+          onMoveEnd={(pos) => setZoomState({ zoom: pos.zoom, center: pos.coordinates, forKey: drillViewKey })}
         >
           <Geographies geography={topologyUrl}>
           {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string; shapeName?: string; parentState?: string } }[] }) => (
