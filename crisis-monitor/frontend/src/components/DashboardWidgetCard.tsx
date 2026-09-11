@@ -2673,7 +2673,7 @@ function ChoroplethMap({
 
       boundaries.slice(0, -1).forEach((lo, i) => {
         const hi = boundaries[i + 1];
-        const label = i === 0 ? `${Math.ceil(lo)}\u2013${Math.floor(hi)}` : `${Math.ceil(lo) + 1}\u2013${Math.floor(hi)}`;
+        const label = legendBinLabel(lo, hi, i === 0);
         const rowY = legendY + 8 + i * rowHeight;
 
         const swatch = document.createElementNS(svgNS, "rect");
@@ -3134,6 +3134,23 @@ function binIndexForValue(value: number, breaks: number[]): number {
   return breaks.length;
 }
 
+/** Builds one legend bin's range label from its boundaries. The +1 on
+ *  non-first bins exists so adjacent bins don't display overlapping
+ *  numbers (e.g. "0-5, 5-10" reads as if 5 belongs to both) - but with
+ *  sparse or mostly-identical data, two adjacent boundaries can collapse
+ *  to the same value, and that +1 then pushes the low bound past the
+ *  high bound, producing a nonsensical backwards range like "2-1"
+ *  (confirmed reproduced: a dataset with mostly single-row-per-country
+ *  counts collapses quantile breaks down to very few distinct values).
+ *  Clamping the low bound to never exceed the high bound fixes this, and
+ *  collapsing to a single number when they'd otherwise be equal reads
+ *  cleaner than a redundant "1-1". */
+function legendBinLabel(lo: number, hi: number, isFirstBin: boolean): string {
+  const hiLabel = Math.floor(hi);
+  const loLabel = Math.min(isFirstBin ? Math.ceil(lo) : Math.ceil(lo) + 1, hiLabel);
+  return loLabel === hiLabel ? `${hiLabel}` : `${loLabel}\u2013${hiLabel}`;
+}
+
 /** The legend the article's own "Define Legend and Palette Colors" step
  *  calls out as essential — without this, a color on the map has no way
  *  to be read back as an actual number, which is the core thing a
@@ -3163,7 +3180,7 @@ function ChoroplethLegend({ breaks, maxValue, baseColor, colorScheme }: { breaks
     >
       {boundaries.slice(0, -1).map((lo, i) => {
         const hi = boundaries[i + 1];
-        const label = i === 0 ? `${Math.ceil(lo)}–${Math.floor(hi)}` : `${Math.ceil(lo) + 1}–${Math.floor(hi)}`;
+        const label = legendBinLabel(lo, hi, i === 0);
         return (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{ width: 13, height: 13, borderRadius: 2, background: choroplethBinColor(i, baseColor, colorScheme), border: "1px solid rgba(0,0,0,0.12)" }} />
