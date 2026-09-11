@@ -635,6 +635,13 @@ export default function DashboardWidgetCard({
   const [gifError, setGifError] = useState<string | null>(null);
   const [showDownloadMenu, setShowDownloadMenu] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
+  // Choropleth drill-down navigation — session-local, never persisted with
+  // the widget, same relationship the globe's rotation-lock/label-
+  // visibility toggles have to their own widgets: a live view choice, not
+  // a saved setting. Lives here (not inside ChoroplethMap itself) so both
+  // the map and the edit popover's own "drill into a country" control
+  // (a sibling, rendered via portal) can share and trigger the same state.
+  const [drill, setDrill] = useState<{ country?: string; adm1?: string }>({});
 
   useEffect(() => {
     if (!showDownloadMenu) return;
@@ -1125,6 +1132,12 @@ export default function DashboardWidgetCard({
             geoCountyColumn={widget.geoCountyColumn}
             valueColumn={widget.secondaryField}
             colorScheme={widget.choroplethColorScheme}
+            drill={drill}
+            setDrill={setDrill}
+            ratioDatasetId={widget.ratioDatasetId}
+            ratioLocationColumn={widget.ratioLocationColumn}
+            ratioValueColumn={widget.ratioValueColumn}
+            ratioMultiplier={widget.ratioMultiplier}
           />
         )}
 
@@ -1280,6 +1293,8 @@ export default function DashboardWidgetCard({
             setShowEditor(false);
           }}
           onClose={() => setShowEditor(false)}
+          drill={drill}
+          setDrill={setDrill}
         />,
         document.body
       )}
@@ -1298,6 +1313,8 @@ function WidgetEditPopover({
   position,
   datasets,
   onDatasetCreated,
+  drill,
+  setDrill,
 }: {
   widget: DashboardWidget;
   onSave: (patch: Partial<DashboardWidget>) => void;
@@ -1311,8 +1328,45 @@ function WidgetEditPopover({
    *  one's local state, which the parent has no visibility into
    *  otherwise. */
   onDatasetCreated?: (dataset: Dataset) => void;
+  /** Choropleth drill-down state, lifted to and owned by the parent
+   *  (DashboardWidgetCard) so this popover — a sibling of the actual map,
+   *  not a parent of it — can trigger the same live navigation the map
+   *  itself responds to. */
+  drill: { country?: string; adm1?: string };
+  setDrill: React.Dispatch<React.SetStateAction<{ country?: string; adm1?: string }>>;
 }) {
   const [type, setType] = useState<WidgetType>(widget.type);
+  const [showEditorCountryMenu, setShowEditorCountryMenu] = useState(false);
+  const [showEditorProvinceMenu, setShowEditorProvinceMenu] = useState(false);
+  const [editorProvinceNames, setEditorProvinceNames] = useState<string[]>([]);
+  useEffect(() => {
+    if (!drill.country) {
+      setEditorProvinceNames([]);
+      return;
+    }
+    const info = findCountryAdminData(drill.country);
+    if (!info) return;
+    let cancelled = false;
+    fetch(info.adm1Url)
+      .then((r) => r.json())
+      .then((topo) => {
+        if (cancelled) return;
+        const names: string[] = [];
+        for (const obj of Object.values(topo.objects as Record<string, { geometries: { properties?: { shapeName?: string; name?: string } }[] }>)) {
+          for (const g of obj.geometries) {
+            const name = g.properties?.shapeName ?? g.properties?.name;
+            if (name) names.push(name);
+          }
+        }
+        setEditorProvinceNames(names.sort());
+      })
+      .catch(() => {
+        if (!cancelled) setEditorProvinceNames([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drill.country]);
   const [datasetId, setDatasetId] = useState<string | undefined>(widget.datasetId);
   const [quickUploading, setQuickUploading] = useState(false);
   const [quickUploadError, setQuickUploadError] = useState<string | null>(null);
@@ -1365,6 +1419,11 @@ function WidgetEditPopover({
   const [geoProvinceColumn, setGeoProvinceColumn] = useState<string | undefined>(widget.geoProvinceColumn);
   const [geoCountyColumn, setGeoCountyColumn] = useState<string | undefined>(widget.geoCountyColumn);
   const [choroplethColorScheme, setChoroplethColorScheme] = useState<string | undefined>(widget.choroplethColorScheme);
+  const [ratioDatasetId, setRatioDatasetId] = useState<string | undefined>(widget.ratioDatasetId);
+  const [ratioLocationColumn, setRatioLocationColumn] = useState<string | undefined>(widget.ratioLocationColumn);
+  const [ratioValueColumn, setRatioValueColumn] = useState<string | undefined>(widget.ratioValueColumn);
+  const [ratioMultiplier, setRatioMultiplier] = useState<number | undefined>(widget.ratioMultiplier);
+  const ratioDataset = (datasets ?? []).find((d) => d.id === ratioDatasetId);
   const [label, setLabel] = useState(widget.label ?? "");
   // Defaults to true specifically for globe, not false like every other
   // widget type here — globe's own rendering treats an unset
@@ -1483,6 +1542,10 @@ function WidgetEditPopover({
       geoProvinceColumn: type === "choropleth" && datasetId && !manualActive ? geoProvinceColumn : undefined,
       geoCountyColumn: type === "choropleth" && datasetId && !manualActive && geoProvinceColumn ? geoCountyColumn : undefined,
       choroplethColorScheme: type === "choropleth" ? choroplethColorScheme : undefined,
+      ratioDatasetId: type === "choropleth" && ratioDatasetId && ratioLocationColumn && ratioValueColumn ? ratioDatasetId : undefined,
+      ratioLocationColumn: type === "choropleth" && ratioDatasetId && ratioLocationColumn && ratioValueColumn ? ratioLocationColumn : undefined,
+      ratioValueColumn: type === "choropleth" && ratioDatasetId && ratioLocationColumn && ratioValueColumn ? ratioValueColumn : undefined,
+      ratioMultiplier: type === "choropleth" && ratioDatasetId && ratioLocationColumn && ratioValueColumn ? ratioMultiplier : undefined,
       label: label || undefined,
       showDataLabels,
       labelFontFamily: labelFontFamily || undefined,
@@ -1699,6 +1762,168 @@ function WidgetEditPopover({
                 </option>
               ))}
           </select>
+        </div>
+      )}
+
+      {type === "choropleth" && Object.keys(COUNTRY_ADMIN_DATA).length > 0 && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>DRILL-DOWN VIEW (LIVE, NOT SAVED)</div>
+          <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 5 }}>
+            Changes what the map on the dashboard shows right now — not part of this widget's saved settings.
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setShowEditorCountryMenu((s) => !s)} style={secondaryBtnStyle}>
+                {drill.country ?? "World"} ▾
+              </button>
+              {showEditorCountryMenu && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    left: 0,
+                    marginTop: 2,
+                    zIndex: 30,
+                    background: "var(--panel)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 5,
+                    boxShadow: "0 4px 16px rgba(19,23,34,0.18)",
+                    minWidth: 140,
+                  }}
+                >
+                  <button
+                    onClick={() => {
+                      setDrill({});
+                      setShowEditorCountryMenu(false);
+                    }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 11, background: "transparent", border: "none", cursor: "pointer", color: "var(--text-primary)" }}
+                  >
+                    World
+                  </button>
+                  {Object.keys(COUNTRY_ADMIN_DATA).map((name) => (
+                    <button
+                      key={name}
+                      onClick={() => {
+                        setDrill({ country: name });
+                        setShowEditorCountryMenu(false);
+                      }}
+                      style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 11, background: "transparent", border: "none", cursor: "pointer", color: "var(--text-primary)" }}
+                    >
+                      {name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {drill.country && editorProvinceNames.length > 0 && (
+              <>
+                <span style={{ color: "var(--text-faint)" }}>›</span>
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setShowEditorProvinceMenu((s) => !s)} style={secondaryBtnStyle}>
+                    {drill.adm1 ?? "Choose province"} ▾
+                  </button>
+                  {showEditorProvinceMenu && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        left: 0,
+                        marginTop: 2,
+                        zIndex: 30,
+                        background: "var(--panel)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 5,
+                        boxShadow: "0 4px 16px rgba(19,23,34,0.18)",
+                        maxHeight: 180,
+                        overflowY: "auto",
+                        minWidth: 140,
+                      }}
+                    >
+                      {editorProvinceNames.map((name) => (
+                        <button
+                          key={name}
+                          onClick={() => {
+                            setDrill((d) => ({ ...d, adm1: name }));
+                            setShowEditorProvinceMenu(false);
+                          }}
+                          style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 11, background: "transparent", border: "none", cursor: "pointer", color: "var(--text-primary)" }}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {type === "choropleth" && datasetId && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>RATIO/RATE (OPTIONAL — e.g. crime per capita)</div>
+          <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 5 }}>
+            Divides this widget's value by a matching location's value from a second dataset — e.g. crime count ÷ population. Only applies at
+            the world/country view, not when drilled into a province.
+          </div>
+          <select
+            value={ratioDatasetId ?? ""}
+            onChange={(e) => {
+              setRatioDatasetId(e.target.value || undefined);
+              setRatioLocationColumn(undefined);
+              setRatioValueColumn(undefined);
+            }}
+            style={selectStyle}
+          >
+            <option value="">None</option>
+            {(datasets ?? [])
+              .filter((d) => d.id !== datasetId)
+              .map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+          </select>
+          {ratioDataset && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 3, fontSize: 9.5 }}>LOCATION COLUMN IN {ratioDataset.name}</div>
+                <select value={ratioLocationColumn ?? ""} onChange={(e) => setRatioLocationColumn(e.target.value || undefined)} style={selectStyle}>
+                  <option value="">Choose a column</option>
+                  {ratioDataset.schema
+                    .filter((col) => col.type === "text")
+                    .map((col) => (
+                      <option key={col.name} value={col.name}>
+                        {col.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 3, fontSize: 9.5 }}>VALUE COLUMN (e.g. Population)</div>
+                <select value={ratioValueColumn ?? ""} onChange={(e) => setRatioValueColumn(e.target.value || undefined)} style={selectStyle}>
+                  <option value="">Choose a column</option>
+                  {ratioDataset.schema
+                    .filter((col) => col.type === "number")
+                    .map((col) => (
+                      <option key={col.name} value={col.name}>
+                        {col.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <div className="eyebrow" style={{ marginBottom: 3, fontSize: 9.5 }}>MULTIPLIER (OPTIONAL)</div>
+                <select value={ratioMultiplier ?? 1} onChange={(e) => setRatioMultiplier(Number(e.target.value))} style={selectStyle}>
+                  <option value={1}>Plain ratio (×1)</option>
+                  <option value={1000}>Per 1,000</option>
+                  <option value={100000}>Per 100,000</option>
+                  <option value={1000000}>Per 1,000,000</option>
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2213,6 +2438,12 @@ function ChoroplethMap({
   geoCountyColumn,
   valueColumn,
   colorScheme,
+  drill,
+  setDrill,
+  ratioDatasetId,
+  ratioLocationColumn,
+  ratioValueColumn,
+  ratioMultiplier,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
@@ -2242,13 +2473,25 @@ function ChoroplethMap({
   /** A named key into CHOROPLETH_COLOR_SCHEMES, or "single"/undefined for
    *  the original single-base-color-at-varying-opacity behavior. */
   colorScheme?: string;
+  /** Lifted to the parent (DashboardWidgetCard) rather than owned here —
+   *  the edit popup is a sibling component (rendered via portal, not a
+   *  child of this map), and needs to trigger the same drill state for
+   *  its own "drill into a country" control there. Session-local either
+   *  way, never persisted with the widget. */
+  drill: { country?: string; adm1?: string };
+  setDrill: React.Dispatch<React.SetStateAction<{ country?: string; adm1?: string }>>;
+  /** All four together compute a rate (e.g. crime per capita) instead of
+   *  shading the primary series' raw value — only applied at the
+   *  top-level/country view, not at drilled-in levels. */
+  ratioDatasetId?: string;
+  ratioLocationColumn?: string;
+  ratioValueColumn?: string;
+  ratioMultiplier?: number;
 }) {
   const usingManualData = !!manualData;
   const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number } | null>(null);
-  // Session-local navigation state, not persisted with the widget — same
-  // relationship the globe's rotation-lock/label-visibility toggles have
-  // to their own widgets: a live view choice, not a saved setting.
-  const [drill, setDrill] = useState<{ country?: string; adm1?: string }>({});
+  const [showCountryMenu, setShowCountryMenu] = useState(false);
+  const [showProvinceMenu, setShowProvinceMenu] = useState(false);
   const [zoomState, setZoomState] = useState<{ zoom: number; center: [number, number] }>({ zoom: 1, center: [0, 0] });
   // Reset zoom/pan whenever the drill level changes — a freshly-loaded
   // topology (a different country's extent, or zooming from country-level
@@ -2302,6 +2545,29 @@ function ChoroplethMap({
   // widget's own top-level series otherwise.
   const effectiveSeries = drill.country && drilledSeries !== null ? drilledSeries : series;
 
+  // Ratio/rate mode: only at the top-level (undrilled) view — a drilled-in
+  // province/county rate would need this second dataset to have its own
+  // matching province/county column, which isn't supported yet.
+  const ratioActive = !drill.country && !!ratioDatasetId && !!ratioLocationColumn && !!ratioValueColumn;
+  const [ratioMap, setRatioMap] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    if (!ratioActive) {
+      setRatioMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    api.getDatasetValueMap(ratioDatasetId!, ratioLocationColumn!, ratioValueColumn!).then((rows) => {
+      if (cancelled) return;
+      const m = new Map<string, number>();
+      for (const r of rows) m.set(worldAtlasKeyFor(String(r.value)), r.count);
+      setRatioMap(m);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ratioActive, ratioDatasetId, ratioLocationColumn, ratioValueColumn]);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const countByName = new Map<string, number>();
   const colorByName = new Map<string, string>();
@@ -2334,7 +2600,17 @@ function ChoroplethMap({
       // would compute correct totals (confirmed: the legend showed the
       // right numbers) but never actually shade that country at all.
       const key = worldAtlasKeyFor(rawValue);
-      countByName.set(key, s.count);
+      if (ratioActive) {
+        const denominator = ratioMap.get(key);
+        // No matching location in the ratio dataset, or a zero denominator
+        // (which would divide-by-zero into Infinity/NaN) — omitted rather
+        // than shown as a nonsensical value; still a "no data" region on
+        // the map, not an error.
+        if (!denominator) continue;
+        countByName.set(key, (s.count / denominator) * (ratioMultiplier ?? 1));
+      } else {
+        countByName.set(key, s.count);
+      }
       originalCaseByName.set(key, rawValue);
     }
   }
@@ -2439,63 +2715,101 @@ function ChoroplethMap({
   return (
     <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
       {drill.country && !drill.adm1 && drillData?.adm2Url && (
-        <div
-          style={{
-            position: "absolute",
-            top: 32,
-            left: 6,
-            zIndex: 10,
-            background: "rgba(255,255,255,0.94)",
-            borderRadius: 5,
-            padding: "3px 6px",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-          }}
-        >
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value) setDrill((d) => ({ ...d, adm1: e.target.value }));
+        <div style={{ position: "absolute", top: 32, left: 6, zIndex: 10 }}>
+          <button
+            onClick={() => setShowProvinceMenu((s) => !s)}
+            style={{
+              fontSize: 10.5,
+              border: "none",
+              background: "rgba(255,255,255,0.94)",
+              color: "var(--signal)",
+              cursor: "pointer",
+              borderRadius: 5,
+              padding: "3px 6px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
             }}
-            style={{ fontSize: 10.5, border: "none", background: "transparent", color: "var(--signal)", cursor: "pointer", outline: "none" }}
           >
-            <option value="">🔍 Drill into a province…</option>
-            {Array.from(originalCaseByName.values())
-              .sort()
-              .map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-          </select>
+            🔍 Drill into a province…
+          </button>
+          {showProvinceMenu && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                marginTop: 2,
+                background: "var(--panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                boxShadow: "0 4px 16px rgba(19,23,34,0.18)",
+                maxHeight: 180,
+                overflowY: "auto",
+                minWidth: 140,
+              }}
+            >
+              {Array.from(originalCaseByName.values())
+                .sort()
+                .map((name) => (
+                  <button
+                    key={name}
+                    onClick={() => {
+                      setDrill((d) => ({ ...d, adm1: name }));
+                      setShowProvinceMenu(false);
+                    }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 11, background: "transparent", border: "none", cursor: "pointer", color: "var(--text-primary)" }}
+                  >
+                    {name}
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       )}
       {!drill.country && Object.keys(COUNTRY_ADMIN_DATA).length > 0 && (
-        <div
-          style={{
-            position: "absolute",
-            top: 6,
-            left: 6,
-            zIndex: 10,
-            background: "rgba(255,255,255,0.94)",
-            borderRadius: 5,
-            padding: "3px 6px",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
-          }}
-        >
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value) setDrill({ country: e.target.value });
+        <div style={{ position: "absolute", top: 6, left: 6, zIndex: 10 }}>
+          <button
+            onClick={() => setShowCountryMenu((s) => !s)}
+            style={{
+              fontSize: 10.5,
+              border: "none",
+              background: "rgba(255,255,255,0.94)",
+              color: "var(--signal)",
+              cursor: "pointer",
+              borderRadius: 5,
+              padding: "3px 6px",
+              boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
             }}
-            style={{ fontSize: 10.5, border: "none", background: "transparent", color: "var(--signal)", cursor: "pointer", outline: "none" }}
           >
-            <option value="">🔍 Drill into a country…</option>
-            {Object.keys(COUNTRY_ADMIN_DATA).map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
+            🔍 Drill into a country…
+          </button>
+          {showCountryMenu && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 0,
+                marginTop: 2,
+                background: "var(--panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                boxShadow: "0 4px 16px rgba(19,23,34,0.18)",
+                minWidth: 140,
+              }}
+            >
+              {Object.keys(COUNTRY_ADMIN_DATA).map((name) => (
+                <button
+                  key={name}
+                  onClick={() => {
+                    setDrill({ country: name });
+                    setShowCountryMenu(false);
+                  }}
+                  style={{ display: "block", width: "100%", textAlign: "left", padding: "5px 8px", fontSize: 11, background: "transparent", border: "none", cursor: "pointer", color: "var(--text-primary)" }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {drill.country && (
