@@ -68,6 +68,10 @@ const widgetSchema = z.object({
    *  drill level, meaningful only alongside geoProvinceColumn. */
   geoCountyColumn: z.string().optional(),
   choroplethColorScheme: z.string().optional(),
+  ratioDatasetId: z.string().optional(),
+  ratioLocationColumn: z.string().optional(),
+  ratioValueColumn: z.string().optional(),
+  ratioMultiplier: z.number().optional(),
   size: z.enum(["small", "medium", "large"]).default("medium"),
   showDataLabels: z.boolean().optional(),
   color: z.string().optional(),
