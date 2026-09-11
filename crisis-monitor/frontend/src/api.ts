@@ -462,6 +462,22 @@ export interface DashboardWidget {
    *  server-side — an unrecognized value just falls back to the single-
    *  color behavior on the frontend rather than erroring. */
   choroplethColorScheme?: string;
+  /** Choropleth only — computes a rate/ratio (e.g. crime per capita) by
+   *  dividing the primary series' value by a matching location's value
+   *  from this second dataset, rather than shading the raw primary value
+   *  directly. All four are required together for the ratio to actually
+   *  apply — any one missing falls back to the plain, undivided value.
+   *  Only applied at the top-level/country view for now, not at drilled-
+   *  in province/county levels, since that would need this second
+   *  dataset to have its own province/county column mapping too. */
+  ratioDatasetId?: string;
+  /** The column in the ratio dataset holding the matching location name —
+   *  not assumed to share the primary dataset's own column name. */
+  ratioLocationColumn?: string;
+  ratioValueColumn?: string;
+  /** E.g. 100000 for "per 100,000" — defaults to 1 (a plain ratio) when
+   *  unset. */
+  ratioMultiplier?: number;
   /** When set, this widget charts an uploaded dataset instead of incidents —
    *  dataField/secondaryField then hold that dataset's own raw column names
    *  directly, not the incidents by_X convention. Widget types that need
