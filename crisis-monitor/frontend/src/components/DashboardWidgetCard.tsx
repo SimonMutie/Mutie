@@ -2318,6 +2318,13 @@ const PROVINCE_TOPOLOGY_URL = "/geo/admin1-provinces.json";
  *  counties at once. */
 const COUNTRY_ADMIN_DATA: Record<string, { adm1Url: string; adm2Url?: string; aliases?: string[] }> = {
   "South Sudan": { adm1Url: "/geo/SSD-adm1.json", adm2Url: "/geo/SSD-adm2.json", aliases: ["S. Sudan"] },
+  // us-atlas's states-10m.json (U.S. Census Bureau data) — reliable,
+  // well-established package, unlike South Sudan's this needed no LFS
+  // workarounds or manual simplification pipeline. Uses "name" as its
+  // property key already (matching world-atlas's own convention), so no
+  // shapeName handling needed. No adm2Url yet — county-level (us-atlas
+  // also has counties-10m.json) isn't wired up, only state level.
+  "United States": { adm1Url: "/geo/us-states.json", aliases: ["United States of America", "USA", "US"] },
 };
 
 /** Case/whitespace-normalized lookup across each entry's canonical name and
@@ -2711,6 +2718,16 @@ function ChoroplethMap({
   // selected state — adm1 files only ever contain that one country's
   // states already, nothing to filter out.
   const filterToParentState = drill.adm1 && drillData?.adm2Url ? drill.adm1 : undefined;
+  // geoAlbersUsa specifically for the US state-level view — repositions
+  // Alaska/Hawaii as compact insets rather than their true (far-flung)
+  // geographic positions, the standard, familiar way a US map is drawn.
+  // Not used for the world view or any other country's drilled-in view,
+  // both of which use plain lat/lon topology this projection isn't meant
+  // for. Verified against the actual d3-geo dependency that this
+  // projection name is really exported, not assumed.
+  const isUsStateView = drill.country && findCountryAdminData(drill.country)?.canonicalName === "United States" && !drill.adm1;
+  const mapProjection = isUsStateView ? "geoAlbersUsa" : "geoEqualEarth";
+  const mapProjectionConfig = isUsStateView ? { scale: 1000 } : { scale: 148 };
 
   return (
     <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
@@ -2873,7 +2890,7 @@ function ChoroplethMap({
           ⭳
         </button>
       </div>
-      <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
+      <ComposableMap projection={mapProjection} projectionConfig={mapProjectionConfig} style={{ width: "100%", height: "100%" }}>
         <ZoomableGroup
           center={zoomState.center}
           zoom={zoomState.zoom}
