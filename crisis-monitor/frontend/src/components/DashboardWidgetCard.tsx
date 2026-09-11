@@ -41,6 +41,7 @@ import { LABEL_TYPE_META, LABEL_TYPES, labelIconSvg, type LabelType } from "./la
 import * as XLSX from "xlsx";
 import "leaflet/dist/leaflet.css";
 import { api } from "../api";
+import { GEO_REGISTRY, findGeoHierarchy, getGeoLevel } from "../geo/registry";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import type { CrosstabRow, Dataset, DatasetColumn, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
@@ -1344,17 +1345,18 @@ function WidgetEditPopover({
       setEditorProvinceNames([]);
       return;
     }
-    const info = findCountryAdminData(drill.country);
-    if (!info) return;
+    const entry = findGeoHierarchy(drill.country);
+    const level1 = entry && getGeoLevel(entry, 1);
+    if (!level1) return;
     let cancelled = false;
-    fetch(info.adm1Url)
+    fetch(level1.boundaryUrl)
       .then((r) => r.json())
       .then((topo) => {
         if (cancelled) return;
         const names: string[] = [];
-        for (const obj of Object.values(topo.objects as Record<string, { geometries: { properties?: { shapeName?: string; name?: string } }[] }>)) {
+        for (const obj of Object.values(topo.objects as Record<string, { geometries: { properties?: Record<string, string | undefined> }[] }>)) {
           for (const g of obj.geometries) {
-            const name = g.properties?.shapeName ?? g.properties?.name;
+            const name = g.properties?.[level1.namePropertyKey];
             if (name) names.push(name);
           }
         }
@@ -1765,7 +1767,7 @@ function WidgetEditPopover({
         </div>
       )}
 
-      {type === "choropleth" && Object.keys(COUNTRY_ADMIN_DATA).length > 0 && (
+      {type === "choropleth" && Object.keys(GEO_REGISTRY).length > 0 && (
         <div>
           <div className="eyebrow" style={{ marginBottom: 4 }}>DRILL-DOWN VIEW (LIVE, NOT SAVED)</div>
           <div style={{ fontSize: 10, color: "var(--text-faint)", marginBottom: 5 }}>
@@ -1800,7 +1802,7 @@ function WidgetEditPopover({
                   >
                     World
                   </button>
-                  {Object.keys(COUNTRY_ADMIN_DATA).map((name) => (
+                  {Object.keys(GEO_REGISTRY).map((name) => (
                     <button
                       key={name}
                       onClick={() => {
@@ -2301,50 +2303,12 @@ const PROVINCE_TOPOLOGY_URL = "/geo/admin1-provinces.json";
  *  exact same world topology and map library already proven working in
  *  WorldMap.tsx, just driven by dashboard stats instead of live events.
  *  Name matching is case/whitespace-insensitive but otherwise exact; a place
- *  in the data that doesn't match the topology's naming just stays unshaded
- *  rather than guessing, since a wrong match would misrepresent where
- *  incidents actually happened. Known limitation: province names are matched
- *  globally, not scoped to a country, so a name that happens to repeat across
- *  countries (uncommon, but real) could match the wrong one. */
-/** Countries with real province/state (ADM1) and county/district (ADM2)
- *  boundary data available for drill-down — starts with just South Sudan,
- *  this app's core focus, verified end-to-end before expanding further.
- *  Adding another country later is just one more entry here plus its two
- *  boundary files in public/geo/, not a rebuild of the drill-down
- *  mechanism itself. adm2's features carry a "parentState" property
- *  (computed once during data preparation via a one-time spatial join,
- *  not part of the source data itself) used to filter counties down to
- *  just the selected state rather than showing the whole country's
- *  counties at once. */
-const COUNTRY_ADMIN_DATA: Record<string, { adm1Url: string; adm2Url?: string; aliases?: string[] }> = {
-  "South Sudan": { adm1Url: "/geo/SSD-adm1.json", adm2Url: "/geo/SSD-adm2.json", aliases: ["S. Sudan"] },
-  // us-atlas's states-10m.json (U.S. Census Bureau data) — reliable,
-  // well-established package, unlike South Sudan's this needed no LFS
-  // workarounds or manual simplification pipeline. Uses "name" as its
-  // property key already (matching world-atlas's own convention), so no
-  // shapeName handling needed. No adm2Url yet — county-level (us-atlas
-  // also has counties-10m.json) isn't wired up, only state level.
-  "United States": { adm1Url: "/geo/us-states.json", aliases: ["United States of America", "USA", "US"] },
-};
-
-/** Case/whitespace-normalized lookup across each entry's canonical name and
- *  its aliases — needed because the world map (world-atlas, via Natural
- *  Earth) and a person's own incident/dataset data don't necessarily agree
- *  on a country's exact label. Confirmed directly: world-atlas actually
- *  labels this country "S. Sudan" (abbreviated for map-label space), not
- *  "South Sudan" — an exact-match lookup against the full name would
- *  silently never match anything hovered on the actual map, which is
- *  exactly the bug this replaced. */
-function findCountryAdminData(name: string | undefined): { canonicalName: string; adm1Url: string; adm2Url?: string } | undefined {
-  if (!name) return undefined;
-  const key = name.trim().toLowerCase();
-  for (const [canonicalName, data] of Object.entries(COUNTRY_ADMIN_DATA)) {
-    if (canonicalName.trim().toLowerCase() === key) return { canonicalName, ...data };
-    if (data.aliases?.some((a) => a.trim().toLowerCase() === key)) return { canonicalName, ...data };
-  }
-  return undefined;
-}
-
+/** Countries with real province/state boundary data available for
+ *  drill-down, and the name-matching lookup across their canonical names
+ *  and aliases, now live in src/geo/registry.ts (GEO_REGISTRY,
+ *  findGeoHierarchy) — a data-driven registry with a generic per-level
+ *  structure, replacing the earlier hardcoded adm1Url/adm2Url shape that
+ *  only fit exactly two levels. Imported at the top of this file. */
 /** Maps a common/full country name (lowercased) to the exact name
  *  world-atlas (via Natural Earth) actually uses for it — verified
  *  directly against countries-50m.json's real property values, not
@@ -2725,13 +2689,22 @@ function ChoroplethMap({
   // navigated into a specific country/state, that's what's actually on
   // screen regardless of which topology the widget was originally
   // configured to show at the top level.
-  const drillData = drill.country ? findCountryAdminData(drill.country) : undefined;
-  const topologyUrl = drill.adm1 && drillData?.adm2Url ? drillData.adm2Url : drillData ? drillData.adm1Url : field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
-  // Only meaningful at the adm2 level, where every county across the whole
-  // country is present in one file and needs filtering down to just the
-  // selected state — adm1 files only ever contain that one country's
-  // states already, nothing to filter out.
-  const filterToParentState = drill.adm1 && drillData?.adm2Url ? drill.adm1 : undefined;
+  const drillEntry = drill.country ? findGeoHierarchy(drill.country) : undefined;
+  const drillLevel1 = drillEntry ? getGeoLevel(drillEntry, 1) : undefined;
+  const drillLevel2 = drillEntry ? getGeoLevel(drillEntry, 2) : undefined;
+  const topologyUrl = drill.adm1 && drillLevel2 ? drillLevel2.boundaryUrl : drillLevel1 ? drillLevel1.boundaryUrl : field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
+  // Which property key holds each shape's display name depends on which
+  // level is actually active — world-atlas and PROVINCE_TOPOLOGY_URL
+  // (neither of which is a registry entry) both use "name"; a drilled-in
+  // registry level uses whatever that level's own namePropertyKey is
+  // (geoBoundaries-sourced files use "shapeName", not "name").
+  const activeNamePropertyKey = drill.adm1 && drillLevel2 ? drillLevel2.namePropertyKey : drillLevel1 ? drillLevel1.namePropertyKey : "name";
+  // Only meaningful when the deeper level's boundary file actually needs
+  // filtering (every entity for the whole country present in one file,
+  // signaled by that level having a parentNamePropertyKey at all) — a
+  // country whose level-2 file is already scoped to one parent on its
+  // own has nothing to filter.
+  const filterToParentState = drill.adm1 && drillLevel2?.parentNamePropertyKey ? drill.adm1 : undefined;
   // geoAlbersUsa specifically for the US state-level view — repositions
   // Alaska/Hawaii as compact insets rather than their true (far-flung)
   // geographic positions, the standard, familiar way a US map is drawn.
@@ -2739,7 +2712,7 @@ function ChoroplethMap({
   // both of which use plain lat/lon topology this projection isn't meant
   // for. Verified against the actual d3-geo dependency that this
   // projection name is really exported, not assumed.
-  const isUsStateView = drill.country && findCountryAdminData(drill.country)?.canonicalName === "United States" && !drill.adm1;
+  const isUsStateView = drill.country && drillEntry?.canonicalName === "United States" && !drill.adm1;
   const mapProjection = isUsStateView ? "geoAlbersUsa" : "geoEqualEarth";
   const mapProjectionConfig = isUsStateView ? { scale: 1000 } : { scale: 148 };
   // geoAlbersUsa is a composite projection covering only US territory —
@@ -2761,7 +2734,7 @@ function ChoroplethMap({
 
   return (
     <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
-      {drill.country && !drill.adm1 && drillData?.adm2Url && (
+      {drill.country && !drill.adm1 && drillLevel2 && (
         <div style={{ position: "absolute", top: 32, left: 6, zIndex: 10 }}>
           <button
             onClick={() => setShowProvinceMenu((s) => !s)}
@@ -2812,7 +2785,7 @@ function ChoroplethMap({
           )}
         </div>
       )}
-      {!drill.country && Object.keys(COUNTRY_ADMIN_DATA).length > 0 && (
+      {!drill.country && Object.keys(GEO_REGISTRY).length > 0 && (
         <div style={{ position: "absolute", top: 6, left: 6, zIndex: 10 }}>
           <button
             onClick={() => setShowCountryMenu((s) => !s)}
@@ -2843,7 +2816,7 @@ function ChoroplethMap({
                 minWidth: 140,
               }}
             >
-              {Object.keys(COUNTRY_ADMIN_DATA).map((name) => (
+              {Object.keys(GEO_REGISTRY).map((name) => (
                 <button
                   key={name}
                   onClick={() => {
@@ -2929,17 +2902,17 @@ function ChoroplethMap({
           onMoveEnd={(pos) => setZoomState({ zoom: pos.zoom, center: pos.coordinates, forKey: drillViewKey })}
         >
           <Geographies geography={topologyUrl}>
-          {({ geographies }: { geographies: { rsmKey: string; properties?: { name?: string; shapeName?: string; parentState?: string } }[] }) => (
+          {({ geographies }: { geographies: { rsmKey: string; properties?: Record<string, string | undefined> }[] }) => (
             <>
               {geographies
-                .filter((geo) => !filterToParentState || geo.properties?.parentState === filterToParentState)
+                .filter((geo) => !filterToParentState || !drillLevel2?.parentNamePropertyKey || geo.properties?.[drillLevel2.parentNamePropertyKey] === filterToParentState)
                 .map((geo) => {
                 // world-atlas/PROVINCE_TOPOLOGY_URL use "name"; the
                 // geoBoundaries-sourced country drill-down files (see
                 // COUNTRY_ADMIN_DATA) use "shapeName" instead — this
                 // component renders either depending on drill state, so
                 // both conventions need handling here.
-                const name = geo.properties?.name ?? geo.properties?.shapeName;
+                const name = geo.properties?.[activeNamePropertyKey] ?? geo.properties?.name ?? geo.properties?.shapeName;
                 const key = name?.trim().toLowerCase();
                 const count = key ? countByName.get(key) : undefined;
                 const explicitColor = key ? colorByName.get(key) : undefined;
@@ -2984,7 +2957,7 @@ function ChoroplethMap({
               })}
               {showLabels &&
                 geographies.map((geo) => {
-                  const name = geo.properties?.name ?? geo.properties?.shapeName;
+                  const name = geo.properties?.[activeNamePropertyKey] ?? geo.properties?.name ?? geo.properties?.shapeName;
                   const key = name?.trim().toLowerCase();
                   const count = key ? countByName.get(key) : undefined;
                   if (!name || !count) return null; // only label regions with actual data, to avoid cluttering every country name on the map
