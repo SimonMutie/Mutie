@@ -1124,6 +1124,7 @@ export default function DashboardWidgetCard({
             geoProvinceColumn={widget.geoProvinceColumn}
             geoCountyColumn={widget.geoCountyColumn}
             valueColumn={widget.secondaryField}
+            colorScheme={widget.choroplethColorScheme}
           />
         )}
 
@@ -1363,6 +1364,7 @@ function WidgetEditPopover({
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [geoProvinceColumn, setGeoProvinceColumn] = useState<string | undefined>(widget.geoProvinceColumn);
   const [geoCountyColumn, setGeoCountyColumn] = useState<string | undefined>(widget.geoCountyColumn);
+  const [choroplethColorScheme, setChoroplethColorScheme] = useState<string | undefined>(widget.choroplethColorScheme);
   const [label, setLabel] = useState(widget.label ?? "");
   // Defaults to true specifically for globe, not false like every other
   // widget type here — globe's own rendering treats an unset
@@ -1480,6 +1482,7 @@ function WidgetEditPopover({
       secondaryField: (supportsBreakdown || ((type === "choropleth" || type === "globe") && datasetId)) && !manualActive ? secondaryField : undefined,
       geoProvinceColumn: type === "choropleth" && datasetId && !manualActive ? geoProvinceColumn : undefined,
       geoCountyColumn: type === "choropleth" && datasetId && !manualActive && geoProvinceColumn ? geoCountyColumn : undefined,
+      choroplethColorScheme: type === "choropleth" ? choroplethColorScheme : undefined,
       label: label || undefined,
       showDataLabels,
       labelFontFamily: labelFontFamily || undefined,
@@ -1769,6 +1772,59 @@ function WidgetEditPopover({
           )}
         </div>
       </div>
+
+      {type === "choropleth" && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR SCHEME</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <button
+              onClick={() => setChoroplethColorScheme(undefined)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "3px 6px",
+                borderRadius: 4,
+                border: !choroplethColorScheme ? "1.5px solid var(--signal)" : "1px solid var(--border)",
+                background: "var(--panel-raised)",
+                cursor: "pointer",
+                textAlign: "left",
+              }}
+            >
+              <div style={{ display: "flex", gap: 2 }}>
+                {CHOROPLETH_BIN_OPACITIES.map((op) => (
+                  <div key={op} style={{ width: 14, height: 14, borderRadius: 2, background: hexToRgba(color || "#0d9488", op) }} />
+                ))}
+              </div>
+              <span style={{ fontSize: 11 }}>Single color (uses COLOR above)</span>
+            </button>
+            {Object.entries(CHOROPLETH_COLOR_SCHEMES).map(([key, colors]) => (
+              <button
+                key={key}
+                onClick={() => setChoroplethColorScheme(key)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "3px 6px",
+                  borderRadius: 4,
+                  border: choroplethColorScheme === key ? "1.5px solid var(--signal)" : "1px solid var(--border)",
+                  background: "var(--panel-raised)",
+                  cursor: "pointer",
+                  textAlign: "left",
+                }}
+              >
+                <div style={{ display: "flex", gap: 2 }}>
+                  {colors.map((c) => (
+                    <div key={c} style={{ width: 14, height: 14, borderRadius: 2, background: c }} />
+                  ))}
+                </div>
+                <span style={{ fontSize: 11, textTransform: "capitalize" }}>{key.replace(/_/g, " ")}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {(type === "bar" || type === "pie" || type === "funnel") && (
         <div>
@@ -2156,6 +2212,7 @@ function ChoroplethMap({
   geoProvinceColumn,
   geoCountyColumn,
   valueColumn,
+  colorScheme,
 }: {
   series: { value: string; count: number }[];
   baseColor: string;
@@ -2182,9 +2239,12 @@ function ChoroplethMap({
   geoProvinceColumn?: string;
   geoCountyColumn?: string;
   valueColumn?: string;
+  /** A named key into CHOROPLETH_COLOR_SCHEMES, or "single"/undefined for
+   *  the original single-base-color-at-varying-opacity behavior. */
+  colorScheme?: string;
 }) {
   const usingManualData = !!manualData;
-  const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number; drillable: boolean } | null>(null);
+  const [tooltip, setTooltip] = useState<{ name: string; value: number; x: number; y: number } | null>(null);
   // Session-local navigation state, not persisted with the widget — same
   // relationship the globe's rotation-lock/label-visibility toggles have
   // to their own widgets: a live view choice, not a saved setting.
@@ -2280,6 +2340,90 @@ function ChoroplethMap({
   }
   const populatedValues = Array.from(countByName.values()).filter((v) => v > 0);
   const quantileBreaks = computeQuantileBreaks(populatedValues, CHOROPLETH_BIN_OPACITIES.length);
+
+  /** Exports the map as a genuinely editable vector file — every country/
+   *  province shape stays a separate, individually-selectable/recolorable
+   *  <path>, unlike the app's existing PNG/GIF export (html2canvas, which
+   *  rasterizes everything into flat pixels). Builds the legend as plain
+   *  SVG rect/text primitives rather than embedding the existing HTML
+   *  legend via <foreignObject> — foreignObject support is inconsistent
+   *  across vector editors (Illustrator in particular), and the whole
+   *  point of this export is that it opens correctly in one. */
+  function downloadAsSvg() {
+    const liveSvg = containerRef.current?.querySelector("svg");
+    if (!liveSvg) return;
+    const rect = containerRef.current!.getBoundingClientRect();
+    const width = Math.round(rect.width);
+    const height = Math.round(rect.height);
+
+    const clone = liveSvg.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(width));
+    clone.setAttribute("height", String(height));
+
+    const svgNS = "http://www.w3.org/2000/svg";
+    const bg = document.createElementNS(svgNS, "rect");
+    bg.setAttribute("width", "100%");
+    bg.setAttribute("height", "100%");
+    bg.setAttribute("fill", "white");
+    clone.insertBefore(bg, clone.firstChild);
+
+    if (populatedValues.length > 0) {
+      const boundaries = [0, ...quantileBreaks, Math.max(...populatedValues)];
+      const rowHeight = 16;
+      const legendHeight = 10 + boundaries.length * rowHeight;
+      const legendWidth = 90;
+      const legendX = 8;
+      const legendY = height - legendHeight - 8;
+
+      const g = document.createElementNS(svgNS, "g");
+      const panel = document.createElementNS(svgNS, "rect");
+      panel.setAttribute("x", String(legendX));
+      panel.setAttribute("y", String(legendY));
+      panel.setAttribute("width", String(legendWidth));
+      panel.setAttribute("height", String(legendHeight));
+      panel.setAttribute("fill", "white");
+      panel.setAttribute("stroke", "#ccc");
+      panel.setAttribute("stroke-width", "1");
+      panel.setAttribute("rx", "4");
+      g.appendChild(panel);
+
+      boundaries.slice(0, -1).forEach((lo, i) => {
+        const hi = boundaries[i + 1];
+        const label = i === 0 ? `${Math.ceil(lo)}\u2013${Math.floor(hi)}` : `${Math.ceil(lo) + 1}\u2013${Math.floor(hi)}`;
+        const rowY = legendY + 8 + i * rowHeight;
+
+        const swatch = document.createElementNS(svgNS, "rect");
+        swatch.setAttribute("x", String(legendX + 8));
+        swatch.setAttribute("y", String(rowY));
+        swatch.setAttribute("width", "13");
+        swatch.setAttribute("height", "13");
+        swatch.setAttribute("fill", choroplethBinColor(i, baseColor, colorScheme));
+        swatch.setAttribute("stroke", "rgba(0,0,0,0.12)");
+        g.appendChild(swatch);
+
+        const text = document.createElementNS(svgNS, "text");
+        text.setAttribute("x", String(legendX + 26));
+        text.setAttribute("y", String(rowY + 11));
+        text.setAttribute("font-size", "10");
+        text.setAttribute("font-family", "sans-serif");
+        text.setAttribute("fill", "#444");
+        text.textContent = label;
+        g.appendChild(text);
+      });
+      clone.appendChild(g);
+    }
+
+    const serialized = new XMLSerializer().serializeToString(clone);
+    const blob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${serialized}`], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `choropleth_${new Date().toISOString().slice(0, 10)}.svg`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // Drill-down takes priority over the widget's own field setting — once
   // navigated into a specific country/state, that's what's actually on
   // screen regardless of which topology the widget was originally
@@ -2294,6 +2438,66 @@ function ChoroplethMap({
 
   return (
     <div ref={containerRef} style={{ height: "100%", borderRadius: 6, overflow: "hidden", background: "var(--panel-raised)", position: "relative" }}>
+      {drill.country && !drill.adm1 && drillData?.adm2Url && (
+        <div
+          style={{
+            position: "absolute",
+            top: 32,
+            left: 6,
+            zIndex: 10,
+            background: "rgba(255,255,255,0.94)",
+            borderRadius: 5,
+            padding: "3px 6px",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+          }}
+        >
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) setDrill((d) => ({ ...d, adm1: e.target.value }));
+            }}
+            style={{ fontSize: 10.5, border: "none", background: "transparent", color: "var(--signal)", cursor: "pointer", outline: "none" }}
+          >
+            <option value="">🔍 Drill into a province…</option>
+            {Array.from(originalCaseByName.values())
+              .sort()
+              .map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
+      {!drill.country && Object.keys(COUNTRY_ADMIN_DATA).length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            top: 6,
+            left: 6,
+            zIndex: 10,
+            background: "rgba(255,255,255,0.94)",
+            borderRadius: 5,
+            padding: "3px 6px",
+            boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+          }}
+        >
+          <select
+            value=""
+            onChange={(e) => {
+              if (e.target.value) setDrill({ country: e.target.value });
+            }}
+            style={{ fontSize: 10.5, border: "none", background: "transparent", color: "var(--signal)", cursor: "pointer", outline: "none" }}
+          >
+            <option value="">🔍 Drill into a country…</option>
+            {Object.keys(COUNTRY_ADMIN_DATA).map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {drill.country && (
         <div
           style={{
@@ -2351,6 +2555,9 @@ function ChoroplethMap({
         <button onClick={() => setZoomState({ zoom: 1, center: [0, 0] })} style={zoomBtnStyle} title="Reset view">
           ⟲
         </button>
+        <button onClick={downloadAsSvg} style={zoomBtnStyle} title="Download as editable SVG">
+          ⭳
+        </button>
       </div>
       <ComposableMap projectionConfig={{ scale: 148 }} style={{ width: "100%", height: "100%" }}>
         <ZoomableGroup
@@ -2375,24 +2582,17 @@ function ChoroplethMap({
                 const key = name?.trim().toLowerCase();
                 const count = key ? countByName.get(key) : undefined;
                 const explicitColor = key ? colorByName.get(key) : undefined;
-                const intensity = count ? CHOROPLETH_BIN_OPACITIES[binIndexForValue(count, quantileBreaks)] : 0;
+                const intensity = count ? binIndexForValue(count, quantileBreaks) : -1;
                 const originalCaseValue = key ? originalCaseByName.get(key) : undefined;
                 const isSelected = selectedValue !== undefined && key === String(selectedValue).trim().toLowerCase();
                 const isDimmed = selectedValue !== undefined && !isSelected;
                 const isHoverable = !usingManualData && originalCaseValue && onHoverStart;
                 const isClickable = !usingManualData && originalCaseValue && onClick;
-                // Whichever level is currently on screen determines what
-                // "drillable" even means here: at the world view, it's
-                // "does this country have boundary data at all"; one level
-                // in, it's "does this specific country also have adm2
-                // data"; two levels in (viewing counties), there's nowhere
-                // further to go.
-                const isDrillable = !drill.country ? !!findCountryAdminData(name) : !drill.adm1 ? !!drillData?.adm2Url : false;
                 return (
                   <Geography
                     key={geo.rsmKey}
                     geography={geo}
-                    fill={explicitColor ?? (count ? hexToRgba(baseColor, intensity) : "var(--panel)")}
+                    fill={explicitColor ?? (count ? choroplethBinColor(intensity, baseColor, colorScheme) : "var(--panel)")}
                     fillOpacity={isDimmed ? 0.3 : 1}
                     stroke={isSelected ? "var(--text-primary)" : "var(--border)"}
                     strokeWidth={(isSelected ? 1.2 : field === "by_province" ? 0.2 : 0.4) / zoomState.zoom}
@@ -2400,13 +2600,13 @@ function ChoroplethMap({
                       if (isHoverable) onHoverStart(originalCaseValue);
                       if (name && count !== undefined) {
                         const rect = containerRef.current?.getBoundingClientRect();
-                        setTooltip({ name, value: count, x: rect ? evt.clientX - rect.left : 0, y: rect ? evt.clientY - rect.top : 0, drillable: isDrillable });
+                        setTooltip({ name, value: count, x: rect ? evt.clientX - rect.left : 0, y: rect ? evt.clientY - rect.top : 0 });
                       }
                     }}
                     onMouseMove={(evt: React.MouseEvent) => {
                       if (!name || count === undefined) return;
                       const rect = containerRef.current?.getBoundingClientRect();
-                      if (rect) setTooltip({ name, value: count, x: evt.clientX - rect.left, y: evt.clientY - rect.top, drillable: isDrillable });
+                      if (rect) setTooltip({ name, value: count, x: evt.clientX - rect.left, y: evt.clientY - rect.top });
                     }}
                     onMouseLeave={() => {
                       onHoverEnd?.();
@@ -2451,7 +2651,7 @@ function ChoroplethMap({
         </Geographies>
         </ZoomableGroup>
       </ComposableMap>
-      {populatedValues.length > 0 && <ChoroplethLegend breaks={quantileBreaks} maxValue={Math.max(...populatedValues)} baseColor={baseColor} />}
+      {populatedValues.length > 0 && <ChoroplethLegend breaks={quantileBreaks} maxValue={Math.max(...populatedValues)} baseColor={baseColor} colorScheme={colorScheme} />}
       {tooltip && (
         <div
           style={{
@@ -2463,36 +2663,12 @@ function ChoroplethMap({
             fontSize: 11,
             padding: "4px 8px",
             borderRadius: 4,
-            pointerEvents: tooltip.drillable ? "auto" : "none",
+            pointerEvents: "none",
             zIndex: 10,
             whiteSpace: "nowrap",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
           }}
         >
-          <span>
-            <strong>{tooltip.name}</strong>: {tooltip.value.toLocaleString()}
-          </span>
-          {tooltip.drillable && (
-            <button
-              onClick={() => {
-                setDrill((d) => (d.country ? { ...d, adm1: tooltip.name } : { country: findCountryAdminData(tooltip.name)?.canonicalName ?? tooltip.name }));
-                setTooltip(null);
-              }}
-              style={{
-                background: "var(--signal-dim)",
-                border: "1px solid var(--signal)",
-                color: "#fff",
-                fontSize: 10,
-                padding: "2px 6px",
-                borderRadius: 3,
-                cursor: "pointer",
-              }}
-            >
-              🔍 {drill.country ? "View counties" : "View provinces"}
-            </button>
-          )}
+          <strong>{tooltip.name}</strong>: {tooltip.value.toLocaleString()}
         </div>
       )}
     </div>
@@ -2515,6 +2691,34 @@ function hexToRgba(hex: string, alpha: number): string {
  *  "no data" (which gets no fill at all), and the steps are close enough
  *  to evenly spaced that no single class visually dominates. */
 const CHOROPLETH_BIN_OPACITIES = [0.22, 0.4, 0.58, 0.76, 1.0];
+
+/** Named 5-step sequential color ramps, in the ColorBrewer tradition — the
+ *  established standard for choropleth color schemes, chosen so each step
+ *  is genuinely distinguishable from its neighbors (not just progressively
+ *  more opaque, which can read as muddy at the darker end with a single
+ *  base color). "single" isn't a real named scheme — it's the default,
+ *  meaning "use the widget's own color at increasing opacity" (the
+ *  original, still-supported behavior), kept as a literal option here so
+ *  a scheme picker can list it alongside the named ones. */
+const CHOROPLETH_COLOR_SCHEMES: Record<string, string[]> = {
+  blues: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
+  reds: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"],
+  greens: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
+  oranges: ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"],
+  purples: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"],
+  grey_to_red: ["#d9d9d9", "#f4a582", "#d6604d", "#b2182b", "#67001f"],
+};
+
+/** Resolves the fill color for a given bin index, given the widget's
+ *  chosen scheme (or none, meaning the original single-base-color/opacity
+ *  behavior). Centralized here so both the map's actual fill and the
+ *  legend's swatches read from exactly the same source and can never
+ *  disagree about what a given class's color actually is. */
+function choroplethBinColor(binIndex: number, baseColor: string, scheme: string | undefined): string {
+  const namedScheme = scheme && scheme !== "single" ? CHOROPLETH_COLOR_SCHEMES[scheme] : undefined;
+  if (namedScheme) return namedScheme[binIndex];
+  return hexToRgba(baseColor, CHOROPLETH_BIN_OPACITIES[binIndex]);
+}
 
 /** Quantile (equal-count) breakpoints for numBins classes — the standard,
  *  data-distribution-aware alternative to a plain linear min/max split.
@@ -2562,7 +2766,7 @@ function binIndexForValue(value: number, breaks: number[]): number {
  *  rows matches breaks.length + 1 exactly, not a hardcoded 5, since
  *  computeQuantileBreaks can return fewer than 4 breaks when values
  *  dedupe. */
-function ChoroplethLegend({ breaks, maxValue, baseColor }: { breaks: number[]; maxValue: number; baseColor: string }) {
+function ChoroplethLegend({ breaks, maxValue, baseColor, colorScheme }: { breaks: number[]; maxValue: number; baseColor: string; colorScheme?: string }) {
   const boundaries = [0, ...breaks, maxValue];
   return (
     <div
@@ -2585,7 +2789,7 @@ function ChoroplethLegend({ breaks, maxValue, baseColor }: { breaks: number[]; m
         const label = i === 0 ? `${Math.ceil(lo)}–${Math.floor(hi)}` : `${Math.ceil(lo) + 1}–${Math.floor(hi)}`;
         return (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 13, height: 13, borderRadius: 2, background: hexToRgba(baseColor, CHOROPLETH_BIN_OPACITIES[i]), border: "1px solid rgba(0,0,0,0.12)" }} />
+            <div style={{ width: 13, height: 13, borderRadius: 2, background: choroplethBinColor(i, baseColor, colorScheme), border: "1px solid rgba(0,0,0,0.12)" }} />
             <span style={{ color: "#444" }}>{label}</span>
           </div>
         );
