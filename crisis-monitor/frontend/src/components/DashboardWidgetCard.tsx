@@ -2530,6 +2530,28 @@ function ChoroplethMap({
   // widget's own top-level series otherwise.
   const effectiveSeries = drill.country && drilledSeries !== null ? drilledSeries : series;
 
+  // Surfaces *why* a drilled-in view is blank, instead of just rendering
+  // an unshaded map with no explanation — the exact confusion that's
+  // come up twice now (once for the US, once for South Sudan): the
+  // "Province/State column" or "County/District column" dropdown left
+  // on "None" while already drilled into a country that needs it set.
+  // Each cause gets its own message since they call for different fixes.
+  let noDataReason: string | null = null;
+  if (drill.country) {
+    if (!datasetId) {
+      noDataReason = "This widget uses incidents data, which doesn't support drill-down yet — only dataset-sourced choropleths do.";
+    } else if (!countryColumn) {
+      noDataReason = "No country column is set for this dataset — open Edit this widget and set the country column.";
+    } else {
+      const groupColumn = drill.adm1 ? geoCountyColumn : geoProvinceColumn;
+      if (!groupColumn) {
+        noDataReason = `No ${drill.adm1 ? "county/district" : "province/state"} column is set for this dataset — open Edit this widget and set it, so drilling into ${drill.country} has a column to group by.`;
+      } else if (drilledSeries !== null && drilledSeries.length === 0 && !drillLoading) {
+        noDataReason = `No rows matched "${drill.adm1 ?? drill.country}" — check that your dataset's ${countryColumn} column actually contains that exact value.`;
+      }
+    }
+  }
+
   // Ratio/rate mode: only at the top-level (undrilled) view — a drilled-in
   // province/county rate would need this second dataset to have its own
   // matching province/county column, which isn't supported yet.
@@ -2893,6 +2915,27 @@ function ChoroplethMap({
           ⭳
         </button>
       </div>
+      {noDataReason && (
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 15,
+            maxWidth: "70%",
+            background: "rgba(255,255,255,0.97)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            padding: "14px 18px",
+            boxShadow: "0 4px 20px rgba(19,23,34,0.15)",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 18, marginBottom: 6 }}>⚠️</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-primary)", lineHeight: 1.5 }}>{noDataReason}</div>
+        </div>
+      )}
       <ComposableMap projection={mapProjection} projectionConfig={mapProjectionConfig} style={{ width: "100%", height: "100%" }}>
         <ZoomableGroup
           center={safeCenter}
