@@ -455,6 +455,13 @@ export interface DashboardWidget {
    *  alongside geoProvinceColumn — there's no county-only drill path that
    *  skips province. */
   geoCountyColumn?: string;
+  /** Choropleth only — a named key into the frontend's
+   *  CHOROPLETH_COLOR_SCHEMES (e.g. "blues", "grey_to_red"), or "single"/
+   *  undefined for the original single-base-color-at-varying-opacity
+   *  look. Purely a rendering choice, not validated against a fixed enum
+   *  server-side — an unrecognized value just falls back to the single-
+   *  color behavior on the frontend rather than erroring. */
+  choroplethColorScheme?: string;
   /** When set, this widget charts an uploaded dataset instead of incidents —
    *  dataField/secondaryField then hold that dataset's own raw column names
    *  directly, not the incidents by_X convention. Widget types that need
