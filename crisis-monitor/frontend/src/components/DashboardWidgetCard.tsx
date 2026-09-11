@@ -2057,6 +2057,61 @@ function findCountryAdminData(name: string | undefined): { canonicalName: string
   return undefined;
 }
 
+/** Maps a common/full country name (lowercased) to the exact name
+ *  world-atlas (via Natural Earth) actually uses for it — verified
+ *  directly against countries-50m.json's real property values, not
+ *  guessed. Natural Earth abbreviates numerous country names for
+ *  map-label space (confirmed pattern: "S. Sudan" instead of "South
+ *  Sudan", which is what originally surfaced this as a real, reproduced
+ *  bug — a dataset's own "South Sudan" values matched nothing on the map
+ *  at all, despite the underlying data being correctly computed). This
+ *  table exists so a dataset-sourced choropleth's location values get
+ *  matched against the map correctly regardless of which of the two
+ *  forms the dataset itself happens to use — deliberately covers the
+ *  countries most likely to actually appear in this app's real use
+ *  (Africa-focused crisis monitoring) plus other globally common
+ *  full-name/short-name mismatches, not every obscure island territory
+ *  Natural Earth also abbreviates. */
+const WORLD_ATLAS_NAME_ALIASES: Record<string, string> = {
+  "south sudan": "S. Sudan",
+  "democratic republic of the congo": "Dem. Rep. Congo",
+  "democratic republic of congo": "Dem. Rep. Congo",
+  "dr congo": "Dem. Rep. Congo",
+  "drc": "Dem. Rep. Congo",
+  "congo-kinshasa": "Dem. Rep. Congo",
+  "republic of the congo": "Congo",
+  "republic of congo": "Congo",
+  "congo-brazzaville": "Congo",
+  "central african republic": "Central African Rep.",
+  "car": "Central African Rep.",
+  "equatorial guinea": "Eq. Guinea",
+  "dominican republic": "Dominican Rep.",
+  "bosnia and herzegovina": "Bosnia and Herz.",
+  "western sahara": "W. Sahara",
+  "ivory coast": "Côte d'Ivoire",
+  "cote d'ivoire": "Côte d'Ivoire",
+  "czech republic": "Czechia",
+  "burma": "Myanmar",
+  "north macedonia": "Macedonia",
+  "east timor": "Timor-Leste",
+  "cape verde": "Cabo Verde",
+  "antigua and barbuda": "Antigua and Barb.",
+  "saint kitts and nevis": "St. Kitts and Nevis",
+  "saint vincent and the grenadines": "St. Vin. and Gren.",
+};
+
+/** Resolves a location value (from a dataset's own data, in whatever form
+ *  it's written) to the normalized key the map's own topology would
+ *  produce for the same place, so a value like "South Sudan" and the
+ *  map's own "S. Sudan" label both resolve to the same lookup key. Falls
+ *  back to the value's own normalized form when it isn't a known alias —
+ *  the common case, where a dataset already uses the map's own naming. */
+function worldAtlasKeyFor(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  const alias = WORLD_ATLAS_NAME_ALIASES[normalized];
+  return alias ? alias.trim().toLowerCase() : normalized;
+}
+
 const breadcrumbLinkStyle: React.CSSProperties = {
   background: "transparent",
   border: "none",
@@ -2199,8 +2254,9 @@ function ChoroplethMap({
   const originalCaseByName = new Map<string, string>();
   if (usingManualData) {
     for (const d of manualData!) {
-      countByName.set(String(d.country).trim().toLowerCase(), d.value);
-      if (d.color) colorByName.set(String(d.country).trim().toLowerCase(), d.color);
+      const key = worldAtlasKeyFor(String(d.country));
+      countByName.set(key, d.value);
+      if (d.color) colorByName.set(key, d.color);
     }
   } else {
     for (const s of effectiveSeries) {
@@ -2210,9 +2266,16 @@ function ChoroplethMap({
       // numeric column picked as the location field hands back an actual
       // number here, not a string. See the identical comment on
       // GlobeWidget's own countByCountry for the full explanation.
-      const key = String(s.value).trim().toLowerCase();
+      const rawValue = String(s.value);
+      // worldAtlasKeyFor resolves a dataset's own country-name spelling
+      // (e.g. "South Sudan") to the same key the map's own topology name
+      // (e.g. "S. Sudan") would produce — without this, a dataset using
+      // the common full name for any country Natural Earth abbreviates
+      // would compute correct totals (confirmed: the legend showed the
+      // right numbers) but never actually shade that country at all.
+      const key = worldAtlasKeyFor(rawValue);
       countByName.set(key, s.count);
-      originalCaseByName.set(key, String(s.value));
+      originalCaseByName.set(key, rawValue);
     }
   }
   const populatedValues = Array.from(countByName.values()).filter((v) => v > 0);
