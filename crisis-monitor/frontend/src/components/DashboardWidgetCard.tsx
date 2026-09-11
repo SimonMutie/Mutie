@@ -1586,7 +1586,9 @@ function WidgetEditPopover({
 
       {type !== "map" && !(supportsManualData && useManualData) && (
         <div>
-          <div className="eyebrow" style={{ marginBottom: 4 }}>DATA</div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            {type === "choropleth" && activeDataset ? "COUNTRY COLUMN (FOR THE WORLD-LEVEL VIEW)" : "DATA"}
+          </div>
           <select
             value={field}
             onChange={(e) => {
@@ -1600,7 +1602,15 @@ function WidgetEditPopover({
               <>
                 {type === "stat" && <option value="">Row count</option>}
                 {activeDataset.schema
-                  .filter((col) => (type === "stat" ? col.type === "number" : type === "calendar" ? col.type === "date" : true))
+                  .filter((col) =>
+                    type === "stat"
+                      ? col.type === "number"
+                      : type === "calendar"
+                      ? col.type === "date"
+                      : type === "choropleth"
+                      ? col.type === "text"
+                      : true
+                  )
                   .map((col) => (
                     <option key={col.name} value={col.name}>
                       {col.name}
@@ -1615,6 +1625,12 @@ function WidgetEditPopover({
               ))
             )}
           </select>
+          {type === "choropleth" && activeDataset && (
+            <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 3 }}>
+              This must be the column holding full country names (e.g. "South Sudan") — the map's world view is always shown by country, even
+              when Province/County columns are set below for drill-down.
+            </div>
+          )}
         </div>
       )}
 
@@ -1652,7 +1668,7 @@ function WidgetEditPopover({
           >
             <option value="">None — country level only</option>
             {activeDataset.schema
-              .filter((col) => col.name !== field)
+              .filter((col) => col.name !== field && col.type === "text")
               .map((col) => (
                 <option key={col.name} value={col.name}>
                   {col.name}
@@ -1661,7 +1677,8 @@ function WidgetEditPopover({
           </select>
           <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 3 }}>
             When set, drilling into a country with province boundaries available re-groups this dataset by this column, filtered to that
-            country, instead of showing an unshaded map.
+            country, instead of showing an unshaded map. Only text columns are offered here — this holds place names (e.g. "Central
+            Equatoria"), not a number.
           </div>
         </div>
       )}
@@ -1672,7 +1689,7 @@ function WidgetEditPopover({
           <select value={geoCountyColumn ?? ""} onChange={(e) => setGeoCountyColumn(e.target.value || undefined)} style={selectStyle}>
             <option value="">None — stop at province level</option>
             {activeDataset.schema
-              .filter((col) => col.name !== field && col.name !== geoProvinceColumn)
+              .filter((col) => col.name !== field && col.name !== geoProvinceColumn && col.type === "text")
               .map((col) => (
                 <option key={col.name} value={col.name}>
                   {col.name}
