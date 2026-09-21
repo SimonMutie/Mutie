@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, ScaleControl, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
@@ -184,6 +184,52 @@ export function totalCasualties(i: IncidentItem): number {
     (i.civilian_injury_unknown ?? 0)
   );
 }
+
+/** Extracted and memoized specifically to fix a real, confirmed
+ *  performance problem: this Marker+Popup JSX used to be created inline
+ *  inside a .map() directly in IncidentsMap's own render body. That
+ *  meant every single incident's marker got recreated and reconciled by
+ *  React on every render of the parent — including renders triggered by
+ *  something with nothing to do with markers at all, like clicking the
+ *  legend/map-types/export toggle buttons in the corner, each of which
+ *  is just a plain useState flip. With potentially hundreds of incidents
+ *  on screen, that reconciliation cost on every unrelated toggle click
+ *  is exactly what made those toggles feel slow to respond. memo's
+ *  default shallow prop comparison means a given marker now only
+ *  actually re-renders when its own incident, highlighted state, or
+ *  iconMode genuinely changes — not on every render of its parent. */
+const IncidentMarker = memo(function IncidentMarker({
+  incident,
+  highlighted,
+  iconMode,
+}: {
+  incident: IncidentItem;
+  highlighted: boolean;
+  iconMode: "actor" | "tactic";
+}) {
+  const actorCategory = classifyActor(incident.actor);
+  const displayCategory = iconMode === "tactic" ? { color: actorCategory.color, shape: classifyTactic(incident.tactic).glyph } : actorCategory;
+  const casualties = totalCasualties(incident);
+  return (
+    <Marker position={[incident.latitude!, incident.longitude!]} icon={incidentIcon(displayCategory, highlighted)}>
+      <Popup>
+        <div style={{ fontSize: 13, minWidth: 180 }}>
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>
+            {[incident.city, incident.province].filter(Boolean).join(", ") || incident.precise_location || "Unknown location"}
+          </div>
+          <div style={{ color: "#666", marginBottom: 4 }}>{incident.occurred_date || ""}</div>
+          <div style={{ marginBottom: 4 }}>
+            <span style={{ color: actorCategory.color, fontWeight: 600 }}>{actorCategory.label}</span>
+            {[incident.sector, incident.tactic, incident.actor].filter(Boolean).length > 0 && " · "}
+            {[incident.sector, incident.tactic, incident.actor].filter(Boolean).join(" · ")}
+          </div>
+          {casualties > 0 && <div style={{ color: "#d1352b" }}>{casualties} civilian casualties</div>}
+          {incident.details && <div style={{ marginTop: 4, color: "#444" }}>{incident.details.slice(0, 200)}</div>}
+        </div>
+      </Popup>
+    </Marker>
+  );
+});
 
 // --- geometry helpers ---
 function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -1788,30 +1834,9 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
         {incidentsVisible &&
           viewMode === "markers" &&
           displayIncidents.map((i) => {
-          const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
-          const actorCategory = classifyActor(i.actor);
-          const displayCategory =
-            iconMode === "tactic" ? { color: actorCategory.color, shape: classifyTactic(i.tactic).glyph } : actorCategory;
-          return (
-            <Marker key={i.id} position={[i.latitude!, i.longitude!]} icon={incidentIcon(displayCategory, highlighted)}>
-              <Popup>
-                <div style={{ fontSize: 13, minWidth: 180 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 2 }}>
-                    {[i.city, i.province].filter(Boolean).join(", ") || i.precise_location || "Unknown location"}
-                  </div>
-                  <div style={{ color: "#666", marginBottom: 4 }}>{i.occurred_date || ""}</div>
-                  <div style={{ marginBottom: 4 }}>
-                    <span style={{ color: actorCategory.color, fontWeight: 600 }}>{actorCategory.label}</span>
-                    {[i.sector, i.tactic, i.actor].filter(Boolean).length > 0 && " · "}
-                    {[i.sector, i.tactic, i.actor].filter(Boolean).join(" · ")}
-                  </div>
-                  {totalCasualties(i) > 0 && <div style={{ color: "#d1352b" }}>{totalCasualties(i)} civilian casualties</div>}
-                  {i.details && <div style={{ marginTop: 4, color: "#444" }}>{i.details.slice(0, 200)}</div>}
-                </div>
-              </Popup>
-            </Marker>
-          );
-        })}
+            const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
+            return <IncidentMarker key={i.id} incident={i} highlighted={highlighted} iconMode={iconMode} />;
+          })}
 
         {/* draft-in-progress waypoints + connecting line */}
         {drafting &&
