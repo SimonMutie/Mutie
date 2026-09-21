@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, ScaleControl, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
@@ -18,6 +18,23 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
 import { HeatmapLayer } from "./HeatmapLayer";
+
+/** Local, session-only display overrides for one incident's popup — never
+ *  sent to the backend or persisted anywhere, purely a presentation layer
+ *  for annotating/customizing what a snip or export shows. Undefined
+ *  fields fall back to the incident's own real data; only what's
+ *  actually been edited is stored here. `pinned` keeps the popup open
+ *  even after clicking elsewhere on the map or opening another popup —
+ *  needed so several can be visible at once for a screenshot. */
+interface PopupAnnotation {
+  pinned?: boolean;
+  headerBg?: string;
+  detailsBg?: string;
+  locationOverride?: string;
+  dateOverride?: string;
+  categoryOverride?: string;
+  detailsOverride?: string;
+}
 
 interface Props {
   /** Used as the initial dataset before the map's own category filters take
@@ -202,33 +219,128 @@ export function totalCasualties(i: IncidentItem): number {
  *  default shallow prop comparison means a given marker now only
  *  actually re-renders when its own incident, highlighted state, or
  *  iconMode genuinely changes — not on every render of its parent. */
+const popupToolBtnStyle: React.CSSProperties = {
+  fontSize: 10.5,
+  padding: "2px 6px",
+  borderRadius: 4,
+  border: "1px solid #ccc",
+  background: "#f5f5f5",
+  cursor: "pointer",
+};
+const popupFieldLabelStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 2, fontSize: 10.5, color: "#555" };
+const popupInputStyle: React.CSSProperties = { fontSize: 12, padding: "3px 5px", border: "1px solid #ccc", borderRadius: 3, fontFamily: "inherit" };
+
 const IncidentMarker = memo(function IncidentMarker({
   incident,
   highlighted,
   iconMode,
+  annotation,
+  onUpdateAnnotation,
 }: {
   incident: IncidentItem;
   highlighted: boolean;
   iconMode: "actor" | "tactic";
+  annotation: PopupAnnotation | undefined;
+  onUpdateAnnotation: (incidentId: string, patch: Partial<PopupAnnotation>) => void;
 }) {
+  const [editing, setEditing] = useState(false);
   const actorCategory = classifyActor(incident.actor);
   const displayCategory = iconMode === "tactic" ? { color: actorCategory.color, shape: classifyTactic(incident.tactic).glyph } : actorCategory;
   const casualties = totalCasualties(incident);
+
+  const realLocation = [incident.city, incident.province].filter(Boolean).join(", ") || incident.precise_location || "Unknown location";
+  const realCategoryLine = [incident.sector, incident.tactic, incident.actor].filter(Boolean).join(" · ");
+  const displayLocation = annotation?.locationOverride ?? realLocation;
+  const displayDate = annotation?.dateOverride ?? incident.occurred_date ?? "";
+  const displayCategoryLine = annotation?.categoryOverride ?? realCategoryLine;
+  const displayDetails = annotation?.detailsOverride ?? incident.details ?? "";
+  const pinned = annotation?.pinned ?? false;
+  const patch = (p: Partial<PopupAnnotation>) => onUpdateAnnotation(incident.id, p);
+
   return (
     <Marker position={[incident.latitude!, incident.longitude!]} icon={incidentIcon(displayCategory, highlighted)}>
-      <Popup>
-        <div style={{ fontSize: 13, minWidth: 180 }}>
-          <div style={{ fontWeight: 700, marginBottom: 2 }}>
-            {[incident.city, incident.province].filter(Boolean).join(", ") || incident.precise_location || "Unknown location"}
+      {/* autoClose/closeOnClick off once pinned — otherwise Leaflet closes
+          this the moment another popup opens or the map itself is
+          clicked, which would defeat the whole point of pinning several
+          open at once for a screenshot. */}
+      <Popup autoClose={!pinned} closeOnClick={!pinned} minWidth={210}>
+        <div style={{ fontSize: 13, minWidth: 190 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginBottom: 4 }}>
+            <button
+              onClick={() => setEditing((e) => !e)}
+              title={editing ? "Done editing" : "Edit this popup"}
+              style={popupToolBtnStyle}
+            >
+              {editing ? "✓ Done" : "✏️ Edit"}
+            </button>
+            <button
+              onClick={() => patch({ pinned: !pinned })}
+              title={pinned ? "Unpin (closes normally again)" : "Pin open (stays visible for a screenshot)"}
+              style={{ ...popupToolBtnStyle, background: pinned ? "var(--signal-dim)" : popupToolBtnStyle.background, borderColor: pinned ? "var(--signal)" : popupToolBtnStyle.borderColor }}
+            >
+              📌 {pinned ? "Pinned" : "Pin"}
+            </button>
           </div>
-          <div style={{ color: "#666", marginBottom: 4 }}>{incident.occurred_date || ""}</div>
-          <div style={{ marginBottom: 4 }}>
-            <span style={{ color: actorCategory.color, fontWeight: 600 }}>{actorCategory.label}</span>
-            {[incident.sector, incident.tactic, incident.actor].filter(Boolean).length > 0 && " · "}
-            {[incident.sector, incident.tactic, incident.actor].filter(Boolean).join(" · ")}
-          </div>
-          {casualties > 0 && <div style={{ color: "#d1352b" }}>{casualties} civilian casualties</div>}
-          {incident.details && <div style={{ marginTop: 4, color: "#444" }}>{incident.details.slice(0, 200)}</div>}
+
+          {editing ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <label style={popupFieldLabelStyle}>
+                Location
+                <input value={displayLocation} onChange={(e) => patch({ locationOverride: e.target.value })} style={popupInputStyle} />
+              </label>
+              <label style={popupFieldLabelStyle}>
+                Date
+                <input value={displayDate} onChange={(e) => patch({ dateOverride: e.target.value })} style={popupInputStyle} />
+              </label>
+              <label style={popupFieldLabelStyle}>
+                Category / sector / tactic / actor
+                <input value={displayCategoryLine} onChange={(e) => patch({ categoryOverride: e.target.value })} style={popupInputStyle} />
+              </label>
+              <label style={popupFieldLabelStyle}>
+                Incident details
+                <textarea
+                  value={displayDetails}
+                  onChange={(e) => patch({ detailsOverride: e.target.value })}
+                  rows={3}
+                  style={{ ...popupInputStyle, resize: "vertical" }}
+                />
+              </label>
+              <label style={popupFieldLabelStyle}>
+                Header background (location, date, category)
+                <input type="color" value={annotation?.headerBg ?? "#ffffff"} onChange={(e) => patch({ headerBg: e.target.value })} style={{ width: "100%", height: 24 }} />
+              </label>
+              <label style={popupFieldLabelStyle}>
+                Incident info background
+                <input type="color" value={annotation?.detailsBg ?? "#ffffff"} onChange={(e) => patch({ detailsBg: e.target.value })} style={{ width: "100%", height: 24 }} />
+              </label>
+              {(annotation?.locationOverride || annotation?.dateOverride || annotation?.categoryOverride || annotation?.detailsOverride || annotation?.headerBg || annotation?.detailsBg) && (
+                <button
+                  onClick={() =>
+                    patch({ locationOverride: undefined, dateOverride: undefined, categoryOverride: undefined, detailsOverride: undefined, headerBg: undefined, detailsBg: undefined })
+                  }
+                  style={{ ...popupToolBtnStyle, alignSelf: "flex-start" }}
+                >
+                  Reset to real data
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div style={{ background: annotation?.headerBg, padding: annotation?.headerBg ? "4px 6px" : 0, borderRadius: 4 }}>
+                <div style={{ fontWeight: 700, marginBottom: 2 }}>{displayLocation}</div>
+                <div style={{ color: "#666", marginBottom: 4 }}>{displayDate}</div>
+                <div>
+                  <span style={{ color: actorCategory.color, fontWeight: 600 }}>{actorCategory.label}</span>
+                  {displayCategoryLine && " · "}
+                  {displayCategoryLine}
+                </div>
+              </div>
+              <div style={{ background: annotation?.detailsBg, padding: annotation?.detailsBg ? "4px 6px" : 0, borderRadius: 4, marginTop: 4 }}>
+                {casualties > 0 && <div style={{ color: "#d1352b" }}>{casualties} civilian casualties</div>}
+                {displayDetails && <div style={{ marginTop: 4, color: "#444" }}>{displayDetails.slice(0, 200)}</div>}
+              </div>
+            </>
+          )}
         </div>
       </Popup>
     </Marker>
@@ -841,6 +953,18 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   // start the map with nothing plotted, not just default to whichever mode.
   const [incidentsVisible, setIncidentsVisible] = useState(true);
   const [iconMode, setIconMode] = useState<"actor" | "tactic">("actor");
+  // Session-only popup annotations (edited text, per-section colors,
+  // pinned-open state) — never sent anywhere, purely a display layer.
+  // Keyed by incident id so each marker below only needs its own single
+  // entry as a prop, not the whole collection — memo() on IncidentMarker
+  // then correctly skips re-rendering any marker whose own annotation
+  // didn't actually change, even though this whole object is replaced on
+  // every edit (a new object is required for React to detect the
+  // state change at all).
+  const [annotations, setAnnotations] = useState<Record<string, PopupAnnotation>>({});
+  const updateAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
+    setAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
+  }, []);
   const [heatWeighted, setHeatWeighted] = useState(false);
   // Applied once, from the admin-configured platform-wide defaults, before
   // the map's own layers render at all — fetching then setting state after
@@ -1034,9 +1158,18 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
     () =>
       displayIncidents.map((i) => {
         const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
-        return <IncidentMarker key={i.id} incident={i} highlighted={highlighted} iconMode={iconMode} />;
+        return (
+          <IncidentMarker
+            key={i.id}
+            incident={i}
+            highlighted={highlighted}
+            iconMode={iconMode}
+            annotation={annotations[i.id]}
+            onUpdateAnnotation={updateAnnotation}
+          />
+        );
       }),
-    [displayIncidents, nearOverlayIds, iconMode]
+    [displayIncidents, nearOverlayIds, iconMode, annotations, updateAnnotation]
   );
 
   function startDrafting() {
