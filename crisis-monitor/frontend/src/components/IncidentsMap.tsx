@@ -12,8 +12,12 @@ import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import "leaflet/dist/leaflet.css";
+import MarkerClusterGroup from "react-leaflet-cluster";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
+import { HeatmapLayer } from "./HeatmapLayer";
 
 interface Props {
   /** Used as the initial dataset before the map's own category filters take
@@ -529,33 +533,6 @@ function featureToEditableLayer(feature: GeoJSON.Feature, style: L.PathOptions):
  *  React `shapes` state — additions, deletions, restyling, and visibility all
  *  flow one way (state -> imperative Leaflet layers) so leaflet-draw's edit
  *  toolbar always operates on the same objects React knows about. */
-/** Canvas-based heat-density layer, an alternative to plotting individual pins
- *  — useful once there are enough incidents that markers start overlapping and
- *  density becomes the more readable signal. `weighted` uses each incident's
- *  total casualties as intensity (so severe clusters stand out more); off,
- *  every incident counts equally (pure geographic density). */
-export function HeatmapLayer({ points }: { points: [number, number, number][] }) {
-  const map = useMap();
-  const layerRef = useRef<L.HeatLayer | null>(null);
-
-  useEffect(() => {
-    const layer = L.heatLayer(points, { radius: 22, blur: 18, maxZoom: 12, minOpacity: 0.35 });
-    layer.addTo(map);
-    layerRef.current = layer;
-    return () => {
-      map.removeLayer(layer);
-      layerRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map]);
-
-  useEffect(() => {
-    layerRef.current?.setLatLngs(points);
-  }, [points]);
-
-  return null;
-}
-
 function ShapeLayerGroup({ shapes, visibleIds, featureGroup }: { shapes: ShapeSim[]; visibleIds: Set<string>; featureGroup: L.FeatureGroup }) {
   const map = useMap();
   const layersRef = useRef<Map<string, L.Layer>>(new Map());
@@ -1847,7 +1824,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
 
         {incidentsVisible && viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
 
-        {incidentsVisible && viewMode === "markers" && markerElements}
+        {incidentsVisible && viewMode === "markers" && <MarkerClusterGroup chunkedLoading>{markerElements}</MarkerClusterGroup>}
 
         {/* draft-in-progress waypoints + connecting line */}
         {drafting &&
