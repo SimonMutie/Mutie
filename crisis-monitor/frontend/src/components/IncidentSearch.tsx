@@ -5,7 +5,8 @@ import "leaflet/dist/leaflet.css";
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
-import { BASEMAPS, type BasemapKey, classifyActor, incidentIcon, totalCasualties, HeatmapLayer } from "./IncidentsMap";
+import { BASEMAPS, type BasemapKey, classifyActor, incidentIcon, totalCasualties } from "./IncidentsMap";
+import { HeatmapLayer } from "./HeatmapLayer";
 
 type ViewMode = "markers" | "heatmap";
 
