@@ -26,7 +26,7 @@ import { HeatmapLayer } from "./HeatmapLayer";
  *  actually been edited is stored here. `pinned` keeps the popup open
  *  even after clicking elsewhere on the map or opening another popup —
  *  needed so several can be visible at once for a screenshot. */
-interface PopupAnnotation {
+export interface PopupAnnotation {
   pinned?: boolean;
   headerBg?: string;
   detailsBg?: string;
@@ -230,7 +230,7 @@ const popupToolBtnStyle: React.CSSProperties = {
 const popupFieldLabelStyle: React.CSSProperties = { display: "flex", flexDirection: "column", gap: 2, fontSize: 10.5, color: "#555" };
 const popupInputStyle: React.CSSProperties = { fontSize: 12, padding: "3px 5px", border: "1px solid #ccc", borderRadius: 3, fontFamily: "inherit" };
 
-const IncidentMarker = memo(function IncidentMarker({
+export const IncidentMarker = memo(function IncidentMarker({
   incident,
   highlighted,
   iconMode,
