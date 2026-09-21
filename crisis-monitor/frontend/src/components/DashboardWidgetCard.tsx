@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   BarChart,
@@ -26,7 +26,7 @@ import {
 } from "recharts";
 import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
-import { HeatmapLayer } from "./IncidentsMap";
+import { HeatmapLayer } from "./HeatmapLayer";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
 import worldTopology from "world-atlas/countries-50m.json?url";
@@ -2576,53 +2576,65 @@ function ChoroplethMap({
   }, [ratioActive, ratioDatasetId, ratioLocationColumn, ratioValueColumn]);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const countByName = new Map<string, number>();
-  const colorByName = new Map<string, string>();
-  // What to actually send as the filter value when a region is clicked —
-  // the backend matches category filters case-sensitively (unlike the
-  // client's own country-restriction check, which is deliberately
-  // case-insensitive), so this needs to be the value exactly as it's
-  // stored in the incidents data, not the map topology's own casing for
-  // the same place name, which can easily differ.
-  const originalCaseByName = new Map<string, string>();
-  if (usingManualData) {
-    for (const d of manualData!) {
-      const key = worldAtlasKeyFor(String(d.country));
-      countByName.set(key, d.value);
-      if (d.color) colorByName.set(key, d.color);
-    }
-  } else {
-    for (const s of effectiveSeries) {
-      // String(...) before .trim() — series comes from a dataset query
-      // where the declared {value: string} type isn't runtime-guaranteed;
-      // json_extract returns whatever type was actually stored, so a
-      // numeric column picked as the location field hands back an actual
-      // number here, not a string. See the identical comment on
-      // GlobeWidget's own countByCountry for the full explanation.
-      const rawValue = String(s.value);
-      // worldAtlasKeyFor resolves a dataset's own country-name spelling
-      // (e.g. "South Sudan") to the same key the map's own topology name
-      // (e.g. "S. Sudan") would produce — without this, a dataset using
-      // the common full name for any country Natural Earth abbreviates
-      // would compute correct totals (confirmed: the legend showed the
-      // right numbers) but never actually shade that country at all.
-      const key = worldAtlasKeyFor(rawValue);
-      if (ratioActive) {
-        const denominator = ratioMap.get(key);
-        // No matching location in the ratio dataset, or a zero denominator
-        // (which would divide-by-zero into Infinity/NaN) — omitted rather
-        // than shown as a nonsensical value; still a "no data" region on
-        // the map, not an error.
-        if (!denominator) continue;
-        countByName.set(key, (s.count / denominator) * (ratioMultiplier ?? 1));
-      } else {
-        countByName.set(key, s.count);
+  // Memoized against its actual data dependencies — this was previously
+  // plain, unmemoized code re-running in full (including a sort inside
+  // computeQuantileBreaks) on every single render of this component,
+  // which happens on every mouse-move event over the map (tooltip
+  // position tracking) and every zoom/pan action — none of which this
+  // computation's result actually depends on. Confirmed as the cause of
+  // reported ongoing slowness (not just first-load) that got worse as
+  // more features were added to this component this session.
+  const { countByName, colorByName, originalCaseByName, populatedValues, quantileBreaks } = useMemo(() => {
+    const countByName = new Map<string, number>();
+    const colorByName = new Map<string, string>();
+    // What to actually send as the filter value when a region is clicked —
+    // the backend matches category filters case-sensitively (unlike the
+    // client's own country-restriction check, which is deliberately
+    // case-insensitive), so this needs to be the value exactly as it's
+    // stored in the incidents data, not the map topology's own casing for
+    // the same place name, which can easily differ.
+    const originalCaseByName = new Map<string, string>();
+    if (usingManualData) {
+      for (const d of manualData!) {
+        const key = worldAtlasKeyFor(String(d.country));
+        countByName.set(key, d.value);
+        if (d.color) colorByName.set(key, d.color);
       }
-      originalCaseByName.set(key, rawValue);
+    } else {
+      for (const s of effectiveSeries) {
+        // String(...) before .trim() — series comes from a dataset query
+        // where the declared {value: string} type isn't runtime-guaranteed;
+        // json_extract returns whatever type was actually stored, so a
+        // numeric column picked as the location field hands back an actual
+        // number here, not a string. See the identical comment on
+        // GlobeWidget's own countByCountry for the full explanation.
+        const rawValue = String(s.value);
+        // worldAtlasKeyFor resolves a dataset's own country-name spelling
+        // (e.g. "South Sudan") to the same key the map's own topology name
+        // (e.g. "S. Sudan") would produce — without this, a dataset using
+        // the common full name for any country Natural Earth abbreviates
+        // would compute correct totals (confirmed: the legend showed the
+        // right numbers) but never actually shade that country at all.
+        const key = worldAtlasKeyFor(rawValue);
+        if (ratioActive) {
+          const denominator = ratioMap.get(key);
+          // No matching location in the ratio dataset, or a zero denominator
+          // (which would divide-by-zero into Infinity/NaN) — omitted rather
+          // than shown as a nonsensical value; still a "no data" region on
+          // the map, not an error.
+          if (!denominator) continue;
+          countByName.set(key, (s.count / denominator) * (ratioMultiplier ?? 1));
+        } else {
+          countByName.set(key, s.count);
+        }
+        originalCaseByName.set(key, rawValue);
+      }
     }
-  }
-  const populatedValues = Array.from(countByName.values()).filter((v) => v > 0);
-  const quantileBreaks = computeQuantileBreaks(populatedValues, CHOROPLETH_BIN_OPACITIES.length);
+    const populatedValues = Array.from(countByName.values()).filter((v) => v > 0);
+    const quantileBreaks = computeQuantileBreaks(populatedValues, CHOROPLETH_BIN_OPACITIES.length);
+    return { countByName, colorByName, originalCaseByName, populatedValues, quantileBreaks };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usingManualData, manualData, effectiveSeries, ratioActive, ratioMap, ratioMultiplier]);
 
   /** Exports the map as a genuinely editable vector file — every country/
    *  province shape stays a separate, individually-selectable/recolorable
@@ -2715,6 +2727,38 @@ function ChoroplethMap({
   const drillLevel1 = drillEntry ? getGeoLevel(drillEntry, 1) : undefined;
   const drillLevel2 = drillEntry ? getGeoLevel(drillEntry, 2) : undefined;
   const topologyUrl = drill.adm1 && drillLevel2 ? drillLevel2.boundaryUrl : drillLevel1 ? drillLevel1.boundaryUrl : field === "by_province" ? PROVINCE_TOPOLOGY_URL : worldTopology;
+  // Independent of react-simple-maps' own internal fetch of this same
+  // URL (which fails silently — no error surfaced anywhere if it can't
+  // load) — this exists specifically to catch and explain the case
+  // confirmed happening in practice: a boundary file missing from the
+  // deployed site returns the app's own index.html (SPA fallback
+  // routing) instead of a real 404, and parsing that as JSON throws
+  // "Unexpected token '<'" — with nothing else on screen to explain why
+  // the map is empty. A second small request for a small, cacheable
+  // static file is an acceptable cost for turning that into a real,
+  // readable explanation instead of a silent blank map.
+  const [topologyLoadError, setTopologyLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setTopologyLoadError(null);
+    fetch(topologyUrl)
+      .then((r) => {
+        if (!r.ok) throw new Error(`server returned ${r.status}`);
+        return r.json();
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const isMissingFile = err instanceof SyntaxError;
+        setTopologyLoadError(
+          isMissingFile
+            ? `The map file for this view (${topologyUrl}) doesn't seem to be deployed — check it was committed to the right path in the repo.`
+            : `The map file for this view failed to load: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [topologyUrl]);
   // Which property key holds each shape's display name depends on which
   // level is actually active — world-atlas and PROVINCE_TOPOLOGY_URL
   // (neither of which is a registry entry) both use "name"; a drilled-in
@@ -2915,7 +2959,7 @@ function ChoroplethMap({
           ⭳
         </button>
       </div>
-      {noDataReason && (
+      {(topologyLoadError || noDataReason) && (
         <div
           style={{
             position: "absolute",
@@ -2933,7 +2977,7 @@ function ChoroplethMap({
           }}
         >
           <div style={{ fontSize: 18, marginBottom: 6 }}>⚠️</div>
-          <div style={{ fontSize: 12.5, color: "var(--text-primary)", lineHeight: 1.5 }}>{noDataReason}</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-primary)", lineHeight: 1.5 }}>{topologyLoadError || noDataReason}</div>
         </div>
       )}
       <ComposableMap projection={mapProjection} projectionConfig={mapProjectionConfig} style={{ width: "100%", height: "100%" }}>
