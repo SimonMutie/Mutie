@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import MarkerClusterGroup from "react-leaflet-cluster";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
-import { BASEMAPS, type BasemapKey, classifyActor, incidentIcon, totalCasualties } from "./IncidentsMap";
+import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties } from "./IncidentsMap";
 import { HeatmapLayer } from "./HeatmapLayer";
 
 type ViewMode = "markers" | "heatmap";
@@ -39,6 +42,10 @@ export default function IncidentSearch() {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
   const [viewMode, setViewMode] = useState<ViewMode>("markers");
   const [heatWeighted, setHeatWeighted] = useState(false);
+  const [annotations, setAnnotations] = useState<Record<string, PopupAnnotation>>({});
+  const updateAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
+    setAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
+  }, []);
 
   useEffect(() => {
     api.getIncidentFilters().then(setFilterOptions).catch(() => {});
@@ -244,29 +251,13 @@ export default function IncidentSearch() {
 
           {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
 
-          {viewMode === "markers" &&
-            geoIncidents.map((i) => {
-              const category = classifyActor(i.actor);
-              return (
-                <Marker key={i.id} position={[i.latitude!, i.longitude!]} icon={incidentIcon(category, true)}>
-                  <Popup>
-                    <div style={{ fontSize: 13, minWidth: 180 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 2 }}>
-                        {[i.city, i.province].filter(Boolean).join(", ") || i.precise_location || "Unknown location"}
-                      </div>
-                      <div style={{ color: "#666", marginBottom: 4 }}>{i.occurred_date || ""}</div>
-                      <div style={{ marginBottom: 4 }}>
-                        <span style={{ color: category.color, fontWeight: 600 }}>{category.label}</span>
-                        {[i.sector, i.tactic, i.actor].filter(Boolean).length > 0 && " · "}
-                        {[i.sector, i.tactic, i.actor].filter(Boolean).join(" · ")}
-                      </div>
-                      {totalCasualties(i) > 0 && <div style={{ color: "#d1352b" }}>{totalCasualties(i)} civilian casualties</div>}
-                      {i.details && <div style={{ marginTop: 4, color: "#444" }}>{i.details.slice(0, 200)}</div>}
-                    </div>
-                  </Popup>
-                </Marker>
-              );
-            })}
+          {viewMode === "markers" && (
+            <MarkerClusterGroup chunkedLoading>
+              {geoIncidents.map((i) => (
+                <IncidentMarker key={i.id} incident={i} highlighted iconMode="actor" annotation={annotations[i.id]} onUpdateAnnotation={updateAnnotation} />
+              ))}
+            </MarkerClusterGroup>
+          )}
         </MapContainer>
       </div>
     </div>
