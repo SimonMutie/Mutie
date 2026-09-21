@@ -1046,6 +1046,22 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
     });
   }, [displayIncidents, heatWeighted]);
 
+  // Memoized on top of IncidentMarker's own memo() wrapper — this avoids
+  // even re-running the .map() call itself (and handing React a fresh
+  // array of element objects to reconcile) on a render triggered by
+  // something with nothing to do with markers, like a toggle button.
+  // Deliberately excludes incidentsVisible/viewMode from its own
+  // dependencies (those gate whether this is rendered at all, in the JSX
+  // below) so toggling those doesn't invalidate this memo unnecessarily.
+  const markerElements = useMemo(
+    () =>
+      displayIncidents.map((i) => {
+        const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
+        return <IncidentMarker key={i.id} incident={i} highlighted={highlighted} iconMode={iconMode} />;
+      }),
+    [displayIncidents, nearOverlayIds, iconMode]
+  );
+
   function startDrafting() {
     setDrafting(true);
     setDraftWaypoints([]);
@@ -1831,12 +1847,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
 
         {incidentsVisible && viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
 
-        {incidentsVisible &&
-          viewMode === "markers" &&
-          displayIncidents.map((i) => {
-            const highlighted = !nearOverlayIds || nearOverlayIds.has(i.id);
-            return <IncidentMarker key={i.id} incident={i} highlighted={highlighted} iconMode={iconMode} />;
-          })}
+        {incidentsVisible && viewMode === "markers" && markerElements}
 
         {/* draft-in-progress waypoints + connecting line */}
         {drafting &&
