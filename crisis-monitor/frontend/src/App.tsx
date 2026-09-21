@@ -1,15 +1,28 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
 import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
-import QueryList from "./components/QueryList";
-import QueryDashboard from "./components/QueryDashboard";
-import QueryEditor from "./components/QueryEditor";
-import AdminPanel from "./components/AdminPanel";
-import SettingsPanel from "./components/SettingsPanel";
-import IncidentsDashboard from "./components/IncidentsDashboard";
-import DatasetsPanel from "./components/DatasetsPanel";
-import PublicDashboardView from "./components/PublicDashboardView";
+
+const QueryList = lazy(() => import("./components/QueryList"));
+const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
+const QueryEditor = lazy(() => import("./components/QueryEditor"));
+const AdminPanel = lazy(() => import("./components/AdminPanel"));
+const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
+const IncidentsDashboard = lazy(() => import("./components/IncidentsDashboard"));
+const DatasetsPanel = lazy(() => import("./components/DatasetsPanel"));
+const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"));
+
+/** Each view above used to be a plain, eager import — meaning every
+ *  page's code (including the mapping page, IncidentsDashboard) shared
+ *  one bundle with every other page's code, choropleth/dashboard
+ *  included. Since the choropleth widget grew substantially this
+ *  session, every page paid that download/parse cost regardless of
+ *  which one was actually being visited — confirmed as the cause of
+ *  reported slowness on the mapping page specifically, a page that
+ *  doesn't use any of that code at all. These are mutually exclusive
+ *  (view is a single value, only one renders at a time), which is
+ *  exactly the shape React.lazy is meant for. */
+const viewLoadingFallback = <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>;
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
 type View = "list" | { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "datasets";
@@ -89,7 +102,11 @@ export default function App() {
   }
 
   if (shareToken) {
-    return <PublicDashboardView token={shareToken} />;
+    return (
+      <Suspense fallback={viewLoadingFallback}>
+        <PublicDashboardView token={shareToken} />
+      </Suspense>
+    );
   }
 
   if (bootState === "checking") {
@@ -132,52 +149,54 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {view === "admin" && <AdminPanel user={user} onBack={() => setView("list")} />}
+      <Suspense fallback={viewLoadingFallback}>
+        {view === "admin" && <AdminPanel user={user} onBack={() => setView("list")} />}
 
-      {view === "settings" && <SettingsPanel onBack={() => setView("list")} />}
+        {view === "settings" && <SettingsPanel onBack={() => setView("list")} />}
 
-      {view === "incidents" && <IncidentsDashboard user={user} />}
+        {view === "incidents" && <IncidentsDashboard user={user} />}
 
-      {view === "datasets" && <DatasetsPanel />}
+        {view === "datasets" && <DatasetsPanel />}
 
-      {view === "list" && (
-        <QueryList
-          queries={queries}
-          onChanged={loadQueries}
-          onOpen={(queryId) => setView({ queryId })}
-          onNew={() => setView("new-query")}
-          onEdit={(queryId) => setView({ editQueryId: queryId })}
-        />
-      )}
-
-      {view === "new-query" && <QueryEditor mode="create" onCancel={() => setView("list")} onSaved={handleSaved} />}
-
-      {typeof view === "object" &&
-        "editQueryId" in view &&
-        (editingQuery ? (
-          <QueryEditor
-            mode="edit"
-            existingQuery={editingQuery}
-            onCancel={() => setView({ queryId: editingQuery.id })}
-            onSaved={handleSaved}
+        {view === "list" && (
+          <QueryList
+            queries={queries}
+            onChanged={loadQueries}
+            onOpen={(queryId) => setView({ queryId })}
+            onNew={() => setView("new-query")}
+            onEdit={(queryId) => setView({ editQueryId: queryId })}
           />
-        ) : (
-          <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
-        ))}
+        )}
 
-      {typeof view === "object" &&
-        "queryId" in view &&
-        (openQuery ? (
-          <QueryDashboard
-            query={openQuery}
-            liveMessage={liveMessage}
-            onBack={() => setView("list")}
-            onEdit={() => setView({ editQueryId: openQuery.id })}
-          />
-        ) : (
-          // query list hasn't loaded yet, or the query was deleted/no longer accessible
-          <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
-        ))}
+        {view === "new-query" && <QueryEditor mode="create" onCancel={() => setView("list")} onSaved={handleSaved} />}
+
+        {typeof view === "object" &&
+          "editQueryId" in view &&
+          (editingQuery ? (
+            <QueryEditor
+              mode="edit"
+              existingQuery={editingQuery}
+              onCancel={() => setView({ queryId: editingQuery.id })}
+              onSaved={handleSaved}
+            />
+          ) : (
+            <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
+          ))}
+
+        {typeof view === "object" &&
+          "queryId" in view &&
+          (openQuery ? (
+            <QueryDashboard
+              query={openQuery}
+              liveMessage={liveMessage}
+              onBack={() => setView("list")}
+              onEdit={() => setView({ editQueryId: openQuery.id })}
+            />
+          ) : (
+            // query list hasn't loaded yet, or the query was deleted/no longer accessible
+            <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
+          ))}
+      </Suspense>
     </div>
   );
 }
