@@ -404,6 +404,17 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Anchor,
     fetcher: async () => fromGateway("#3fd0ff", "Maritime")(await api.getLiveMaritime()),
   },
+  {
+    key: "ais-vessels",
+    // Real live vessel positions from AISstream.io's global AIS feed (see
+    // AISSTREAM_API_KEY's comment in bindings.ts) — distinct from the static
+    // "Maritime / Naval" reference layer above (ports/bases/chokepoints).
+    label: "Live Vessels (AIS)",
+    group: "Maritime",
+    color: "#ffb443",
+    icon: Waypoints,
+    fetcher: async () => fromGateway("#ffb443", "Live Vessels")(await api.getLiveAisVessels()),
+  },
   // Real satellite positions computed from CelesTrak's own orbital elements
   // (SGP4 propagation on the backend — see satelliteCategory on
   // liveLayers.ts's /satellites route for exactly which real CelesTrak
@@ -627,6 +638,7 @@ export default function LiveIntelView() {
     // layer (confirmed directly from a screenshot of its actual left rail,
     // not the open-source mirror, which has no lines concept at all).
     "maritime-lines": false,
+    "ais-vessels": false,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
   const [layers, setLayers] = useState<Record<string, LayerState>>(() =>

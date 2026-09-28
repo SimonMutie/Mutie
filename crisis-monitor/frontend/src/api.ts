@@ -968,6 +968,7 @@ export const api = {
   // Real, computed sea-lane geometries (searoute-js over a real maritime
   // network graph) — see backend/src/data/maritimeLanes.ts.
   getLiveMaritimeLines: () => req<MaritimeLanes>("/api/live-layers/maritime-lines"),
+  getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
   // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
   // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key

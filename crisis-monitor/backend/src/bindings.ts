@@ -4,6 +4,10 @@ export interface Env {
   LIVE_FEED: DurableObjectNamespace;
   INGESTION_ACTOR: DurableObjectNamespace;
   ALERTING_ACTOR: DurableObjectNamespace;
+  /** Holds the single persistent outbound WebSocket to AISstream.io and the
+   *  in-memory snapshot of recent vessel positions — see
+   *  durableObjects/aisIngestionActor.ts. */
+  AIS_INGESTION_ACTOR: DurableObjectNamespace;
   MOCK_MODE: string;
   GDELT_ENABLED: string;
   /** Set as an encrypted Worker secret (never in wrangler.toml [vars]) — signs session tokens. */
@@ -28,4 +32,15 @@ export interface Env {
    *  returns exchange status + crypto without it, just with
    *  commoditiesAvailable: false. */
   FRED_API_KEY?: string;
+  /** API key from a free aisstream.io account (aisstream.io — sign in,
+   *  then generate a key), used by AisIngestionActor to open the
+   *  persistent WebSocket to wss://stream.aisstream.io/v0/stream for real
+   *  global live AIS vessel positions. Optional: the /ais-vessels route
+   *  502s with a specific "AISSTREAM_API_KEY not set" message until this
+   *  is provided, same pattern as ABUSECH_AUTH_KEY. Chosen over
+   *  alternatives (AISHub requires operating a physical AIS receiver;
+   *  MarineTraffic/Datalastic are paid) after checking each directly —
+   *  accepted with eyes open that aisstream.io publishes no terms of
+   *  service or SLA, per the user's explicit decision. */
+  AISSTREAM_API_KEY?: string;
 }

@@ -22,9 +22,19 @@ class_name = "IngestionActor"
 name = "ALERTING_ACTOR"
 class_name = "AlertingActor"
 
+[[durable_objects.bindings]]
+name = "AIS_INGESTION_ACTOR"
+class_name = "AisIngestionActor"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["LiveFeedHub", "IngestionActor", "AlertingActor"]
+
+# Durable Object migrations are additive/append-only — a new class goes in
+# its own tag rather than editing v1's list above.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["AisIngestionActor"]
 
 # Polls GDELT every 5 minutes when GDELT_ENABLED=true, and re-kicks the
 # ingestion/alerting Durable Object alarms as a safety net (see src/index.ts).

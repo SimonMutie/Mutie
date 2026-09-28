@@ -21,6 +21,7 @@ import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
 export { IngestionActor } from "./durableObjects/ingestionActor";
 export { AlertingActor } from "./durableObjects/alertingActor";
+export { AisIngestionActor } from "./durableObjects/aisIngestionActor";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -36,9 +37,11 @@ app.use("*", cors());
 async function bootstrapActors(env: Env) {
   const ingestionId = env.INGESTION_ACTOR.idFromName("global");
   const alertingId = env.ALERTING_ACTOR.idFromName("global");
+  const aisId = env.AIS_INGESTION_ACTOR.idFromName("global");
   await Promise.all([
     env.INGESTION_ACTOR.get(ingestionId).fetch("http://ingestion-actor/start"),
     env.ALERTING_ACTOR.get(alertingId).fetch("http://alerting-actor/start"),
+    env.AIS_INGESTION_ACTOR.get(aisId).fetch("http://ais-ingestion-actor/start"),
   ]);
 }
 

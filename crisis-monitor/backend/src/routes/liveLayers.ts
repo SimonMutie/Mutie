@@ -961,6 +961,50 @@ const NUCLEAR_FACILITIES: Array<{ name: string; country: string; lat: number; ln
   { name: "Zhangzhou", country: "CN", lat: 23.8292, lng: 117.4917 },
 ];
 
+interface AisSnapshot {
+  connected: boolean;
+  vessels: { mmsi: number; name: string | null; lat: number; lng: number; speedKn: number | null; courseDeg: number | null; lastUpdate: string }[];
+  fetchedAt: string;
+}
+
+/** Real global live vessel positions from AISstream.io, held by
+ *  AisIngestionActor's persistent outbound WebSocket (see that file for
+ *  the connection/reconnect logic and bindings.ts's AISSTREAM_API_KEY
+ *  comment for why this source, chosen after checking the alternatives
+ *  directly and its explicit lack of published terms accepted as a known
+ *  trade-off). A short 15s cache here isn't slowing anything down —
+ *  AISstream.io itself pushes updates continuously, so this just caps how
+ *  often concurrent Lens viewers each re-poll the Durable Object. */
+liveLayersRouter.get("/ais-vessels", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      if (!c.env.AISSTREAM_API_KEY) {
+        throw new Error("AISSTREAM_API_KEY not set — sign up free at aisstream.io, generate a key, and set it as a Worker secret");
+      }
+      const id = c.env.AIS_INGESTION_ACTOR.idFromName("global");
+      const resp = await c.env.AIS_INGESTION_ACTOR.get(id).fetch("http://ais-ingestion-actor/snapshot");
+      const snapshot = await resp.json<AisSnapshot>();
+
+      const features: NormalizedFeature[] = snapshot.vessels.map((v) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [v.lng, v.lat] },
+        properties: {
+          id: `vessel:${v.mmsi}`,
+          title: v.name ?? `MMSI ${v.mmsi}`,
+          time: v.lastUpdate,
+          intensity: v.speedKn !== null ? Math.min(v.speedKn / 25, 1) : 0.3,
+          intensityLabel: v.speedKn !== null ? `${v.speedKn.toFixed(1)} kn` : "Speed unknown",
+          detail: v.courseDeg !== null ? `Course ${v.courseDeg.toFixed(0)}°` : "AIS position report",
+          url: null,
+        },
+      }));
+      return { type: "FeatureCollection", features, fetchedAt: snapshot.fetchedAt, connected: snapshot.connected };
+    },
+    15
+  );
+});
+
 /** Real, computed sea-lane geometries — see maritimeLanes.ts for exactly
  *  how these were generated and sanity-checked (searoute-js over a real
  *  marnet/Oak Ridge maritime network, not hand-drawn waypoints). Served as
