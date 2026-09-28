@@ -48,6 +48,14 @@ interface NormalizedFeature {
      *  /satellites route for exactly which real CelesTrak group(s) each
      *  value is sourced from. Every other layer leaves this undefined. */
     satelliteCategory?: "starlink-comms" | "military-intel" | "gps-nav" | "earth-observation" | "stations-telescopes";
+    /** Natural-events only — derived directly from NASA EONET's own
+     *  `categories[0].title` (see classifyNaturalEvent() just above
+     *  /natural-events), not a guess: EONET already tells us whether an
+     *  event is a wildfire or a severe storm. Every other EONET category
+     *  (volcanoes, floods, drought, etc.) is left undefined here since
+     *  OSIRIS's real Natural Hazards flyout only exposes these two plus
+     *  Earthquakes (which comes from a separate feed entirely). */
+    naturalHazardCategory?: "wildfire" | "severe-weather";
   };
 }
 
@@ -144,6 +152,17 @@ liveLayersRouter.get("/earthquakes", async (c) => {
   });
 });
 
+/** EONET's own category titles map directly onto two of OSIRIS's three real
+ *  Natural Hazards rows — no invented classification, just reading the
+ *  field EONET already provides. The third row (Earthquakes) is a
+ *  completely separate feed (USGS, above), matching how OSIRIS's own count
+ *  for that row doesn't come from EONET either. */
+function classifyNaturalEvent(categoryTitle: string): "wildfire" | "severe-weather" | undefined {
+  if (categoryTitle === "Wildfires") return "wildfire";
+  if (categoryTitle === "Severe Storms") return "severe-weather";
+  return undefined;
+}
+
 /** NASA EONET's open natural-event catalog (wildfires, storms, volcanoes,
  *  floods, etc). Public domain, no key. Each event can carry several
  *  geometry entries over its lifetime (a storm's tracked path); only the
@@ -185,6 +204,7 @@ liveLayersRouter.get("/natural-events", async (c) => {
           intensityLabel: category,
           detail: category,
           url: e.sources[0]?.url ?? null,
+          naturalHazardCategory: classifyNaturalEvent(category),
         },
       });
     }

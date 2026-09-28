@@ -601,6 +601,10 @@ export interface LiveLayerFeature {
      *  for exactly which real CelesTrak group(s) each value is sourced
      *  from. Undefined on every other layer. */
     satelliteCategory?: "starlink-comms" | "military-intel" | "gps-nav" | "earth-observation" | "stations-telescopes";
+    /** Natural-events only — see the backend's classifyNaturalEvent() for
+     *  exactly how this is derived from NASA EONET's own category field.
+     *  Undefined on every other layer. */
+    naturalHazardCategory?: "wildfire" | "severe-weather";
   };
 }
 

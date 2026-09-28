@@ -7,6 +7,7 @@ import {
   Anchor,
   Bell,
   Building2,
+  CloudLightning,
   Flame,
   MapPin,
   Mountain,
@@ -163,7 +164,9 @@ type LayerGroup = "Natural Hazards" | "Threats & Infra" | "Aviation" | "Maritime
  *  including a group with only one real layer, confirmed directly against
  *  OSIRIS's own real Maritime flyout. */
 const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
-  "Natural Hazards": { icon: Activity, color: HUD.alertOrange },
+  // CloudLightning matches a direct screenshot of OSIRIS's own rail icon
+  // for this group (a cloud-with-lightning glyph, not a generic pulse icon).
+  "Natural Hazards": { icon: CloudLightning, color: HUD.alertOrange },
   "Threats & Infra": { icon: AlertTriangle, color: HUD.alertRed },
   Aviation: { icon: Plane, color: HUD.cyan },
   Maritime: { icon: Ship, color: "#00BCD4" },
@@ -205,7 +208,27 @@ function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeat
 
 const LAYER_DEFS: LayerDef[] = [
   { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", icon: Activity, fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
-  { key: "natural-events", label: "Active Fires & Storms", group: "Natural Hazards", color: "#ffb020", icon: Flame, fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
+  // Both real rows below share NASA EONET's own event feed, split by the
+  // category EONET itself already assigns each event (see the backend's
+  // classifyNaturalEvent()) — matching OSIRIS's real "NATURAL HAZARDS"
+  // flyout (EARTHQUAKES / ACTIVE FIRES / SEVERE WEATHER), confirmed
+  // directly from a screenshot of its actual flyout rather than assumed.
+  {
+    key: "active-fires",
+    label: "Active Fires",
+    group: "Natural Hazards",
+    color: "#ffb020",
+    icon: Flame,
+    fetcher: async () => fromGateway("#ffb020", "Active Fires", (f) => f.properties.naturalHazardCategory === "wildfire")(await api.getLiveNaturalEvents()),
+  },
+  {
+    key: "severe-weather",
+    label: "Severe Weather",
+    group: "Natural Hazards",
+    color: "#4fd1ff",
+    icon: CloudLightning,
+    fetcher: async () => fromGateway("#4fd1ff", "Severe Weather", (f) => f.properties.naturalHazardCategory === "severe-weather")(await api.getLiveNaturalEvents()),
+  },
   { key: "conflict-events", label: "Conflict Reports", group: "Threats & Infra", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
   {
     key: "malware-infrastructure",
@@ -494,7 +517,8 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
 export default function LiveIntelView() {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     earthquakes: true,
-    "natural-events": true,
+    "active-fires": true,
+    "severe-weather": true,
     "conflict-events": true,
     "air-traffic-commercial": false,
     "air-traffic-private": false,
@@ -944,10 +968,12 @@ function escapeHtml(s: string): string {
  *  order. Every group — even a group with only one real layer, like
  *  Maritime — renders through the same GroupRailButton: a live-count badge
  *  on the rail icon itself, and hovering opens a flyout with the group
- *  name, an "ALL" enable/disable-everything button, a close (×), and one
+ *  name, an enable/disable-everything button reading "ALL" or "NONE"
+ *  depending on the group's own current state, a close (×), and one
  *  toggle+count row per layer, matching direct screenshots of OSIRIS's own
- *  AVIATION and MARITIME flyouts down to that one-row-is-still-a-flyout
- *  detail. A thin gold hairline separates each group in the rail. */
+ *  AVIATION, MARITIME and NATURAL HAZARDS flyouts down to that
+ *  one-row-is-still-a-flyout detail and the state-reflecting button label.
+ *  A thin gold hairline separates each group in the rail. */
 function LayerPanel({
   defs,
   enabled,
@@ -1005,10 +1031,13 @@ function LayerPanel({
 }
 
 /** A group's rail button — one icon standing in for several layers, exactly
- *  matching a direct screenshot of OSIRIS's own AVIATION flyout: hovering
- *  opens a card with the group name, an "ALL" enable/disable-everything
- *  button, a close (×), and one row per layer (its own icon, toggle, and
- *  live count). The rail icon itself shows the group's combined live count
+ *  matching direct screenshots of OSIRIS's own AVIATION and NATURAL
+ *  HAZARDS flyouts: hovering opens a card with the group name, an
+ *  enable/disable-everything button (labeled "ALL" when every row is on,
+ *  "NONE" otherwise — OSIRIS's own flyout showed "NONE" with all three
+ *  Natural Hazards rows off), a close (×), and one row per layer (its own
+ *  icon, toggle, and live count). The rail icon itself shows the group's
+ *  combined live count
  *  across whichever of its layers are on, so the rail stays informative
  *  even with the flyout closed. */
 function GroupRailButton({
@@ -1085,9 +1114,14 @@ function GroupRailButton({
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <button
                 onClick={() => onToggleAll(!allActive)}
+                title={allActive ? "Turn all off" : "Turn all on"}
                 style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontSize: 9.5, letterSpacing: "0.1em", fontWeight: 700, color: allActive ? meta.color : HUD.textMuted, fontFamily: "inherit" }}
               >
-                ALL
+                {/* Reflects the group's own current state rather than a
+                    fixed label — matches a direct screenshot of OSIRIS's
+                    real NATURAL HAZARDS flyout showing "NONE" while every
+                    row in that group was off. */}
+                {allActive ? "ALL" : "NONE"}
               </button>
               <button onClick={() => setHovered(false)} style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0, display: "flex" }}>
                 <CloseGlyph size={13} />
