@@ -1,9 +1,74 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import {
+  Activity,
+  AlertTriangle,
+  Anchor,
+  Bell,
+  Building2,
+  Flame,
+  MapPin,
+  Mountain,
+  Newspaper,
+  Plane,
+  Route as RouteGlyph,
+  Rss,
+  Ruler,
+  Shield,
+  Ship,
+  Sun,
+  type LucideIcon,
+} from "lucide-react";
 import Map3D from "./Map3D";
 import { api, type LiveLayerCollection, type LiveLayerFeature, type IssPosition, type NewsItem, type RouteProfile, type RouteResult } from "../api";
 import { BASEMAPS } from "./mapConstants";
+
+/**
+ * OSIRIS's real visual language — checked directly against its open-source
+ * repo (github.com/enzg/osiris-live, src/app/globals.css): a gold "Eye of
+ * Horus" accent on a near-black glass panel, JetBrains Mono throughout,
+ * uppercase/tracked headers, not the blue HUD palette this view launched
+ * with. Kept as local constants (not pushed into the app's shared
+ * globals.css) so this one view's restyle can't leak into any other part
+ * of the app. Map/data-point colors (per-layer dot colors, route/draw
+ * colors) are deliberately NOT reassigned to this palette — those encode
+ * real data (layer identity, alert severity) and OSIRIS's own layer dots
+ * are similarly varied per-layer, not all forced to one accent color.
+ */
+const HUD = {
+  bgPanel: "rgba(8, 10, 20, 0.88)",
+  borderPrimary: "rgba(212, 175, 55, 0.15)",
+  borderPrimaryHover: "rgba(212, 175, 55, 0.22)",
+  gold: "#D4AF37",
+  goldLight: "#F0D060",
+  cyan: "#00E5FF",
+  textPrimary: "#E8E6E0",
+  textSecondary: "#9B978E",
+  textMuted: "#5C5A54",
+  alertRed: "#FF3D3D",
+  alertOrange: "#FF9500",
+  alertGreen: "#00E676",
+  alertBlue: "#448AFF",
+} as const;
+
+const HUD_PANEL_SHADOW = "0 4px 30px rgba(0,0,0,0.5), 0 1px 0 rgba(212,175,55,0.06) inset, 0 -1px 0 rgba(0,0,0,0.3) inset";
+
+/** A glass-panel container, OSIRIS's own .glass-panel rule ported to inline
+ *  styles (blur+saturate backdrop, gold hairline border, layered shadow,
+ *  14px corners) — every floating HUD card in this view is built on this. */
+function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
+  return {
+    background: HUD.bgPanel,
+    backdropFilter: "blur(24px) saturate(1.3)",
+    WebkitBackdropFilter: "blur(24px) saturate(1.3)",
+    border: `1px solid ${HUD.borderPrimary}`,
+    borderRadius: 14,
+    boxShadow: HUD_PANEL_SHADOW,
+    ...extra,
+  };
+}
+
 
 /**
  * "Live Intelligence" — a new, separate view rather than a restyle of the
@@ -92,6 +157,7 @@ interface LayerDef {
   label: string;
   group: LayerGroup;
   color: string;
+  icon: LucideIcon;
   fetcher: () => Promise<GlobePoint[]>;
 }
 
@@ -117,22 +183,24 @@ function fromGateway(color: string, label: string) {
 }
 
 const LAYER_DEFS: LayerDef[] = [
-  { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
-  { key: "natural-events", label: "Active Fires & Storms", group: "Natural Hazards", color: "#ffb020", fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
-  { key: "conflict-events", label: "Conflict Reports", group: "Threats & Infra", color: "#7c9cff", fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
+  { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", icon: Activity, fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
+  { key: "natural-events", label: "Active Fires & Storms", group: "Natural Hazards", color: "#ffb020", icon: Flame, fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
+  { key: "conflict-events", label: "Conflict Reports", group: "Threats & Infra", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
   {
     key: "malware-infrastructure",
     label: "Botnet C2 Servers",
     group: "Threats & Infra",
     color: "#ff4fa3",
+    icon: Shield,
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
   },
-  { key: "air-traffic", label: "Air Traffic", group: "Aviation", color: "#2fe0c8", fetcher: async () => fromGateway("#2fe0c8", "Air Traffic")(await api.getLiveAirTraffic()) },
+  { key: "air-traffic", label: "Air Traffic", group: "Aviation", color: "#2fe0c8", icon: Plane, fetcher: async () => fromGateway("#2fe0c8", "Air Traffic")(await api.getLiveAirTraffic()) },
   {
     key: "maritime",
     label: "Ports, Bases & Chokepoints",
     group: "Maritime",
     color: "#3fd0ff",
+    icon: Anchor,
     fetcher: async () => fromGateway("#3fd0ff", "Maritime")(await api.getLiveMaritime()),
   },
   {
@@ -140,6 +208,7 @@ const LAYER_DEFS: LayerDef[] = [
     label: "My Incidents",
     group: "My Data",
     color: "#ff9de2",
+    icon: MapPin,
     fetcher: async () => {
       const rows = await api.getIncidents({ limit: 2000 });
       const out: GlobePoint[] = [];
@@ -166,6 +235,7 @@ const LAYER_DEFS: LayerDef[] = [
     label: "My Alerts",
     group: "My Data",
     color: "#ffd23f",
+    icon: Bell,
     fetcher: async () => {
       // /api/alerts requires a query_id for anyone who isn't an admin (the
       // same restriction QueryDashboard.tsx already works within — alerts
@@ -722,11 +792,18 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }
 
-/** Grouped, collapsible left-side toggle panel — OSIRIS's own layout, one
- *  card per category with a switch + live count per row, rather than the
- *  earlier flat row of chips. Kept as plain CSS toggles (not a heavier
- *  component) since this can hold a couple dozen rows and needs to stay
- *  fast to click through. */
+/** Left-side layer panel — rebuilt as OSIRIS's own collapsed icon rail
+ *  (its real left sidebar, seen icon-only) rather than the wide labeled
+ *  list this view first shipped: one small square button per layer,
+ *  vertically stacked in group order, each an icon (colored + filled when
+ *  the layer is on, muted outline when off) with a small cyan badge
+ *  showing its live feature count — badge appears only once the layer is
+ *  both on and has data, exactly matching the reference screenshot (an
+ *  off/empty layer shows a bare icon, no badge). Clicking a button toggles
+ *  that layer; the label lives in the native title tooltip since there's
+ *  no room for text in an icon-only rail. A thin gold hairline separates
+ *  each layer group, standing in for OSIRIS's own group boundaries without
+ *  needing full header rows at this width. */
 function LayerPanel({
   defs,
   enabled,
@@ -738,126 +815,113 @@ function LayerPanel({
   layers: Record<string, LayerState>;
   onToggle: (key: string) => void;
 }) {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const byGroup = useMemo(() => {
-    const map = new Map<LayerGroup, LayerDef[]>();
-    for (const def of defs) {
-      if (!map.has(def.group)) map.set(def.group, []);
-      map.get(def.group)!.push(def);
-    }
-    return map;
-  }, [defs]);
+  const groupedRows = useMemo(() => GROUP_ORDER.map((group) => defs.filter((d) => d.group === group)).filter((rows) => rows.length > 0), [defs]);
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 12,
-        left: 12,
-        zIndex: 500,
-        width: 240,
-        maxHeight: "calc(100% - 90px)",
-        overflowY: "auto",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
-      <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7c9cff", fontWeight: 700, padding: "2px 4px 4px" }}>
-        Live Intelligence
-      </div>
-
-      {GROUP_ORDER.map((group) => {
-        const rows = byGroup.get(group);
-        if (!rows || rows.length === 0) return null;
-        const isCollapsed = collapsed[group];
-        return (
-          <div key={group} style={{ background: "rgba(6,10,18,0.82)", border: "1px solid rgba(124,156,255,0.18)", borderRadius: 8, backdropFilter: "blur(4px)", overflow: "hidden" }}>
-            <button
-              onClick={() => setCollapsed((prev) => ({ ...prev, [group]: !prev[group] }))}
-              style={{
-                width: "100%",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "7px 10px",
-                background: "transparent",
-                border: "none",
-                borderBottom: isCollapsed ? "none" : "1px solid rgba(124,156,255,0.12)",
-                color: "#9fb3d9",
-                fontSize: 10.5,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                fontFamily: "inherit",
-                cursor: "pointer",
-              }}
-            >
-              {group}
-              <span style={{ opacity: 0.5 }}>{isCollapsed ? "▸" : "▾"}</span>
-            </button>
-            {!isCollapsed &&
-              rows.map((def) => {
-                const state = layers[def.key];
-                const isOn = enabled[def.key];
-                const count = state?.data?.length ?? 0;
-                return (
-                  <button
-                    key={def.key}
-                    onClick={() => onToggle(def.key)}
-                    title={state?.error ?? undefined}
+    <div style={{ ...glassPanel(), position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 2, padding: 5 }}>
+      {groupedRows.map((rows, gi) => (
+        <div
+          key={rows[0].group}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            ...(gi > 0 ? { borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 } : {}),
+          }}
+        >
+          {rows.map((def) => {
+            const state = layers[def.key];
+            const isOn = enabled[def.key];
+            const count = state?.data?.length ?? 0;
+            const Icon = def.icon;
+            const hasError = Boolean(state?.error);
+            return (
+              <button
+                key={def.key}
+                onClick={() => onToggle(def.key)}
+                title={`${def.label}${hasError ? ` — ${state?.error}` : isOn ? ` — ${count.toLocaleString()} tracked` : " — off"}`}
+                style={{
+                  position: "relative",
+                  width: 42,
+                  height: 38,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: isOn ? "rgba(212,175,55,0.14)" : "transparent",
+                  border: "none",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  transition: "background 0.15s",
+                }}
+              >
+                <Icon size={17} color={isOn ? def.color : HUD.textMuted} strokeWidth={isOn ? 2.25 : 1.75} />
+                {isOn && count > 0 && !hasError && (
+                  <span
                     style={{
-                      width: "100%",
+                      position: "absolute",
+                      top: 2,
+                      right: 2,
+                      minWidth: 15,
+                      height: 15,
+                      padding: "0 3px",
+                      borderRadius: 999,
+                      background: HUD.cyan,
+                      color: "#04121a",
+                      fontSize: 9,
+                      fontWeight: 800,
                       display: "flex",
                       alignItems: "center",
-                      gap: 8,
-                      padding: "6px 10px",
-                      background: "transparent",
-                      border: "none",
-                      borderTop: "1px solid rgba(124,156,255,0.06)",
-                      cursor: "pointer",
-                      fontFamily: "inherit",
-                      textAlign: "left",
+                      justifyContent: "center",
+                      lineHeight: 1,
+                      boxShadow: "0 0 6px rgba(0,229,255,0.5)",
                     }}
                   >
-                    <ToggleSwitch on={isOn} color={def.color} />
-                    <span style={{ flex: 1, fontSize: 12, color: isOn ? "#eef3ff" : "#7f8ea3" }}>{def.label}</span>
-                    <span style={{ fontSize: 11, color: state?.error ? "#ff5d5d" : "#7f8ea3" }}>
-                      {state?.loading ? "…" : state?.error ? "ERR" : count}
-                    </span>
-                  </button>
-                );
-              })}
-          </div>
-        );
-      })}
+                    {count > 99 ? "99+" : count}
+                  </span>
+                )}
+                {isOn && state?.loading && (
+                  <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.textMuted }} />
+                )}
+                {hasError && (
+                  <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.alertRed, boxShadow: `0 0 6px ${HUD.alertRed}99` }} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }
 
-function ToggleSwitch({ on, color }: { on: boolean; color: string }) {
+/** OSIRIS's own .layer-toggle: a 28×14 pill, gold-tinted + gold-glowing
+ *  thumb when active, muted gray otherwise — ported from its exact CSS
+ *  rule rather than the generic blue switch this view used before. */
+function LayerToggleSwitch({ on }: { on: boolean }) {
   return (
     <span
       style={{
         position: "relative",
-        width: 26,
+        width: 28,
         height: 14,
-        borderRadius: 999,
-        background: on ? `${color}44` : "rgba(255,255,255,0.12)",
-        border: `1px solid ${on ? color : "rgba(255,255,255,0.2)"}`,
+        borderRadius: 7,
         flexShrink: 0,
-        transition: "background 0.15s",
+        background: on ? "rgba(212,175,55,0.25)" : "rgba(255,255,255,0.06)",
+        border: `1px solid ${on ? HUD.gold : "rgba(255,255,255,0.08)"}`,
+        transition: "all 0.2s",
       }}
     >
       <span
         style={{
           position: "absolute",
           top: 1,
-          left: on ? 12 : 1,
+          left: on ? 15 : 1,
           width: 10,
           height: 10,
           borderRadius: "50%",
-          background: on ? color : "#8a97ab",
-          transition: "left 0.15s",
+          background: on ? HUD.gold : HUD.textMuted,
+          boxShadow: on ? "0 0 8px rgba(212,175,55,0.5)" : "none",
+          transition: "all 0.2s",
         }}
       />
     </span>
@@ -872,35 +936,24 @@ function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapM
     { key: "sat", label: "Sat" },
   ];
   return (
-    <div
-      style={{
-        position: "absolute",
-        left: 12,
-        bottom: 44,
-        zIndex: 500,
-        display: "flex",
-        gap: 2,
-        background: "rgba(6,10,18,0.82)",
-        border: "1px solid rgba(124,156,255,0.18)",
-        borderRadius: 8,
-        padding: 3,
-        backdropFilter: "blur(4px)",
-      }}
-    >
+    <div style={{ ...glassPanel(), position: "absolute", left: 12, bottom: 44, zIndex: 500, display: "flex", gap: 2, padding: 3 }}>
       {options.map((opt) => (
         <button
           key={opt.key}
           onClick={() => onChange(opt.key)}
           style={{
-            fontSize: 11,
-            padding: "5px 10px",
-            borderRadius: 6,
+            fontSize: 10.5,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            padding: "5px 11px",
+            borderRadius: 8,
             border: "none",
-            background: mode === opt.key ? "#7c9cff33" : "transparent",
-            color: mode === opt.key ? "#eef3ff" : "#7f8ea3",
-            fontWeight: mode === opt.key ? 700 : 400,
+            background: mode === opt.key ? "rgba(212,175,55,0.18)" : "transparent",
+            color: mode === opt.key ? HUD.gold : HUD.textMuted,
             cursor: "pointer",
             fontFamily: "inherit",
+            transition: "all 0.15s",
           }}
         >
           {opt.label}
@@ -932,41 +985,29 @@ function DisplayPanel({
   onToggleBuildings: () => void;
   onToggleTerrain: () => void;
 }) {
-  const rows: { label: string; hint?: string; on: boolean; onToggle: () => void }[] = [
-    { label: "Day / Night Cycle", on: dayNight, onToggle: onToggleDayNight },
-    { label: "3D Buildings", hint: "City detail — zoom 14.5+", on: buildings, onToggle: onToggleBuildings },
-    { label: "3D Terrain", hint: "Mountains — zoom 10+", on: terrain, onToggle: onToggleTerrain },
+  const rows: { label: string; hint?: string; icon: LucideIcon; on: boolean; onToggle: () => void }[] = [
+    { label: "Day / Night Cycle", icon: Sun, on: dayNight, onToggle: onToggleDayNight },
+    { label: "3D Buildings", hint: "City detail — zoom 14.5+", icon: Building2, on: buildings, onToggle: onToggleBuildings },
+    { label: "3D Terrain", hint: "Mountains — zoom 10+", icon: Mountain, on: terrain, onToggle: onToggleTerrain },
   ];
   return (
-    <div
-      style={{
-        position: "absolute",
-        left: 12,
-        bottom: 84,
-        zIndex: 500,
-        width: 200,
-        background: "rgba(6,10,18,0.9)",
-        border: "1px solid rgba(124,156,255,0.18)",
-        borderRadius: 8,
-        backdropFilter: "blur(4px)",
-        padding: 10,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
-      <div style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "#7c9cff", fontWeight: 700 }}>Display</div>
+    <div style={{ ...glassPanel(), position: "absolute", left: 12, bottom: 84, zIndex: 500, width: 210, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>
+        <Sun size={12} color={HUD.gold} />
+        Display
+      </div>
       {rows.map((r) => (
         <button
           key={r.label}
           onClick={r.onToggle}
           style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}
         >
-          <ToggleSwitch on={r.on} color="#7c9cff" />
-          <span style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontSize: 11.5, color: r.on ? "#eef3ff" : "#9fb3d9" }}>{r.label}</span>
-            {r.hint && <span style={{ fontSize: 9.5, color: "#7f8ea3" }}>{r.hint}</span>}
+          <r.icon size={13} color={r.on ? HUD.gold : HUD.textMuted} />
+          <span style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+            <span style={{ fontSize: 11.5, color: r.on ? HUD.textPrimary : HUD.textSecondary }}>{r.label}</span>
+            {r.hint && <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{r.hint}</span>}
           </span>
+          <LayerToggleSwitch on={r.on} />
         </button>
       ))}
     </div>
@@ -977,23 +1018,21 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
   return (
     <div
       style={{
+        ...glassPanel({ borderRadius: 8 }),
         position: "absolute",
         left: 12,
         bottom: 12,
         zIndex: 500,
         display: "flex",
         gap: 16,
-        fontSize: 11,
-        color: "#7f8ea3",
-        background: "rgba(0,3,8,0.72)",
-        border: "1px solid rgba(124,156,255,0.18)",
-        borderRadius: 6,
+        fontSize: 10.5,
+        letterSpacing: "0.04em",
+        color: HUD.textMuted,
         padding: "6px 12px",
-        backdropFilter: "blur(4px)",
       }}
     >
       <span>
-        TRACKS <span style={{ color: "#eef3ff" }}>{totalFeatures}</span>
+        TRACKS <span style={{ color: HUD.gold, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{totalFeatures}</span>
       </span>
       <span>{clock.toISOString().replace("T", " ").slice(0, 19)} UTC</span>
     </div>
@@ -1005,51 +1044,37 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
  *  same border color) but icon-only + a short label, since this rail holds
  *  tools rather than a scrollable list of toggles. */
 function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void }) {
-  const tools: { key: Exclude<RightTool, null>; icon: string; label: string }[] = [
-    { key: "draw", icon: "✏", label: "Draw" },
-    { key: "route", icon: "➜", label: "Route" },
-    { key: "space", icon: "◎", label: "Space" },
-    { key: "news", icon: "☰", label: "Alerts" },
+  const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
+    { key: "draw", icon: Ruler, label: "Draw" },
+    { key: "route", icon: RouteGlyph, label: "Route" },
+    { key: "space", icon: Rss, label: "Space" },
+    { key: "news", icon: Newspaper, label: "Alerts" },
   ];
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 12,
-        right: 12,
-        zIndex: 500,
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        background: "rgba(6,10,18,0.82)",
-        border: "1px solid rgba(124,156,255,0.18)",
-        borderRadius: 8,
-        padding: 4,
-        backdropFilter: "blur(4px)",
-      }}
-    >
+    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 4, padding: 4 }}>
       {tools.map((t) => (
         <button
           key={t.key}
           onClick={() => onSelect(t.key)}
           title={t.label}
           style={{
-            width: 52,
+            width: 54,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            gap: 2,
-            padding: "7px 4px",
-            background: active === t.key ? "#7c9cff33" : "transparent",
+            gap: 3,
+            padding: "8px 4px",
+            background: active === t.key ? "rgba(212,175,55,0.18)" : "transparent",
             border: "none",
-            borderRadius: 6,
-            color: active === t.key ? "#eef3ff" : "#7f8ea3",
+            borderRadius: 8,
+            color: active === t.key ? HUD.gold : HUD.textMuted,
             cursor: "pointer",
             fontFamily: "inherit",
+            transition: "all 0.15s",
           }}
         >
-          <span style={{ fontSize: 15, lineHeight: 1 }}>{t.icon}</span>
-          <span style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase" }}>{t.label}</span>
+          <t.icon size={16} color={active === t.key ? HUD.gold : HUD.textMuted} />
+          <span style={{ fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700 }}>{t.label}</span>
         </button>
       ))}
     </div>
@@ -1062,26 +1087,8 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
  *  than four separately-designed popovers. */
 function ToolPanelShell({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div
-      style={{
-        position: "absolute",
-        top: 12,
-        right: 76,
-        zIndex: 500,
-        width: 260,
-        maxHeight: "calc(100% - 24px)",
-        overflowY: "auto",
-        background: "rgba(6,10,18,0.9)",
-        border: "1px solid rgba(124,156,255,0.18)",
-        borderRadius: 8,
-        backdropFilter: "blur(4px)",
-        padding: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "#7c9cff", fontWeight: 700 }}>{title}</div>
+    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: 260, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>{title}</div>
       {children}
     </div>
   );
@@ -1096,9 +1103,9 @@ function ToolButton({ active, onClick, children }: { active?: boolean; onClick: 
         fontSize: 11,
         padding: "6px 8px",
         borderRadius: 6,
-        border: `1px solid ${active ? "#7c9cff" : "rgba(124,156,255,0.25)"}`,
-        background: active ? "#7c9cff33" : "transparent",
-        color: active ? "#eef3ff" : "#9fb3d9",
+        border: `1px solid ${active ? HUD.gold : "rgba(212,175,55,0.2)"}`,
+        background: active ? "rgba(212,175,55,0.15)" : "transparent",
+        color: active ? HUD.gold : HUD.textSecondary,
         cursor: "pointer",
         fontFamily: "inherit",
       }}
@@ -1135,25 +1142,25 @@ function DrawingToolPanel({
         </ToolButton>
       </div>
       {mode ? (
-        <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
+        <div style={{ fontSize: 11, color: HUD.textSecondary, lineHeight: 1.6 }}>
           Click the map to add points{mode === "area" ? " (closes automatically)" : ""}.
           <br />
           {points.length} point{points.length === 1 ? "" : "s"} placed.
           {mode === "distance" && points.length >= 2 && (
             <>
               <br />
-              Distance: <b style={{ color: "#eef3ff" }}>{formatKm(distanceKm)}</b>
+              Distance: <b style={{ color: HUD.textPrimary }}>{formatKm(distanceKm)}</b>
             </>
           )}
           {mode === "area" && points.length >= 3 && (
             <>
               <br />
-              Area: <b style={{ color: "#eef3ff" }}>{areaKm2 >= 1 ? `${areaKm2.toFixed(1)} km²` : `${(areaKm2 * 1e6).toFixed(0)} m²`}</b>
+              Area: <b style={{ color: HUD.textPrimary }}>{areaKm2 >= 1 ? `${areaKm2.toFixed(1)} km²` : `${(areaKm2 * 1e6).toFixed(0)} m²`}</b>
             </>
           )}
         </div>
       ) : (
-        <div style={{ fontSize: 11, color: "#7f8ea3" }}>Pick Distance or Area to start placing points.</div>
+        <div style={{ fontSize: 11, color: HUD.textMuted }}>Pick Distance or Area to start placing points.</div>
       )}
       <div style={{ display: "flex", gap: 6 }}>
         <ToolButton onClick={onClear}>Clear</ToolButton>
@@ -1196,21 +1203,21 @@ function RoutePlannerPanel({
           </ToolButton>
         ))}
       </div>
-      <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: HUD.textSecondary, lineHeight: 1.6 }}>
         {!origin && "Click the map to set an origin."}
         {origin && !destination && "Now click a destination."}
         {origin && destination && !loading && !error && !result && "Routing…"}
       </div>
-      {loading && <div style={{ fontSize: 11, color: "#7f8ea3" }}>Routing…</div>}
-      {error && <div style={{ fontSize: 11, color: "#ff5d5d" }}>{error}</div>}
+      {loading && <div style={{ fontSize: 11, color: HUD.textMuted }}>Routing…</div>}
+      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
       {result && (
-        <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
-          Distance: <b style={{ color: "#eef3ff" }}>{formatKm(result.distanceMeters / 1000)}</b>
+        <div style={{ fontSize: 11, color: HUD.textSecondary, lineHeight: 1.6 }}>
+          Distance: <b style={{ color: HUD.textPrimary }}>{formatKm(result.distanceMeters / 1000)}</b>
           <br />
-          Duration: <b style={{ color: "#eef3ff" }}>{formatDuration(result.durationSeconds)}</b>
+          Duration: <b style={{ color: HUD.textPrimary }}>{formatDuration(result.durationSeconds)}</b>
         </div>
       )}
-      <div style={{ fontSize: 10, color: "#7f8ea3", lineHeight: 1.5 }}>
+      <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
         Routed via OSRM's free public demo server — fine for occasional use, not a guaranteed production service.
       </div>
       <ToolButton onClick={onClear}>Clear</ToolButton>
@@ -1221,17 +1228,17 @@ function RoutePlannerPanel({
 function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string | null }) {
   return (
     <ToolPanelShell title="Live From Space">
-      {error && <div style={{ fontSize: 11, color: "#ff5d5d" }}>{error}</div>}
+      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
       {pos ? (
-        <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
-          ISS position: <b style={{ color: "#eef3ff" }}>{pos.lat.toFixed(2)}, {pos.lng.toFixed(2)}</b>
+        <div style={{ fontSize: 11, color: HUD.textSecondary, lineHeight: 1.6 }}>
+          ISS position: <b style={{ color: HUD.textPrimary }}>{pos.lat.toFixed(2)}, {pos.lng.toFixed(2)}</b>
           <br />
-          Ground speed: <b style={{ color: "#eef3ff" }}>~{pos.speedKmh.toLocaleString()} km/h</b>
+          Ground speed: <b style={{ color: HUD.textPrimary }}>~{pos.speedKmh.toLocaleString()} km/h</b>
           <br />
           As of {new Date(pos.timestamp).toLocaleTimeString()}
         </div>
       ) : (
-        !error && <div style={{ fontSize: 11, color: "#7f8ea3" }}>Locating ISS…</div>
+        !error && <div style={{ fontSize: 11, color: HUD.textMuted }}>Locating ISS…</div>
       )}
       <div style={{ borderRadius: 6, overflow: "hidden", aspectRatio: "16 / 9", background: "#000" }}>
         <iframe
@@ -1242,7 +1249,7 @@ function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string
           allowFullScreen
         />
       </div>
-      <div style={{ fontSize: 10, color: "#7f8ea3" }}>NASA's public live channel — plays whatever NASA currently has live (ISS views, launches, briefings).</div>
+      <div style={{ fontSize: 10, color: HUD.textMuted }}>NASA's public live channel — plays whatever NASA currently has live (ISS views, launches, briefings).</div>
     </ToolPanelShell>
   );
 }
@@ -1250,9 +1257,9 @@ function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string
 function NewsFeedPanel({ items, loading, error }: { items: NewsItem[] | null; loading: boolean; error: string | null }) {
   return (
     <ToolPanelShell title="Live Alerts">
-      {loading && !items && <div style={{ fontSize: 11, color: "#7f8ea3" }}>Loading headlines…</div>}
-      {error && <div style={{ fontSize: 11, color: "#ff5d5d" }}>{error}</div>}
-      {items && items.length === 0 && !error && <div style={{ fontSize: 11, color: "#7f8ea3" }}>No headlines available right now.</div>}
+      {loading && !items && <div style={{ fontSize: 11, color: HUD.textMuted }}>Loading headlines…</div>}
+      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
+      {items && items.length === 0 && !error && <div style={{ fontSize: 11, color: HUD.textMuted }}>No headlines available right now.</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {items?.map((item) => (
           <a
@@ -1262,8 +1269,8 @@ function NewsFeedPanel({ items, loading, error }: { items: NewsItem[] | null; lo
             rel="noreferrer"
             style={{ display: "block", textDecoration: "none", padding: "6px 0", borderBottom: "1px solid rgba(124,156,255,0.1)" }}
           >
-            <div style={{ fontSize: 12, color: "#eef3ff", lineHeight: 1.35 }}>{item.title}</div>
-            <div style={{ fontSize: 10, color: "#7f8ea3", marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: HUD.textPrimary, lineHeight: 1.35 }}>{item.title}</div>
+            <div style={{ fontSize: 10, color: HUD.textMuted, marginTop: 2 }}>
               {item.source}
               {item.publishedAt ? ` · ${new Date(item.publishedAt).toLocaleString()}` : ""}
             </div>
