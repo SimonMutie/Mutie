@@ -43,7 +43,7 @@ export default function App() {
   const shareToken = usePublicShareToken();
   const [bootState, setBootState] = useState<BootState>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [view, setView] = useState<View>("incidents");
+  const [view, setView] = useState<View>("live-intel");
   const [queries, setQueries] = useState<MonitoringQueryItem[]>([]);
   const [connected, setConnected] = useState(false);
   const [liveMessage, setLiveMessage] = useState<{ type: string; payload: unknown } | null>(null);

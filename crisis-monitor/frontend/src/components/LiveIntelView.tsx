@@ -72,7 +72,12 @@ function fromGateway(color: string, label: string) {
       lat: f.geometry.coordinates[1],
       lng: f.geometry.coordinates[0],
       color,
-      size: 0.35 + f.properties.intensity * 0.9,
+      // OSIRIS's own points render as tiny flat 2D circles (roughly 3-9px,
+      // via MapLibre) — three-globe's pointsData markers are real 3D
+      // discs, which read as chunky next to that at any size much above
+      // this. Kept small and in a narrow range on purpose to match that
+      // crisp, minimal feel rather than the bigger default scale.
+      size: 0.1 + f.properties.intensity * 0.16,
       title: f.properties.title,
       subtitle: `${f.properties.intensityLabel}${f.properties.detail ? ` — ${f.properties.detail}` : ""}`,
       time: f.properties.time,
@@ -112,7 +117,7 @@ const LAYER_DEFS: LayerDef[] = [
           lat: r.latitude,
           lng: r.longitude,
           color: "#ff9de2",
-          size: 0.4,
+          size: 0.16,
           title: r.city || r.district || r.country || "Incident",
           subtitle: [r.sector, r.tactic].filter(Boolean).join(" — "),
           time: r.occurred_at,
@@ -137,7 +142,7 @@ const LAYER_DEFS: LayerDef[] = [
           lat: r.geo_lat,
           lng: r.geo_lng,
           color: "#ffd23f",
-          size: 0.45,
+          size: 0.18,
           title: r.title,
           subtitle: r.geo_label ?? r.level,
           time: r.created_at,
@@ -147,6 +152,22 @@ const LAYER_DEFS: LayerDef[] = [
       return out;
     },
   },
+];
+
+/** Major real global container-shipping trunk routes, drawn as arcs
+ *  between the hub ports the backend's /maritime layer already lists.
+ *  OSIRIS itself has no shipping-lane rendering at all (checked directly
+ *  against its source — no lane/route code exists there, and its "ship"
+ *  layer is wired to a backend field that's never actually populated), so
+ *  this isn't matching something OSIRIS has; it's a legitimate addition of
+ *  well-known real trade routes, tied to the same Maritime toggle. */
+const SHIPPING_LANES: { points: [number, number][]; label: string }[] = [
+  { points: [[31.23, 121.47], [33.74, -118.27]], label: "Transpacific — Shanghai–Los Angeles" },
+  { points: [[35.10, 129.04], [33.74, -118.27]], label: "Transpacific — Busan–Los Angeles" },
+  { points: [[31.23, 121.47], [1.26, 103.84], [25.01, 55.06]], label: "Asia–Middle East — Shanghai–Singapore–Jebel Ali" },
+  { points: [[1.26, 103.84], [51.90, 4.50]], label: "Asia–Europe — Singapore–Rotterdam" },
+  { points: [[51.90, 4.50], [32.08, -81.09]], label: "Transatlantic — Rotterdam–Savannah" },
+  { points: [[31.23, 121.47], [1.26, 103.84]], label: "Intra-Asia trunk — Shanghai–Singapore" },
 ];
 
 const POLL_MS = 60_000;
@@ -361,7 +382,19 @@ export default function LiveIntelView() {
           pointLng={(d: object) => (d as GlobePoint).lng}
           pointColor={(d: object) => (d as GlobePoint).color}
           pointRadius={(d: object) => (d as GlobePoint).size}
-          pointAltitude={0.01}
+          pointAltitude={0.002}
+          pointResolution={16}
+          pathsData={enabled.maritime ? SHIPPING_LANES : []}
+          pathPoints={(d: object) => (d as { points: [number, number][] }).points}
+          pathPointLat={(p: unknown) => (p as [number, number])[0]}
+          pathPointLng={(p: unknown) => (p as [number, number])[1]}
+          pathColor={() => "#3fd0ff"}
+          pathLabel={(d: object) => (d as { label: string }).label}
+          pathStroke={0.4}
+          pathDashLength={0.4}
+          pathDashGap={0.2}
+          pathDashAnimateTime={6000}
+          pathTransitionDuration={0}
           pointLabel={(d: object) => {
             const p = d as GlobePoint;
             return `<div style="font-family:monospace;font-size:12px;max-width:220px">
