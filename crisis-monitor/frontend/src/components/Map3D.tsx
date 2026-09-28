@@ -148,15 +148,27 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
     const map = new MapLibreMap({
       container: containerRef.current,
       style: CARTO_DARK_MATTER_STYLE,
-      center: [30, 15],
-      zoom: 2.2,
+      // Centered/zoomed on the same Africa/Middle East framing as the
+      // reference screenshots, rather than a full whole-earth view — at
+      // zoom ~2 the dark-matter style's land color (#0e0e0e) sits so close
+      // to this view's own black page background (#000308) that continents
+      // barely read against it; this starting view shows real granularity
+      // (borders, place labels) immediately instead of requiring the
+      // viewer to zoom in first to see anything.
+      center: [40, 12],
+      zoom: 3.4,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
     map.addControl(new NavigationControl({ showCompass: true }), "bottom-right");
 
     map.on("load", () => {
-      (map as unknown as { setProjection: (p: { type: string }) => void }).setProjection({ type: "globe" });
+      map.setProjection({ type: "globe" });
+      // Without an explicit sky, the globe's rim has no atmosphere glow and
+      // the void beyond it is just the page's own black background — the
+      // sphere itself can visually disappear into that black backdrop.
+      // These are the same blue tones the old three-globe atmosphere used.
+      map.setSky({ "sky-color": "#000308", "horizon-color": "#1a2a4d", "horizon-fog-blend": 0.6, "atmosphere-blend": 0.4 });
 
       map.addSource("osiris-points", { type: "geojson", data: toGeoJsonPoints([]) });
       map.addLayer({
