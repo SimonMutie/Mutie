@@ -1181,7 +1181,24 @@ function GroupRailButton({
         )}
       </button>
       {hovered && (
-        <div style={{ ...glassPanel(), position: "absolute", left: "100%", top: 0, marginLeft: 8, width: 220, padding: 10, zIndex: 600 }}>
+        <div
+          style={{
+            ...glassPanel(),
+            position: "absolute",
+            left: "100%",
+            top: 0,
+            // Same fix as RailHoverToggle's flyout below: no marginLeft
+            // gap between the rail icon and the flyout — that gap was a
+            // dead zone with no hoverable element in it, so moving the
+            // mouse toward the toggles fired onMouseLeave and closed the
+            // flyout before it could be reached. The visual gap is now
+            // internal padding instead, which stays part of the same
+            // continuously-hoverable box as the icon button.
+            width: 220,
+            padding: "10px 10px 10px 18px",
+            zIndex: 600,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>{group}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1310,14 +1327,19 @@ function RailHoverToggle({
             position: "absolute",
             left: "100%",
             top: 0,
-            marginLeft: 8,
+            // No marginLeft gap: a gap here is a dead zone the mouse has
+            // to cross without hovering *either* element, which fires
+            // onMouseLeave on the wrapping div before the cursor ever
+            // reaches the flyout — the exact bug reported live. The same
+            // 8px of visual breathing room is kept via paddingLeft
+            // instead, which is part of this element's own hoverable box.
             width: 190,
-            padding: 10,
+            padding: "10px 10px 10px 18px",
             zIndex: 600,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: HUD.textSecondary, fontWeight: 700 }}>Maritime</span>
+            <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: HUD.textSecondary, fontWeight: 700 }}>{label}</span>
             <button
               onClick={() => setHovered(false)}
               style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0, display: "flex" }}
