@@ -1,19 +1,20 @@
 import { useEffect, useRef } from "react";
 import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
-import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
 
-// MapLibre GL loads its own worker script from a URL it builds internally
-// at runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
-// pipeline can statically see), so Vite never copies maplibre-gl-worker.mjs
-// into the build at all — the browser's request for it 404s, Cloudflare
-// Pages' SPA fallback serves index.html instead (hence the real symptom:
-// "non-JavaScript MIME type of text/html"), the worker fails to start, and
-// the map never renders a single tile. The `?url` import above is what
-// makes Vite actually emit the file as a real build asset with a real URL;
-// this line is what tells MapLibre to load its worker from that URL
-// instead of guessing.
-setWorkerUrl(maplibreWorkerUrl);
+// MapLibre GL loads its own worker script from a URL it builds internally at
+// runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
+// pipeline can statically see), so Vite never bundled maplibre-gl-worker.mjs
+// on its own. Worse, that worker file isn't even self-contained — it does
+// `import ... from "./maplibre-gl-shared.mjs"` — so copying just the worker
+// file (an earlier attempt, via a `?url` import) still 404'd one file deeper
+// once the browser tried to load its sibling. vite.config.ts's
+// copy-maplibre-worker-assets plugin now copies BOTH files together, as a
+// pair, into dist/assets/maplibre-<version>/ so the relative import between
+// them keeps working, and __MAPLIBRE_WORKER_URL__ (injected by that same
+// config, via `define`) points here at build time.
+declare const __MAPLIBRE_WORKER_URL__: string;
+setWorkerUrl(__MAPLIBRE_WORKER_URL__);
 
 /**
  * The 3D view, rebuilt on the same engine OSIRIS itself actually uses —
