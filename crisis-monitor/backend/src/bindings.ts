@@ -43,4 +43,14 @@ export interface Env {
    *  accepted with eyes open that aisstream.io publishes no terms of
    *  service or SLA, per the user's explicit decision. */
   AISSTREAM_API_KEY?: string;
+  /** Access token from UCDP (Uppsala Conflict Data Program) for its GED
+   *  (Georeferenced Event Dataset) API — used by /api/live-layers/ucdp-conflict-events
+   *  for validated, academically-coded historical conflict events (CC BY
+   *  4.0, verified commercial-safe directly against ucdp.uu.se/downloads).
+   *  Unlike every other optional key in this file, there's no self-serve
+   *  signup: email mertcan.yilmaz@pcr.uu.se with a short description of the
+   *  intended use (UCDP's own API docs, ucdp.uu.se/apidocs) and they issue
+   *  one. Optional: the route reports it's unconfigured until this is set,
+   *  same pattern as ABUSECH_AUTH_KEY/AISSTREAM_API_KEY. */
+  UCDP_API_TOKEN?: string;
 }

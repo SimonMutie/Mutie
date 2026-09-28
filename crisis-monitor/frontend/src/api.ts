@@ -664,6 +664,15 @@ export interface ActivityIndex {
   fetchedAt: string;
 }
 
+export interface EconomicIndicators {
+  countries: Array<
+    { code: string; name: string } & Record<string, number | string | null>
+  >;
+  indicators: { key: string; label: string; unit: string }[];
+  source: string;
+  fetchedAt: string;
+}
+
 export interface MaritimeLane {
   label: string;
   points: [number, number][];
@@ -969,6 +978,7 @@ export const api = {
   // network graph) — see backend/src/data/maritimeLanes.ts.
   getLiveMaritimeLines: () => req<MaritimeLanes>("/api/live-layers/maritime-lines"),
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
+  getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
   // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
   // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key
@@ -988,6 +998,7 @@ export const api = {
   getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
   getMarkets: () => req<MarketsStatus>("/api/global-status/markets"),
   getActivityIndex: () => req<ActivityIndex>("/api/global-status/activity-index"),
+  getEconomicIndicators: () => req<EconomicIndicators>("/api/global-status/economic-indicators"),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

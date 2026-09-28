@@ -12,6 +12,7 @@ import {
   CloudLightning,
   Flame,
   Hexagon,
+  Landmark,
   MapPin,
   Mountain,
   Navigation,
@@ -54,6 +55,7 @@ import {
   type IncidentFilters as IncidentFilterOptions,
   type SavedShape,
   type SavedRoute,
+  type EconomicIndicators,
 } from "../api";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -347,6 +349,20 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
+  // Deliberately separate from GDELT Events above — GDELT is a real-time,
+  // unverified news-mention feed; this is UCDP's own academically-coded
+  // Georeferenced Event Dataset (CC BY 4.0, verified commercial-safe), with
+  // a real best-estimate death toll per event. Needs UCDP_API_TOKEN set
+  // server-side (see bindings.ts) — until then this layer just comes back
+  // empty rather than erroring the whole poll loop.
+  {
+    key: "ucdp-conflict-events",
+    label: "UCDP Conflict Events",
+    group: "Threats & Intel",
+    color: "#ff6b6b",
+    icon: Siren,
+    fetcher: async () => fromGateway("#ff6b6b", "UCDP Conflict Events")(await api.getLiveUcdpConflictEvents()),
+  },
   // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
   // a dedicated rail icon, separate from Threats & Intel, with rows LIVE
   // MALWARE and BOTNET C2 SERVERS) — Botnet C2 Servers moves here from
@@ -564,7 +580,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | null;
+type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | null;
 type DrawMode = "distance" | "area" | null;
 
 /** [lat, lng] tuples throughout the drawing/route tools — matches how a
@@ -670,6 +686,7 @@ export default function LiveIntelView() {
     // not the open-source mirror, which has no lines concept at all).
     "maritime-lines": false,
     "ais-vessels": false,
+    "ucdp-conflict-events": false,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
   const [layers, setLayers] = useState<Record<string, LayerState>>(() =>
@@ -718,6 +735,26 @@ export default function LiveIntelView() {
   const [newsItems, setNewsItems] = useState<NewsItem[] | null>(null);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
+
+  // --- Economy tool: World Bank indicators (GDP, growth, inflation, trade)
+  // across Afrilens's African coverage set — fetched lazily on first open,
+  // since these barely change and there's no reason to poll them. ---
+  const [econData, setEconData] = useState<EconomicIndicators | null>(null);
+  const [econLoading, setEconLoading] = useState(false);
+  const [econError, setEconError] = useState<string | null>(null);
+  const [econSortKey, setEconSortKey] = useState<string>("gdpUsd");
+  useEffect(() => {
+    if (activeTool !== "economy" || econData || econLoading) return;
+    setEconLoading(true);
+    api
+      .getEconomicIndicators()
+      .then((d) => {
+        setEconData(d);
+        setEconError(null);
+      })
+      .catch((err) => setEconError(err instanceof Error ? err.message : "World Bank feed unavailable"))
+      .finally(() => setEconLoading(false));
+  }, [activeTool, econData, econLoading]);
 
   // --- Incidents tool: search/filter the same incident set "My Incidents"
   // polls, plus the Add/Bulk-upload intake modal. ---
@@ -1234,6 +1271,9 @@ export default function LiveIntelView() {
             onAdd={() => setIncidentModalTab("add")}
             onBulkUpload={() => setIncidentModalTab("bulk")}
           />
+        )}
+        {activeTool === "economy" && (
+          <EconomicIndicatorsPanel data={econData} loading={econLoading} error={econError} sortKey={econSortKey} onSortKeyChange={setEconSortKey} />
         )}
         {activeTool === "shapes" && (
           <ShapesToolPanel
@@ -1959,6 +1999,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
   const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
     { key: "shapes", icon: Hexagon, label: "AOI" },
+    { key: "economy", icon: Landmark, label: "Economy" },
     { key: "draw", icon: Ruler, label: "Draw" },
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
@@ -2406,6 +2447,94 @@ function ShapesToolPanel({
         </div>
       )}
     </ToolPanelShell>
+  );
+}
+
+/** Economy tool — World Bank indicators (CC-BY 4.0, see globalStatus.ts's
+ *  comment for the license check) across Afrilens's African coverage set.
+ *  Tabular rather than map markers — a country's GDP isn't a point on the
+ *  globe — so this is a wider scrollable panel rather than the usual
+ *  260px ToolPanelShell. */
+function EconomicIndicatorsPanel({
+  data,
+  loading,
+  error,
+  sortKey,
+  onSortKeyChange,
+}: {
+  data: EconomicIndicators | null;
+  loading: boolean;
+  error: string | null;
+  sortKey: string;
+  onSortKeyChange: (k: string) => void;
+}) {
+  const rows = useMemo(() => {
+    if (!data) return [];
+    const sorted = [...data.countries].sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (typeof av !== "number" && typeof bv !== "number") return 0;
+      if (typeof av !== "number") return 1;
+      if (typeof bv !== "number") return -1;
+      return bv - av;
+    });
+    return sorted;
+  }, [data, sortKey]);
+
+  function formatValue(v: unknown, unit: string): string {
+    if (typeof v !== "number") return "—";
+    if (unit === "US$") return v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : `$${(v / 1e6).toFixed(0)}M`;
+    if (unit === "%/yr" || unit === "% of GDP") return `${v.toFixed(1)}%`;
+    return v.toLocaleString();
+  }
+
+  return (
+    <div
+      style={{
+        ...glassPanel(),
+        position: "absolute",
+        top: 12,
+        right: 76,
+        zIndex: 500,
+        width: 340,
+        maxHeight: "calc(100% - 24px)",
+        overflowY: "auto",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Economy</div>
+      {loading && <div style={{ fontSize: 11, color: HUD.textMuted }}>Loading World Bank indicators…</div>}
+      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
+      {data && (
+        <>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {data.indicators.map((ind) => (
+              <ToolButton key={ind.key} active={sortKey === ind.key} onClick={() => onSortKeyChange(ind.key)}>
+                {ind.label}
+              </ToolButton>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: HUD.textMuted }}>{data.source} · sorted by {data.indicators.find((i) => i.key === sortKey)?.label}</div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {rows.map((r) => {
+              const indicator = data.indicators.find((i) => i.key === sortKey);
+              return (
+                <div
+                  key={r.code}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11.5, padding: "5px 0", borderBottom: "1px solid rgba(212,175,55,0.08)" }}
+                >
+                  <span style={{ color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{r.name}</span>
+                  <span style={{ color: HUD.textPrimary, fontWeight: 600, marginLeft: 8 }}>{formatValue(r[sortKey], indicator?.unit ?? "")}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

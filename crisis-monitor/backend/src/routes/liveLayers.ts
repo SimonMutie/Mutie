@@ -1005,6 +1005,79 @@ liveLayersRouter.get("/ais-vessels", async (c) => {
   );
 });
 
+interface UcdpEvent {
+  id: number;
+  date_start: string;
+  date_end: string;
+  latitude: number;
+  longitude: number;
+  best: number;
+  type_of_violence: string;
+  side_a: string;
+  side_b: string;
+  country: string;
+  conflict_name?: string;
+}
+
+const UCDP_VIOLENCE_TYPES: Record<string, string> = {
+  "1": "State-based violence",
+  "2": "Non-state violence",
+  "3": "One-sided violence",
+};
+
+/** UCDP's Georeferenced Event Dataset (GED) — validated, academically-coded
+ *  historical conflict events (CC BY 4.0, verified commercial-safe directly
+ *  against ucdp.uu.se/downloads). A deliberately different thing from
+ *  /conflict-events above (GDELT's real-time, unverified news-mention
+ *  feed): this is slower to update but each event carries a real
+ *  best-estimate death toll and a validated actor pairing, not a text
+ *  match. Requires UCDP_API_TOKEN (see bindings.ts for how to request one
+ *  — it's not self-serve, so this reports plainly that it's unconfigured
+ *  rather than 502ing with no explanation). Scoped to the last 180 days —
+ *  UCDP publishes the GED periodically, not daily, so a shorter window
+ *  would often show nothing at all. */
+liveLayersRouter.get("/ucdp-conflict-events", async (c) => {
+  if (!c.env.UCDP_API_TOKEN) {
+    return Response.json(
+      { error: "UCDP Conflict Events not configured — UCDP_API_TOKEN secret is unset (request one from UCDP first, see bindings.ts's comment)" },
+      { status: 502 }
+    );
+  }
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const startDate = new Date(Date.now() - 180 * 86_400_000).toISOString().slice(0, 10);
+      const url = `https://ucdpapi.pcr.uu.se/api/gedevents/26.1?pagesize=500&StartDate=${startDate}`;
+      const res = await fetch(url, {
+        headers: { "x-ucdp-access-token": c.env.UCDP_API_TOKEN! },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!res.ok) throw new Error(`UCDP API returned ${res.status}`);
+      const data = (await res.json()) as { Result?: UcdpEvent[] };
+      const events = data.Result ?? [];
+
+      const features: NormalizedFeature[] = events
+        .filter((e) => Number.isFinite(e.latitude) && Number.isFinite(e.longitude))
+        .map((e) => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [e.longitude, e.latitude] },
+          properties: {
+            id: `ucdp:${e.id}`,
+            title: `${e.side_a} vs ${e.side_b}`,
+            time: e.date_end ?? e.date_start ?? null,
+            intensity: Math.min((e.best ?? 0) / 50, 1),
+            intensityLabel: `${e.best ?? 0} killed (best est.)`,
+            detail: `${UCDP_VIOLENCE_TYPES[e.type_of_violence] ?? "Conflict event"} — ${e.country}${e.conflict_name ? ` (${e.conflict_name})` : ""}`,
+            url: null,
+          },
+        }));
+
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    3600
+  );
+});
+
 /** Real, computed sea-lane geometries — see maritimeLanes.ts for exactly
  *  how these were generated and sanity-checked (searoute-js over a real
  *  marnet/Oak Ridge maritime network, not hand-drawn waypoints). Served as

@@ -295,3 +295,82 @@ globalStatusRouter.get("/activity-index", async (c) => {
     return { countries, fetchedAt: new Date().toISOString() };
   });
 });
+
+/** ISO-3166-1 alpha-2 codes for Afrilens's core coverage area — every
+ *  UN-recognized African state, matching this app's actual focus (African
+ *  security monitoring) rather than the whole world. */
+const AFRICA_COUNTRIES: Record<string, string> = {
+  DZ: "Algeria", AO: "Angola", BJ: "Benin", BW: "Botswana", BF: "Burkina Faso", BI: "Burundi",
+  CM: "Cameroon", CV: "Cabo Verde", CF: "Central African Republic", TD: "Chad", KM: "Comoros",
+  CG: "Congo (Rep.)", CD: "Congo (DRC)", CI: "Côte d'Ivoire", DJ: "Djibouti", EG: "Egypt",
+  GQ: "Equatorial Guinea", ER: "Eritrea", SZ: "Eswatini", ET: "Ethiopia", GA: "Gabon", GM: "Gambia",
+  GH: "Ghana", GN: "Guinea", GW: "Guinea-Bissau", KE: "Kenya", LS: "Lesotho", LR: "Liberia",
+  LY: "Libya", MG: "Madagascar", MW: "Malawi", ML: "Mali", MR: "Mauritania", MU: "Mauritius",
+  MA: "Morocco", MZ: "Mozambique", NA: "Namibia", NE: "Niger", NG: "Nigeria", RW: "Rwanda",
+  ST: "São Tomé and Príncipe", SN: "Senegal", SC: "Seychelles", SL: "Sierra Leone", SO: "Somalia",
+  ZA: "South Africa", SS: "South Sudan", SD: "Sudan", TZ: "Tanzania", TG: "Togo", TN: "Tunisia",
+  UG: "Uganda", ZM: "Zambia", ZW: "Zimbabwe",
+};
+
+/** World Bank Indicators API v2 (CC-BY 4.0, no key, commercial use
+ *  explicitly permitted — verified directly against
+ *  datacatalog.worldbank.org/public-licenses). One indicator per call is
+ *  the API's own constraint, not a choice made here — it doesn't support
+ *  combining several indicators in a single request. `mrnev=1` asks for
+ *  each country's Most Recent Non-Empty Value, since indicators update on
+ *  different real-world schedules (quarterly, annually) and a fixed year
+ *  would leave gaps. NE.TRD.GNFS.ZS (trade as % of GDP) stands in for
+ *  bilateral trade-flow detail (UN Comtrade) — Comtrade's own policy
+ *  requires a paid license for any for-profit application, so it isn't
+ *  built here; this is the closest real, free substitute. */
+const WB_INDICATORS: { id: string; key: string; label: string; unit: string }[] = [
+  { id: "NY.GDP.MKTP.CD", key: "gdpUsd", label: "GDP", unit: "US$" },
+  { id: "NY.GDP.MKTP.KD.ZG", key: "gdpGrowthPct", label: "GDP growth", unit: "%/yr" },
+  { id: "FP.CPI.TOTL.ZG", key: "inflationPct", label: "Inflation (CPI)", unit: "%/yr" },
+  { id: "NE.TRD.GNFS.ZS", key: "tradePctGdp", label: "Trade", unit: "% of GDP" },
+];
+
+async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
+  const url = `https://api.worldbank.org/v2/country/${countryCodes.join(";")}/indicator/${indicatorId}?format=json&mrnev=1&per_page=20000`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`World Bank API returned ${res.status} for ${indicatorId}`);
+  const data = (await res.json()) as [unknown, Array<{ country: { id: string; value: string }; value: number | null; date: string }> | null];
+  const rows = data[1] ?? [];
+  const out = new Map<string, { value: number; date: string }>();
+  for (const row of rows) {
+    if (row.value === null) continue;
+    out.set(row.country.id, { value: row.value, date: row.date });
+  }
+  return out;
+}
+
+/** No key, no rate limit posted, CC-BY 4.0 — see the comments above. Cached
+ *  6h: these indicators genuinely only update quarterly/annually upstream,
+ *  so this is about being a considerate API citizen, not freshness. */
+globalStatusRouter.get("/economic-indicators", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const codes = Object.keys(AFRICA_COUNTRIES);
+      const perIndicator = await Promise.all(WB_INDICATORS.map((ind) => fetchWorldBankIndicator(ind.id, codes)));
+
+      const countries = codes.map((code) => {
+        const entry: Record<string, unknown> = { code, name: AFRICA_COUNTRIES[code] };
+        WB_INDICATORS.forEach((ind, i) => {
+          const hit = perIndicator[i].get(code);
+          entry[ind.key] = hit ? hit.value : null;
+          entry[`${ind.key}Date`] = hit ? hit.date : null;
+        });
+        return entry;
+      });
+
+      return {
+        countries,
+        indicators: WB_INDICATORS.map(({ key, label, unit }) => ({ key, label, unit })),
+        source: "World Bank Open Data (CC-BY 4.0)",
+        fetchedAt: new Date().toISOString(),
+      };
+    },
+    21600
+  );
+});
