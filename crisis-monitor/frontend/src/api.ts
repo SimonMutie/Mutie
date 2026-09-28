@@ -926,6 +926,10 @@ export const api = {
   getLiveSatellites: () => req<LiveLayerCollection>("/api/live-layers/satellites"),
   getLiveNuclearFacilities: () => req<LiveLayerCollection>("/api/live-layers/nuclear-facilities"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
+  // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
+  // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key
+  // and MaxMind license key are set as Worker secrets (see liveLayers.ts).
+  getLiveMalware: () => req<LiveLayerCollection>("/api/live-layers/live-malware"),
   getLiveIss: () => req<IssPosition>("/api/live-layers/iss"),
   getLiveNews: () => req<NewsFeed>("/api/live-layers/news"),
   getLiveRoute: (from: [number, number], to: [number, number], mode: RouteProfile) =>

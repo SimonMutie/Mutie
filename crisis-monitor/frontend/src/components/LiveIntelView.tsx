@@ -6,12 +6,14 @@ import {
   AlertTriangle,
   Anchor,
   Bell,
+  Bug,
   Building2,
   CloudLightning,
   Flame,
   MapPin,
   Mountain,
   Navigation,
+  Network,
   Newspaper,
   Plane,
   Radiation,
@@ -176,7 +178,7 @@ interface GlobePoint {
   url: string | null;
 }
 
-type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
+type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Network Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
 
 /** Icon + accent for a group's own rail button — every group renders
  *  through the same flyout treatment now (see LayerPanel/GroupRailButton),
@@ -189,6 +191,10 @@ const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
   // Real label ("Threats & Intel", not "Threats & Infra") confirmed
   // directly from a screenshot of OSIRIS's own flyout header.
   "Threats & Intel": { icon: AlertTriangle, color: HUD.alertRed },
+  // Network icon matches a direct screenshot of OSIRIS's own rail icon for
+  // this group (a 3-node hierarchy/network glyph, distinct from Threats &
+  // Intel's triangle).
+  "Network Intel": { icon: Network, color: "#ff4fa3" },
   Aviation: { icon: Plane, color: HUD.cyan },
   Maritime: { icon: Ship, color: "#00BCD4" },
   "Space Tracking": { icon: Satellite, color: "#9d7bff" },
@@ -313,17 +319,31 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
-  // Not one of OSIRIS's own 4 rows — a real, legitimate addition of
-  // another already-integrated threat-intel feed (same reasoning as the
-  // shipping-lane arcs added to Maritime: genuinely useful real data,
-  // clearly not claimed to be something OSIRIS itself has).
+  // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
+  // a dedicated rail icon, separate from Threats & Intel, with rows LIVE
+  // MALWARE and BOTNET C2 SERVERS) — Botnet C2 Servers moves here from
+  // Threats & Intel to match.
   {
     key: "malware-infrastructure",
     label: "Botnet C2 Servers",
-    group: "Threats & Intel",
+    group: "Network Intel",
     color: "#ff4fa3",
     icon: Shield,
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
+  },
+  // "Live Malware" — real ThreatFox IOC data, geolocated via a
+  // periodically-refreshed GeoLite2 country lookup. Both pieces need a
+  // registered credential (abuse.ch Auth-Key, MaxMind license key) that
+  // can't be fabricated — this fetcher is wired in once those are set as
+  // Worker secrets and the backend route exists; see the backend's
+  // liveLayers.ts for the current status of that route.
+  {
+    key: "live-malware",
+    label: "Live Malware",
+    group: "Network Intel",
+    color: "#ff3d3d",
+    icon: Bug,
+    fetcher: async () => fromGateway("#ff3d3d", "Live Malware")(await api.getLiveMalware()),
   },
   // Three real, sourced categories rather than OSIRIS's full four — see
   // classifyAviation() on the backend (liveLayers.ts) for exactly what
@@ -458,7 +478,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
 ];
 
-const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
+const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Network Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
 
 /** Major real global container-shipping trunk routes, drawn as arcs
  *  between the hub ports the backend's /maritime layer already lists.
@@ -577,6 +597,7 @@ export default function LiveIntelView() {
     "air-traffic-private": false,
     "air-traffic-military": false,
     "malware-infrastructure": false,
+    "live-malware": false,
     maritime: false,
     "satellites-all": false,
     "satellites-starlink-comms": false,

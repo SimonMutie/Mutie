@@ -8,4 +8,17 @@ export interface Env {
   GDELT_ENABLED: string;
   /** Set as an encrypted Worker secret (never in wrangler.toml [vars]) — signs session tokens. */
   SESSION_SECRET: string;
+  /** Encrypted Worker secrets for the /live-malware route (liveLayers.ts) —
+   *  a personal Auth-Key from a free abuse.ch account (auth.abuse.ch),
+   *  used to call the ThreatFox IOC API, which abuse.ch made mandatory
+   *  across its APIs. Optional: unset until the account owner provides
+   *  one, at which point the route starts working rather than 502ing. */
+  ABUSECH_AUTH_KEY?: string;
+  /** MaxMind account id + license key (from a free maxmind.com account),
+   *  used to download the GeoLite2-Country database for IP→country
+   *  lookups (see fetchGeoLite2CountryReader in liveLayers.ts). Both
+   *  required together — MaxMind's download API uses HTTP Basic Auth with
+   *  these two values, not the license key alone. */
+  MAXMIND_ACCOUNT_ID?: string;
+  MAXMIND_LICENSE_KEY?: string;
 }

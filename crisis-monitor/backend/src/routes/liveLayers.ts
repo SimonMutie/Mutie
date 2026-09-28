@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { twoline2satrec, propagate, gstime, eciToGeodetic, degreesLong, degreesLat } from "satellite.js";
+import { Reader as MmdbReader, type CountryResponse } from "mmdb-lib";
+import { Buffer } from "node:buffer";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
@@ -507,6 +509,142 @@ liveLayersRouter.get("/malware-infrastructure", async (c) => {
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     600 // 10 min — this list refreshes on abuse.ch's side roughly hourly, not second-by-second
+  );
+});
+
+/** Module-scope, not per-request: within one warm Worker isolate this
+ *  avoids re-parsing the GeoLite2 database on every single request, on top
+ *  of the Cache API layer below that avoids re-downloading it. Cleared
+ *  naturally whenever the isolate recycles (a fresh cold start just
+ *  re-fetches from cache/upstream), so this is a speed optimization, not a
+ *  source of staleness beyond what the Cache API TTL already allows. */
+let geoliteReaderCache: { reader: MmdbReader<CountryResponse>; cachedAt: number } | null = null;
+const GEOLITE_REFRESH_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — GeoLite2 itself only publishes new builds ~weekly, and country-level assignment changes rarely
+
+/** Downloads (or serves from cache) MaxMind's free GeoLite2-Country
+ *  database and returns a ready-to-query reader. Free tier, but a
+ *  registered account + license key is required (MaxMind's own download
+ *  API, not a paywall on the data itself) — GeoLite2 is explicitly
+ *  licensed for commercial use with attribution, unlike the free tiers of
+ *  IP-geolocation *APIs* like IPinfo (which bar exactly this "embed it in
+ *  your own commercial dashboard" use case — checked directly against
+ *  ipinfo.io/terms-of-service before choosing this instead). Cached via
+ *  the Cache API as raw bytes (not just the parsed reader) so a cold
+ *  isolate doesn't need to re-download from MaxMind either. */
+async function getGeoliteCountryReader(env: Env): Promise<MmdbReader<CountryResponse> | null> {
+  if (!env.MAXMIND_ACCOUNT_ID || !env.MAXMIND_LICENSE_KEY) return null; // not configured yet — /live-malware reports this plainly rather than guessing a location
+
+  if (geoliteReaderCache && Date.now() - geoliteReaderCache.cachedAt < GEOLITE_REFRESH_MS) {
+    return geoliteReaderCache.reader;
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request("https://internal.the-lens/geolite2-country.mmdb");
+  let bytes: ArrayBuffer;
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    bytes = await cached.arrayBuffer();
+  } else {
+    const auth = "Basic " + btoa(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`);
+    const res = await fetch("https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=gzip", {
+      headers: { Authorization: auth },
+      redirect: "follow", // MaxMind's own docs note this permalink 302s to a presigned R2 URL
+    });
+    if (!res.ok || !res.body) throw new Error(`MaxMind GeoLite2 download returned ${res.status}`);
+    // .mmdb.gz — a plain gzip stream, decompressed with the platform's own
+    // native Compression Streams API rather than adding a JS gzip
+    // dependency on top of the already-new mmdb-lib one.
+    const decompressed = res.body.pipeThrough(new DecompressionStream("gzip"));
+    bytes = await new Response(decompressed).arrayBuffer();
+    await cache.put(cacheKey, new Response(bytes.slice(0), { headers: { "Cache-Control": `public, max-age=${GEOLITE_REFRESH_MS / 1000}` } }));
+  }
+
+  const reader = new MmdbReader<CountryResponse>(Buffer.from(bytes));
+  geoliteReaderCache = { reader, cachedAt: Date.now() };
+  return reader;
+}
+
+interface ThreatFoxIoc {
+  ioc: string;
+  ioc_type: string;
+  threat_type: string;
+  malware_printable: string;
+  first_seen: string;
+  confidence_level: number;
+}
+
+/** ThreatFox (abuse.ch): a real, free indicator-of-compromise feed —
+ *  active malware C2/distribution IOCs reported in the last 24h. Requires
+ *  the same Auth-Key abuse.ch now mandates across its APIs (see
+ *  ABUSECH_AUTH_KEY in bindings.ts). Only ioc_type "ip:port" entries are
+ *  usable here — ThreatFox's other IOC types (domains, URLs, hashes)
+ *  carry no IP to geolocate at all, so they're skipped rather than
+ *  mislocated or dropped onto a fake point. */
+async function fetchThreatFoxIps(authKey: string): Promise<ThreatFoxIoc[]> {
+  const res = await fetch("https://threatfox-api.abuse.ch/api/v1/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Auth-Key": authKey },
+    body: JSON.stringify({ query: "get_iocs", days: 1 }),
+  });
+  if (!res.ok) throw new Error(`ThreatFox returned ${res.status}`);
+  const raw = (await res.json()) as { query_status: string; data?: ThreatFoxIoc[] };
+  if (raw.query_status !== "ok") throw new Error(`ThreatFox query_status: ${raw.query_status}`);
+  return (raw.data ?? []).filter((d) => d.ioc_type === "ip:port");
+}
+
+/** "Live Malware" — matches OSIRIS's real NETWORK INTEL flyout (screenshot:
+ *  a dedicated rail group with LIVE MALWARE and BOTNET C2 SERVERS rows).
+ *  Real ThreatFox IOC data, geolocated to a country centroid via GeoLite2
+ *  — both credentials genuinely required, so this 502s with a specific,
+ *  honest reason (not a generic upstream failure) until an account owner
+ *  sets ABUSECH_AUTH_KEY and the two MAXMIND_* secrets. See the comments
+ *  on fetchThreatFoxIps and getGeoliteCountryReader for why each one is
+ *  sourced the way it is (ACLED and IPinfo were both considered and
+ *  rejected over commercial-use licensing terms). */
+liveLayersRouter.get("/live-malware", async (c) => {
+  if (!c.env.ABUSECH_AUTH_KEY) {
+    return Response.json({ error: "Live Malware not configured — ABUSECH_AUTH_KEY secret is unset" }, { status: 502 });
+  }
+  const geolite = await getGeoliteCountryReader(c.env);
+  if (!geolite) {
+    return Response.json({ error: "Live Malware not configured — MAXMIND_ACCOUNT_ID/MAXMIND_LICENSE_KEY secrets are unset" }, { status: 502 });
+  }
+
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const iocs = await fetchThreatFoxIps(c.env.ABUSECH_AUTH_KEY!);
+      const jitter = () => (Math.random() - 0.5) * 4; // same reasoning as /malware-infrastructure's own jitter — several IOCs sharing one country shouldn't collapse onto one point
+
+      const features: NormalizedFeature[] = [];
+      for (const ioc of iocs) {
+        const ip = ioc.ioc.split(":")[0];
+        let countryCode: string | undefined;
+        try {
+          countryCode = geolite.get(ip)?.country?.iso_code;
+        } catch {
+          continue; // malformed/unparseable IP — skip rather than mislocate
+        }
+        const centroid = countryCode ? COUNTRY_CENTROIDS[countryCode.toUpperCase()] : undefined;
+        if (!centroid) continue;
+        const [lat, lng] = centroid;
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [lng + jitter(), lat + jitter()] },
+          properties: {
+            id: ioc.ioc,
+            title: ioc.malware_printable || ioc.threat_type,
+            time: ioc.first_seen,
+            intensity: Math.max(0, Math.min(1, ioc.confidence_level / 100)),
+            intensityLabel: `${ioc.confidence_level}% confidence`,
+            detail: countryCode ?? "Unknown",
+            url: null,
+          },
+        });
+      }
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    600 // 10 min — matches /malware-infrastructure's own TTL; ThreatFox's get_iocs endpoint itself only covers the last 24h, not second-by-second data anyway
   );
 });
 
