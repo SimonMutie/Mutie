@@ -582,6 +582,26 @@ export interface StatsSummary {
   top_queries: { id: string; name: string; category: string; matches: number }[];
 }
 
+export interface LiveLayerFeature {
+  type: "Feature";
+  geometry: { type: "Point"; coordinates: [number, number] };
+  properties: {
+    id: string;
+    title: string;
+    time: string | null;
+    intensity: number;
+    intensityLabel: string;
+    detail: string;
+    url: string | null;
+  };
+}
+
+export interface LiveLayerCollection {
+  type: "FeatureCollection";
+  features: LiveLayerFeature[];
+  fetchedAt: string;
+}
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -853,6 +873,13 @@ export const api = {
   getDatasetSummary: (datasetId: string) => req<DatasetSummary>(`/api/datasets/${datasetId}/summary`),
   getDatasetDaily: (datasetId: string, field: string) =>
     req<{ date: string; count: number }[]>(`/api/datasets/${datasetId}/daily?field=${encodeURIComponent(field)}`),
+
+  // Live Intelligence layers — each backed by a cached, public upstream feed
+  // (USGS, NASA EONET, GDELT). Shared GeoJSON shape across all three so the
+  // frontend layer renderer/popup is generic.
+  getLiveEarthquakes: () => req<LiveLayerCollection>("/api/live-layers/earthquakes"),
+  getLiveNaturalEvents: () => req<LiveLayerCollection>("/api/live-layers/natural-events"),
+  getLiveConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/conflict-events"),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

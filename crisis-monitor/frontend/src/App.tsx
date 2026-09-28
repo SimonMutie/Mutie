@@ -11,6 +11,7 @@ const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const IncidentsDashboard = lazy(() => import("./components/IncidentsDashboard"));
 const DatasetsPanel = lazy(() => import("./components/DatasetsPanel"));
 const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"));
+const LiveIntelView = lazy(() => import("./components/LiveIntelView"));
 
 /** Each view above used to be a plain, eager import — meaning every
  *  page's code (including the mapping page, IncidentsDashboard) shared
@@ -25,7 +26,7 @@ const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"
 const viewLoadingFallback = <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>;
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
-type View = "list" | { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "datasets";
+type View = "list" | { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "datasets" | "live-intel";
 
 /** Minimal, single-purpose routing: this app is otherwise entirely
  *  state-driven (no URLs for any authenticated view), but a "share for live
@@ -143,7 +144,9 @@ export default function App() {
                   ? "incidents"
                   : view === "datasets"
                     ? "datasets"
-                    : "dashboard"
+                    : view === "live-intel"
+                      ? "live-intel"
+                      : "dashboard"
         }
         onNavigate={(v) => setView(v)}
         onLogout={handleLogout}
@@ -157,6 +160,8 @@ export default function App() {
         {view === "incidents" && <IncidentsDashboard user={user} />}
 
         {view === "datasets" && <DatasetsPanel />}
+
+        {view === "live-intel" && <LiveIntelView />}
 
         {view === "list" && (
           <QueryList

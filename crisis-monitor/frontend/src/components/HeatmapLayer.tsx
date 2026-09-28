@@ -1,4 +1,4 @@
--import { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useMap } from "react-leaflet";
 import * as L from "leaflet";
 import "leaflet.heat";

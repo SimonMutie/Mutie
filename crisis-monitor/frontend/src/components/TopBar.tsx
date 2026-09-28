@@ -5,8 +5,8 @@ import Logo from "./Logo";
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets";
-  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets") => void;
+  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets" | "live-intel";
+  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets" | "live-intel") => void;
   onLogout: () => void;
 }
 
@@ -76,6 +76,9 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           <button onClick={() => onNavigate("datasets")} style={navBtnStyle(view === "datasets")}>
             Datasets
           </button>
+          <button onClick={() => onNavigate("live-intel")} style={navBtnStyle(view === "live-intel")}>
+            Live Intel
+          </button>
         </nav>
 
         <AccountMenu user={user} view={view} onNavigate={onNavigate} onLogout={onLogout} />
@@ -103,8 +106,8 @@ function AccountMenu({
   onLogout,
 }: {
   user: AuthUser;
-  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets";
-  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets") => void;
+  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets" | "live-intel";
+  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets" | "live-intel") => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);

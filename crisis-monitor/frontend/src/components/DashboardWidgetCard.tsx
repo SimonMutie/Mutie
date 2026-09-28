@@ -41,7 +41,7 @@ import { LABEL_TYPE_META, LABEL_TYPES, labelIconSvg, type LabelType } from "./la
 import * as XLSX from "xlsx";
 import "leaflet/dist/leaflet.css";
 import { api } from "../api";
-import { GEO_REGISTRY, findGeoHierarchy, getGeoLevel } from "../geo/registry";
+import { GEO_REGISTRY, findGeoHierarchy, getGeoLevel } from "../registry";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import type { CrosstabRow, Dataset, DatasetColumn, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
