@@ -20,9 +20,14 @@ export const BASEMAPS = {
     attribution: "Tiles &copy; Esri",
   },
   dark: {
+    // CARTO's free anonymous dark_all tiles (used here originally) started
+    // requiring an API key partway through 2026 — every unauthenticated
+    // request now renders an "API KEY REQUIRED" watermark instead of a map.
+    // Esri's Dark Gray Canvas is the keyless equivalent, served the same
+    // no-key way as the Esri Streets/Imagery entries above.
     label: "Dark",
-    url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    attribution: "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, OpenStreetMap contributors",
   },
 } as const;
 export type BasemapKey = keyof typeof BASEMAPS;
