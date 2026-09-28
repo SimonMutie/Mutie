@@ -57,10 +57,14 @@ const CACHE_TTL_SECONDS = 60;
  *  concurrent viewers of the Lens cost this Worker one upstream request per
  *  TTL window, not N. Cache-Control on the response is what actually
  *  drives `caches.default`'s storage duration; the header is also honest
- *  to any downstream cache (e.g. Cloudflare's edge cache) that might see it. */
+ *  to any downstream cache (e.g. Cloudflare's edge cache) that might see it.
+ *  `ttlSeconds` is overridable per route — OpenSky's anonymous quota is far
+ *  stricter than USGS/EONET/GDELT's, so that route asks for a much longer
+ *  window rather than sharing the default. */
 async function cachedJson(
   request: Request,
-  build: () => Promise<NormalizedFeatureCollection>
+  build: () => Promise<NormalizedFeatureCollection>,
+  ttlSeconds: number = CACHE_TTL_SECONDS
 ): Promise<Response> {
   const cache = caches.default;
   const cacheKey = new Request(request.url, { method: "GET" });
@@ -78,7 +82,7 @@ async function cachedJson(
   }
 
   const response = Response.json(body, {
-    headers: { "Cache-Control": `public, max-age=${CACHE_TTL_SECONDS}` },
+    headers: { "Cache-Control": `public, max-age=${ttlSeconds}` },
   });
   // waitUntil isn't available here (no ExecutionContext plumbed through this
   // helper) — cache.put's own promise is awaited directly instead, which
@@ -231,4 +235,79 @@ liveLayersRouter.get("/conflict-events", async (c) => {
     }
     return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
   });
+});
+
+const AIR_TRAFFIC_TTL_SECONDS = 900; // 15 min
+
+/** OpenSky Network's anonymous (keyless) global state vector snapshot.
+ *  Anonymous accounts get a much smaller daily credit budget than a
+ *  registered account would, and a full-globe query costs several credits
+ *  per call — so this route is cached far longer than the others (15 min,
+ *  vs. the usual 60s). One shared cache entry means every viewer of this
+ *  Lens instance costs the upstream budget one call per 15 minutes, not
+ *  one call per viewer per poll. Positions this stale are still a real,
+ *  reasonably representative snapshot of global air traffic, just not a
+ *  second-by-second tracker — being a good citizen of a free anonymous
+ *  quota matters more here than freshness. */
+liveLayersRouter.get("/air-traffic", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const res = await fetch("https://opensky-network.org/api/states/all");
+      if (!res.ok) throw new Error(`OpenSky returned ${res.status}`);
+      const raw = (await res.json()) as {
+        time: number;
+        // Each state vector is a fixed-position array, not an object — this
+        // is OpenSky's own wire format (documented at openskynetwork.github.io),
+        // not a shape chosen here.
+        states: Array<
+          [
+            string, // icao24
+            string | null, // callsign
+            string, // origin_country
+            number | null, // time_position
+            number | null, // last_contact
+            number | null, // longitude
+            number | null, // latitude
+            number | null, // baro_altitude
+            boolean, // on_ground
+            number | null, // velocity (m/s)
+            number | null, // true_track (deg)
+            number | null, // vertical_rate
+            number[] | null, // sensors
+            number | null, // geo_altitude
+            string | null, // squawk
+            boolean, // spi
+            number, // position_source
+          ]
+        > | null;
+      };
+
+      const features: NormalizedFeature[] = [];
+      for (const s of raw.states ?? []) {
+        const [icao24, callsign, originCountry, , , lon, lat, , onGround, velocity] = s;
+        if (lon == null || lat == null || onGround) continue;
+        const speedKts = velocity != null ? velocity * 1.94384 : 0;
+        // Reference ceiling near a fast commercial jet's typical cruise
+        // speed — same "don't let one outlier flatten everything else"
+        // reasoning as the other layers' intensity scales above.
+        const intensity = Math.max(0, Math.min(1, speedKts / 550));
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [lon, lat] },
+          properties: {
+            id: icao24,
+            title: callsign?.trim() || icao24,
+            time: raw.time ? new Date(raw.time * 1000).toISOString() : null,
+            intensity,
+            intensityLabel: velocity != null ? `${Math.round(speedKts)} kt` : "in flight",
+            detail: originCountry,
+            url: null,
+          },
+        });
+      }
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    AIR_TRAFFIC_TTL_SECONDS
+  );
 });

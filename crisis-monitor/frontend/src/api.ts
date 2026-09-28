@@ -880,6 +880,7 @@ export const api = {
   getLiveEarthquakes: () => req<LiveLayerCollection>("/api/live-layers/earthquakes"),
   getLiveNaturalEvents: () => req<LiveLayerCollection>("/api/live-layers/natural-events"),
   getLiveConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/conflict-events"),
+  getLiveAirTraffic: () => req<LiveLayerCollection>("/api/live-layers/air-traffic"),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
