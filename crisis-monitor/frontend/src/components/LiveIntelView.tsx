@@ -27,15 +27,21 @@ import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
  *    the backend's normal auth (client/country restrictions apply exactly
  *    as they do everywhere else in the app) — reusing the existing
  *    /api/incidents and /api/alerts endpoints rather than a new route.
+ *  - Maritime: checked directly against OSIRIS's own open-source code
+ *    (github.com/enzg/osiris-live) rather than assumed to have live AIS —
+ *    it turns out OSIRIS's "Maritime" layer is itself a static reference
+ *    dataset (major ports, naval bases, shipping chokepoints with real
+ *    published stats), refreshed once a day, zero external API calls. This
+ *    reproduces that same kind of dataset rather than chasing a live-AIS
+ *    parity that was never actually there. A genuine live-AIS layer stays
+ *    a possible future upgrade (would need a registered key, e.g.
+ *    aisstream.io, plus a Durable Object to hold its WebSocket open).
  *  - Deliberately NOT included, despite being on OSIRIS's own toggle list:
  *    live CCTV (aggregating public/private cameras without consent is a
  *    surveillance capability this app isn't going to carry, independent of
- *    whether a feed for it exists). Maritime/AIS ship tracking has no
- *    free+keyless+global source either — every option found needs a
- *    registered API key (e.g. aisstream.io), so it's held for a follow-up
- *    once a key is available rather than built silently broken. Submarine
- *    cables: a real open dataset exists but wasn't confirmed reachable in
- *    time for this pass — a reasonable fast-follow.
+ *    whether a feed for it exists). Submarine cables: a real open dataset
+ *    exists but wasn't confirmed reachable in time for this pass — a
+ *    reasonable fast-follow.
  */
 
 interface GlobePoint {
@@ -84,6 +90,12 @@ const LAYER_DEFS: LayerDef[] = [
     label: "Botnet C2s",
     color: "#ff4fa3",
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
+  },
+  {
+    key: "maritime",
+    label: "Maritime",
+    color: "#3fd0ff",
+    fetcher: async () => fromGateway("#3fd0ff", "Maritime")(await api.getLiveMaritime()),
   },
   {
     key: "my-incidents",
@@ -246,6 +258,7 @@ export default function LiveIntelView() {
     "conflict-events": true,
     "air-traffic": false,
     "malware-infrastructure": false,
+    maritime: false,
     "my-incidents": false,
     "my-alerts": false,
   });

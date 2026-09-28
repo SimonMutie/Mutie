@@ -882,6 +882,7 @@ export const api = {
   getLiveConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/conflict-events"),
   getLiveAirTraffic: () => req<LiveLayerCollection>("/api/live-layers/air-traffic"),
   getLiveMalwareInfrastructure: () => req<LiveLayerCollection>("/api/live-layers/malware-infrastructure"),
+  getLiveMaritime: () => req<LiveLayerCollection>("/api/live-layers/maritime"),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

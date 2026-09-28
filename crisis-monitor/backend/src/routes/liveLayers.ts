@@ -409,3 +409,98 @@ liveLayersRouter.get("/malware-infrastructure", async (c) => {
     600 // 10 min — this list refreshes on abuse.ch's side roughly hourly, not second-by-second
   );
 });
+
+/** Major ports, naval bases, and shipping chokepoints — a static reference
+ *  dataset, not a live feed. This is deliberate, not a placeholder: checked
+ *  directly against OSIRIS's own open-source code (github.com/enzg/
+ *  osiris-live) rather than assumed, its own "Maritime" layer turns out to
+ *  be exactly this — the same fixed list of ports/chokepoints/bases,
+ *  refreshed once a day, zero external API calls. There is no free global
+ *  live-AIS source to match (see the /air-traffic comment above for the
+ *  same reasoning applied to flights, where OpenSky actually does exist);
+ *  unlike flights, for ships nothing keyless and truly global does. So
+ *  this reproduces real, public, verifiable facts (published cargo
+ *  throughput, canal traffic shares, named naval fleets) rather than
+ *  faking vessel positions that would look live but wouldn't be. */
+const MARITIME_PORTS: Array<{ name: string; country: string; lat: number; lng: number; kind: "container" | "energy" | "naval"; stat: string }> = [
+  { name: "Shanghai", country: "CN", lat: 31.23, lng: 121.47, kind: "container", stat: "47.3M TEU/yr — world's busiest container port" },
+  { name: "Singapore", country: "SG", lat: 1.26, lng: 103.84, kind: "container", stat: "37.2M TEU/yr" },
+  { name: "Ningbo-Zhoushan", country: "CN", lat: 29.87, lng: 121.55, kind: "container", stat: "33.3M TEU/yr" },
+  { name: "Shenzhen", country: "CN", lat: 22.54, lng: 114.05, kind: "container", stat: "30.0M TEU/yr" },
+  { name: "Busan", country: "KR", lat: 35.10, lng: 129.04, kind: "container", stat: "22.7M TEU/yr" },
+  { name: "Rotterdam", country: "NL", lat: 51.90, lng: 4.50, kind: "container", stat: "14.5M TEU/yr — Europe's largest port" },
+  { name: "Dubai (Jebel Ali)", country: "AE", lat: 25.01, lng: 55.06, kind: "container", stat: "14.0M TEU/yr" },
+  { name: "Antwerp", country: "BE", lat: 51.30, lng: 4.40, kind: "container", stat: "12.0M TEU/yr" },
+  { name: "Los Angeles", country: "US", lat: 33.74, lng: -118.27, kind: "container", stat: "9.9M TEU/yr — busiest US container port" },
+  { name: "Hamburg", country: "DE", lat: 53.55, lng: 9.97, kind: "container", stat: "8.7M TEU/yr" },
+  { name: "Felixstowe", country: "GB", lat: 51.96, lng: 1.35, kind: "container", stat: "3.8M TEU/yr — UK's busiest container port" },
+  { name: "Colombo", country: "LK", lat: 6.94, lng: 79.84, kind: "container", stat: "7.2M TEU/yr" },
+  { name: "Ras Tanura", country: "SA", lat: 26.64, lng: 50.16, kind: "energy", stat: "≈ 6.5M bpd throughput — world's largest oil export terminal" },
+  { name: "Fujairah", country: "AE", lat: 25.14, lng: 56.35, kind: "energy", stat: "≈ 3.5M bpd, key bunkering hub outside the Strait of Hormuz" },
+  { name: "Novorossiysk", country: "RU", lat: 44.72, lng: 37.77, kind: "energy", stat: "≈ 2.8M bpd — Russia's main Black Sea oil terminal" },
+  { name: "Houston Ship Channel", country: "US", lat: 29.73, lng: -95.27, kind: "energy", stat: "≈ 2.5M bpd — core of US Gulf Coast refining" },
+  { name: "Kharg Island", country: "IR", lat: 29.24, lng: 50.33, kind: "energy", stat: "≈ 2.0M bpd — Iran's main oil export terminal" },
+  { name: "Primorsk", country: "RU", lat: 60.35, lng: 28.70, kind: "energy", stat: "≈ 1.6M bpd — Russia's main Baltic oil terminal" },
+  { name: "Norfolk Naval Station", country: "US", lat: 36.95, lng: -76.33, kind: "naval", stat: "US Atlantic Fleet — world's largest naval base" },
+  { name: "San Diego Naval Base", country: "US", lat: 32.69, lng: -117.15, kind: "naval", stat: "US Pacific Fleet" },
+  { name: "Pearl Harbor", country: "US", lat: 21.35, lng: -157.97, kind: "naval", stat: "US Pacific Fleet" },
+  { name: "Yokosuka", country: "JP", lat: 35.28, lng: 139.67, kind: "naval", stat: "US 7th Fleet forward base" },
+  { name: "Severomorsk", country: "RU", lat: 69.07, lng: 33.42, kind: "naval", stat: "Russian Northern Fleet HQ" },
+  { name: "Tartus", country: "SY", lat: 34.89, lng: 35.89, kind: "naval", stat: "Russia's only Mediterranean naval facility" },
+  { name: "Zhanjiang", country: "CN", lat: 21.20, lng: 110.39, kind: "naval", stat: "PLA Navy South Sea Fleet HQ" },
+  { name: "Portsmouth", country: "GB", lat: 50.80, lng: -1.11, kind: "naval", stat: "Royal Navy home port" },
+  { name: "Toulon", country: "FR", lat: 43.12, lng: 5.93, kind: "naval", stat: "French Navy Mediterranean fleet HQ" },
+  { name: "Visakhapatnam", country: "IN", lat: 17.69, lng: 83.30, kind: "naval", stat: "Indian Navy Eastern Naval Command HQ" },
+];
+
+const MARITIME_CHOKEPOINTS: Array<{ name: string; lat: number; lng: number; stat: string }> = [
+  { name: "Strait of Hormuz", lat: 26.57, lng: 56.25, stat: "≈ 21M bpd oil transits — world's most critical oil chokepoint" },
+  { name: "Strait of Malacca", lat: 2.50, lng: 101.50, stat: "≈ 16M bpd oil; busiest strait by vessel count" },
+  { name: "Suez Canal", lat: 30.43, lng: 32.34, stat: "≈ 12% of world trade by volume" },
+  { name: "Bab el-Mandeb", lat: 12.58, lng: 43.33, stat: "≈ 6.2M bpd oil — gateway between Red Sea and Gulf of Aden" },
+  { name: "Panama Canal", lat: 9.08, lng: -79.68, stat: "≈ 5% of world trade by volume" },
+  { name: "Turkish Straits (Bosphorus/Dardanelles)", lat: 41.12, lng: 29.07, stat: "≈ 3M bpd oil — sole Black Sea outlet" },
+  { name: "Danish Straits", lat: 55.70, lng: 12.60, stat: "≈ 3.2M bpd oil — sole Baltic Sea outlet" },
+  { name: "Taiwan Strait", lat: 24.00, lng: 119.00, stat: "≈ 88% of the world's largest container ships transit annually" },
+];
+
+liveLayersRouter.get("/maritime", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const features: NormalizedFeature[] = [];
+      for (const p of MARITIME_PORTS) {
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [p.lng, p.lat] },
+          properties: {
+            id: `port:${p.name}`,
+            title: p.name,
+            time: null,
+            intensity: p.kind === "naval" ? 0.5 : 0.7,
+            intensityLabel: p.kind === "container" ? "Port" : p.kind === "energy" ? "Energy terminal" : "Naval base",
+            detail: p.stat,
+            url: null,
+          },
+        });
+      }
+      for (const cp of MARITIME_CHOKEPOINTS) {
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [cp.lng, cp.lat] },
+          properties: {
+            id: `chokepoint:${cp.name}`,
+            title: cp.name,
+            time: null,
+            intensity: 0.9,
+            intensityLabel: "Chokepoint",
+            detail: cp.stat,
+            url: null,
+          },
+        });
+      }
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    86400 // 1 day — this is reference data, not a feed; nothing here changes minute to minute
+  );
+});
