@@ -494,85 +494,24 @@ const LAYER_DEFS: LayerDef[] = [
 
 const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Network Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
 
-/** Real-world strait / chokepoint / open-water waypoints shared across the
- *  lanes below. Each lane is rendered as straight segments between its
- *  listed points (see Map3D's GeoJSON LineString source), so with only 2-3
- *  raw port coordinates a "route" is really just a chord cutting straight
- *  through whatever coastline happens to sit between them (this is exactly
- *  the land-crossing bug reported — e.g. Shanghai→LA cut across southern
- *  Japan, and Singapore→Rotterdam cut straight through the Arabian
- *  Peninsula and continental Europe instead of transiting Suez/Gibraltar).
- *  These waypoints are genuine geographic strait/cape locations vessels
- *  actually transit — not arbitrary bends added to make the line "look"
- *  ocean-only. */
-const TOKARA_STRAIT: [number, number] = [29.5, 129.7]; // between Kyushu and Okinawa, Japan
-const KOREA_STRAIT: [number, number] = [34.0, 129.8]; // between South Korea and Japan
-const TAIWAN_STRAIT: [number, number] = [24.0, 119.4]; // between mainland China and Taiwan
-const SOUTH_CHINA_SEA: [number, number] = [10.0, 112.0]; // open water, west of the Philippines
-const SOUTH_OF_SRI_LANKA: [number, number] = [6.0, 80.5]; // clears the Indian subcontinent
-const ARABIAN_SEA: [number, number] = [13.0, 62.0]; // open water south of the Gulf of Aden approach
-const BAB_EL_MANDEB: [number, number] = [12.6, 43.4]; // strait between Yemen and Djibouti, Red Sea entrance
-const RED_SEA: [number, number] = [20.5, 38.0]; // open water mid Red Sea
-const SUEZ_SOUTH: [number, number] = [29.9, 32.55]; // Suez Canal, Red Sea entrance
-const SUEZ_NORTH: [number, number] = [31.3, 32.3]; // Suez Canal, Mediterranean entrance (Port Said)
-const MED_SOUTH_OF_CRETE: [number, number] = [33.5, 25.0]; // open Mediterranean
-const MED_SOUTH_OF_SARDINIA: [number, number] = [37.0, 9.5]; // open Mediterranean
-const STRAIT_OF_GIBRALTAR: [number, number] = [35.9, -5.6]; // between Spain and Morocco
-const IBERIAN_COAST: [number, number] = [43.0, -9.5]; // open Atlantic off Galicia, Spain
-const BAY_OF_BISCAY: [number, number] = [47.0, -6.0]; // open Atlantic
-const ENGLISH_CHANNEL: [number, number] = [50.0, 1.5]; // open water off Dover/Calais
-const HORMUZ_APPROACH: [number, number] = [22.0, 62.0]; // Arabian Sea approach to the Gulf of Oman
-const STRAIT_OF_HORMUZ: [number, number] = [26.5, 56.3]; // between Iran and Oman
-const NORTH_PACIFIC_1: [number, number] = [35.0, 160.0]; // open water, south of the Kuril Islands
-const NORTH_PACIFIC_2: [number, number] = [42.0, -175.0]; // open water, south of the Aleutians
-const NORTH_PACIFIC_3: [number, number] = [38.0, -155.0]; // open mid-Pacific
-
-/** Major real global container-shipping trunk routes, drawn as line
- *  segments between the hub ports the backend's /maritime layer already
- *  lists, threaded through the real straits/chokepoints above so each
- *  segment stays in open water instead of a straight chord across land.
- *  OSIRIS itself has no shipping-lane rendering at all (checked directly
- *  against its source — no lane/route code exists there, and its "ship"
- *  layer is wired to a backend field that's never actually populated), so
- *  this isn't matching something OSIRIS has; it's a legitimate addition of
- *  well-known real trade routes, tied to the same Maritime toggle. Only
- *  drawn in 3D mode — a flat equirectangular Polyline through these same
- *  raw coordinates would visibly wrap the wrong way around the antimeridian
- *  on several of these Pacific-crossing routes, which is worse than not
- *  showing them there at all. */
-const SHIPPING_LANES: { points: [number, number][]; label: string }[] = [
-  {
-    points: [[31.23, 121.47], TOKARA_STRAIT, NORTH_PACIFIC_1, NORTH_PACIFIC_2, NORTH_PACIFIC_3, [33.74, -118.27]],
-    label: "Transpacific — Shanghai–Los Angeles",
-  },
-  {
-    points: [[35.10, 129.04], KOREA_STRAIT, TOKARA_STRAIT, NORTH_PACIFIC_1, NORTH_PACIFIC_2, NORTH_PACIFIC_3, [33.74, -118.27]],
-    label: "Transpacific — Busan–Los Angeles",
-  },
-  {
-    points: [
-      [31.23, 121.47], TAIWAN_STRAIT, SOUTH_CHINA_SEA, [1.26, 103.84],
-      SOUTH_OF_SRI_LANKA, ARABIAN_SEA, HORMUZ_APPROACH, STRAIT_OF_HORMUZ, [25.01, 55.06],
-    ],
-    label: "Asia–Middle East — Shanghai–Singapore–Jebel Ali",
-  },
-  {
-    points: [
-      [1.26, 103.84], SOUTH_OF_SRI_LANKA, ARABIAN_SEA, BAB_EL_MANDEB, RED_SEA, SUEZ_SOUTH, SUEZ_NORTH,
-      MED_SOUTH_OF_CRETE, MED_SOUTH_OF_SARDINIA, STRAIT_OF_GIBRALTAR, IBERIAN_COAST, BAY_OF_BISCAY,
-      ENGLISH_CHANNEL, [51.90, 4.50],
-    ],
-    label: "Asia–Europe — Singapore–Rotterdam",
-  },
-  {
-    points: [[51.90, 4.50], ENGLISH_CHANNEL, [45.0, -20.0], [35.0, -50.0], [32.08, -81.09]],
-    label: "Transatlantic — Rotterdam–Savannah",
-  },
-  {
-    points: [[31.23, 121.47], TAIWAN_STRAIT, SOUTH_CHINA_SEA, [1.26, 103.84]],
-    label: "Intra-Asia trunk — Shanghai–Singapore",
-  },
-];
+/** Real global shipping-lane geometries now come from the backend's
+ *  /api/live-layers/maritime-lines (see LayerState below and
+ *  backend/src/data/maritimeLanes.ts) instead of being hand-approximated
+ *  here. That data is computed via searoute-js over a real maritime
+ *  network graph (Eurostat marnet + Oak Ridge National Labs' Global
+ *  Shipping Lane Network), which threads real chokepoints — Suez,
+ *  Gibraltar, Panama, Malacca, Bab-el-Mandeb, the Danish Straits — rather
+ *  than a straight chord across land, and gives a genuinely dense web of
+ *  ~40 real trunk routes (not a handful of hand-picked ones) to match how
+ *  dense real shipping-lane visualizations look. OSIRIS itself has no
+ *  shipping-lane rendering at all (checked directly against its source —
+ *  no lane/route code exists there, and its "ship" layer is wired to a
+ *  backend field that's never actually populated), so this isn't matching
+ *  something OSIRIS has; it's a legitimate addition of real trade routes,
+ *  tied to the same Maritime toggle. Only drawn in 3D mode — a flat
+ *  equirectangular Polyline through these same raw coordinates would
+ *  visibly wrap the wrong way around the antimeridian on the Pacific
+ *  routes, which is worse than not showing them there at all. */
 
 const POLL_MS = 60_000;
 
@@ -681,8 +620,9 @@ export default function LiveIntelView() {
     "satellites-stations-telescopes": false,
     "my-incidents": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
-    // chokepoints) — this toggles the shipping-lane arcs (SHIPPING_LANES)
-    // instead, matching OSIRIS's own real product having a separate
+    // chokepoints) — this toggles the shipping-lane arcs (maritimeLanes,
+    // fetched from the backend) instead, matching OSIRIS's own real
+    // product having a separate
     // "Maritime Lines" toggle alongside its points-based "Maritime / Naval"
     // layer (confirmed directly from a screenshot of its actual left rail,
     // not the open-source mirror, which has no lines concept at all).
@@ -693,6 +633,20 @@ export default function LiveIntelView() {
     Object.fromEntries(LAYER_DEFS.map((d) => [d.key, { data: null, loading: true, error: null }]))
   );
   const [clock, setClock] = useState(() => new Date());
+  // Real computed sea-lane geometries (see the file comment above
+  // SHIPPING_LANES's old spot) — reference data like /maritime and
+  // /nuclear-facilities, so one fetch on mount is enough, no polling.
+  const [maritimeLanes, setMaritimeLanes] = useState<{ points: [number, number][]; label: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getLiveMaritimeLines()
+      .then((d) => !cancelled && setMaritimeLanes(d.lanes))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // DISPLAY toggles — OSIRIS's own left-panel group of the same name (its
   // real source labels them "Day / Night Cycle" and gates buildings/terrain
@@ -893,7 +847,7 @@ export default function LiveIntelView() {
   // have none, so they fall back to their usual blue) is what tells
   // pathColor apart, rather than needing three separate path layers.
   const globePaths = useMemo(() => {
-    const lanes = enabled["maritime-lines"] ? SHIPPING_LANES : [];
+    const lanes = enabled["maritime-lines"] ? maritimeLanes : [];
     const drawPath =
       drawMode === "distance" && drawPoints.length >= 2 ? [{ points: drawPoints, label: "Measured distance", color: "#ffd23f" }] : [];
     const routePath =
@@ -901,7 +855,7 @@ export default function LiveIntelView() {
         ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
         : [];
     return [...lanes, ...drawPath, ...routePath];
-  }, [enabled["maritime-lines"], drawMode, drawPoints, routeResult]);
+  }, [enabled["maritime-lines"], maritimeLanes, drawMode, drawPoints, routeResult]);
 
   // The in-progress area-drawing shape, as a closed ring — country borders
   // themselves no longer need to be built here at all now that the 3D view
@@ -964,7 +918,7 @@ export default function LiveIntelView() {
             })
           }
           maritimeLinesOn={enabled["maritime-lines"]}
-          maritimeLinesCount={SHIPPING_LANES.length}
+          maritimeLinesCount={maritimeLanes.length}
           onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
         />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />

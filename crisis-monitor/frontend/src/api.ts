@@ -664,6 +664,16 @@ export interface ActivityIndex {
   fetchedAt: string;
 }
 
+export interface MaritimeLane {
+  label: string;
+  points: [number, number][];
+}
+
+export interface MaritimeLanes {
+  lanes: MaritimeLane[];
+  fetchedAt: string;
+}
+
 export type RouteProfile = "driving" | "walking" | "cycling";
 
 export interface RouteResult {
@@ -955,6 +965,9 @@ export const api = {
   getLiveMaritime: () => req<LiveLayerCollection>("/api/live-layers/maritime"),
   getLiveSatellites: () => req<LiveLayerCollection>("/api/live-layers/satellites"),
   getLiveNuclearFacilities: () => req<LiveLayerCollection>("/api/live-layers/nuclear-facilities"),
+  // Real, computed sea-lane geometries (searoute-js over a real maritime
+  // network graph) — see backend/src/data/maritimeLanes.ts.
+  getLiveMaritimeLines: () => req<MaritimeLanes>("/api/live-layers/maritime-lines"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
   // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
   // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key

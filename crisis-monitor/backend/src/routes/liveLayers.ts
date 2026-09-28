@@ -4,6 +4,7 @@ import { Reader as MmdbReader, type CountryResponse } from "mmdb-lib";
 import { Buffer } from "node:buffer";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
+import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -959,6 +960,18 @@ const NUCLEAR_FACILITIES: Array<{ name: string; country: string; lat: number; ln
   { name: "Zaporizhzhia", country: "UA", lat: 47.51222, lng: 34.58583 },
   { name: "Zhangzhou", country: "CN", lat: 23.8292, lng: 117.4917 },
 ];
+
+/** Real, computed sea-lane geometries — see maritimeLanes.ts for exactly
+ *  how these were generated and sanity-checked (searoute-js over a real
+ *  marnet/Oak Ridge maritime network, not hand-drawn waypoints). Served as
+ *  reference data, same 1-day cache as /maritime and /nuclear-facilities. */
+liveLayersRouter.get("/maritime-lines", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => ({ lanes: REAL_SHIPPING_LANES, fetchedAt: new Date().toISOString() }),
+    86400
+  );
+});
 
 liveLayersRouter.get("/nuclear-facilities", async (c) => {
   return cachedJson(
