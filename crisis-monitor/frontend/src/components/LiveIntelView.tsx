@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import {
@@ -8,8 +8,10 @@ import {
   Bell,
   Bug,
   Building2,
+  ClipboardList,
   CloudLightning,
   Flame,
+  Hexagon,
   MapPin,
   Mountain,
   Navigation,
@@ -22,6 +24,7 @@ import {
   Rss,
   Ruler,
   Satellite,
+  Search as SearchGlyph,
   Shield,
   Ship,
   Siren,
@@ -29,6 +32,7 @@ import {
   Telescope,
   TrendingDown,
   TrendingUp,
+  Upload as UploadGlyph,
   Waypoints,
   X as CloseGlyph,
   type LucideIcon,
@@ -46,8 +50,18 @@ import {
   type CyberThreats,
   type MarketsStatus,
   type ActivityIndex,
+  type IncidentItem,
+  type IncidentFilters as IncidentFilterOptions,
+  type SavedShape,
+  type SavedRoute,
 } from "../api";
 import { BASEMAPS } from "./mapConstants";
+// Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
+// loading for every visit to this view when the intake modal may never
+// open (same lazy-load pattern DashboardWidgetCard already uses for
+// RouteDrawingGlobe/LabelDrawingGlobe).
+const IncidentManualEntry = lazy(() => import("./IncidentManualEntry"));
+const IncidentUpload = lazy(() => import("./IncidentUpload"));
 
 /**
  * OSIRIS's real visual language — checked directly against its open-source
@@ -482,26 +496,43 @@ const LAYER_DEFS: LayerDef[] = [
     icon: MapPin,
     fetcher: async () => {
       const rows = await api.getIncidents({ limit: 2000 });
-      const out: GlobePoint[] = [];
-      for (const r of rows) {
-        if (r.latitude == null || r.longitude == null) continue;
-        out.push({
-          id: r.id,
-          layerKey: "My Incidents",
-          lat: r.latitude,
-          lng: r.longitude,
-          color: "#ff9de2",
-          size: 0.16,
-          title: r.city || r.district || r.country || "Incident",
-          subtitle: [r.sector, r.tactic].filter(Boolean).join(" — "),
-          time: r.occurred_at,
-          url: null,
-        });
-      }
-      return out;
+      return rows.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null);
     },
   },
 ];
+
+/** Shared between the "My Incidents" layer's own poll and the Incidents
+ *  tool's live search results, so a filtered search shows exactly the same
+ *  marker styling as the unfiltered layer — just a different underlying
+ *  row set. */
+function incidentRowToPoint(r: IncidentItem): GlobePoint | null {
+  if (r.latitude == null || r.longitude == null) return null;
+  return {
+    id: r.id,
+    layerKey: "My Incidents",
+    lat: r.latitude,
+    lng: r.longitude,
+    color: "#ff9de2",
+    size: 0.16,
+    title: r.city || r.district || r.country || "Incident",
+    subtitle: [r.sector, r.tactic].filter(Boolean).join(" — "),
+    time: r.occurred_at,
+    url: null,
+  };
+}
+
+/** Saved AOI's outer ring, in this view's own [lat, lng] tuple order —
+ *  map_shapes stores a plain GeoJSON Feature ([lng, lat] coordinates), and
+ *  only a single-ring Polygon is rendered here (a shapefile/geojson upload
+ *  with holes or a MultiPolygon just won't outline on this view — the
+ *  Shapes panel that creates these always writes a plain single-ring
+ *  Polygon Feature, so that covers everything drawn from here). */
+function shapeRingLatLng(shape: SavedShape): LatLng[] {
+  if (shape.geometry.type !== "Feature") return [];
+  const geom = shape.geometry.geometry;
+  if (!geom || geom.type !== "Polygon") return [];
+  return geom.coordinates[0].map(([lng, lat]) => [lat, lng] as LatLng);
+}
 
 const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Network Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
 
@@ -533,7 +564,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "draw" | "route" | "space" | "news" | null;
+type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | null;
 type DrawMode = "distance" | "area" | null;
 
 /** [lat, lng] tuples throughout the drawing/route tools — matches how a
@@ -688,6 +719,106 @@ export default function LiveIntelView() {
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
 
+  // --- Incidents tool: search/filter the same incident set "My Incidents"
+  // polls, plus the Add/Bulk-upload intake modal. ---
+  const [incidentFilterOptions, setIncidentFilterOptions] = useState<IncidentFilterOptions | null>(null);
+  const [incidentFilters, setIncidentFilters] = useState<{ sector?: string; actor?: string; severity?: string; country?: string }>({});
+  const [incidentSearchResults, setIncidentSearchResults] = useState<IncidentItem[] | null>(null);
+  const [incidentSearchLoading, setIncidentSearchLoading] = useState(false);
+  const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
+
+  // --- Shapes tool: persisted AOI overlays (map_shapes), drawn here and
+  // shown on the map alongside every live layer and incident. ---
+  const [savedShapes, setSavedShapes] = useState<SavedShape[]>([]);
+  const [shapeDrawing, setShapeDrawing] = useState(false);
+  const [shapeDrawPoints, setShapeDrawPoints] = useState<LatLng[]>([]);
+  const [shapeNameDraft, setShapeNameDraft] = useState("");
+  const [shapeColorDraft, setShapeColorDraft] = useState("#7dd3fc");
+  const [shapeSaving, setShapeSaving] = useState(false);
+  const [shapeError, setShapeError] = useState<string | null>(null);
+
+  // --- Saved routes (map_routes) — the Route tool's planned routes can be
+  // saved here, so they persist and overlay the map (and any incidents)
+  // alongside everything else, rather than vanishing once the tool closes. ---
+  const [savedRoutes, setSavedRoutes] = useState<SavedRoute[]>([]);
+  const [routeNameDraft, setRouteNameDraft] = useState("");
+  const [routeSaving, setRouteSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.getMapShapes(), api.getMapRoutes()])
+      .then(([shapes, routes]) => {
+        if (cancelled) return;
+        setSavedShapes(shapes);
+        setSavedRoutes(routes);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function refreshShapes() {
+    api.getMapShapes().then(setSavedShapes).catch(() => {});
+  }
+  function refreshRoutes() {
+    api.getMapRoutes().then(setSavedRoutes).catch(() => {});
+  }
+
+  // Refetches both the base "My Incidents" layer and, if a search is
+  // active, the filtered result set — called right after an Add-one or
+  // Bulk-upload save so a freshly-entered incident appears immediately
+  // instead of waiting for the next 60s poll.
+  function refreshMyIncidents() {
+    api
+      .getIncidents({ limit: 2000 })
+      .then((rows) => {
+        setLayers((prev) => ({
+          ...prev,
+          "my-incidents": { data: rows.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null), loading: false, error: null },
+        }));
+      })
+      .catch(() => {});
+    if (Object.values(incidentFilters).some(Boolean)) {
+      api.getIncidents({ ...incidentFilters, limit: 2000 }).then(setIncidentSearchResults).catch(() => {});
+    }
+  }
+
+  useEffect(() => {
+    if (activeTool !== "incidents" || incidentFilterOptions) return;
+    api.getIncidentFilters().then(setIncidentFilterOptions).catch(() => {});
+  }, [activeTool, incidentFilterOptions]);
+
+  // Debounced live search — filters change fairly often as someone clicks
+  // through dropdowns, so this waits a beat rather than firing a request
+  // per click.
+  useEffect(() => {
+    const hasFilter = Object.values(incidentFilters).some(Boolean);
+    if (!hasFilter) {
+      setIncidentSearchResults(null);
+      return;
+    }
+    let cancelled = false;
+    setIncidentSearchLoading(true);
+    const t = setTimeout(() => {
+      api
+        .getIncidents({ ...incidentFilters, limit: 2000 })
+        .then((rows) => {
+          if (!cancelled) setIncidentSearchResults(rows);
+        })
+        .catch(() => {
+          if (!cancelled) setIncidentSearchResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIncidentSearchLoading(false);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [incidentFilters]);
+
   // A click on the map/globe means something different depending on which
   // right-side tool is open: adds the next drawing vertex, or sets
   // whichever of origin/destination isn't picked yet (a third click starts
@@ -704,6 +835,56 @@ export default function LiveIntelView() {
         setRouteResult(null);
         setRouteError(null);
       }
+    } else if (activeTool === "shapes" && shapeDrawing) {
+      setShapeDrawPoints((prev) => [...prev, [lat, lng]]);
+    }
+  }
+
+  async function handleSaveShape() {
+    if (shapeDrawPoints.length < 3) return;
+    setShapeSaving(true);
+    setShapeError(null);
+    try {
+      const ring = [...shapeDrawPoints, shapeDrawPoints[0]].map(([lat, lng]) => [lng, lat]);
+      await api.createMapShape({
+        name: shapeNameDraft.trim() || "Untitled AOI",
+        source: "drawn",
+        geometry: { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } },
+        style: { color: shapeColorDraft, fillColor: shapeColorDraft, fillOpacity: 0.22, weight: 2 },
+      });
+      setShapeDrawPoints([]);
+      setShapeDrawing(false);
+      setShapeNameDraft("");
+      refreshShapes();
+    } catch (err) {
+      setShapeError(err instanceof Error ? err.message : "Couldn't save this AOI");
+    } finally {
+      setShapeSaving(false);
+    }
+  }
+
+  async function handleSaveRoute() {
+    if (!routeResult || routeResult.coordinates.length < 2) return;
+    setRouteSaving(true);
+    try {
+      const geometry = routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng);
+      const waypoints = [routeOrigin, routeDestination].filter((p): p is LatLng => p !== null);
+      await api.createMapRoute({
+        name: routeNameDraft.trim() || "Untitled route",
+        mode: "road",
+        waypoints: waypoints.length >= 2 ? waypoints : geometry.slice(0, 2),
+        geometry,
+        distance_km: routeResult.distanceMeters / 1000,
+        duration_min: routeResult.durationSeconds / 60,
+        color: "#4dff9e",
+      });
+      setRouteNameDraft("");
+      refreshRoutes();
+    } catch {
+      // Best-effort — the route stays visible in the planner either way,
+      // this only affects whether it's also persisted for later.
+    } finally {
+      setRouteSaving(false);
     }
   }
 
@@ -809,11 +990,18 @@ export default function LiveIntelView() {
     const all: GlobePoint[] = [];
     for (const def of LAYER_DEFS) {
       if (!enabled[def.key]) continue;
+      // An active incidents search overrides the base poll for this one
+      // layer — same marker styling (incidentRowToPoint), just a filtered
+      // row set, so search visibly narrows what's on the map itself.
+      if (def.key === "my-incidents" && incidentSearchResults) {
+        all.push(...incidentSearchResults.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null));
+        continue;
+      }
       const data = layers[def.key]?.data;
       if (data) all.push(...data);
     }
     return all;
-  }, [layers, enabled]);
+  }, [layers, enabled, incidentSearchResults]);
 
   // Tool overlays rendered as ordinary GlobePoints — the marker rendering
   // (both the 3D pointsData layer and the flat CircleMarker map) is already
@@ -849,8 +1037,13 @@ export default function LiveIntelView() {
         extra.push({ id: `draw-${i}`, layerKey: "Drawing", lat, lng, color: "#ffd23f", size: 0.14, title: `Point ${i + 1}`, subtitle: "", time: null, url: null });
       });
     }
+    if (activeTool === "shapes") {
+      shapeDrawPoints.forEach(([lat, lng], i) => {
+        extra.push({ id: `shape-${i}`, layerKey: "AOI", lat, lng, color: shapeColorDraft, size: 0.14, title: `Vertex ${i + 1}`, subtitle: "", time: null, url: null });
+      });
+    }
     return extra;
-  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints]);
+  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints, shapeDrawPoints, shapeColorDraft]);
 
   const mapPoints = useMemo(() => [...points, ...toolPoints], [points, toolPoints]);
 
@@ -866,8 +1059,20 @@ export default function LiveIntelView() {
       routeResult && routeResult.coordinates.length >= 2
         ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
         : [];
-    return [...lanes, ...drawPath, ...routePath];
-  }, [enabled["maritime-lines"], maritimeLanes, drawMode, drawPoints, routeResult]);
+    const inProgressShape =
+      activeTool === "shapes" && shapeDrawPoints.length >= 2
+        ? [{ points: [...shapeDrawPoints, shapeDrawPoints[0]], label: shapeNameDraft || "New AOI", color: shapeColorDraft }]
+        : [];
+    const shapeOverlays = savedShapes
+      .filter((s) => s.visible)
+      .map((s) => ({ points: shapeRingLatLng(s), label: s.name, color: s.style?.color || "#7dd3fc" }))
+      .filter((p) => p.points.length >= 3);
+    const routeOverlays = savedRoutes
+      .filter((r) => r.visible)
+      .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
+      .filter((p) => p.points.length >= 2);
+    return [...lanes, ...drawPath, ...routePath, ...inProgressShape, ...shapeOverlays, ...routeOverlays];
+  }, [enabled["maritime-lines"], maritimeLanes, drawMode, drawPoints, routeResult, activeTool, shapeDrawPoints, shapeNameDraft, shapeColorDraft, savedShapes, savedRoutes]);
 
   // The in-progress area-drawing shape, as a closed ring — country borders
   // themselves no longer need to be built here at all now that the 3D view
@@ -910,10 +1115,15 @@ export default function LiveIntelView() {
           <FlatMap
             mode={mapMode}
             points={mapPoints}
-            onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
+            onMapClick={activeTool === "draw" || activeTool === "route" || activeTool === "shapes" ? handleMapClick : undefined}
             drawMode={activeTool === "draw" ? drawMode : null}
             drawPoints={drawPoints}
             routeLine={activeTool === "route" ? routeLineForFlatMap : undefined}
+            savedShapes={savedShapes}
+            savedRoutes={savedRoutes}
+            shapeDrawPoints={activeTool === "shapes" ? shapeDrawPoints : undefined}
+            shapeDrawActive={activeTool === "shapes" && shapeDrawing}
+            shapeDraftColor={shapeColorDraft}
           />
         )}
 
@@ -966,6 +1176,11 @@ export default function LiveIntelView() {
                 setRouteResult(null);
                 setRouteError(null);
               }
+              if (next !== "shapes") {
+                setShapeDrawing(false);
+                setShapeDrawPoints([]);
+                setShapeError(null);
+              }
               return next;
             })
           }
@@ -998,11 +1213,59 @@ export default function LiveIntelView() {
               setRouteResult(null);
               setRouteError(null);
             }}
+            savedRoutes={savedRoutes}
+            routeNameDraft={routeNameDraft}
+            onRouteNameDraftChange={setRouteNameDraft}
+            routeSaving={routeSaving}
+            onSaveRoute={handleSaveRoute}
+            onToggleRoute={(id, visible) => api.updateMapRoute(id, { visible }).then(refreshRoutes).catch(() => {})}
+            onDeleteRoute={(id) => api.deleteMapRoute(id).then(refreshRoutes).catch(() => {})}
           />
         )}
         {activeTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {activeTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
+        {activeTool === "incidents" && (
+          <IncidentsToolPanel
+            filterOptions={incidentFilterOptions}
+            filters={incidentFilters}
+            onFiltersChange={setIncidentFilters}
+            resultCount={incidentSearchResults?.length ?? null}
+            loading={incidentSearchLoading}
+            onAdd={() => setIncidentModalTab("add")}
+            onBulkUpload={() => setIncidentModalTab("bulk")}
+          />
+        )}
+        {activeTool === "shapes" && (
+          <ShapesToolPanel
+            drawing={shapeDrawing}
+            points={shapeDrawPoints}
+            name={shapeNameDraft}
+            color={shapeColorDraft}
+            saving={shapeSaving}
+            error={shapeError}
+            onToggleDrawing={() => {
+              setShapeDrawing((v) => !v);
+              setShapeDrawPoints([]);
+            }}
+            onNameChange={setShapeNameDraft}
+            onColorChange={setShapeColorDraft}
+            onClear={() => setShapeDrawPoints([])}
+            onSave={handleSaveShape}
+            savedShapes={savedShapes}
+            onToggleShape={(id, visible) => api.updateMapShape(id, { visible }).then(refreshShapes).catch(() => {})}
+            onDeleteShape={(id) => api.deleteMapShape(id).then(refreshShapes).catch(() => {})}
+          />
+        )}
       </div>
+
+      {incidentModalTab && (
+        <IncidentIntakeModal
+          tab={incidentModalTab}
+          onTabChange={setIncidentModalTab}
+          onClose={() => setIncidentModalTab(null)}
+          onSaved={refreshMyIncidents}
+        />
+      )}
     </div>
   );
 }
@@ -1020,15 +1283,30 @@ function FlatMap({
   drawMode,
   drawPoints,
   routeLine,
+  savedShapes,
+  savedRoutes,
+  shapeDrawPoints,
+  shapeDrawActive,
+  shapeDraftColor,
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
-  /** Set only while Drawing Tools or Route is the active right-side tool —
-   *  its presence is literally what makes a map click do something. */
+  /** Set only while Drawing Tools, Route, or Shapes is the active
+   *  right-side tool — its presence is literally what makes a map click do
+   *  something. */
   onMapClick?: (lat: number, lng: number) => void;
   drawMode?: DrawMode;
   drawPoints?: LatLng[];
   routeLine?: LatLng[];
+  /** Persisted overlays (map_shapes/map_routes) — shown regardless of which
+   *  right-side tool is open, same as the live data layers, so a saved AOI
+   *  or route stays visible while browsing rather than only while its own
+   *  tool panel happens to be open. */
+  savedShapes?: SavedShape[];
+  savedRoutes?: SavedRoute[];
+  shapeDrawPoints?: LatLng[];
+  shapeDrawActive?: boolean;
+  shapeDraftColor?: string;
 }) {
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
@@ -1042,6 +1320,31 @@ function FlatMap({
         <Polygon positions={drawPoints} pathOptions={{ color: "#ffd23f", fillColor: "#ffd23f", fillOpacity: 0.25, weight: 2 }} />
       )}
       {routeLine && routeLine.length >= 2 && <Polyline positions={routeLine} pathOptions={{ color: "#4dff9e", weight: 3 }} />}
+      {shapeDrawActive && shapeDrawPoints && shapeDrawPoints.length >= 3 && (
+        <Polygon
+          positions={shapeDrawPoints}
+          pathOptions={{ color: shapeDraftColor ?? "#7dd3fc", fillColor: shapeDraftColor ?? "#7dd3fc", fillOpacity: 0.2, weight: 2, dashArray: "4 4" }}
+        />
+      )}
+      {savedShapes
+        ?.filter((s) => s.visible)
+        .map((s) => {
+          const ring = shapeRingLatLng(s);
+          if (ring.length < 3) return null;
+          const color = s.style?.color || "#7dd3fc";
+          return (
+            <Polygon key={s.id} positions={ring} pathOptions={{ color, fillColor: s.style?.fillColor || color, fillOpacity: s.style?.fillOpacity ?? 0.18, weight: s.style?.weight ?? 2 }}>
+              <LeafletTooltip direction="center">{s.name}</LeafletTooltip>
+            </Polygon>
+          );
+        })}
+      {savedRoutes
+        ?.filter((r) => r.visible)
+        .map((r) => (
+          <Polyline key={r.id} positions={r.geometry as LatLng[]} pathOptions={{ color: r.color || "#4dff9e", weight: 3 }}>
+            <LeafletTooltip direction="center">{r.name}</LeafletTooltip>
+          </Polyline>
+        ))}
       {points.map((p) => (
         <CircleMarker key={`${p.layerKey}:${p.id}`} center={[p.lat, p.lng]} radius={3 + p.size * 18} pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}>
           <LeafletTooltip direction="top">
@@ -1654,6 +1957,8 @@ function GlobalStatusTicker() {
  *  tools rather than a scrollable list of toggles. */
 function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void }) {
   const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
+    { key: "incidents", icon: ClipboardList, label: "Incidents" },
+    { key: "shapes", icon: Hexagon, label: "AOI" },
     { key: "draw", icon: Ruler, label: "Draw" },
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
@@ -1788,6 +2093,13 @@ function RoutePlannerPanel({
   loading,
   error,
   onClear,
+  savedRoutes,
+  routeNameDraft,
+  onRouteNameDraftChange,
+  routeSaving,
+  onSaveRoute,
+  onToggleRoute,
+  onDeleteRoute,
 }: {
   mode: RouteProfile;
   onModeChange: (m: RouteProfile) => void;
@@ -1797,6 +2109,13 @@ function RoutePlannerPanel({
   loading: boolean;
   error: string | null;
   onClear: () => void;
+  savedRoutes: SavedRoute[];
+  routeNameDraft: string;
+  onRouteNameDraftChange: (v: string) => void;
+  routeSaving: boolean;
+  onSaveRoute: () => void;
+  onToggleRoute: (id: string, visible: boolean) => void;
+  onDeleteRoute: (id: string) => void;
 }) {
   const profiles: { key: RouteProfile; label: string }[] = [
     { key: "driving", label: "Drive" },
@@ -1829,10 +2148,61 @@ function RoutePlannerPanel({
       <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
         Routed via OSRM's free public demo server — fine for occasional use, not a guaranteed production service.
       </div>
+      {result && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+          <input
+            value={routeNameDraft}
+            onChange={(e) => onRouteNameDraftChange(e.target.value)}
+            placeholder="Name this route…"
+            style={hudInputStyle}
+          />
+          <ToolButton onClick={onSaveRoute}>{routeSaving ? "Saving…" : "Save route (overlays the map)"}</ToolButton>
+        </div>
+      )}
       <ToolButton onClick={onClear}>Clear</ToolButton>
+
+      {savedRoutes.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 8, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>
+            Saved routes ({savedRoutes.length})
+          </div>
+          {savedRoutes.map((r) => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+              <input type="checkbox" checked={r.visible} onChange={(e) => onToggleRoute(r.id, e.target.checked)} />
+              <span style={{ flex: 1, color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.name}>
+                {r.name}
+              </span>
+              <span style={{ color: HUD.textMuted, fontSize: 10 }}>{r.distance_km ? `${r.distance_km.toFixed(0)}km` : ""}</span>
+              <button onClick={() => onDeleteRoute(r.id)} title="Delete" style={iconOnlyBtnStyle}>
+                <CloseGlyph size={11} color={HUD.textMuted} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </ToolPanelShell>
   );
 }
+
+const hudInputStyle: React.CSSProperties = {
+  width: "100%",
+  fontSize: 12,
+  padding: "6px 8px",
+  borderRadius: 6,
+  border: "1px solid rgba(212,175,55,0.2)",
+  background: "rgba(0,0,0,0.3)",
+  color: HUD.textPrimary,
+  fontFamily: "inherit",
+};
+
+const iconOnlyBtnStyle: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  padding: 2,
+  display: "flex",
+  alignItems: "center",
+};
 
 function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string | null }) {
   return (
@@ -1887,5 +2257,210 @@ function NewsFeedPanel({ items, loading, error }: { items: NewsItem[] | null; lo
         ))}
       </div>
     </ToolPanelShell>
+  );
+}
+
+/** Incidents tool — search/filter the same "My Incidents" set the left rail
+ *  toggles, plus the two intake paths (Add one / Bulk upload) that reuse
+ *  IncidentManualEntry/IncidentUpload unmodified via the intake modal
+ *  below, since both are full-page forms not built for this 260px rail. */
+function IncidentsToolPanel({
+  filterOptions,
+  filters,
+  onFiltersChange,
+  resultCount,
+  loading,
+  onAdd,
+  onBulkUpload,
+}: {
+  filterOptions: IncidentFilterOptions | null;
+  filters: { sector?: string; actor?: string; severity?: string; country?: string };
+  onFiltersChange: (f: { sector?: string; actor?: string; severity?: string; country?: string }) => void;
+  resultCount: number | null;
+  loading: boolean;
+  onAdd: () => void;
+  onBulkUpload: () => void;
+}) {
+  const hasFilters = Object.values(filters).some(Boolean);
+  function select(key: keyof typeof filters, options?: string[]) {
+    return (
+      <select
+        value={filters[key] ?? ""}
+        onChange={(e) => onFiltersChange({ ...filters, [key]: e.target.value || undefined })}
+        style={{ ...hudInputStyle, cursor: "pointer" }}
+      >
+        <option value="">{key[0].toUpperCase() + key.slice(1)}: All</option>
+        {options?.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+    );
+  }
+  return (
+    <ToolPanelShell title="Incidents">
+      <div style={{ display: "flex", gap: 6 }}>
+        <ToolButton onClick={onAdd}>+ Add one</ToolButton>
+        <ToolButton onClick={onBulkUpload}>Bulk upload</ToolButton>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted, display: "flex", alignItems: "center", gap: 5 }}>
+          <SearchGlyph size={11} /> Search / filter
+        </div>
+        {select("country", filterOptions?.country)}
+        {select("sector", filterOptions?.sector)}
+        {select("actor", filterOptions?.actor)}
+        {select("severity", filterOptions?.severity)}
+        {hasFilters && <ToolButton onClick={() => onFiltersChange({})}>Clear filters</ToolButton>}
+      </div>
+
+      <div style={{ fontSize: 11, color: HUD.textSecondary }}>
+        {loading
+          ? "Searching…"
+          : hasFilters
+          ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — shown on the map`
+          : "Enable \"My Incidents\" on the left rail to see them on the map. Filters above narrow that view."}
+      </div>
+    </ToolPanelShell>
+  );
+}
+
+/** Shapes tool — draw-and-save persisted AOI overlays (map_shapes). Draw
+ *  mode reuses the same map-click plumbing as Drawing Tools/Route, just
+ *  writing to its own point buffer so the three don't collide. */
+function ShapesToolPanel({
+  drawing,
+  points,
+  name,
+  color,
+  saving,
+  error,
+  onToggleDrawing,
+  onNameChange,
+  onColorChange,
+  onClear,
+  onSave,
+  savedShapes,
+  onToggleShape,
+  onDeleteShape,
+}: {
+  drawing: boolean;
+  points: LatLng[];
+  name: string;
+  color: string;
+  saving: boolean;
+  error: string | null;
+  onToggleDrawing: () => void;
+  onNameChange: (v: string) => void;
+  onColorChange: (v: string) => void;
+  onClear: () => void;
+  onSave: () => void;
+  savedShapes: SavedShape[];
+  onToggleShape: (id: string, visible: boolean) => void;
+  onDeleteShape: (id: string) => void;
+}) {
+  return (
+    <ToolPanelShell title="Areas of Interest">
+      <ToolButton active={drawing} onClick={onToggleDrawing}>
+        {drawing ? "Drawing… click map to add vertices" : "Draw new AOI"}
+      </ToolButton>
+      {drawing && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 11, color: HUD.textSecondary }}>
+            {points.length} vertex{points.length === 1 ? "" : "es"} placed. Needs at least 3.
+          </div>
+          <input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="Name this area…" style={hudInputStyle} />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="color" value={color} onChange={(e) => onColorChange(e.target.value)} style={{ width: 32, height: 26, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
+            <span style={{ fontSize: 10, color: HUD.textMuted }}>Overlay color</span>
+          </div>
+          {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
+          <div style={{ display: "flex", gap: 6 }}>
+            <ToolButton onClick={onClear}>Clear points</ToolButton>
+            <ToolButton onClick={onSave}>{saving ? "Saving…" : "Save AOI"}</ToolButton>
+          </div>
+        </div>
+      )}
+
+      {savedShapes.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 8, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>
+            Saved areas ({savedShapes.length})
+          </div>
+          {savedShapes.map((s) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+              <input type="checkbox" checked={s.visible} onChange={(e) => onToggleShape(s.id, e.target.checked)} />
+              <span
+                style={{ width: 9, height: 9, borderRadius: 2, background: s.style?.color || "#7dd3fc", flexShrink: 0 }}
+              />
+              <span style={{ flex: 1, color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
+                {s.name}
+              </span>
+              <button onClick={() => onDeleteShape(s.id)} title="Delete" style={iconOnlyBtnStyle}>
+                <CloseGlyph size={11} color={HUD.textMuted} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </ToolPanelShell>
+  );
+}
+
+/** Full-screen intake modal for Add-one / Bulk-upload — a modal rather than
+ *  cramming these into the 260px tool rail, since both IncidentManualEntry
+ *  and IncidentUpload are full-page forms (max-width 640–760) already used
+ *  elsewhere in the app unmodified; this view just hosts them. */
+function IncidentIntakeModal({
+  tab,
+  onTabChange,
+  onClose,
+  onSaved,
+}: {
+  tab: "add" | "bulk";
+  onTabChange: (t: "add" | "bulk") => void;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 2000,
+        background: "rgba(0,3,8,0.78)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        overflowY: "auto",
+        padding: "40px 20px",
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div style={{ ...glassPanel(), width: "min(820px, 100%)", padding: 20, background: "rgba(10,12,22,0.97)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <ToolButton active={tab === "add"} onClick={() => onTabChange("add")}>
+              Add one
+            </ToolButton>
+            <ToolButton active={tab === "bulk"} onClick={() => onTabChange("bulk")}>
+              Bulk upload
+            </ToolButton>
+          </div>
+          <button onClick={onClose} title="Close" style={iconOnlyBtnStyle}>
+            <CloseGlyph size={18} color={HUD.textSecondary} />
+          </button>
+        </div>
+        <div style={{ color: "#111", background: "#fff", borderRadius: 8, padding: 16 }}>
+          <Suspense fallback={<div style={{ padding: 20, color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>}>
+            {tab === "add" ? <IncidentManualEntry onSaved={onSaved} /> : <IncidentUpload onUploaded={onSaved} />}
+          </Suspense>
+        </div>
+      </div>
+    </div>
   );
 }
