@@ -1,10 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import Globe, { type GlobeMethods } from "react-globe.gl";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
-import { feature } from "topojson-client";
-import type { Topology, GeometryCollection } from "topojson-specification";
-import worldTopology from "world-atlas/countries-110m.json?url";
+import Map3D from "./Map3D";
 import { api, type LiveLayerCollection, type LiveLayerFeature, type IssPosition, type NewsItem, type RouteProfile, type RouteResult } from "../api";
 import { BASEMAPS } from "./mapConstants";
 
@@ -88,7 +85,7 @@ interface GlobePoint {
   url: string | null;
 }
 
-type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Aviation" | "Maritime" | "My Data";
+type LayerGroup = "Natural Hazards" | "Threats & Infra" | "Aviation" | "Maritime" | "My Data";
 
 interface LayerDef {
   key: string;
@@ -122,11 +119,11 @@ function fromGateway(color: string, label: string) {
 const LAYER_DEFS: LayerDef[] = [
   { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
   { key: "natural-events", label: "Active Fires & Storms", group: "Natural Hazards", color: "#ffb020", fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
-  { key: "conflict-events", label: "Conflict Reports", group: "Threats & Intel", color: "#7c9cff", fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
+  { key: "conflict-events", label: "Conflict Reports", group: "Threats & Infra", color: "#7c9cff", fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
   {
     key: "malware-infrastructure",
     label: "Botnet C2 Servers",
-    group: "Threats & Intel",
+    group: "Threats & Infra",
     color: "#ff4fa3",
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
   },
@@ -192,7 +189,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
 ];
 
-const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Aviation", "Maritime", "My Data"];
+const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Infra", "Aviation", "Maritime", "My Data"];
 
 /** Major real global container-shipping trunk routes, drawn as arcs
  *  between the hub ports the backend's /maritime layer already lists.
@@ -298,29 +295,6 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
   URL.revokeObjectURL(url);
 }
 
-/** Country border polygons for the 3D globe — same world-atlas topology and
- *  topojson-client conversion GlobeWidget already uses for its choropleth,
- *  loaded independently here since this view is code-split from that one
- *  and shouldn't need to import a whole other component to reuse a JSON
- *  file. Fetched once; never changes at runtime. */
-function useCountryBorders(): GeoJSON.Feature[] | null {
-  const [features, setFeatures] = useState<GeoJSON.Feature[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    fetch(worldTopology)
-      .then((r) => r.json())
-      .then((topo: Topology) => {
-        if (cancelled) return;
-        const collection = feature(topo, topo.objects.countries as GeometryCollection) as unknown as GeoJSON.FeatureCollection;
-        setFeatures(collection.features);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return features;
-}
-
 export default function LiveIntelView() {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     earthquakes: true,
@@ -337,10 +311,14 @@ export default function LiveIntelView() {
     Object.fromEntries(LAYER_DEFS.map((d) => [d.key, { data: null, loading: true, error: null }]))
   );
   const [clock, setClock] = useState(() => new Date());
-  const globeRef = useRef<GlobeMethods | undefined>(undefined);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  const countryBorders = useCountryBorders();
+
+  // DISPLAY toggles — OSIRIS's own left-panel group of the same name (its
+  // real source labels them "Day / Night Cycle" and gates buildings/terrain
+  // by zoom rather than a manual switch; see LayerPanel/Map3D's own
+  // comments for exactly what each does).
+  const [showDayNight, setShowDayNight] = useState(false);
+  const [showBuildings, setShowBuildings] = useState(false);
+  const [showTerrain, setShowTerrain] = useState(false);
 
   // --- Right-side tools: at most one open at a time (see RightTool). ---
   const [activeTool, setActiveTool] = useState<RightTool>(null);
@@ -453,25 +431,6 @@ export default function LiveIntelView() {
   }, [activeTool]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (entry) setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (mapMode !== "3d") return;
-    const controls = globeRef.current?.controls?.();
-    if (controls) {
-      controls.autoRotate = true;
-      controls.autoRotateSpeed = 0.35;
-    }
-  }, [size, mapMode]);
-
-  useEffect(() => {
     let cancelled = false;
     async function loadLayer(def: LayerDef) {
       setLayers((prev) => ({ ...prev, [def.key]: { ...prev[def.key], loading: true } }));
@@ -562,16 +521,14 @@ export default function LiveIntelView() {
     return [...lanes, ...drawPath, ...routePath];
   }, [enabled.maritime, drawMode, drawPoints, routeResult]);
 
-  // Same idea for the 3D globe's polygon layer — country borders plus, when
-  // area-measuring, the in-progress shape itself (flagged so
-  // polygonCapColor/polygonStrokeColor can render it distinctly from an
-  // ordinary country border).
-  const globePolygons = useMemo(() => {
-    if (drawMode !== "area" || drawPoints.length < 3) return countryBorders ?? [];
-    const ring = [...drawPoints.map(([lat, lng]) => [lng, lat]), [drawPoints[0][1], drawPoints[0][0]]];
-    const drawFeature: GeoJSON.Feature = { type: "Feature", properties: { __draw: true }, geometry: { type: "Polygon", coordinates: [ring] } };
-    return [...(countryBorders ?? []), drawFeature];
-  }, [countryBorders, drawMode, drawPoints]);
+  // The in-progress area-drawing shape, as a closed ring — country borders
+  // themselves no longer need to be built here at all now that the 3D view
+  // is a real vector-tile basemap (Map3D) that already draws them as part
+  // of its own style.
+  const drawAreaRing = useMemo<LatLng[] | null>(() => {
+    if (drawMode !== "area" || drawPoints.length < 3) return null;
+    return [...drawPoints, drawPoints[0]];
+  }, [drawMode, drawPoints]);
 
   const routeLineForFlatMap = useMemo<LatLng[] | undefined>(
     () => (routeResult ? routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng) : undefined),
@@ -590,57 +547,16 @@ export default function LiveIntelView() {
         fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
       }}
     >
-      <div ref={containerRef} style={{ position: "relative", flex: 1 }}>
+      <div style={{ position: "relative", flex: 1 }}>
         {mapMode === "3d" ? (
-          <Globe
-            ref={globeRef}
-            width={size.width}
-            height={size.height}
-            backgroundColor="#000308"
-            globeImageUrl={null}
-            showGlobe
-            showGraticules
-            showAtmosphere
-            atmosphereColor="#5d8cff"
-            atmosphereAltitude={0.18}
-            polygonsData={globePolygons}
-            polygonCapColor={(f: object) => ((f as GeoJSON.Feature).properties?.__draw ? "rgba(255,210,63,0.3)" : "rgba(10,16,28,0.55)")}
-            polygonSideColor={() => "rgba(0,0,0,0.2)"}
-            polygonStrokeColor={(f: object) => ((f as GeoJSON.Feature).properties?.__draw ? "#ffd23f" : "rgba(210,225,255,0.55)")}
-            polygonAltitude={0.001}
-            polygonLabel={(f: object) => {
-              const name = (f as GeoJSON.Feature).properties?.name as string | undefined;
-              return name ? `<div style="font-family:monospace;font-size:12px">${escapeHtml(name)}</div>` : "";
-            }}
-            onGlobeClick={(coords) => handleMapClick(coords.lat, coords.lng)}
-            onPolygonClick={(_p, _e, coords) => handleMapClick(coords.lat, coords.lng)}
-            pointsData={mapPoints}
-            pointLat={(d: object) => (d as GlobePoint).lat}
-            pointLng={(d: object) => (d as GlobePoint).lng}
-            pointColor={(d: object) => (d as GlobePoint).color}
-            pointRadius={(d: object) => (d as GlobePoint).size}
-            pointAltitude={0.002}
-            pointResolution={16}
-            pathsData={globePaths}
-            pathPoints={(d: object) => (d as { points: LatLng[] }).points}
-            pathPointLat={(p: unknown) => (p as LatLng)[0]}
-            pathPointLng={(p: unknown) => (p as LatLng)[1]}
-            pathColor={(d: object) => (d as { color?: string }).color ?? "#3fd0ff"}
-            pathLabel={(d: object) => (d as { label: string }).label}
-            pathStroke={0.4}
-            pathDashLength={0.4}
-            pathDashGap={0.2}
-            pathDashAnimateTime={6000}
-            pathTransitionDuration={0}
-            pointLabel={(d: object) => {
-              const p = d as GlobePoint;
-              return `<div style="font-family:monospace;font-size:12px;max-width:220px">
-                <b>${escapeHtml(p.title)}</b><br/>
-                <span style="opacity:0.75">${escapeHtml(p.layerKey)}</span><br/>
-                ${escapeHtml(p.subtitle)}
-                ${p.time ? `<br/>${new Date(p.time).toLocaleString()}` : ""}
-              </div>`;
-            }}
+          <Map3D
+            points={mapPoints}
+            paths={globePaths}
+            drawAreaRing={drawAreaRing}
+            onMapClick={handleMapClick}
+            showDayNight={showDayNight}
+            showBuildings={showBuildings}
+            showTerrain={showTerrain}
           />
         ) : (
           <FlatMap
@@ -655,6 +571,16 @@ export default function LiveIntelView() {
 
         <LayerPanel defs={LAYER_DEFS} enabled={enabled} layers={layers} onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))} />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
+        {mapMode === "3d" && (
+          <DisplayPanel
+            dayNight={showDayNight}
+            buildings={showBuildings}
+            terrain={showTerrain}
+            onToggleDayNight={() => setShowDayNight((v) => !v)}
+            onToggleBuildings={() => setShowBuildings((v) => !v)}
+            onToggleTerrain={() => setShowTerrain((v) => !v)}
+          />
+        )}
         <StatusBar totalFeatures={points.length} clock={clock} />
 
         <RightToolRail
@@ -968,6 +894,69 @@ function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapM
           }}
         >
           {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** OSIRIS's own left-panel "DISPLAY" group (its real source: LayerPanel.tsx
+ *  — Day/Night Cycle, plus the 3D Buildings/3D Terrain toggles from its own
+ *  bottom-left panel screenshots) — visual/rendering switches rather than
+ *  data layers, so they get their own small panel next to the mode
+ *  switcher instead of living among the data-layer toggles above. Only
+ *  meaningful in 3D mode (Map3D is the only renderer that implements any
+ *  of the three), hence only shown there. */
+function DisplayPanel({
+  dayNight,
+  buildings,
+  terrain,
+  onToggleDayNight,
+  onToggleBuildings,
+  onToggleTerrain,
+}: {
+  dayNight: boolean;
+  buildings: boolean;
+  terrain: boolean;
+  onToggleDayNight: () => void;
+  onToggleBuildings: () => void;
+  onToggleTerrain: () => void;
+}) {
+  const rows: { label: string; hint?: string; on: boolean; onToggle: () => void }[] = [
+    { label: "Day / Night Cycle", on: dayNight, onToggle: onToggleDayNight },
+    { label: "3D Buildings", hint: "City detail — zoom 14.5+", on: buildings, onToggle: onToggleBuildings },
+    { label: "3D Terrain", hint: "Mountains — zoom 10+", on: terrain, onToggle: onToggleTerrain },
+  ];
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 12,
+        bottom: 84,
+        zIndex: 500,
+        width: 200,
+        background: "rgba(6,10,18,0.9)",
+        border: "1px solid rgba(124,156,255,0.18)",
+        borderRadius: 8,
+        backdropFilter: "blur(4px)",
+        padding: 10,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "#7c9cff", fontWeight: 700 }}>Display</div>
+      {rows.map((r) => (
+        <button
+          key={r.label}
+          onClick={r.onToggle}
+          style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}
+        >
+          <ToggleSwitch on={r.on} color="#7c9cff" />
+          <span style={{ display: "flex", flexDirection: "column" }}>
+            <span style={{ fontSize: 11.5, color: r.on ? "#eef3ff" : "#9fb3d9" }}>{r.label}</span>
+            {r.hint && <span style={{ fontSize: 9.5, color: "#7f8ea3" }}>{r.hint}</span>}
+          </span>
         </button>
       ))}
     </div>
