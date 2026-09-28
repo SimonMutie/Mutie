@@ -634,6 +634,36 @@ export interface NewsFeed {
   fetchedAt: string;
 }
 
+export interface SpaceWeather {
+  kpIndex: number;
+  stormLevel: string;
+  stormColor: string;
+  kpTimestamp: string | null;
+  alerts: { id: string; issuedAt: string | null; message: string }[];
+  fetchedAt: string;
+}
+
+export interface CyberThreats {
+  recentCount: number;
+  catalogTotal: number;
+  vulnerabilities: { id: string; name: string; vendor: string; product: string; dateAdded: string; dueDate: string; source: string }[];
+  fetchedAt: string;
+}
+
+export interface MarketsStatus {
+  exchanges: { name: string; country: string; open: boolean }[];
+  openCount: number;
+  commodities: Record<string, { value: number; unit: string; date: string; changePercent: number | null }>;
+  commoditiesAvailable: boolean;
+  crypto: Record<string, { price: number; changePercent: number }>;
+  fetchedAt: string;
+}
+
+export interface ActivityIndex {
+  countries: { code: string; name: string; activityScore: number }[];
+  fetchedAt: string;
+}
+
 export type RouteProfile = "driving" | "walking" | "cycling";
 
 export interface RouteResult {
@@ -936,6 +966,14 @@ export const api = {
     req<RouteResult>(
       `/api/live-layers/route?from=${from[0]},${from[1]}&to=${to[0]},${to[1]}&mode=${mode}`
     ),
+
+  // Global-status HUD feeds — not map layers, see globalStatus.ts for the
+  // real sources behind each and why OSIRIS's own Markets/Country-Risk
+  // numbers were rebuilt rather than copied.
+  getSpaceWeather: () => req<SpaceWeather>("/api/global-status/space-weather"),
+  getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
+  getMarkets: () => req<MarketsStatus>("/api/global-status/markets"),
+  getActivityIndex: () => req<ActivityIndex>("/api/global-status/activity-index"),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

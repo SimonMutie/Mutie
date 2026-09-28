@@ -27,12 +27,26 @@ import {
   Siren,
   Sun,
   Telescope,
+  TrendingDown,
+  TrendingUp,
   Waypoints,
   X as CloseGlyph,
   type LucideIcon,
 } from "lucide-react";
 import Map3D from "./Map3D";
-import { api, type LiveLayerCollection, type LiveLayerFeature, type IssPosition, type NewsItem, type RouteProfile, type RouteResult } from "../api";
+import {
+  api,
+  type LiveLayerCollection,
+  type LiveLayerFeature,
+  type IssPosition,
+  type NewsItem,
+  type RouteProfile,
+  type RouteResult,
+  type SpaceWeather,
+  type CyberThreats,
+  type MarketsStatus,
+  type ActivityIndex,
+} from "../api";
 import { BASEMAPS } from "./mapConstants";
 
 /**
@@ -480,8 +494,43 @@ const LAYER_DEFS: LayerDef[] = [
 
 const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Network Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
 
-/** Major real global container-shipping trunk routes, drawn as arcs
- *  between the hub ports the backend's /maritime layer already lists.
+/** Real-world strait / chokepoint / open-water waypoints shared across the
+ *  lanes below. Each lane is rendered as straight segments between its
+ *  listed points (see Map3D's GeoJSON LineString source), so with only 2-3
+ *  raw port coordinates a "route" is really just a chord cutting straight
+ *  through whatever coastline happens to sit between them (this is exactly
+ *  the land-crossing bug reported — e.g. Shanghai→LA cut across southern
+ *  Japan, and Singapore→Rotterdam cut straight through the Arabian
+ *  Peninsula and continental Europe instead of transiting Suez/Gibraltar).
+ *  These waypoints are genuine geographic strait/cape locations vessels
+ *  actually transit — not arbitrary bends added to make the line "look"
+ *  ocean-only. */
+const TOKARA_STRAIT: [number, number] = [29.5, 129.7]; // between Kyushu and Okinawa, Japan
+const KOREA_STRAIT: [number, number] = [34.0, 129.8]; // between South Korea and Japan
+const TAIWAN_STRAIT: [number, number] = [24.0, 119.4]; // between mainland China and Taiwan
+const SOUTH_CHINA_SEA: [number, number] = [10.0, 112.0]; // open water, west of the Philippines
+const SOUTH_OF_SRI_LANKA: [number, number] = [6.0, 80.5]; // clears the Indian subcontinent
+const ARABIAN_SEA: [number, number] = [13.0, 62.0]; // open water south of the Gulf of Aden approach
+const BAB_EL_MANDEB: [number, number] = [12.6, 43.4]; // strait between Yemen and Djibouti, Red Sea entrance
+const RED_SEA: [number, number] = [20.5, 38.0]; // open water mid Red Sea
+const SUEZ_SOUTH: [number, number] = [29.9, 32.55]; // Suez Canal, Red Sea entrance
+const SUEZ_NORTH: [number, number] = [31.3, 32.3]; // Suez Canal, Mediterranean entrance (Port Said)
+const MED_SOUTH_OF_CRETE: [number, number] = [33.5, 25.0]; // open Mediterranean
+const MED_SOUTH_OF_SARDINIA: [number, number] = [37.0, 9.5]; // open Mediterranean
+const STRAIT_OF_GIBRALTAR: [number, number] = [35.9, -5.6]; // between Spain and Morocco
+const IBERIAN_COAST: [number, number] = [43.0, -9.5]; // open Atlantic off Galicia, Spain
+const BAY_OF_BISCAY: [number, number] = [47.0, -6.0]; // open Atlantic
+const ENGLISH_CHANNEL: [number, number] = [50.0, 1.5]; // open water off Dover/Calais
+const HORMUZ_APPROACH: [number, number] = [22.0, 62.0]; // Arabian Sea approach to the Gulf of Oman
+const STRAIT_OF_HORMUZ: [number, number] = [26.5, 56.3]; // between Iran and Oman
+const NORTH_PACIFIC_1: [number, number] = [35.0, 160.0]; // open water, south of the Kuril Islands
+const NORTH_PACIFIC_2: [number, number] = [42.0, -175.0]; // open water, south of the Aleutians
+const NORTH_PACIFIC_3: [number, number] = [38.0, -155.0]; // open mid-Pacific
+
+/** Major real global container-shipping trunk routes, drawn as line
+ *  segments between the hub ports the backend's /maritime layer already
+ *  lists, threaded through the real straits/chokepoints above so each
+ *  segment stays in open water instead of a straight chord across land.
  *  OSIRIS itself has no shipping-lane rendering at all (checked directly
  *  against its source — no lane/route code exists there, and its "ship"
  *  layer is wired to a backend field that's never actually populated), so
@@ -492,12 +541,37 @@ const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Networ
  *  on several of these Pacific-crossing routes, which is worse than not
  *  showing them there at all. */
 const SHIPPING_LANES: { points: [number, number][]; label: string }[] = [
-  { points: [[31.23, 121.47], [33.74, -118.27]], label: "Transpacific — Shanghai–Los Angeles" },
-  { points: [[35.10, 129.04], [33.74, -118.27]], label: "Transpacific — Busan–Los Angeles" },
-  { points: [[31.23, 121.47], [1.26, 103.84], [25.01, 55.06]], label: "Asia–Middle East — Shanghai–Singapore–Jebel Ali" },
-  { points: [[1.26, 103.84], [51.90, 4.50]], label: "Asia–Europe — Singapore–Rotterdam" },
-  { points: [[51.90, 4.50], [32.08, -81.09]], label: "Transatlantic — Rotterdam–Savannah" },
-  { points: [[31.23, 121.47], [1.26, 103.84]], label: "Intra-Asia trunk — Shanghai–Singapore" },
+  {
+    points: [[31.23, 121.47], TOKARA_STRAIT, NORTH_PACIFIC_1, NORTH_PACIFIC_2, NORTH_PACIFIC_3, [33.74, -118.27]],
+    label: "Transpacific — Shanghai–Los Angeles",
+  },
+  {
+    points: [[35.10, 129.04], KOREA_STRAIT, TOKARA_STRAIT, NORTH_PACIFIC_1, NORTH_PACIFIC_2, NORTH_PACIFIC_3, [33.74, -118.27]],
+    label: "Transpacific — Busan–Los Angeles",
+  },
+  {
+    points: [
+      [31.23, 121.47], TAIWAN_STRAIT, SOUTH_CHINA_SEA, [1.26, 103.84],
+      SOUTH_OF_SRI_LANKA, ARABIAN_SEA, HORMUZ_APPROACH, STRAIT_OF_HORMUZ, [25.01, 55.06],
+    ],
+    label: "Asia–Middle East — Shanghai–Singapore–Jebel Ali",
+  },
+  {
+    points: [
+      [1.26, 103.84], SOUTH_OF_SRI_LANKA, ARABIAN_SEA, BAB_EL_MANDEB, RED_SEA, SUEZ_SOUTH, SUEZ_NORTH,
+      MED_SOUTH_OF_CRETE, MED_SOUTH_OF_SARDINIA, STRAIT_OF_GIBRALTAR, IBERIAN_COAST, BAY_OF_BISCAY,
+      ENGLISH_CHANNEL, [51.90, 4.50],
+    ],
+    label: "Asia–Europe — Singapore–Rotterdam",
+  },
+  {
+    points: [[51.90, 4.50], ENGLISH_CHANNEL, [45.0, -20.0], [35.0, -50.0], [32.08, -81.09]],
+    label: "Transatlantic — Rotterdam–Savannah",
+  },
+  {
+    points: [[31.23, 121.47], TAIWAN_STRAIT, SOUTH_CHINA_SEA, [1.26, 103.84]],
+    label: "Intra-Asia trunk — Shanghai–Singapore",
+  },
 ];
 
 const POLL_MS = 60_000;
@@ -905,6 +979,7 @@ export default function LiveIntelView() {
           />
         )}
         <StatusBar totalFeatures={points.length} clock={clock} />
+        <GlobalStatusTicker />
 
         <RightToolRail
           active={activeTool}
@@ -1502,6 +1577,107 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
         TRACKS <span style={{ color: HUD.gold, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{totalFeatures}</span>
       </span>
       <span>{clock.toISOString().replace("T", " ").slice(0, 19)} UTC</span>
+    </div>
+  );
+}
+
+/** Top-center HUD ticker — OSIRIS's own GlobalStatusBar shows an exchange
+ *  open/closed row, a country-risk chip row, and a CVE count fed from
+ *  /api/cyber-threats; its MarketsPanel/space-weather readout separately
+ *  shows the Kp index. This is the same ticker concept, rebuilt on real,
+ *  verified-licensed sources (see globalStatus.ts's file comment for
+ *  exactly which OSIRIS pieces were dropped or replaced and why — Markets'
+ *  Yahoo scrape and Country Risk's hardcoded numbers aren't reproduced
+ *  as-is). Polls every 10 minutes; each of the four calls fails
+ *  independently so one slow/down upstream doesn't blank the whole ticker. */
+function GlobalStatusTicker() {
+  const [space, setSpace] = useState<SpaceWeather | null>(null);
+  const [cyber, setCyber] = useState<CyberThreats | null>(null);
+  const [markets, setMarkets] = useState<MarketsStatus | null>(null);
+  const [activity, setActivity] = useState<ActivityIndex | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      api.getSpaceWeather().then((d) => !cancelled && setSpace(d)).catch(() => {});
+      api.getCyberThreats().then((d) => !cancelled && setCyber(d)).catch(() => {});
+      api.getMarkets().then((d) => !cancelled && setMarkets(d)).catch(() => {});
+      api.getActivityIndex().then((d) => !cancelled && setActivity(d)).catch(() => {});
+    };
+    load();
+    const iv = setInterval(load, 10 * 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, []);
+
+  if (!space && !cyber && !markets && !activity) return null;
+
+  const topActivity = activity?.countries[0];
+  const crypto = markets ? Object.entries(markets.crypto) : [];
+  const commodities = markets ? Object.entries(markets.commodities) : [];
+
+  return (
+    <div
+      style={{
+        ...glassPanel({ borderRadius: 8 }),
+        position: "absolute",
+        top: 12,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 500,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        fontSize: 10.5,
+        letterSpacing: "0.03em",
+        color: HUD.textMuted,
+        padding: "6px 14px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {markets && (
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <Activity size={11} color={HUD.gold} />
+          <span style={{ color: HUD.textPrimary, fontWeight: 600 }}>{markets.openCount}</span>
+          <span>EXCHANGES OPEN</span>
+        </span>
+      )}
+      {commodities.map(([label, c]) => (
+        <span key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {c.changePercent !== null && (c.changePercent >= 0 ? <TrendingUp size={11} color="#4dff9e" /> : <TrendingDown size={11} color="#ff5f6d" />)}
+          <span style={{ color: HUD.textPrimary }}>{label}</span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{c.value.toFixed(2)}</span>
+        </span>
+      ))}
+      {crypto.map(([label, c]) => (
+        <span key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {c.changePercent >= 0 ? <TrendingUp size={11} color="#4dff9e" /> : <TrendingDown size={11} color="#ff5f6d" />}
+          <span style={{ color: HUD.textPrimary }}>{label}</span>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>${c.price.toLocaleString()}</span>
+        </span>
+      ))}
+      {space && (
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }} title={space.stormLevel}>
+          <Sun size={11} color={space.stormColor} />
+          <span>SOLAR Kp</span>
+          <span style={{ color: space.stormColor, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{space.kpIndex}</span>
+        </span>
+      )}
+      {cyber && (
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }} title="CISA Known Exploited Vulnerabilities, added in the last 30 days">
+          <Bug size={11} color={cyber.recentCount > 5 ? "#ff5f6d" : HUD.gold} />
+          <span style={{ color: HUD.textPrimary, fontWeight: 600 }}>{cyber.recentCount}</span>
+          <span>ACTIVE CVES</span>
+        </span>
+      )}
+      {topActivity && (
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }} title="Live incident/seismic activity index (GDELT + USGS), not a risk rating">
+          <AlertTriangle size={11} color="#ff9500" />
+          <span>{topActivity.name.toUpperCase()}</span>
+        </span>
+      )}
     </div>
   );
 }

@@ -21,4 +21,11 @@ export interface Env {
    *  these two values, not the license key alone. */
   MAXMIND_ACCOUNT_ID?: string;
   MAXMIND_LICENSE_KEY?: string;
+  /** Free FRED API key (fred.stlouisfed.org/docs/api/api_key.html), used by
+   *  /api/global-status/markets for WTI crude + Henry Hub natural gas
+   *  (both EIA/US-government-sourced FRED series — verified commercial-use
+   *  safe, unlike FRED's precious-metal series). Optional: the route still
+   *  returns exchange status + crypto without it, just with
+   *  commoditiesAvailable: false. */
+  FRED_API_KEY?: string;
 }
