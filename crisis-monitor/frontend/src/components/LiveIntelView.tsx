@@ -167,7 +167,17 @@ const LAYER_DEFS: LayerDef[] = [
     group: "My Data",
     color: "#ffd23f",
     fetcher: async () => {
-      const rows = await api.getAlerts({ status: "open" });
+      // /api/alerts requires a query_id for anyone who isn't an admin (the
+      // same restriction QueryDashboard.tsx already works within — alerts
+      // are always fetched in the context of one monitoring query there).
+      // A bare status-only fetch 400s for a regular account, which is
+      // exactly what this layer was doing before: it only ever worked for
+      // an admin. Fetching the user's own queries first and merging each
+      // one's alerts respects that same per-query ownership model instead
+      // of trying to bypass it.
+      const queries = await api.getQueries();
+      const perQuery = await Promise.allSettled(queries.map((q) => api.getAlerts({ query_id: q.id, status: "open" })));
+      const rows = perQuery.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
       const out: GlobePoint[] = [];
       for (const r of rows) {
         if (r.geo_lat == null || r.geo_lng == null) continue;

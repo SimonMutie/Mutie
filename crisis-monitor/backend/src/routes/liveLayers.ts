@@ -96,7 +96,7 @@ async function cachedJson<T>(
  *  domain (US government work), no key, no rate limit posted. */
 liveLayersRouter.get("/earthquakes", async (c) => {
   return cachedJson(c.req.raw, async () => {
-    const res = await fetch("https://earthquake.usgs.gov/earthquake/feed/v1.0/summary/all_day.geojson");
+    const res = await fetch("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson");
     if (!res.ok) throw new Error(`USGS returned ${res.status}`);
     const raw = (await res.json()) as {
       features: Array<{
