@@ -311,3 +311,101 @@ liveLayersRouter.get("/air-traffic", async (c) => {
     AIR_TRAFFIC_TTL_SECONDS
   );
 });
+
+/** Country-code (ISO 3166-1 alpha-2) centroids, for attributing a feed
+ *  entry that only carries a country code (never a precise lat/lng) to an
+ *  approximate map position. Deliberately country-level, not a guess at
+ *  street-level — that's genuinely the limit of what the source data
+ *  claims to know, and reporting a fake precise position would be worse
+ *  than reporting an honest, coarser one. Only the countries actually
+ *  likely to show up in a global malware-infrastructure feed are included;
+ *  an unlisted code is skipped entirely rather than plotted at (0, 0). */
+const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
+  US: [39.8, -98.6], CA: [56.1, -106.3], MX: [23.6, -102.5], BR: [-14.2, -51.9], AR: [-38.4, -63.6],
+  GB: [55.4, -3.4], IE: [53.4, -8.2], FR: [46.2, 2.2], DE: [51.2, 10.5], NL: [52.1, 5.3],
+  BE: [50.5, 4.5], LU: [49.8, 6.1], CH: [46.8, 8.2], AT: [47.5, 14.6], IT: [41.9, 12.6],
+  ES: [40.5, -3.7], PT: [39.4, -8.2], SE: [60.1, 18.6], NO: [60.5, 8.5], FI: [61.9, 25.7],
+  DK: [56.3, 9.5], PL: [51.9, 19.1], CZ: [49.8, 15.5], SK: [48.7, 19.7], HU: [47.2, 19.5],
+  RO: [45.9, 25.0], BG: [42.7, 25.5], GR: [39.1, 21.8], UA: [48.4, 31.2], RU: [61.5, 105.3],
+  BY: [53.7, 27.9], MD: [47.4, 28.4], LT: [55.2, 23.9], LV: [56.9, 24.6], EE: [58.6, 25.0],
+  TR: [38.9, 35.2], IR: [32.4, 53.7], IQ: [33.2, 43.7], SA: [23.9, 45.1], AE: [23.4, 53.8],
+  IL: [31.0, 34.9], EG: [26.8, 30.8], ZA: [-30.6, 22.9], NG: [9.1, 8.7], KE: [-0.0, 37.9],
+  ET: [9.1, 40.5], SS: [7.0, 30.0], SD: [12.9, 30.2], MA: [31.8, -7.1], DZ: [28.0, 1.7],
+  CN: [35.9, 104.2], HK: [22.3, 114.2], TW: [23.7, 121.0], JP: [36.2, 138.3], KR: [35.9, 127.8],
+  KP: [40.3, 127.5], VN: [14.1, 108.3], TH: [15.9, 100.9], MY: [4.2, 101.9], SG: [1.35, 103.8],
+  ID: [-0.8, 113.9], PH: [12.9, 121.8], IN: [20.6, 79.0], PK: [30.4, 69.3], BD: [23.7, 90.4],
+  AU: [-25.3, 133.8], NZ: [-41.0, 174.9], KZ: [48.0, 66.9], UZ: [41.4, 64.6],
+  UY: [-32.5, -55.8], CL: [-35.7, -71.5], CO: [4.6, -74.3], PE: [-9.2, -75.0], VE: [6.4, -66.6],
+  PA: [8.5, -80.8], CR: [9.7, -83.8], DO: [18.7, -70.2], JM: [18.1, -77.3], CU: [21.5, -77.8],
+  IS: [64.9, -19.0], HR: [45.1, 15.2], SI: [46.2, 15.0], RS: [44.0, 21.0], AL: [41.2, 20.2],
+  CY: [35.1, 33.4], MT: [35.9, 14.4], LI: [47.2, 9.5], MC: [43.7, 7.4], MN: [46.9, 103.8],
+  QA: [25.4, 51.2], KW: [29.3, 47.5], OM: [21.5, 55.9], JO: [30.6, 36.2], LB: [33.9, 35.9],
+  SY: [34.8, 39.0], YE: [15.6, 48.5], AF: [33.9, 67.7], LK: [7.9, 80.7], NP: [28.4, 84.1],
+  MM: [21.9, 96.0], KH: [12.6, 105.0], LA: [19.9, 102.5], GE: [42.3, 43.4], AM: [40.1, 45.0],
+  AZ: [40.1, 47.6],
+};
+
+/** Feodo Tracker (part of abuse.ch, the same nonprofit threat-intel
+ *  community behind URLhaus and ThreatFox): a free, keyless, continuously
+ *  updated list of IP addresses currently confirmed to be running a
+ *  botnet command-and-control server for one of a handful of well-known
+ *  malware families. This is genuinely real, actively-maintained threat
+ *  intelligence — not the "attack in progress" animated-line theater that
+ *  vendor marketing cyberattack maps show (which is illustrative, not
+ *  live telemetry). What it represents is precise: confirmed C2
+ *  infrastructure locations (by the hosting country the IP resolves to,
+ *  which may itself be a proxy or bulletproof-hosting jurisdiction rather
+ *  than the operator's real location) — not attacks landing anywhere in
+ *  real time. Labeled honestly as that on the frontend rather than as a
+ *  generic "cyberattacks" layer. */
+liveLayersRouter.get("/malware-infrastructure", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const res = await fetch("https://feodotracker.abuse.ch/downloads/ipblocklist.json");
+      if (!res.ok) throw new Error(`Feodo Tracker returned ${res.status}`);
+      const raw = (await res.json()) as Array<{
+        ip_address: string;
+        port: number;
+        status: string;
+        hostname: string | null;
+        as_number: number | null;
+        as_name: string | null;
+        country: string | null;
+        malware: string | null;
+        first_seen: string | null;
+        last_online: string | null;
+      }>;
+
+      // Several C2 servers commonly share a hosting country — jittering
+      // each one a small random amount around that country's centroid
+      // keeps them visually distinguishable as separate points instead of
+      // one dot silently absorbing N servers, without implying any of
+      // them has a precision the source data doesn't actually have.
+      const jitter = () => (Math.random() - 0.5) * 4;
+
+      const features: NormalizedFeature[] = [];
+      for (const entry of raw) {
+        if (entry.status !== "online") continue; // only currently-active C2s, not historical/offline entries
+        const centroid = entry.country ? COUNTRY_CENTROIDS[entry.country.toUpperCase()] : undefined;
+        if (!centroid) continue; // unattributable country code — skip rather than mislocate
+        const [lat, lng] = centroid;
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [lng + jitter(), lat + jitter()] },
+          properties: {
+            id: `${entry.ip_address}:${entry.port}`,
+            title: entry.malware ?? "Unknown malware family",
+            time: entry.last_online,
+            intensity: 0.7,
+            intensityLabel: entry.country ?? "Unknown",
+            detail: entry.as_name ?? entry.hostname ?? "",
+            url: null,
+          },
+        });
+      }
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    600 // 10 min — this list refreshes on abuse.ch's side roughly hourly, not second-by-second
+  );
+});

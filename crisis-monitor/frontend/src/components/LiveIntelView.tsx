@@ -15,6 +15,14 @@ import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
  *  - Earthquakes / Natural Events / Conflict Reports / Air Traffic: real
  *    public feeds (USGS, NASA EONET, GDELT, OpenSky), proxied and
  *    normalized by the backend's /api/live-layers gateway.
+ *  - Botnet C2s: abuse.ch's Feodo Tracker — a real, free, keyless,
+ *    continuously-updated list of confirmed active botnet
+ *    command-and-control servers. Labeled specifically as "Botnet C2s"
+ *    rather than a generic "Cyberattacks" layer because that's precisely
+ *    what it is: confirmed C2 infrastructure by hosting country (which may
+ *    itself be a proxy/bulletproof-hosting jurisdiction), not an
+ *    "attack in progress" animation — those vendor map visuals are
+ *    illustrative, not live telemetry, and this view only shows real data.
  *  - My Incidents / My Alerts: this account's own data, already scoped by
  *    the backend's normal auth (client/country restrictions apply exactly
  *    as they do everywhere else in the app) — reusing the existing
@@ -22,12 +30,12 @@ import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
  *  - Deliberately NOT included, despite being on OSIRIS's own toggle list:
  *    live CCTV (aggregating public/private cameras without consent is a
  *    surveillance capability this app isn't going to carry, independent of
- *    whether a feed for it exists), maritime AIS and a "cyberattacks" feed
- *    (no free, keyless, genuinely-global source exists for either — the
- *    public "live cyberattack map" visuals elsewhere are illustrative, not
- *    real telemetry, and this view only ever shows real data), and
- *    submarine cables (a real open dataset exists but wasn't confirmed
- *    reachable in time for this pass — a reasonable fast-follow).
+ *    whether a feed for it exists). Maritime/AIS ship tracking has no
+ *    free+keyless+global source either — every option found needs a
+ *    registered API key (e.g. aisstream.io), so it's held for a follow-up
+ *    once a key is available rather than built silently broken. Submarine
+ *    cables: a real open dataset exists but wasn't confirmed reachable in
+ *    time for this pass — a reasonable fast-follow.
  */
 
 interface GlobePoint {
@@ -71,6 +79,12 @@ const LAYER_DEFS: LayerDef[] = [
   { key: "natural-events", label: "Natural Events", color: "#ffb020", fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
   { key: "conflict-events", label: "Conflict Reports", color: "#7c9cff", fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
   { key: "air-traffic", label: "Air Traffic", color: "#2fe0c8", fetcher: async () => fromGateway("#2fe0c8", "Air Traffic")(await api.getLiveAirTraffic()) },
+  {
+    key: "malware-infrastructure",
+    label: "Botnet C2s",
+    color: "#ff4fa3",
+    fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
+  },
   {
     key: "my-incidents",
     label: "My Incidents",
@@ -231,6 +245,7 @@ export default function LiveIntelView() {
     "natural-events": true,
     "conflict-events": true,
     "air-traffic": false,
+    "malware-infrastructure": false,
     "my-incidents": false,
     "my-alerts": false,
   });
