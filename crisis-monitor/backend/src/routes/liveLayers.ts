@@ -521,6 +521,33 @@ liveLayersRouter.get("/malware-infrastructure", async (c) => {
 let geoliteReaderCache: { reader: MmdbReader<CountryResponse>; cachedAt: number } | null = null;
 const GEOLITE_REFRESH_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — GeoLite2 itself only publishes new builds ~weekly, and country-level assignment changes rarely
 
+/** MaxMind's "gzip" download isn't a bare gzip of the .mmdb file — it's a
+ *  gzip-compressed **tar archive** containing a dated folder with the
+ *  .mmdb plus COPYRIGHT.txt/README.txt (confirmed against a real
+ *  third-party bug report — github.com/amule-org/amule PR #1624 — after
+ *  this route's first version, which skipped this step, turned out to
+ *  fail: MmdbReader can't parse a raw tar stream). This is a minimal,
+ *  dependency-free reader for exactly the subset of the tar format
+ *  actually needed here (find the first entry ending in ".mmdb", read its
+ *  USTAR octal size field, return its bytes) — not a general-purpose tar
+ *  library, since nothing else in this pipeline needs one. */
+function extractMmdbFromTar(tarBytes: Uint8Array): Uint8Array {
+  const decoder = new TextDecoder();
+  let offset = 0;
+  while (offset + 512 <= tarBytes.length) {
+    const header = tarBytes.subarray(offset, offset + 512);
+    if (header.every((b) => b === 0)) break; // an all-zero block marks the end of the archive
+    const nameEnd = header.subarray(0, 100).indexOf(0);
+    const name = decoder.decode(header.subarray(0, nameEnd === -1 ? 100 : nameEnd));
+    const sizeField = decoder.decode(header.subarray(124, 136)).replace(/\0/g, "").trim();
+    const size = Number.parseInt(sizeField, 8) || 0;
+    const dataStart = offset + 512;
+    if (name.endsWith(".mmdb")) return tarBytes.slice(dataStart, dataStart + size);
+    offset = dataStart + Math.ceil(size / 512) * 512; // skip this entry's data, rounded up to the next 512-byte block
+  }
+  throw new Error("No .mmdb file found inside MaxMind's GeoLite2 tar archive");
+}
+
 /** Downloads (or serves from cache) MaxMind's free GeoLite2-Country
  *  database and returns a ready-to-query reader. Free tier, but a
  *  registered account + license key is required (MaxMind's own download
@@ -529,8 +556,9 @@ const GEOLITE_REFRESH_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — GeoLite2 its
  *  IP-geolocation *APIs* like IPinfo (which bar exactly this "embed it in
  *  your own commercial dashboard" use case — checked directly against
  *  ipinfo.io/terms-of-service before choosing this instead). Cached via
- *  the Cache API as raw bytes (not just the parsed reader) so a cold
- *  isolate doesn't need to re-download from MaxMind either. */
+ *  the Cache API as the already-extracted .mmdb bytes (not the raw
+ *  tar.gz), so a cold isolate doesn't need to re-download from MaxMind or
+ *  redo the tar extraction either. */
 async function getGeoliteCountryReader(env: Env): Promise<MmdbReader<CountryResponse> | null> {
   if (!env.MAXMIND_ACCOUNT_ID || !env.MAXMIND_LICENSE_KEY) return null; // not configured yet — /live-malware reports this plainly rather than guessing a location
 
@@ -540,10 +568,10 @@ async function getGeoliteCountryReader(env: Env): Promise<MmdbReader<CountryResp
 
   const cache = caches.default;
   const cacheKey = new Request("https://internal.the-lens/geolite2-country.mmdb");
-  let bytes: ArrayBuffer;
+  let bytes: Uint8Array;
   const cached = await cache.match(cacheKey);
   if (cached) {
-    bytes = await cached.arrayBuffer();
+    bytes = new Uint8Array(await cached.arrayBuffer());
   } else {
     const auth = "Basic " + btoa(`${env.MAXMIND_ACCOUNT_ID}:${env.MAXMIND_LICENSE_KEY}`);
     const res = await fetch("https://download.maxmind.com/geoip/databases/GeoLite2-Country/download?suffix=gzip", {
@@ -551,11 +579,12 @@ async function getGeoliteCountryReader(env: Env): Promise<MmdbReader<CountryResp
       redirect: "follow", // MaxMind's own docs note this permalink 302s to a presigned R2 URL
     });
     if (!res.ok || !res.body) throw new Error(`MaxMind GeoLite2 download returned ${res.status}`);
-    // .mmdb.gz — a plain gzip stream, decompressed with the platform's own
-    // native Compression Streams API rather than adding a JS gzip
-    // dependency on top of the already-new mmdb-lib one.
+    // One gzip layer wraps a tar archive — decompressed with the
+    // platform's own native Compression Streams API (no JS gzip
+    // dependency needed), then unwrapped with extractMmdbFromTar above.
     const decompressed = res.body.pipeThrough(new DecompressionStream("gzip"));
-    bytes = await new Response(decompressed).arrayBuffer();
+    const tarBytes = new Uint8Array(await new Response(decompressed).arrayBuffer());
+    bytes = extractMmdbFromTar(tarBytes);
     await cache.put(cacheKey, new Response(bytes.slice(0), { headers: { "Cache-Control": `public, max-age=${GEOLITE_REFRESH_MS / 1000}` } }));
   }
 

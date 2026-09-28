@@ -1217,7 +1217,9 @@ function GroupRailButton({
                   <Icon size={13} color={isOn ? def.color : HUD.textMuted} />
                   <span style={{ flex: 1, fontSize: 11, color: isOn ? HUD.textPrimary : HUD.textSecondary }}>{def.label}</span>
                   {state?.error ? (
-                    <span style={{ fontSize: 9, fontWeight: 700, color: HUD.alertRed }}>ERR</span>
+                    <span title={state.error} style={{ fontSize: 9, fontWeight: 700, color: HUD.alertRed, cursor: "help" }}>
+                      ERR
+                    </span>
                   ) : (
                     <span style={{ fontSize: 10, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: isOn ? def.color : HUD.textMuted }}>
                       {state?.loading ? "…" : count.toLocaleString()}
