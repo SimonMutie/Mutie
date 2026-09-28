@@ -18,6 +18,8 @@ import {
   Shield,
   Ship,
   Sun,
+  Waypoints,
+  X as CloseGlyph,
   type LucideIcon,
 } from "lucide-react";
 import Map3D from "./Map3D";
@@ -385,6 +387,13 @@ export default function LiveIntelView() {
     maritime: false,
     "my-incidents": false,
     "my-alerts": false,
+    // Decoupled from the "maritime" points layer above (ports/bases/
+    // chokepoints) — this toggles the shipping-lane arcs (SHIPPING_LANES)
+    // instead, matching OSIRIS's own real product having a separate
+    // "Maritime Lines" toggle alongside its points-based "Maritime / Naval"
+    // layer (confirmed directly from a screenshot of its actual left rail,
+    // not the open-source mirror, which has no lines concept at all).
+    "maritime-lines": false,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
   const [layers, setLayers] = useState<Record<string, LayerState>>(() =>
@@ -591,7 +600,7 @@ export default function LiveIntelView() {
   // have none, so they fall back to their usual blue) is what tells
   // pathColor apart, rather than needing three separate path layers.
   const globePaths = useMemo(() => {
-    const lanes = enabled.maritime ? SHIPPING_LANES : [];
+    const lanes = enabled["maritime-lines"] ? SHIPPING_LANES : [];
     const drawPath =
       drawMode === "distance" && drawPoints.length >= 2 ? [{ points: drawPoints, label: "Measured distance", color: "#ffd23f" }] : [];
     const routePath =
@@ -599,7 +608,7 @@ export default function LiveIntelView() {
         ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
         : [];
     return [...lanes, ...drawPath, ...routePath];
-  }, [enabled.maritime, drawMode, drawPoints, routeResult]);
+  }, [enabled["maritime-lines"], drawMode, drawPoints, routeResult]);
 
   // The in-progress area-drawing shape, as a closed ring — country borders
   // themselves no longer need to be built here at all now that the 3D view
@@ -649,7 +658,15 @@ export default function LiveIntelView() {
           />
         )}
 
-        <LayerPanel defs={LAYER_DEFS} enabled={enabled} layers={layers} onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))} />
+        <LayerPanel
+          defs={LAYER_DEFS}
+          enabled={enabled}
+          layers={layers}
+          onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))}
+          maritimeLinesOn={enabled["maritime-lines"]}
+          maritimeLinesCount={SHIPPING_LANES.length}
+          onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
+        />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
         {mapMode === "3d" && (
           <DisplayPanel
@@ -809,16 +826,31 @@ function LayerPanel({
   enabled,
   layers,
   onToggle,
+  maritimeLinesOn,
+  maritimeLinesCount,
+  onToggleMaritimeLines,
 }: {
   defs: LayerDef[];
   enabled: Record<string, boolean>;
   layers: Record<string, LayerState>;
   onToggle: (key: string) => void;
+  maritimeLinesOn: boolean;
+  maritimeLinesCount: number;
+  onToggleMaritimeLines: () => void;
 }) {
   const groupedRows = useMemo(() => GROUP_ORDER.map((group) => defs.filter((d) => d.group === group)).filter((rows) => rows.length > 0), [defs]);
 
   return (
     <div style={{ ...glassPanel(), position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 2, padding: 5 }}>
+      <div style={{ borderBottom: "1px solid rgba(212,175,55,0.12)", paddingBottom: 4, marginBottom: 2 }}>
+        <RailHoverToggle
+          icon={Waypoints}
+          label="Maritime Lines"
+          on={maritimeLinesOn}
+          count={maritimeLinesCount}
+          onToggle={onToggleMaritimeLines}
+        />
+      </div>
       {groupedRows.map((rows, gi) => (
         <div
           key={rows[0].group}
@@ -890,6 +922,110 @@ function LayerPanel({
           })}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** A rail button that reveals its toggle on hover instead of toggling
+ *  directly on click — for a path/line layer (like the shipping-lane
+ *  arcs) that doesn't carry its own per-feature entity count the way a
+ *  fetched point layer does, so a bare click-to-toggle icon would give no
+ *  feedback about what it even controls. Matches a direct screenshot of
+ *  OSIRIS's own top-of-rail "Maritime Lines" control: hovering the icon
+ *  opens a small flyout to its right with the toggle switch, label and
+ *  live count; a close (×) button dismisses it explicitly since the mouse
+ *  has to cross into the flyout itself to reach the switch. */
+function RailHoverToggle({
+  icon: Icon,
+  label,
+  on,
+  count,
+  onToggle,
+}: {
+  icon: LucideIcon;
+  label: string;
+  on: boolean;
+  count: number;
+  onToggle: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div style={{ position: "relative" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button
+        onClick={onToggle}
+        title={`${label}${on ? ` — ${count.toLocaleString()} routes` : " — off"}`}
+        style={{
+          position: "relative",
+          width: 42,
+          height: 38,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: on ? "rgba(212,175,55,0.14)" : "transparent",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+          transition: "background 0.15s",
+        }}
+      >
+        <Icon size={17} color={on ? HUD.cyan : HUD.textMuted} strokeWidth={on ? 2.25 : 1.75} />
+        {on && count > 0 && (
+          <span
+            style={{
+              position: "absolute",
+              top: 2,
+              right: 2,
+              minWidth: 15,
+              height: 15,
+              padding: "0 3px",
+              borderRadius: 999,
+              background: HUD.cyan,
+              color: "#04121a",
+              fontSize: 9,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              lineHeight: 1,
+              boxShadow: "0 0 6px rgba(0,229,255,0.5)",
+            }}
+          >
+            {count > 99 ? "99+" : count}
+          </span>
+        )}
+      </button>
+      {hovered && (
+        <div
+          style={{
+            ...glassPanel(),
+            position: "absolute",
+            left: "100%",
+            top: 0,
+            marginLeft: 8,
+            width: 190,
+            padding: 10,
+            zIndex: 600,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: HUD.textSecondary, fontWeight: 700 }}>Maritime</span>
+            <button
+              onClick={() => setHovered(false)}
+              style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0, display: "flex" }}
+            >
+              <CloseGlyph size={13} />
+            </button>
+          </div>
+          <button
+            onClick={onToggle}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", textAlign: "left" }}
+          >
+            <LayerToggleSwitch on={on} />
+            <span style={{ flex: 1, fontSize: 11, color: on ? HUD.textPrimary : HUD.textSecondary }}>{label}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: on ? HUD.cyan : HUD.textMuted }}>{count}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
