@@ -602,6 +602,34 @@ export interface LiveLayerCollection {
   fetchedAt: string;
 }
 
+export interface IssPosition {
+  lat: number;
+  lng: number;
+  speedKmh: number;
+  timestamp: string;
+}
+
+export interface NewsItem {
+  id: string;
+  title: string;
+  source: string;
+  link: string;
+  publishedAt: string | null;
+}
+
+export interface NewsFeed {
+  items: NewsItem[];
+  fetchedAt: string;
+}
+
+export type RouteProfile = "driving" | "walking" | "cycling";
+
+export interface RouteResult {
+  coordinates: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -883,6 +911,12 @@ export const api = {
   getLiveAirTraffic: () => req<LiveLayerCollection>("/api/live-layers/air-traffic"),
   getLiveMalwareInfrastructure: () => req<LiveLayerCollection>("/api/live-layers/malware-infrastructure"),
   getLiveMaritime: () => req<LiveLayerCollection>("/api/live-layers/maritime"),
+  getLiveIss: () => req<IssPosition>("/api/live-layers/iss"),
+  getLiveNews: () => req<NewsFeed>("/api/live-layers/news"),
+  getLiveRoute: (from: [number, number], to: [number, number], mode: RouteProfile) =>
+    req<RouteResult>(
+      `/api/live-layers/route?from=${from[0]},${from[1]}&to=${to[0]},${to[1]}&mode=${mode}`
+    ),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

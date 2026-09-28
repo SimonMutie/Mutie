@@ -61,9 +61,9 @@ const CACHE_TTL_SECONDS = 60;
  *  `ttlSeconds` is overridable per route — OpenSky's anonymous quota is far
  *  stricter than USGS/EONET/GDELT's, so that route asks for a much longer
  *  window rather than sharing the default. */
-async function cachedJson(
+async function cachedJson<T>(
   request: Request,
-  build: () => Promise<NormalizedFeatureCollection>,
+  build: () => Promise<T>,
   ttlSeconds: number = CACHE_TTL_SECONDS
 ): Promise<Response> {
   const cache = caches.default;
@@ -71,7 +71,7 @@ async function cachedJson(
   const cached = await cache.match(cacheKey);
   if (cached) return cached;
 
-  let body: NormalizedFeatureCollection;
+  let body: T;
   try {
     body = await build();
   } catch (err) {
@@ -502,5 +502,204 @@ liveLayersRouter.get("/maritime", async (c) => {
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     86400 // 1 day — this is reference data, not a feed; nothing here changes minute to minute
+  );
+});
+
+interface IssPosition {
+  lat: number;
+  lng: number;
+  /** Rough estimate (ISS orbital ground speed is ~27,600 km/h and nearly
+   *  constant at its stable orbital altitude — this isn't derived from two
+   *  fixes, just a documented constant), so it's not upstream data being
+   *  claimed as more precise than it is. */
+  speedKmh: number;
+  timestamp: string;
+}
+
+/** open-notify.org's ISS position API — free, keyless, no documented rate
+ *  limit, returns the ISS's current subpoint (the ground location directly
+ *  beneath it) once per call. A 5s cache TTL is a compromise: the ISS moves
+ *  roughly 2.3km per real second, so anything longer would visibly lag a
+ *  live marker, but this route existing at all means every viewer of this
+ *  Lens instance shares one upstream call per 5s window rather than one
+ *  each. */
+liveLayersRouter.get("/iss", async (c) => {
+  return cachedJson<IssPosition>(
+    c.req.raw,
+    async () => {
+      const res = await fetch("https://api.open-notify.org/iss-now.json");
+      if (!res.ok) throw new Error(`open-notify returned ${res.status}`);
+      const raw = (await res.json()) as { timestamp: number; iss_position: { latitude: string; longitude: string } };
+      return {
+        lat: parseFloat(raw.iss_position.latitude),
+        lng: parseFloat(raw.iss_position.longitude),
+        speedKmh: 27_600,
+        timestamp: new Date(raw.timestamp * 1000).toISOString(),
+      };
+    },
+    5
+  );
+});
+
+interface NewsItem {
+  id: string;
+  title: string;
+  source: string;
+  link: string;
+  publishedAt: string | null;
+}
+
+interface NewsFeed {
+  items: NewsItem[];
+  fetchedAt: string;
+}
+
+/** A handful of real broadcaster/wire-service RSS feeds — the same category
+ *  OSIRIS itself uses (it lists 25+; this starts with a representative
+ *  handful of major, freely-syndicated world-news feeds rather than trying
+ *  to match that count in one pass). Fetched and parsed here rather than
+ *  client-side because these feeds don't set CORS headers for arbitrary
+ *  browser origins, so a direct frontend fetch would simply fail — this is
+ *  a genuine proxy need, not just cache/rate-limit hygiene. Minimal regex
+ *  parsing rather than a full XML parser: Workers has no DOMParser, and
+ *  RSS's <item>/<title>/<link>/<pubDate> structure is regular enough
+ *  across these particular feeds to extract reliably without one. */
+liveLayersRouter.get("/news", async (c) => {
+  return cachedJson<NewsFeed>(
+    c.req.raw,
+    async () => {
+      // Deliberately official, first-party feeds only — no third-party RSS
+      // mirror/aggregator services (several exist for outlets that dropped
+      // their own public RSS, like AP and Reuters, but their availability
+      // and content fidelity isn't this project's to vouch for).
+      const feeds: { source: string; url: string }[] = [
+        { source: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml" },
+        { source: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml" },
+        { source: "NYT World", url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml" },
+        { source: "UN News", url: "https://news.un.org/feed/subscribe/en/news/all/rss.xml" },
+      ];
+
+      const results = await Promise.allSettled(
+        feeds.map(async (f) => {
+          const res = await fetch(f.url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLensBot/1.0)" } });
+          if (!res.ok) throw new Error(`${f.source} returned ${res.status}`);
+          const xml = await res.text();
+          return parseRssItems(xml, f.source);
+        })
+      );
+
+      const items: NewsItem[] = [];
+      for (const r of results) {
+        if (r.status === "fulfilled") items.push(...r.value);
+        // A failed feed is simply omitted — one broadcaster's outage
+        // shouldn't 502 the whole panel when the others are fine.
+      }
+      items.sort((a, b) => {
+        const at = a.publishedAt ? Date.parse(a.publishedAt) : 0;
+        const bt = b.publishedAt ? Date.parse(b.publishedAt) : 0;
+        return bt - at;
+      });
+      return { items: items.slice(0, 60), fetchedAt: new Date().toISOString() };
+    },
+    300 // 5 min — headline feeds don't need second-by-second freshness, and this keeps upstream load light
+  );
+});
+
+/** Extracts <item> blocks and their <title>/<link>/<pubDate> out of raw RSS
+ *  XML text with regex rather than a parser — deliberately tolerant (each
+ *  field is optional and independently matched) since real-world feeds
+ *  vary in whether title/link use CDATA wrapping, self-closing tags, etc. */
+function parseRssItems(xml: string, source: string): NewsItem[] {
+  const items: NewsItem[] = [];
+  const itemBlocks = xml.match(/<item[\s>][\s\S]*?<\/item>/g) ?? [];
+  for (const [i, block] of itemBlocks.entries()) {
+    const title = extractRssField(block, "title");
+    const link = extractRssField(block, "link");
+    const pubDate = extractRssField(block, "pubDate") ?? extractRssField(block, "dc:date");
+    if (!title || !link) continue;
+    const publishedAt = pubDate ? new Date(pubDate).toISOString() : null;
+    items.push({
+      id: `${source}:${i}:${link}`,
+      title,
+      source,
+      link,
+      publishedAt: Number.isNaN(Date.parse(publishedAt ?? "")) ? null : publishedAt,
+    });
+  }
+  return items;
+}
+
+function extractRssField(block: string, tag: string): string | null {
+  const match = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i").exec(block);
+  if (!match) return null;
+  const raw = match[1];
+  const cdataMatch = /<!\[CDATA\[([\s\S]*?)\]\]>/.exec(raw);
+  const text = cdataMatch ? cdataMatch[1] : raw;
+  return text
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim() || null;
+}
+
+interface RouteResult {
+  /** [lng, lat] pairs, matching GeoJSON coordinate order. */
+  coordinates: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
+const VALID_ROUTE_PROFILES = new Set(["driving", "walking", "cycling"]);
+
+/** OSRM's free public demo server (router.project-osrm.org) — no key
+ *  required, but explicitly posted by the OSRM project as a demo/evaluation
+ *  instance, not a production SLA: rate-limited and offered with no uptime
+ *  guarantee. Proxied here (rather than called directly from the browser)
+ *  both to share one small cache across viewers requesting the same
+ *  from/to/mode, and because a production deployment that outgrows this
+ *  demo instance's limits would swap the upstream URL here for a paid
+ *  provider (Mapbox/ORS/self-hosted OSRM) or a real key, without any
+ *  frontend change. */
+liveLayersRouter.get("/route", async (c) => {
+  const from = c.req.query("from"); // "lat,lng"
+  const to = c.req.query("to");
+  const profile = c.req.query("mode") ?? "driving";
+  if (!from || !to) return Response.json({ error: "Missing from/to query params (each \"lat,lng\")" }, { status: 400 });
+  if (!VALID_ROUTE_PROFILES.has(profile)) return Response.json({ error: "mode must be driving, walking, or cycling" }, { status: 400 });
+
+  const parseLatLng = (s: string): [number, number] | null => {
+    const m = /^(-?\d+\.?\d*),(-?\d+\.?\d*)$/.exec(s.trim());
+    if (!m) return null;
+    return [parseFloat(m[1]), parseFloat(m[2])];
+  };
+  const fromLatLng = parseLatLng(from);
+  const toLatLng = parseLatLng(to);
+  if (!fromLatLng || !toLatLng) return Response.json({ error: "from/to must be \"lat,lng\" numbers" }, { status: 400 });
+
+  return cachedJson<RouteResult>(
+    c.req.raw,
+    async () => {
+      // OSRM's coordinate order is lng,lat (GeoJSON convention), the
+      // opposite of this route's own lat,lng query params — the query
+      // params match how every other part of this app writes coordinates
+      // (see resolveLocation elsewhere), the conversion happens right here.
+      const coordPart = `${fromLatLng[1]},${fromLatLng[0]};${toLatLng[1]},${toLatLng[0]}`;
+      const res = await fetch(
+        `https://router.project-osrm.org/route/v1/${profile}/${coordPart}?overview=full&geometries=geojson`
+      );
+      if (!res.ok) throw new Error(`OSRM demo server returned ${res.status}`);
+      const raw = (await res.json()) as {
+        code: string;
+        routes?: Array<{ geometry: { coordinates: [number, number][] }; distance: number; duration: number }>;
+      };
+      const route = raw.routes?.[0];
+      if (raw.code !== "Ok" || !route) throw new Error(`OSRM could not find a ${profile} route between those points`);
+      return { coordinates: route.geometry.coordinates, distanceMeters: route.distance, durationSeconds: route.duration };
+    },
+    120 // 2 min — same from/to/mode requested again shortly after (e.g. a re-render) shouldn't re-hit the shared demo server
   );
 });

@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
-import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { feature } from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import worldTopology from "world-atlas/countries-110m.json?url";
-import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
+import { api, type LiveLayerCollection, type LiveLayerFeature, type IssPosition, type NewsItem, type RouteProfile, type RouteResult } from "../api";
 import { BASEMAPS } from "./mapConstants";
 
 /**
@@ -53,6 +53,26 @@ import { BASEMAPS } from "./mapConstants";
  *    and this app isn't going to carry them regardless of whether a
  *    backend exists to power them. Submarine cables: a real open dataset
  *    exists but wasn't confirmed reachable in time for this pass.
+ *
+ * Right-side toolbar — OSIRIS shows several of these as its own icon rail;
+ * the ones built here are the legitimate, non-reconnaissance subset:
+ *  - Drawing Tools: click points on the map to measure a line's distance or
+ *    a shape's area, then export the shape as GeoJSON. Pure client-side
+ *    geometry (haversine distance, a standard spherical-polygon-area
+ *    approximation) — no external API.
+ *  - Route: turn-by-turn driving/walking/cycling directions between two
+ *    clicked points, via the backend's /route proxy in front of OSRM's free
+ *    public demo router (see that route's own comment — it's a demo
+ *    instance, not a production SLA).
+ *  - Live From Space: the ISS's real current position (open-notify.org,
+ *    proxied/cached by the backend) plotted as a live marker, plus NASA's
+ *    own public livestream embed.
+ *  - Live Alerts: real headlines from a handful of official, first-party
+ *    broadcaster/wire RSS feeds (BBC, Al Jazeera, NYT, UN News), parsed
+ *    server-side since none of them set CORS headers for a browser fetch.
+ *  - NOT built here (same reconnaissance boundary as above): "Recon
+ *    Toolkit" (port/MAC/IP scanning, self-track) and "Marauder" (Bluetooth
+ *    device sweeps).
  */
 
 interface GlobePoint {
@@ -199,6 +219,85 @@ const POLL_MS = 60_000;
 type LayerState = { data: GlobePoint[] | null; loading: boolean; error: string | null };
 type MapMode = "3d" | "2d" | "map" | "sat";
 
+/** Which right-side tool panel is open, if any — at most one at a time, both
+ *  because that's simpler state to reason about and because Drawing Tools
+ *  and Route both interpret a map/globe click as their own next action, so
+ *  two active together would fight over the same click. */
+type RightTool = "draw" | "route" | "space" | "news" | null;
+type DrawMode = "distance" | "area" | null;
+
+/** [lat, lng] tuples throughout the drawing/route tools — matches how a
+ *  map click naturally arrives (Leaflet's own LatLng, and this view's own
+ *  onGlobeClick handler below), converted to GeoJSON's [lng, lat] order
+ *  only at the export/API boundary. */
+type LatLng = [number, number];
+
+const EARTH_RADIUS_KM = 6371.0088;
+
+function haversineKm(a: LatLng, b: LatLng): number {
+  const rad = Math.PI / 180;
+  const dLat = (b[0] - a[0]) * rad;
+  const dLng = (b[1] - a[1]) * rad;
+  const lat1 = a[0] * rad;
+  const lat2 = b[0] * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.sqrt(h));
+}
+
+function pathDistanceKm(points: LatLng[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) total += haversineKm(points[i - 1], points[i]);
+  return total;
+}
+
+/** Standard spherical-polygon-area approximation (the same one behind most
+ *  GIS "measure area" tools, sometimes credited to Chamberlain & Duquette /
+ *  JPL) — accurate enough for a rough on-map measurement, not surveyed
+ *  cadastral precision. Treats the point list as an implicitly closed ring
+ *  (last point connects back to the first). */
+function sphericalPolygonAreaKm2(points: LatLng[]): number {
+  if (points.length < 3) return 0;
+  const rad = Math.PI / 180;
+  let total = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [lat1, lng1] = points[i];
+    const [lat2, lng2] = points[(i + 1) % points.length];
+    total += (lng2 - lng1) * rad * (2 + Math.sin(lat1 * rad) + Math.sin(lat2 * rad));
+  }
+  return Math.abs((total * EARTH_RADIUS_KM * EARTH_RADIUS_KM) / 2);
+}
+
+function formatKm(km: number): string {
+  return km >= 1 ? `${km.toFixed(km >= 100 ? 0 : 1)} km` : `${Math.round(km * 1000)} m`;
+}
+
+function formatDuration(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m} min`;
+}
+
+/** Downloads a drawn shape as a standalone .geojson file — client-side only
+ *  (Blob + a synthetic anchor click), no server round-trip needed since the
+ *  shape only ever existed in this browser session anyway. */
+function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
+  if (!mode || points.length < 2) return;
+  const coordinates = points.map(([lat, lng]) => [lng, lat]);
+  const isArea = mode === "area" && points.length >= 3;
+  const geometry = isArea ? { type: "Polygon" as const, coordinates: [[...coordinates, coordinates[0]]] } : { type: "LineString" as const, coordinates };
+  const properties = isArea
+    ? { measurement: "area", areaKm2: Number(sphericalPolygonAreaKm2(points).toFixed(3)) }
+    : { measurement: "distance", distanceKm: Number(pathDistanceKm(points).toFixed(3)) };
+  const fc = { type: "FeatureCollection", features: [{ type: "Feature", geometry, properties }] };
+  const blob = new Blob([JSON.stringify(fc, null, 2)], { type: "application/geo+json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `live-intel-${mode}-${Date.now()}.geojson`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Country border polygons for the 3D globe — same world-atlas topology and
  *  topojson-client conversion GlobeWidget already uses for its choropleth,
  *  loaded independently here since this view is code-split from that one
@@ -242,6 +341,116 @@ export default function LiveIntelView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const countryBorders = useCountryBorders();
+
+  // --- Right-side tools: at most one open at a time (see RightTool). ---
+  const [activeTool, setActiveTool] = useState<RightTool>(null);
+
+  const [drawMode, setDrawMode] = useState<DrawMode>(null);
+  const [drawPoints, setDrawPoints] = useState<LatLng[]>([]);
+
+  const [routeMode, setRouteMode] = useState<RouteProfile>("driving");
+  const [routeOrigin, setRouteOrigin] = useState<LatLng | null>(null);
+  const [routeDestination, setRouteDestination] = useState<LatLng | null>(null);
+  const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+
+  const [issPos, setIssPos] = useState<IssPosition | null>(null);
+  const [issError, setIssError] = useState<string | null>(null);
+
+  const [newsItems, setNewsItems] = useState<NewsItem[] | null>(null);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState<string | null>(null);
+
+  // A click on the map/globe means something different depending on which
+  // right-side tool is open: adds the next drawing vertex, or sets
+  // whichever of origin/destination isn't picked yet (a third click starts
+  // a fresh pair rather than silently doing nothing).
+  function handleMapClick(lat: number, lng: number) {
+    if (activeTool === "draw" && drawMode) {
+      setDrawPoints((prev) => [...prev, [lat, lng]]);
+    } else if (activeTool === "route") {
+      if (!routeOrigin) setRouteOrigin([lat, lng]);
+      else if (!routeDestination) setRouteDestination([lat, lng]);
+      else {
+        setRouteOrigin([lat, lng]);
+        setRouteDestination(null);
+        setRouteResult(null);
+        setRouteError(null);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!routeOrigin || !routeDestination) return;
+    let cancelled = false;
+    setRouteLoading(true);
+    setRouteError(null);
+    api
+      .getLiveRoute(routeOrigin, routeDestination, routeMode)
+      .then((result) => {
+        if (cancelled) return;
+        setRouteResult(result);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRouteResult(null);
+        setRouteError(err instanceof Error ? err.message : "Route unavailable");
+      })
+      .finally(() => {
+        if (!cancelled) setRouteLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [routeOrigin, routeDestination, routeMode]);
+
+  useEffect(() => {
+    if (activeTool !== "space") return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const pos = await api.getLiveIss();
+        if (!cancelled) {
+          setIssPos(pos);
+          setIssError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setIssError(err instanceof Error ? err.message : "ISS feed unavailable");
+      }
+    }
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (activeTool !== "news") return;
+    let cancelled = false;
+    async function poll() {
+      setNewsLoading(true);
+      try {
+        const feed = await api.getLiveNews();
+        if (!cancelled) {
+          setNewsItems(feed.items);
+          setNewsError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setNewsError(err instanceof Error ? err.message : "News feed unavailable");
+      } finally {
+        if (!cancelled) setNewsLoading(false);
+      }
+    }
+    poll();
+    const interval = setInterval(poll, 300_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [activeTool]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -299,6 +508,76 @@ export default function LiveIntelView() {
     return all;
   }, [layers, enabled]);
 
+  // Tool overlays rendered as ordinary GlobePoints — the marker rendering
+  // (both the 3D pointsData layer and the flat CircleMarker map) is already
+  // generic over color/size/title/subtitle, so a drawing vertex or a route
+  // endpoint just piggybacks on that same code path rather than needing its
+  // own renderer per map mode.
+  const toolPoints = useMemo(() => {
+    const extra: GlobePoint[] = [];
+    if (activeTool === "space" && issPos) {
+      extra.push({
+        id: "iss",
+        layerKey: "ISS",
+        lat: issPos.lat,
+        lng: issPos.lng,
+        color: "#ffffff",
+        size: 0.22,
+        title: "International Space Station",
+        subtitle: `~${issPos.speedKmh.toLocaleString()} km/h orbital ground speed`,
+        time: issPos.timestamp,
+        url: null,
+      });
+    }
+    if (activeTool === "route") {
+      if (routeOrigin) {
+        extra.push({ id: "route-origin", layerKey: "Route", lat: routeOrigin[0], lng: routeOrigin[1], color: "#4dff9e", size: 0.2, title: "Origin", subtitle: "", time: null, url: null });
+      }
+      if (routeDestination) {
+        extra.push({ id: "route-destination", layerKey: "Route", lat: routeDestination[0], lng: routeDestination[1], color: "#ff5d5d", size: 0.2, title: "Destination", subtitle: "", time: null, url: null });
+      }
+    }
+    if (activeTool === "draw") {
+      drawPoints.forEach(([lat, lng], i) => {
+        extra.push({ id: `draw-${i}`, layerKey: "Drawing", lat, lng, color: "#ffd23f", size: 0.14, title: `Point ${i + 1}`, subtitle: "", time: null, url: null });
+      });
+    }
+    return extra;
+  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints]);
+
+  const mapPoints = useMemo(() => [...points, ...toolPoints], [points, toolPoints]);
+
+  // Draw/route lines, merged alongside the shipping lanes for the 3D globe's
+  // single pathsData layer — a color field on each entry (shipping lanes
+  // have none, so they fall back to their usual blue) is what tells
+  // pathColor apart, rather than needing three separate path layers.
+  const globePaths = useMemo(() => {
+    const lanes = enabled.maritime ? SHIPPING_LANES : [];
+    const drawPath =
+      drawMode === "distance" && drawPoints.length >= 2 ? [{ points: drawPoints, label: "Measured distance", color: "#ffd23f" }] : [];
+    const routePath =
+      routeResult && routeResult.coordinates.length >= 2
+        ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
+        : [];
+    return [...lanes, ...drawPath, ...routePath];
+  }, [enabled.maritime, drawMode, drawPoints, routeResult]);
+
+  // Same idea for the 3D globe's polygon layer — country borders plus, when
+  // area-measuring, the in-progress shape itself (flagged so
+  // polygonCapColor/polygonStrokeColor can render it distinctly from an
+  // ordinary country border).
+  const globePolygons = useMemo(() => {
+    if (drawMode !== "area" || drawPoints.length < 3) return countryBorders ?? [];
+    const ring = [...drawPoints.map(([lat, lng]) => [lng, lat]), [drawPoints[0][1], drawPoints[0][0]]];
+    const drawFeature: GeoJSON.Feature = { type: "Feature", properties: { __draw: true }, geometry: { type: "Polygon", coordinates: [ring] } };
+    return [...(countryBorders ?? []), drawFeature];
+  }, [countryBorders, drawMode, drawPoints]);
+
+  const routeLineForFlatMap = useMemo<LatLng[] | undefined>(
+    () => (routeResult ? routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng) : undefined),
+    [routeResult]
+  );
+
   return (
     <div
       style={{
@@ -324,27 +603,29 @@ export default function LiveIntelView() {
             showAtmosphere
             atmosphereColor="#5d8cff"
             atmosphereAltitude={0.18}
-            polygonsData={countryBorders ?? []}
-            polygonCapColor={() => "rgba(10,16,28,0.55)"}
+            polygonsData={globePolygons}
+            polygonCapColor={(f: object) => ((f as GeoJSON.Feature).properties?.__draw ? "rgba(255,210,63,0.3)" : "rgba(10,16,28,0.55)")}
             polygonSideColor={() => "rgba(0,0,0,0.2)"}
-            polygonStrokeColor={() => "rgba(210,225,255,0.55)"}
+            polygonStrokeColor={(f: object) => ((f as GeoJSON.Feature).properties?.__draw ? "#ffd23f" : "rgba(210,225,255,0.55)")}
             polygonAltitude={0.001}
             polygonLabel={(f: object) => {
               const name = (f as GeoJSON.Feature).properties?.name as string | undefined;
               return name ? `<div style="font-family:monospace;font-size:12px">${escapeHtml(name)}</div>` : "";
             }}
-            pointsData={points}
+            onGlobeClick={(coords) => handleMapClick(coords.lat, coords.lng)}
+            onPolygonClick={(_p, _e, coords) => handleMapClick(coords.lat, coords.lng)}
+            pointsData={mapPoints}
             pointLat={(d: object) => (d as GlobePoint).lat}
             pointLng={(d: object) => (d as GlobePoint).lng}
             pointColor={(d: object) => (d as GlobePoint).color}
             pointRadius={(d: object) => (d as GlobePoint).size}
             pointAltitude={0.002}
             pointResolution={16}
-            pathsData={enabled.maritime ? SHIPPING_LANES : []}
-            pathPoints={(d: object) => (d as { points: [number, number][] }).points}
-            pathPointLat={(p: unknown) => (p as [number, number])[0]}
-            pathPointLng={(p: unknown) => (p as [number, number])[1]}
-            pathColor={() => "#3fd0ff"}
+            pathsData={globePaths}
+            pathPoints={(d: object) => (d as { points: LatLng[] }).points}
+            pathPointLat={(p: unknown) => (p as LatLng)[0]}
+            pathPointLng={(p: unknown) => (p as LatLng)[1]}
+            pathColor={(d: object) => (d as { color?: string }).color ?? "#3fd0ff"}
             pathLabel={(d: object) => (d as { label: string }).label}
             pathStroke={0.4}
             pathDashLength={0.4}
@@ -362,12 +643,75 @@ export default function LiveIntelView() {
             }}
           />
         ) : (
-          <FlatMap mode={mapMode} points={points} />
+          <FlatMap
+            mode={mapMode}
+            points={mapPoints}
+            onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
+            drawMode={activeTool === "draw" ? drawMode : null}
+            drawPoints={drawPoints}
+            routeLine={activeTool === "route" ? routeLineForFlatMap : undefined}
+          />
         )}
 
         <LayerPanel defs={LAYER_DEFS} enabled={enabled} layers={layers} onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))} />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
         <StatusBar totalFeatures={points.length} clock={clock} />
+
+        <RightToolRail
+          active={activeTool}
+          onSelect={(tool) =>
+            setActiveTool((prev) => {
+              const next = prev === tool ? null : tool;
+              // Leaving a tool clears its in-progress state, rather than
+              // leaving a half-drawn shape or a stale route sitting on the
+              // map invisibly (its panel gone, but its data/click-handling
+              // still live) the next time some other tool is opened.
+              if (next !== "draw") {
+                setDrawMode(null);
+                setDrawPoints([]);
+              }
+              if (next !== "route") {
+                setRouteOrigin(null);
+                setRouteDestination(null);
+                setRouteResult(null);
+                setRouteError(null);
+              }
+              return next;
+            })
+          }
+        />
+
+        {activeTool === "draw" && (
+          <DrawingToolPanel
+            mode={drawMode}
+            points={drawPoints}
+            onSetMode={(m) => {
+              setDrawMode(m);
+              setDrawPoints([]);
+            }}
+            onClear={() => setDrawPoints([])}
+            onExport={() => downloadDrawingAsGeoJson(drawPoints, drawMode)}
+          />
+        )}
+        {activeTool === "route" && (
+          <RoutePlannerPanel
+            mode={routeMode}
+            onModeChange={setRouteMode}
+            origin={routeOrigin}
+            destination={routeDestination}
+            result={routeResult}
+            loading={routeLoading}
+            error={routeError}
+            onClear={() => {
+              setRouteOrigin(null);
+              setRouteDestination(null);
+              setRouteResult(null);
+              setRouteError(null);
+            }}
+          />
+        )}
+        {activeTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
+        {activeTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
       </div>
     </div>
   );
@@ -379,11 +723,35 @@ export default function LiveIntelView() {
  *  2D map, not a globe photographed from directly above. "2D" and "Map"
  *  both use street-style tiles (2D dark, Map light) — Sat uses satellite
  *  imagery, matching what the three style buttons mean on OSIRIS itself. */
-function FlatMap({ mode, points }: { mode: Exclude<MapMode, "3d">; points: GlobePoint[] }) {
+function FlatMap({
+  mode,
+  points,
+  onMapClick,
+  drawMode,
+  drawPoints,
+  routeLine,
+}: {
+  mode: Exclude<MapMode, "3d">;
+  points: GlobePoint[];
+  /** Set only while Drawing Tools or Route is the active right-side tool —
+   *  its presence is literally what makes a map click do something. */
+  onMapClick?: (lat: number, lng: number) => void;
+  drawMode?: DrawMode;
+  drawPoints?: LatLng[];
+  routeLine?: LatLng[];
+}) {
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump style={{ height: "100%", width: "100%", background: "#000308" }}>
       <TileLayer url={tile.url} attribution={tile.attribution} />
+      {onMapClick && <MapClickCapture onClick={onMapClick} />}
+      {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
+        <Polyline positions={drawPoints} pathOptions={{ color: "#ffd23f", weight: 2 }} />
+      )}
+      {drawMode === "area" && drawPoints && drawPoints.length >= 3 && (
+        <Polygon positions={drawPoints} pathOptions={{ color: "#ffd23f", fillColor: "#ffd23f", fillOpacity: 0.25, weight: 2 }} />
+      )}
+      {routeLine && routeLine.length >= 2 && <Polyline positions={routeLine} pathOptions={{ color: "#4dff9e", weight: 3 }} />}
       {points.map((p) => (
         <CircleMarker key={`${p.layerKey}:${p.id}`} center={[p.lat, p.lng]} radius={3 + p.size * 18} pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}>
           <LeafletTooltip direction="top">
@@ -399,6 +767,19 @@ function FlatMap({ mode, points }: { mode: Exclude<MapMode, "3d">; points: Globe
       ))}
     </MapContainer>
   );
+}
+
+/** Bridges Leaflet's own click event to this view's tool click-handling —
+ *  a null-rendering child rather than a prop on MapContainer itself since
+ *  react-leaflet only exposes map events through hooks used from inside
+ *  the map's own React context. */
+function MapClickCapture({ onClick }: { onClick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
 }
 
 function escapeHtml(s: string): string {
@@ -617,5 +998,279 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
       </span>
       <span>{clock.toISOString().replace("T", " ").slice(0, 19)} UTC</span>
     </div>
+  );
+}
+
+/** Right-side icon rail — the OSIRIS-style vertical strip of tool buttons,
+ *  mirroring the left LayerPanel's visual language (same dark glass card,
+ *  same border color) but icon-only + a short label, since this rail holds
+ *  tools rather than a scrollable list of toggles. */
+function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void }) {
+  const tools: { key: Exclude<RightTool, null>; icon: string; label: string }[] = [
+    { key: "draw", icon: "✏", label: "Draw" },
+    { key: "route", icon: "➜", label: "Route" },
+    { key: "space", icon: "◎", label: "Space" },
+    { key: "news", icon: "☰", label: "Alerts" },
+  ];
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 12,
+        right: 12,
+        zIndex: 500,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        background: "rgba(6,10,18,0.82)",
+        border: "1px solid rgba(124,156,255,0.18)",
+        borderRadius: 8,
+        padding: 4,
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      {tools.map((t) => (
+        <button
+          key={t.key}
+          onClick={() => onSelect(t.key)}
+          title={t.label}
+          style={{
+            width: 52,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 2,
+            padding: "7px 4px",
+            background: active === t.key ? "#7c9cff33" : "transparent",
+            border: "none",
+            borderRadius: 6,
+            color: active === t.key ? "#eef3ff" : "#7f8ea3",
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          <span style={{ fontSize: 15, lineHeight: 1 }}>{t.icon}</span>
+          <span style={{ fontSize: 9.5, letterSpacing: "0.04em", textTransform: "uppercase" }}>{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Shared shell every right-side tool panel renders inside — same
+ *  positioning (just left of the icon rail) and card chrome as the rail
+ *  itself, so opening any tool feels like one consistent system rather
+ *  than four separately-designed popovers. */
+function ToolPanelShell({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 12,
+        right: 76,
+        zIndex: 500,
+        width: 260,
+        maxHeight: "calc(100% - 24px)",
+        overflowY: "auto",
+        background: "rgba(6,10,18,0.9)",
+        border: "1px solid rgba(124,156,255,0.18)",
+        borderRadius: 8,
+        backdropFilter: "blur(4px)",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", color: "#7c9cff", fontWeight: 700 }}>{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function ToolButton({ active, onClick, children }: { active?: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1,
+        fontSize: 11,
+        padding: "6px 8px",
+        borderRadius: 6,
+        border: `1px solid ${active ? "#7c9cff" : "rgba(124,156,255,0.25)"}`,
+        background: active ? "#7c9cff33" : "transparent",
+        color: active ? "#eef3ff" : "#9fb3d9",
+        cursor: "pointer",
+        fontFamily: "inherit",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DrawingToolPanel({
+  mode,
+  points,
+  onSetMode,
+  onClear,
+  onExport,
+}: {
+  mode: DrawMode;
+  points: LatLng[];
+  onSetMode: (m: DrawMode) => void;
+  onClear: () => void;
+  onExport: () => void;
+}) {
+  const distanceKm = mode === "distance" ? pathDistanceKm(points) : 0;
+  const areaKm2 = mode === "area" ? sphericalPolygonAreaKm2(points) : 0;
+  const canExport = (mode === "distance" && points.length >= 2) || (mode === "area" && points.length >= 3);
+  return (
+    <ToolPanelShell title="Drawing Tools">
+      <div style={{ display: "flex", gap: 6 }}>
+        <ToolButton active={mode === "distance"} onClick={() => onSetMode(mode === "distance" ? null : "distance")}>
+          Distance
+        </ToolButton>
+        <ToolButton active={mode === "area"} onClick={() => onSetMode(mode === "area" ? null : "area")}>
+          Area
+        </ToolButton>
+      </div>
+      {mode ? (
+        <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
+          Click the map to add points{mode === "area" ? " (closes automatically)" : ""}.
+          <br />
+          {points.length} point{points.length === 1 ? "" : "s"} placed.
+          {mode === "distance" && points.length >= 2 && (
+            <>
+              <br />
+              Distance: <b style={{ color: "#eef3ff" }}>{formatKm(distanceKm)}</b>
+            </>
+          )}
+          {mode === "area" && points.length >= 3 && (
+            <>
+              <br />
+              Area: <b style={{ color: "#eef3ff" }}>{areaKm2 >= 1 ? `${areaKm2.toFixed(1)} km²` : `${(areaKm2 * 1e6).toFixed(0)} m²`}</b>
+            </>
+          )}
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "#7f8ea3" }}>Pick Distance or Area to start placing points.</div>
+      )}
+      <div style={{ display: "flex", gap: 6 }}>
+        <ToolButton onClick={onClear}>Clear</ToolButton>
+        <ToolButton onClick={onExport}>{canExport ? "Export GeoJSON" : "Export"}</ToolButton>
+      </div>
+    </ToolPanelShell>
+  );
+}
+
+function RoutePlannerPanel({
+  mode,
+  onModeChange,
+  origin,
+  destination,
+  result,
+  loading,
+  error,
+  onClear,
+}: {
+  mode: RouteProfile;
+  onModeChange: (m: RouteProfile) => void;
+  origin: LatLng | null;
+  destination: LatLng | null;
+  result: RouteResult | null;
+  loading: boolean;
+  error: string | null;
+  onClear: () => void;
+}) {
+  const profiles: { key: RouteProfile; label: string }[] = [
+    { key: "driving", label: "Drive" },
+    { key: "walking", label: "Walk" },
+    { key: "cycling", label: "Bike" },
+  ];
+  return (
+    <ToolPanelShell title="Route">
+      <div style={{ display: "flex", gap: 4 }}>
+        {profiles.map((p) => (
+          <ToolButton key={p.key} active={mode === p.key} onClick={() => onModeChange(p.key)}>
+            {p.label}
+          </ToolButton>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
+        {!origin && "Click the map to set an origin."}
+        {origin && !destination && "Now click a destination."}
+        {origin && destination && !loading && !error && !result && "Routing…"}
+      </div>
+      {loading && <div style={{ fontSize: 11, color: "#7f8ea3" }}>Routing…</div>}
+      {error && <div style={{ fontSize: 11, color: "#ff5d5d" }}>{error}</div>}
+      {result && (
+        <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
+          Distance: <b style={{ color: "#eef3ff" }}>{formatKm(result.distanceMeters / 1000)}</b>
+          <br />
+          Duration: <b style={{ color: "#eef3ff" }}>{formatDuration(result.durationSeconds)}</b>
+        </div>
+      )}
+      <div style={{ fontSize: 10, color: "#7f8ea3", lineHeight: 1.5 }}>
+        Routed via OSRM's free public demo server — fine for occasional use, not a guaranteed production service.
+      </div>
+      <ToolButton onClick={onClear}>Clear</ToolButton>
+    </ToolPanelShell>
+  );
+}
+
+function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string | null }) {
+  return (
+    <ToolPanelShell title="Live From Space">
+      {error && <div style={{ fontSize: 11, color: "#ff5d5d" }}>{error}</div>}
+      {pos ? (
+        <div style={{ fontSize: 11, color: "#9fb3d9", lineHeight: 1.6 }}>
+          ISS position: <b style={{ color: "#eef3ff" }}>{pos.lat.toFixed(2)}, {pos.lng.toFixed(2)}</b>
+          <br />
+          Ground speed: <b style={{ color: "#eef3ff" }}>~{pos.speedKmh.toLocaleString()} km/h</b>
+          <br />
+          As of {new Date(pos.timestamp).toLocaleTimeString()}
+        </div>
+      ) : (
+        !error && <div style={{ fontSize: 11, color: "#7f8ea3" }}>Locating ISS…</div>
+      )}
+      <div style={{ borderRadius: 6, overflow: "hidden", aspectRatio: "16 / 9", background: "#000" }}>
+        <iframe
+          title="NASA live"
+          src="https://www.youtube.com/embed/live_stream?channel=UCLA_DiR1FfKNvjuUpBHmylQ&autoplay=0&mute=1"
+          style={{ width: "100%", height: "100%", border: "none" }}
+          allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+          allowFullScreen
+        />
+      </div>
+      <div style={{ fontSize: 10, color: "#7f8ea3" }}>NASA's public live channel — plays whatever NASA currently has live (ISS views, launches, briefings).</div>
+    </ToolPanelShell>
+  );
+}
+
+function NewsFeedPanel({ items, loading, error }: { items: NewsItem[] | null; loading: boolean; error: string | null }) {
+  return (
+    <ToolPanelShell title="Live Alerts">
+      {loading && !items && <div style={{ fontSize: 11, color: "#7f8ea3" }}>Loading headlines…</div>}
+      {error && <div style={{ fontSize: 11, color: "#ff5d5d" }}>{error}</div>}
+      {items && items.length === 0 && !error && <div style={{ fontSize: 11, color: "#7f8ea3" }}>No headlines available right now.</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {items?.map((item) => (
+          <a
+            key={item.id}
+            href={item.link}
+            target="_blank"
+            rel="noreferrer"
+            style={{ display: "block", textDecoration: "none", padding: "6px 0", borderBottom: "1px solid rgba(124,156,255,0.1)" }}
+          >
+            <div style={{ fontSize: 12, color: "#eef3ff", lineHeight: 1.35 }}>{item.title}</div>
+            <div style={{ fontSize: 10, color: "#7f8ea3", marginTop: 2 }}>
+              {item.source}
+              {item.publishedAt ? ` · ${new Date(item.publishedAt).toLocaleString()}` : ""}
+            </div>
+          </a>
+        ))}
+      </div>
+    </ToolPanelShell>
   );
 }
