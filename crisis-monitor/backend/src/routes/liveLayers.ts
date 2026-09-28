@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { twoline2satrec, propagate, gstime, eciToGeodetic, degreesLong, degreesLat } from "satellite.js";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
@@ -43,6 +44,10 @@ interface NormalizedFeature {
      *  route for exactly what each value means and how confident it is.
      *  Every other layer leaves this undefined. */
     aviationClass?: "commercial" | "private" | "military";
+    /** Space Tracking only — see SATELLITE_CATEGORY_GROUPS just above the
+     *  /satellites route for exactly which real CelesTrak group(s) each
+     *  value is sourced from. Every other layer leaves this undefined. */
+    satelliteCategory?: "starlink-comms" | "military-intel" | "gps-nav" | "earth-observation" | "stations-telescopes";
   };
 }
 
@@ -689,6 +694,152 @@ function extractRssField(block: string, tag: string): string | null {
     .replace(/\s+/g, " ")
     .trim() || null;
 }
+
+/** One parsed CelesTrak TLE (Two-Line Element) record — the real, standard
+ *  orbital-element wire format used across the whole satellite-tracking
+ *  industry, not something invented for this app. */
+interface TleRecord {
+  name: string;
+  line1: string;
+  line2: string;
+}
+
+/** CelesTrak serves each group as plain text, 3 lines per satellite (name,
+ *  then the two numbered TLE lines) — this just splits that back into
+ *  records. Tolerant of blank lines / trailing whitespace, which the raw
+ *  feed sometimes has. */
+function parseTleText(text: string): TleRecord[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trimEnd()).filter((l) => l.length > 0);
+  const records: TleRecord[] = [];
+  for (let i = 0; i + 2 < lines.length; i += 3) {
+    const name = lines[i].trim();
+    const line1 = lines[i + 1];
+    const line2 = lines[i + 2];
+    if (line1?.startsWith("1 ") && line2?.startsWith("2 ")) {
+      records.push({ name, line1, line2 });
+    }
+  }
+  return records;
+}
+
+/** CelesTrak (celestrak.org): the real, free, keyless public source of
+ *  satellite orbital elements, organized into named groups it maintains
+ *  itself (github.com/CelesTrak — this isn't a scrape of someone else's
+ *  repackaging). One group per fetch, matching how CelesTrak's own API is
+ *  shaped. */
+async function fetchCelestrakGroup(group: string): Promise<TleRecord[]> {
+  const res = await fetch(`https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=tle`);
+  if (!res.ok) throw new Error(`CelesTrak group "${group}" returned ${res.status}`);
+  return parseTleText(await res.text());
+}
+
+/** Maps each of OSIRIS's real Space Tracking sub-categories onto the real
+ *  CelesTrak group slug(s) that actually correspond to it (verified against
+ *  CelesTrak's own group index, not guessed) — several categories are a
+ *  union of more than one CelesTrak group because CelesTrak splits by
+ *  operator/constellation, not by the coarser role-based buckets OSIRIS's
+ *  UI uses. There's deliberately no separate massive fetch for an "all
+ *  active satellites" catalog here: CelesTrak's own `active` group runs
+ *  well into five figures, and propagating that many TLEs through SGP4 on
+ *  every cache-refresh would risk this Worker's CPU budget for a result
+ *  that would be unreadable clutter on the globe anyway. The "All
+ *  Satellites" layer (see LAYER_DEFS in the frontend) instead shows the
+ *  union of every satellite already fetched for the categories below —
+ *  real, sourced data, just not a claim to track literally every catalogued
+ *  object in orbit. */
+const SATELLITE_CATEGORY_GROUPS: Record<string, string[]> = {
+  "starlink-comms": ["starlink", "oneweb", "iridium-NEXT", "intelsat", "ses", "orbcomm", "globalstar"],
+  "military-intel": ["military"],
+  "gps-nav": ["gnss"],
+  "earth-observation": ["resource", "weather", "planet", "spire"],
+  "stations-telescopes": ["stations", "science"],
+};
+
+/** SGP4/SDP4 propagation via satellite.js (pinned to 5.0.0 — see
+ *  package.json — the current 6.x release bundles a WASM module unsuited
+ *  to this Worker's bundler, the same class of bug the maplibre worker
+ *  script hit earlier). Returns null for a TLE satellite.js can't
+ *  propagate (a handful of catalog entries are stale/decayed/malformed)
+ *  rather than throwing, so one bad record doesn't drop the whole group. */
+function propagateTle(rec: TleRecord, now: Date): { lat: number; lng: number } | null {
+  try {
+    const satrec = twoline2satrec(rec.line1, rec.line2);
+    const pv = propagate(satrec, now);
+    if (!pv.position || typeof pv.position === "boolean") return null;
+    const gmst = gstime(now);
+    const geo = eciToGeodetic(pv.position, gmst);
+    const lat = degreesLat(geo.latitude);
+    const lng = degreesLong(geo.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+const SATELLITE_TTL_SECONDS = 120; // real orbital positions drift several km/s, but this cache is shared across every viewer of this Lens instance — 2 min balances "not visibly stale on the globe" against not hammering CelesTrak's free service or this Worker's own CPU budget on every request.
+
+/** Real satellite positions for OSIRIS's "Space Tracking" layer group,
+ *  computed from CelesTrak's own orbital elements rather than a static or
+ *  fabricated point set — see SATELLITE_CATEGORY_GROUPS above for exactly
+ *  which real CelesTrak groups back each sub-category. */
+liveLayersRouter.get("/satellites", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const categoryResults = await Promise.allSettled(
+        Object.entries(SATELLITE_CATEGORY_GROUPS).map(async ([category, groups]) => {
+          const perGroup = await Promise.allSettled(groups.map((g) => fetchCelestrakGroup(g)));
+          const records: TleRecord[] = [];
+          const seenNoradIds = new Set<string>();
+          for (const g of perGroup) {
+            if (g.status !== "fulfilled") continue; // one failing group in a union shouldn't drop the rest
+            for (const rec of g.value) {
+              // The same satellite can legitimately appear in more than one
+              // CelesTrak group within a union (e.g. a bird cross-listed
+              // under both a constellation group and a generic one) — the
+              // TLE's own NORAD catalog number (line 1, columns 3-7) is a
+              // real stable identifier to de-dupe on; satellite names
+              // aren't guaranteed unique.
+              const noradId = rec.line1.slice(2, 7);
+              if (seenNoradIds.has(noradId)) continue;
+              seenNoradIds.add(noradId);
+              records.push(rec);
+            }
+          }
+          return { category: category as NonNullable<NormalizedFeature["properties"]["satelliteCategory"]>, records };
+        })
+      );
+
+      const now = new Date();
+      const features: NormalizedFeature[] = [];
+      for (const r of categoryResults) {
+        if (r.status !== "fulfilled") continue; // one failing category shouldn't 502 the whole layer
+        const { category, records } = r.value;
+        for (const rec of records) {
+          const pos = propagateTle(rec, now);
+          if (!pos) continue;
+          features.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [pos.lng, pos.lat] },
+            properties: {
+              id: rec.line1.slice(2, 7),
+              title: rec.name,
+              time: now.toISOString(),
+              intensity: 0.5,
+              intensityLabel: "in orbit",
+              detail: category.replace(/-/g, " / "),
+              url: null,
+              satelliteCategory: category,
+            },
+          });
+        }
+      }
+      return { type: "FeatureCollection", features, fetchedAt: now.toISOString() };
+    },
+    SATELLITE_TTL_SECONDS
+  );
+});
 
 interface RouteResult {
   /** [lng, lat] pairs, matching GeoJSON coordinate order. */

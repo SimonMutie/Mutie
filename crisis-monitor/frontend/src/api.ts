@@ -597,6 +597,10 @@ export interface LiveLayerFeature {
      *  what each value means and how it's derived. Undefined on every
      *  other layer. */
     aviationClass?: "commercial" | "private" | "military";
+    /** Space Tracking only — see the backend's SATELLITE_CATEGORY_GROUPS
+     *  for exactly which real CelesTrak group(s) each value is sourced
+     *  from. Undefined on every other layer. */
+    satelliteCategory?: "starlink-comms" | "military-intel" | "gps-nav" | "earth-observation" | "stations-telescopes";
   };
 }
 
@@ -915,6 +919,7 @@ export const api = {
   getLiveAirTraffic: () => req<LiveLayerCollection>("/api/live-layers/air-traffic"),
   getLiveMalwareInfrastructure: () => req<LiveLayerCollection>("/api/live-layers/malware-infrastructure"),
   getLiveMaritime: () => req<LiveLayerCollection>("/api/live-layers/maritime"),
+  getLiveSatellites: () => req<LiveLayerCollection>("/api/live-layers/satellites"),
   getLiveIss: () => req<IssPosition>("/api/live-layers/iss"),
   getLiveNews: () => req<NewsFeed>("/api/live-layers/news"),
   getLiveRoute: (from: [number, number], to: [number, number], mode: RouteProfile) =>

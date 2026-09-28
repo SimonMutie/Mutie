@@ -10,14 +10,18 @@ import {
   Flame,
   MapPin,
   Mountain,
+  Navigation,
   Newspaper,
   Plane,
+  Radio,
   Route as RouteGlyph,
   Rss,
   Ruler,
+  Satellite,
   Shield,
   Ship,
   Sun,
+  Telescope,
   Waypoints,
   X as CloseGlyph,
   type LucideIcon,
@@ -152,16 +156,18 @@ interface GlobePoint {
   url: string | null;
 }
 
-type LayerGroup = "Natural Hazards" | "Threats & Infra" | "Aviation" | "Maritime" | "My Data";
+type LayerGroup = "Natural Hazards" | "Threats & Infra" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
 
-/** Icon + accent for a group's own rail button, shown when the group has
- *  more than one layer (see LayerPanel/GroupRailButton — a single-layer
- *  group just renders that one layer's own icon directly instead). */
+/** Icon + accent for a group's own rail button — every group renders
+ *  through the same flyout treatment now (see LayerPanel/GroupRailButton),
+ *  including a group with only one real layer, confirmed directly against
+ *  OSIRIS's own real Maritime flyout. */
 const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
   "Natural Hazards": { icon: Activity, color: HUD.alertOrange },
   "Threats & Infra": { icon: AlertTriangle, color: HUD.alertRed },
   Aviation: { icon: Plane, color: HUD.cyan },
   Maritime: { icon: Ship, color: "#00BCD4" },
+  "Space Tracking": { icon: Satellite, color: "#9d7bff" },
   "My Data": { icon: Bell, color: HUD.gold },
 };
 
@@ -254,6 +260,65 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Anchor,
     fetcher: async () => fromGateway("#3fd0ff", "Maritime")(await api.getLiveMaritime()),
   },
+  // Real satellite positions computed from CelesTrak's own orbital elements
+  // (SGP4 propagation on the backend — see satelliteCategory on
+  // liveLayers.ts's /satellites route for exactly which real CelesTrak
+  // group(s) back each category below). "All Satellites" is every
+  // satellite the shared fetch returns, not a separate larger catalog —
+  // propagating CelesTrak's full active-satellite catalog on every refresh
+  // was judged too expensive for this Worker's CPU budget and too dense to
+  // read on the globe (see the backend comment for the full reasoning), so
+  // this is real, sourced data at an honestly bounded scope rather than a
+  // claim to track every catalogued object in orbit. All six share one
+  // upstream fetch via the backend's own 2-min shared cache.
+  {
+    key: "satellites-all",
+    label: "All Satellites",
+    group: "Space Tracking",
+    color: "#9d7bff",
+    icon: Satellite,
+    fetcher: async () => fromGateway("#9d7bff", "Satellites")(await api.getLiveSatellites()),
+  },
+  {
+    key: "satellites-starlink-comms",
+    label: "Starlink / Comms",
+    group: "Space Tracking",
+    color: "#4fd1ff",
+    icon: Radio,
+    fetcher: async () => fromGateway("#4fd1ff", "Starlink / Comms", (f) => f.properties.satelliteCategory === "starlink-comms")(await api.getLiveSatellites()),
+  },
+  {
+    key: "satellites-military-intel",
+    label: "Military / Intel",
+    group: "Space Tracking",
+    color: "#FF3D3D",
+    icon: Shield,
+    fetcher: async () => fromGateway("#FF3D3D", "Military / Intel", (f) => f.properties.satelliteCategory === "military-intel")(await api.getLiveSatellites()),
+  },
+  {
+    key: "satellites-gps-nav",
+    label: "GPS / Navigation",
+    group: "Space Tracking",
+    color: "#00E676",
+    icon: Navigation,
+    fetcher: async () => fromGateway("#00E676", "GPS / Navigation", (f) => f.properties.satelliteCategory === "gps-nav")(await api.getLiveSatellites()),
+  },
+  {
+    key: "satellites-earth-observation",
+    label: "Earth Observation",
+    group: "Space Tracking",
+    color: "#ffb020",
+    icon: Activity,
+    fetcher: async () => fromGateway("#ffb020", "Earth Observation", (f) => f.properties.satelliteCategory === "earth-observation")(await api.getLiveSatellites()),
+  },
+  {
+    key: "satellites-stations-telescopes",
+    label: "Stations / Telescopes",
+    group: "Space Tracking",
+    color: "#ffd23f",
+    icon: Telescope,
+    fetcher: async () => fromGateway("#ffd23f", "Stations / Telescopes", (f) => f.properties.satelliteCategory === "stations-telescopes")(await api.getLiveSatellites()),
+  },
   {
     key: "my-incidents",
     label: "My Incidents",
@@ -320,7 +385,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
 ];
 
-const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Infra", "Aviation", "Maritime", "My Data"];
+const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Infra", "Aviation", "Maritime", "Space Tracking", "My Data"];
 
 /** Major real global container-shipping trunk routes, drawn as arcs
  *  between the hub ports the backend's /maritime layer already lists.
@@ -436,6 +501,12 @@ export default function LiveIntelView() {
     "air-traffic-military": false,
     "malware-infrastructure": false,
     maritime: false,
+    "satellites-all": false,
+    "satellites-starlink-comms": false,
+    "satellites-military-intel": false,
+    "satellites-gps-nav": false,
+    "satellites-earth-observation": false,
+    "satellites-stations-telescopes": false,
     "my-incidents": false,
     "my-alerts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
