@@ -213,55 +213,86 @@ liveLayersRouter.get("/natural-events", async (c) => {
 });
 
 /** GDELT's GEO 2.0 API, in PointData mode: every geocoded news article
- *  worldwide from the last 24h matching this query, one point per distinct
+ *  worldwide from the last 24h matching a query, one point per distinct
  *  location. Free, keyless, but a shared public service — this is exactly
- *  the fixed query approach OSIRIS itself needs for a general "conflict
- *  events" layer (there's no single upstream endpoint for "all conflict
- *  events," only a search). `html` in GDELT's response is a ready-made
- *  link/snippet blob meant for direct display; it's stripped down to plain
- *  text here rather than passed through, since rendering arbitrary
- *  upstream HTML in the frontend would be an XSS surface for no real gain. */
+ *  the fixed query approach OSIRIS itself needs for a general "incidents"
+ *  layer (there's no single upstream endpoint for "all incidents," only a
+ *  search). `html` in GDELT's response is a ready-made link/snippet blob
+ *  meant for direct display; it's stripped down to plain text here rather
+ *  than passed through, since rendering arbitrary upstream HTML in the
+ *  frontend would be an XSS surface for no real gain. Shared by both
+ *  /conflict-events (a narrow, armed-conflict-specific query) and
+ *  /global-incidents (a deliberately broader one — see the comment there
+ *  for why that's GDELT too, rather than ACLED: ACLED's EULA blocks
+ *  exactly this app's use case — a commercial entity embedding it in its
+ *  own dashboard — without a paid corporate license). */
+async function fetchGdeltPoints(query: string): Promise<NormalizedFeature[]> {
+  const res = await fetch(
+    `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=PointData&format=geojson&timespan=24h`
+  );
+  if (!res.ok) throw new Error(`GDELT returned ${res.status}`);
+  const raw = (await res.json()) as {
+    features: Array<{
+      properties: { name?: string; count?: number; html?: string };
+      geometry: { type: string; coordinates: [number, number] };
+    }>;
+  };
+
+  const features: NormalizedFeature[] = [];
+  for (const [i, f] of raw.features.entries()) {
+    if (f.geometry?.type !== "Point") continue;
+    const [lon, lat] = f.geometry.coordinates;
+    const count = f.properties.count ?? 1;
+    const plainText = (f.properties.html ?? "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [lon, lat] },
+      properties: {
+        id: `${f.properties.name ?? "gdelt"}-${i}`,
+        title: f.properties.name ?? "Unnamed location",
+        time: null, // GDELT's PointData mode reports a 24h aggregate, not a per-point timestamp
+        // Reference ceiling picked empirically from typical daily GDELT
+        // point-count spread, same reasoning as the earthquake magnitude
+        // clamp above — an outlier hub city shouldn't flatten every
+        // other point's relative sizing to zero.
+        intensity: Math.max(0, Math.min(1, count / 40)),
+        intensityLabel: `${count} report${count === 1 ? "" : "s"}`,
+        detail: plainText.slice(0, 240),
+        url: null,
+      },
+    });
+  }
+  return features;
+}
+
 liveLayersRouter.get("/conflict-events", async (c) => {
   return cachedJson(c.req.raw, async () => {
-    const query = encodeURIComponent("conflict OR violence OR attack OR airstrike OR shelling OR clashes");
-    const res = await fetch(
-      `https://api.gdeltproject.org/api/v2/geo/geo?query=${query}&mode=PointData&format=geojson&timespan=24h`
-    );
-    if (!res.ok) throw new Error(`GDELT returned ${res.status}`);
-    const raw = (await res.json()) as {
-      features: Array<{
-        properties: { name?: string; count?: number; html?: string };
-        geometry: { type: string; coordinates: [number, number] };
-      }>;
-    };
+    const features = await fetchGdeltPoints("conflict OR violence OR attack OR airstrike OR shelling OR clashes");
+    return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+  });
+});
 
-    const features: NormalizedFeature[] = [];
-    for (const [i, f] of raw.features.entries()) {
-      if (f.geometry?.type !== "Point") continue;
-      const [lon, lat] = f.geometry.coordinates;
-      const count = f.properties.count ?? 1;
-      const plainText = (f.properties.html ?? "")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      features.push({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [lon, lat] },
-        properties: {
-          id: `${f.properties.name ?? "gdelt"}-${i}`,
-          title: f.properties.name ?? "Unnamed location",
-          time: null, // GDELT's PointData mode reports a 24h aggregate, not a per-point timestamp
-          // Reference ceiling picked empirically from typical daily GDELT
-          // point-count spread, same reasoning as the earthquake magnitude
-          // clamp above — an outlier hub city shouldn't flatten every
-          // other point's relative sizing to zero.
-          intensity: Math.max(0, Math.min(1, count / 40)),
-          intensityLabel: `${count} report${count === 1 ? "" : "s"}`,
-          detail: plainText.slice(0, 240),
-          url: null,
-        },
-      });
-    }
+/** OSIRIS's real THREATS & INTEL flyout has a "Global Incidents" row
+ *  alongside its (narrower) "GDELT Events" row. ACLED would be the more
+ *  obvious real source for a broad global-incidents feed, but its EULA
+ *  explicitly bars a commercial entity from using it in the entity's own
+ *  dashboard without a corporate license (checked directly against
+ *  acleddata.com/eula, not assumed) — exactly what this would be. So this
+ *  is a second, deliberately broader GDELT query instead: still real,
+ *  still keyless, still no license restriction, just a wider net (unrest,
+ *  disasters, crime, explosions — not only armed-conflict terms) than
+ *  /conflict-events casts. The two counts will legitimately differ from
+ *  whatever OSIRIS's own two rows show, same as every other layer in this
+ *  app that reproduces OSIRIS's UI structure with this app's own real,
+ *  independently-sourced data rather than its exact numbers. */
+liveLayersRouter.get("/global-incidents", async (c) => {
+  return cachedJson(c.req.raw, async () => {
+    const features = await fetchGdeltPoints(
+      "incident OR explosion OR protest OR unrest OR riot OR disaster OR accident OR crime OR terrorism OR emergency"
+    );
     return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
   });
 });
@@ -571,6 +602,217 @@ liveLayersRouter.get("/maritime", async (c) => {
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     86400 // 1 day — this is reference data, not a feed; nothing here changes minute to minute
+  );
+});
+
+/** Operating nuclear power stations worldwide — another static reference
+ *  dataset, same reasoning as MARITIME_PORTS above: there's no live,
+ *  keyless global feed for this (and nothing here would meaningfully
+ *  change minute to minute even if there were), so this reproduces real,
+ *  public facts instead of faking a live sensor network. Sourced from
+ *  Wikipedia's "List of nuclear power stations" (in turn drawn from the
+ *  IAEA's Power Reactor Information System), restricted to sites currently
+ *  listed as operating — under-construction and permanently-shut-down
+ *  sites are left out since OSIRIS's own "Nuclear Facilities" row reads as
+ *  current facilities, not a historical registry. Not an exhaustive IAEA
+ *  export, but a substantial, real, individually-verifiable list (173
+ *  sites) rather than a placeholder handful. */
+const NUCLEAR_FACILITIES: Array<{ name: string; country: string; lat: number; lng: number }> = [
+  { name: "Akademik Lomonosov", country: "RU", lat: 69.7097, lng: 170.3061 },
+  { name: "Almaraz", country: "ES", lat: 39.80806, lng: -5.69694 },
+  { name: "Angra", country: "BR", lat: -23.00833, lng: -44.47389 },
+  { name: "Arkansas Nuclear One", country: "US", lat: 35.31028, lng: -93.23139 },
+  { name: "Ascó", country: "ES", lat: 41.2, lng: 0.56944 },
+  { name: "Astravets", country: "BY", lat: 54.76194, lng: 26.12 },
+  { name: "Atucha", country: "AR", lat: -33.9675, lng: -59.205 },
+  { name: "Balakovo", country: "RU", lat: 52.09111, lng: 47.95528 },
+  { name: "Barakah", country: "AE", lat: 23.985, lng: 52.28361 },
+  { name: "Beaver Valley", country: "US", lat: 40.62333, lng: -80.43056 },
+  { name: "Belleville", country: "FR", lat: 47.50972, lng: 2.875 },
+  { name: "Beloyarsk", country: "RU", lat: 56.84167, lng: 61.3225 },
+  { name: "Beznau", country: "CH", lat: 47.55194, lng: 8.22778 },
+  { name: "Blayais", country: "FR", lat: 45.25583, lng: -0.69306 },
+  { name: "Bohunice", country: "SK", lat: 48.49444, lng: 17.68194 },
+  { name: "Borssele", country: "NL", lat: 51.43083, lng: 3.71833 },
+  { name: "Braidwood", country: "US", lat: 41.24361, lng: -88.22917 },
+  { name: "Browns Ferry", country: "US", lat: 34.70389, lng: -87.11861 },
+  { name: "Bruce", country: "CA", lat: 44.32528, lng: -81.59944 },
+  { name: "Brunswick", country: "US", lat: 33.95833, lng: -78.01028 },
+  { name: "Bugey", country: "FR", lat: 45.8, lng: 5.27083 },
+  { name: "Bushehr", country: "IR", lat: 28.82972, lng: 50.88611 },
+  { name: "Byron", country: "US", lat: 42.07417, lng: -89.28194 },
+  { name: "Callaway", country: "US", lat: 38.76167, lng: -91.78 },
+  { name: "Calvert Cliffs", country: "US", lat: 38.43194, lng: -76.44222 },
+  { name: "Catawba", country: "US", lat: 35.05167, lng: -81.07 },
+  { name: "Cattenom", country: "FR", lat: 49.41583, lng: 6.21806 },
+  { name: "Cernavodă", country: "RO", lat: 44.32222, lng: 28.05722 },
+  { name: "Changjiang", country: "CN", lat: 19.46028, lng: 108.9 },
+  { name: "Chashma", country: "PK", lat: 32.39028, lng: 71.4625 },
+  { name: "Chinon", country: "FR", lat: 47.23056, lng: 0.17056 },
+  { name: "Chooz", country: "FR", lat: 50.09, lng: 4.78944 },
+  { name: "Civaux", country: "FR", lat: 46.45667, lng: 0.65278 },
+  { name: "Clinton", country: "US", lat: 40.17222, lng: -88.835 },
+  { name: "Cofrentes", country: "ES", lat: 39.21667, lng: -1.05 },
+  { name: "Columbia", country: "US", lat: 46.47111, lng: -119.33389 },
+  { name: "Comanche Peak", country: "US", lat: 32.29833, lng: -97.785 },
+  { name: "Cooper", country: "US", lat: 40.36194, lng: -95.64139 },
+  { name: "Cruas", country: "FR", lat: 44.63306, lng: 4.75667 },
+  { name: "Dampierre", country: "FR", lat: 47.73306, lng: 2.51667 },
+  { name: "Darlington", country: "CA", lat: 43.87278, lng: -78.71972 },
+  { name: "Davis-Besse", country: "US", lat: 41.59667, lng: -83.08639 },
+  { name: "Daya Bay", country: "CN", lat: 22.59778, lng: 114.54361 },
+  { name: "Diablo Canyon", country: "US", lat: 35.21083, lng: -120.85611 },
+  { name: "Doel", country: "BE", lat: 51.32472, lng: 4.25861 },
+  { name: "Donald C. Cook", country: "US", lat: 41.97528, lng: -86.56583 },
+  { name: "Dresden", country: "US", lat: 41.38972, lng: -88.26806 },
+  { name: "Dukovany", country: "CZ", lat: 49.085, lng: 16.14889 },
+  { name: "Edwin I. Hatch", country: "US", lat: 31.93417, lng: -82.34389 },
+  { name: "Embalse", country: "AR", lat: -32.232, lng: -64.443 },
+  { name: "Fermi", country: "US", lat: 41.96278, lng: -83.2575 },
+  { name: "Fangchenggang", country: "CN", lat: 21.66667, lng: 108.56306 },
+  { name: "Fangjiashan", country: "CN", lat: 30.44139, lng: 120.94167 },
+  { name: "Flamanville", country: "FR", lat: 49.53639, lng: -1.88167 },
+  { name: "Forsmark", country: "SE", lat: 60.40333, lng: 18.16667 },
+  { name: "Fuqing", country: "CN", lat: 25.44417, lng: 119.44611 },
+  { name: "Genkai", country: "JP", lat: 33.51556, lng: 129.83722 },
+  { name: "Ginna", country: "US", lat: 43.27778, lng: -77.31 },
+  { name: "Gösgen", country: "CH", lat: 47.36583, lng: 7.96667 },
+  { name: "Golfech", country: "FR", lat: 44.10667, lng: 0.84528 },
+  { name: "Grand Gulf", country: "US", lat: 32.00667, lng: -91.04833 },
+  { name: "Gravelines", country: "FR", lat: 51.01528, lng: 2.13611 },
+  { name: "Haiyang", country: "CN", lat: 36.70917, lng: 121.38167 },
+  { name: "Hamaoka", country: "JP", lat: 34.62361, lng: 138.1425 },
+  { name: "Hanbit", country: "KR", lat: 35.415, lng: 126.42389 },
+  { name: "Hanul", country: "KR", lat: 37.09278, lng: 129.38361 },
+  { name: "Hartlepool", country: "GB", lat: 54.635, lng: -1.18083 },
+  { name: "H. B. Robinson", country: "US", lat: 34.40278, lng: -80.15833 },
+  { name: "Heysham", country: "GB", lat: 54.02889, lng: -2.91611 },
+  { name: "Higashidōri", country: "JP", lat: 41.18806, lng: 141.39028 },
+  { name: "Hongyanhe", country: "CN", lat: 39.79778, lng: 121.47194 },
+  { name: "Hope Creek", country: "US", lat: 39.46778, lng: -75.53806 },
+  { name: "Ikata", country: "JP", lat: 33.49083, lng: 132.31139 },
+  { name: "James A. FitzPatrick", country: "US", lat: 43.5233, lng: -76.3983 },
+  { name: "Joseph M. Farley", country: "US", lat: 31.22306, lng: -85.11167 },
+  { name: "Kalinin", country: "RU", lat: 57.90556, lng: 35.06028 },
+  { name: "Kaiga", country: "IN", lat: 14.86528, lng: 74.43944 },
+  { name: "Kakrapar", country: "IN", lat: 21.23861, lng: 73.35 },
+  { name: "Karachi", country: "PK", lat: 24.847167, lng: 66.78825 },
+  { name: "Kashiwazaki-Kariwa", country: "JP", lat: 37.42917, lng: 138.59528 },
+  { name: "Khmelnytskyi", country: "UA", lat: 50.30139, lng: 26.64972 },
+  { name: "Koeberg", country: "ZA", lat: -33.67639, lng: 18.43194 },
+  { name: "Kola", country: "RU", lat: 67.46667, lng: 32.46667 },
+  { name: "Kori", country: "KR", lat: 35.31694, lng: 129.3 },
+  { name: "Kozloduy", country: "BG", lat: 43.74611, lng: 23.77056 },
+  { name: "Krško", country: "SI", lat: 45.93833, lng: 15.51556 },
+  { name: "Kudankulam", country: "IN", lat: 8.16833, lng: 77.7125 },
+  { name: "Kursk", country: "RU", lat: 51.675, lng: 35.60556 },
+  { name: "Laguna Verde", country: "MX", lat: 19.72083, lng: -96.40639 },
+  { name: "LaSalle", country: "US", lat: 41.24556, lng: -88.66917 },
+  { name: "Leibstadt", country: "CH", lat: 47.60306, lng: 8.18472 },
+  { name: "Leningrad", country: "RU", lat: 59.84722, lng: 29.04361 },
+  { name: "Leningrad II", country: "RU", lat: 59.83056, lng: 29.05722 },
+  { name: "Limerick", country: "US", lat: 40.22667, lng: -75.58722 },
+  { name: "Ling Ao", country: "CN", lat: 22.60472, lng: 114.55139 },
+  { name: "Loviisa", country: "FI", lat: 60.37222, lng: 26.34722 },
+  { name: "McGuire", country: "US", lat: 35.4325, lng: -80.94833 },
+  { name: "Madras", country: "IN", lat: 12.5575, lng: 80.175 },
+  { name: "Metsamor", country: "AM", lat: 40.18083, lng: 44.14889 },
+  { name: "Mihama", country: "JP", lat: 35.70333, lng: 135.96333 },
+  { name: "Millstone", country: "US", lat: 41.31194, lng: -72.16861 },
+  { name: "Monticello", country: "US", lat: 45.33361, lng: -93.84917 },
+  { name: "Mochovce", country: "SK", lat: 48.26389, lng: 18.45694 },
+  { name: "Narora", country: "IN", lat: 28.15806, lng: 78.40944 },
+  { name: "Nine Mile Point", country: "US", lat: 43.52083, lng: -76.40694 },
+  { name: "Ningde", country: "CN", lat: 27.04611, lng: 120.28833 },
+  { name: "Nogent", country: "FR", lat: 48.51528, lng: 3.51778 },
+  { name: "North Anna", country: "US", lat: 38.06056, lng: -77.78944 },
+  { name: "Novovoronezh I", country: "RU", lat: 51.275, lng: 39.2 },
+  { name: "Novovoronezh II", country: "RU", lat: 51.277, lng: 39.203 },
+  { name: "Oconee", country: "US", lat: 34.79389, lng: -82.89806 },
+  { name: "Ōi", country: "JP", lat: 35.54056, lng: 135.65194 },
+  { name: "Olkiluoto", country: "FI", lat: 61.23694, lng: 21.44083 },
+  { name: "Onagawa", country: "JP", lat: 38.40111, lng: 141.49972 },
+  { name: "Oskarshamn", country: "SE", lat: 57.41556, lng: 16.67111 },
+  { name: "Paks", country: "HU", lat: 46.5725, lng: 18.85417 },
+  { name: "Palo Verde", country: "US", lat: 33.38917, lng: -112.865 },
+  { name: "Paluel", country: "FR", lat: 49.85806, lng: 0.63556 },
+  { name: "Penly", country: "FR", lat: 49.97667, lng: 1.21194 },
+  { name: "Peach Bottom", country: "US", lat: 39.75833, lng: -76.26806 },
+  { name: "Perry", country: "US", lat: 41.80083, lng: -81.14333 },
+  { name: "Pickering", country: "CA", lat: 43.81167, lng: -79.06583 },
+  { name: "Point Beach", country: "US", lat: 44.28111, lng: -87.53667 },
+  { name: "Point Lepreau", country: "CA", lat: 45.06889, lng: -66.45472 },
+  { name: "Prairie Island", country: "US", lat: 44.62167, lng: -92.63306 },
+  { name: "Qinshan", country: "CN", lat: 30.43556, lng: 120.95639 },
+  { name: "Quad Cities", country: "US", lat: 41.72639, lng: -90.31 },
+  { name: "Rajasthan", country: "IN", lat: 24.87222, lng: 75.61389 },
+  { name: "Ringhals", country: "SE", lat: 57.25972, lng: 12.11083 },
+  { name: "River Bend", country: "US", lat: 30.7567, lng: -91.333 },
+  { name: "Rivne", country: "UA", lat: 51.32778, lng: 25.89167 },
+  { name: "Rostov", country: "RU", lat: 47.59944, lng: 42.37194 },
+  { name: "Saint-Alban", country: "FR", lat: 45.40444, lng: 4.75444 },
+  { name: "Saint-Laurent", country: "FR", lat: 47.72, lng: 1.5775 },
+  { name: "Saint Lucie", country: "US", lat: 27.34861, lng: -80.24639 },
+  { name: "Salem", country: "US", lat: 39.46278, lng: -75.53556 },
+  { name: "Sanmen", country: "CN", lat: 29.10111, lng: 121.63972 },
+  { name: "Seabrook", country: "US", lat: 42.89889, lng: -70.85083 },
+  { name: "Sendai", country: "JP", lat: 31.83361, lng: 130.18972 },
+  { name: "Sequoyah", country: "US", lat: 35.22639, lng: -85.09167 },
+  { name: "Shearon Harris", country: "US", lat: 35.6333, lng: -78.955 },
+  { name: "Shidao Bay", country: "CN", lat: 36.9722, lng: 122.5289 },
+  { name: "Shika", country: "JP", lat: 37.06111, lng: 136.72639 },
+  { name: "Shimane", country: "JP", lat: 35.53833, lng: 132.99917 },
+  { name: "Sizewell B", country: "GB", lat: 52.21333, lng: 1.61861 },
+  { name: "Smolensk", country: "RU", lat: 54.16917, lng: 33.24667 },
+  { name: "South Texas", country: "US", lat: 28.79556, lng: -96.04889 },
+  { name: "South Ukraine", country: "UA", lat: 47.81667, lng: 31.21667 },
+  { name: "Surry", country: "US", lat: 37.16556, lng: -76.69778 },
+  { name: "Susquehanna", country: "US", lat: 41.08889, lng: -76.14889 },
+  { name: "Taishan", country: "CN", lat: 21.90944, lng: 112.97917 },
+  { name: "Takahama", country: "JP", lat: 35.52222, lng: 135.50472 },
+  { name: "Tarapur", country: "IN", lat: 19.82778, lng: 72.66111 },
+  { name: "Temelín", country: "CZ", lat: 49.18, lng: 14.37611 },
+  { name: "Tianwan", country: "CN", lat: 34.68694, lng: 119.45972 },
+  { name: "Tihange", country: "BE", lat: 50.53472, lng: 5.2725 },
+  { name: "Tokai", country: "JP", lat: 36.46639, lng: 140.60667 },
+  { name: "Tomari", country: "JP", lat: 43.03611, lng: 140.5125 },
+  { name: "Torness", country: "GB", lat: 55.96806, lng: -2.40917 },
+  { name: "Tricastin", country: "FR", lat: 44.32972, lng: 4.73222 },
+  { name: "Trillo", country: "ES", lat: 40.70111, lng: -2.62194 },
+  { name: "Tsuruga", country: "JP", lat: 35.67278, lng: 136.07722 },
+  { name: "Turkey Point", country: "US", lat: 25.43417, lng: -80.33056 },
+  { name: "Vandellòs", country: "ES", lat: 40.95139, lng: 0.86667 },
+  { name: "Virgil C. Summer", country: "US", lat: 34.29861, lng: -81.31472 },
+  { name: "Vogtle", country: "US", lat: 33.14306, lng: -81.76583 },
+  { name: "Waterford", country: "US", lat: 29.99528, lng: -90.47111 },
+  { name: "Watts Bar", country: "US", lat: 35.60278, lng: -84.78944 },
+  { name: "Wolf Creek", country: "US", lat: 38.23889, lng: -95.68889 },
+  { name: "Wolseong", country: "KR", lat: 35.71111, lng: 129.475 },
+  { name: "Yangjiang", country: "CN", lat: 21.70972, lng: 112.26056 },
+  { name: "Zaporizhzhia", country: "UA", lat: 47.51222, lng: 34.58583 },
+  { name: "Zhangzhou", country: "CN", lat: 23.8292, lng: 117.4917 },
+];
+
+liveLayersRouter.get("/nuclear-facilities", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const features: NormalizedFeature[] = NUCLEAR_FACILITIES.map((f) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [f.lng, f.lat] },
+        properties: {
+          id: `nuclear:${f.name}`,
+          title: f.name,
+          time: null,
+          intensity: 0.6,
+          intensityLabel: "Nuclear facility",
+          detail: f.country,
+          url: null,
+        },
+      }));
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    86400 // 1 day — reference data, same reasoning as /maritime
   );
 });
 

@@ -14,6 +14,7 @@ import {
   Navigation,
   Newspaper,
   Plane,
+  Radiation,
   Radio,
   Route as RouteGlyph,
   Rss,
@@ -21,6 +22,7 @@ import {
   Satellite,
   Shield,
   Ship,
+  Siren,
   Sun,
   Telescope,
   Waypoints,
@@ -96,9 +98,21 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  * mode switcher below, matching what OSIRIS's own 3D/2D/Map/Sat buttons do.
  *
  * Layer sourcing, and why each one either is or isn't here:
- *  - Earthquakes / Natural Events / Conflict Reports / Air Traffic: real
- *    public feeds (USGS, NASA EONET, GDELT, OpenSky), proxied and
- *    normalized by the backend's /api/live-layers gateway.
+ *  - Earthquakes / Active Fires / Severe Weather / GDELT Events / Air
+ *    Traffic / Satellites: real public feeds (USGS, NASA EONET, GDELT,
+ *    OpenSky, CelesTrak), proxied and normalized by the backend's
+ *    /api/live-layers gateway.
+ *  - Nuclear Facilities: another static reference dataset, same idea as
+ *    Maritime below — real operating nuclear power stations worldwide
+ *    (Wikipedia's list, itself drawn from the IAEA's PRIS registry), not a
+ *    live sensor feed, since nothing here changes minute to minute anyway.
+ *  - Global Incidents: OSIRIS's real flyout pairs this with GDELT Events,
+ *    and ACLED would be the obvious real source — but its EULA explicitly
+ *    bars a commercial entity from using it in the entity's own dashboard
+ *    without a paid corporate license (checked directly against
+ *    acleddata.com/eula), which is exactly this app's situation. This is a
+ *    second, deliberately broader GDELT query instead — real, keyless, no
+ *    licensing conflict, just covering more than armed-conflict terms.
  *  - Botnet C2s: abuse.ch's Feodo Tracker — a real, free, keyless,
  *    continuously-updated list of confirmed active botnet
  *    command-and-control servers. Labeled specifically as "Botnet C2s"
@@ -107,10 +121,15 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    itself be a proxy/bulletproof-hosting jurisdiction), not an
  *    "attack in progress" animation — those vendor map visuals are
  *    illustrative, not live telemetry, and this view only shows real data.
- *  - My Incidents / My Alerts: this account's own data, already scoped by
- *    the backend's normal auth (client/country restrictions apply exactly
- *    as they do everywhere else in the app) — reusing the existing
- *    /api/incidents and /api/alerts endpoints rather than a new route.
+ *    Not one of OSIRIS's own Threats & Intel rows, but a legitimate
+ *    addition of another already-integrated real feed.
+ *  - My Incidents / Live Alert Pins: this account's own data, already
+ *    scoped by the backend's normal auth (client/country restrictions
+ *    apply exactly as they do everywhere else in the app) — reusing the
+ *    existing /api/incidents and /api/alerts endpoints rather than a new
+ *    route. Live Alert Pins lives under Threats & Intel (matching OSIRIS's
+ *    real grouping), not My Data, even though it's the same per-account
+ *    alert data "My Alerts" always was.
  *  - Maritime: checked directly against OSIRIS's own open-source code
  *    (github.com/enzg/osiris-live) rather than assumed to have live AIS —
  *    it turns out OSIRIS's "Maritime" layer is itself a static reference
@@ -157,7 +176,7 @@ interface GlobePoint {
   url: string | null;
 }
 
-type LayerGroup = "Natural Hazards" | "Threats & Infra" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
+type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
 
 /** Icon + accent for a group's own rail button — every group renders
  *  through the same flyout treatment now (see LayerPanel/GroupRailButton),
@@ -167,7 +186,9 @@ const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
   // CloudLightning matches a direct screenshot of OSIRIS's own rail icon
   // for this group (a cloud-with-lightning glyph, not a generic pulse icon).
   "Natural Hazards": { icon: CloudLightning, color: HUD.alertOrange },
-  "Threats & Infra": { icon: AlertTriangle, color: HUD.alertRed },
+  // Real label ("Threats & Intel", not "Threats & Infra") confirmed
+  // directly from a screenshot of OSIRIS's own flyout header.
+  "Threats & Intel": { icon: AlertTriangle, color: HUD.alertRed },
   Aviation: { icon: Plane, color: HUD.cyan },
   Maritime: { icon: Ship, color: "#00BCD4" },
   "Space Tracking": { icon: Satellite, color: "#9d7bff" },
@@ -229,11 +250,77 @@ const LAYER_DEFS: LayerDef[] = [
     icon: CloudLightning,
     fetcher: async () => fromGateway("#4fd1ff", "Severe Weather", (f) => f.properties.naturalHazardCategory === "severe-weather")(await api.getLiveNaturalEvents()),
   },
-  { key: "conflict-events", label: "Conflict Reports", group: "Threats & Infra", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
+  // Four real rows below match OSIRIS's own "THREATS & INTEL" flyout
+  // (confirmed directly from a screenshot: NUCLEAR FACILITIES / GLOBAL
+  // INCIDENTS / LIVE ALERT PINS / GDELT EVENTS), each backed by genuinely
+  // real, sourced data rather than a guess at what OSIRIS's own numbers
+  // mean:
+  {
+    key: "nuclear-facilities",
+    label: "Nuclear Facilities",
+    group: "Threats & Intel",
+    color: "#7CFC00",
+    icon: Radiation,
+    fetcher: async () => fromGateway("#7CFC00", "Nuclear Facilities")(await api.getLiveNuclearFacilities()),
+  },
+  // ACLED (the obvious real source for a broad "global incidents" feed)
+  // is deliberately not used here — its EULA bars a commercial entity
+  // from using it in the entity's own dashboard without a paid corporate
+  // license (checked directly against acleddata.com/eula), which is
+  // exactly this app's situation. This is a second, differently-scoped
+  // GDELT query instead — see the backend's /global-incidents route
+  // comment for the exact query — still real, still keyless, no
+  // licensing conflict.
+  {
+    key: "global-incidents",
+    label: "Global Incidents",
+    group: "Threats & Intel",
+    color: "#ff9d4f",
+    icon: Siren,
+    fetcher: async () => fromGateway("#ff9d4f", "Global Incidents")(await api.getLiveGlobalIncidents()),
+  },
+  {
+    key: "live-alert-pins",
+    label: "Live Alert Pins",
+    group: "Threats & Intel",
+    color: "#ffd23f",
+    icon: Bell,
+    fetcher: async () => {
+      // Same real per-query alert data "My Alerts" always used (see
+      // below) — regrouped and relabeled here to match OSIRIS's real
+      // "Live Alert Pins" row living under Threats & Intel rather than a
+      // separate "My Data" group.
+      const queries = await api.getQueries();
+      const perQuery = await Promise.allSettled(queries.map((q) => api.getAlerts({ query_id: q.id, status: "open" })));
+      const rows = perQuery.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+      const out: GlobePoint[] = [];
+      for (const r of rows) {
+        if (r.geo_lat == null || r.geo_lng == null) continue;
+        out.push({
+          id: r.id,
+          layerKey: "Live Alert Pins",
+          lat: r.geo_lat,
+          lng: r.geo_lng,
+          color: "#ffd23f",
+          size: 0.18,
+          title: r.title,
+          subtitle: r.geo_label ?? r.level,
+          time: r.created_at,
+          url: null,
+        });
+      }
+      return out;
+    },
+  },
+  { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
+  // Not one of OSIRIS's own 4 rows — a real, legitimate addition of
+  // another already-integrated threat-intel feed (same reasoning as the
+  // shipping-lane arcs added to Maritime: genuinely useful real data,
+  // clearly not claimed to be something OSIRIS itself has).
   {
     key: "malware-infrastructure",
     label: "Botnet C2 Servers",
-    group: "Threats & Infra",
+    group: "Threats & Intel",
     color: "#ff4fa3",
     icon: Shield,
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
@@ -369,46 +456,9 @@ const LAYER_DEFS: LayerDef[] = [
       return out;
     },
   },
-  {
-    key: "my-alerts",
-    label: "My Alerts",
-    group: "My Data",
-    color: "#ffd23f",
-    icon: Bell,
-    fetcher: async () => {
-      // /api/alerts requires a query_id for anyone who isn't an admin (the
-      // same restriction QueryDashboard.tsx already works within — alerts
-      // are always fetched in the context of one monitoring query there).
-      // A bare status-only fetch 400s for a regular account, which is
-      // exactly what this layer was doing before: it only ever worked for
-      // an admin. Fetching the user's own queries first and merging each
-      // one's alerts respects that same per-query ownership model instead
-      // of trying to bypass it.
-      const queries = await api.getQueries();
-      const perQuery = await Promise.allSettled(queries.map((q) => api.getAlerts({ query_id: q.id, status: "open" })));
-      const rows = perQuery.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
-      const out: GlobePoint[] = [];
-      for (const r of rows) {
-        if (r.geo_lat == null || r.geo_lng == null) continue;
-        out.push({
-          id: r.id,
-          layerKey: "My Alerts",
-          lat: r.geo_lat,
-          lng: r.geo_lng,
-          color: "#ffd23f",
-          size: 0.18,
-          title: r.title,
-          subtitle: r.geo_label ?? r.level,
-          time: r.created_at,
-          url: null,
-        });
-      }
-      return out;
-    },
-  },
 ];
 
-const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Infra", "Aviation", "Maritime", "Space Tracking", "My Data"];
+const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
 
 /** Major real global container-shipping trunk routes, drawn as arcs
  *  between the hub ports the backend's /maritime layer already lists.
@@ -520,6 +570,9 @@ export default function LiveIntelView() {
     "active-fires": true,
     "severe-weather": true,
     "conflict-events": true,
+    "nuclear-facilities": false,
+    "global-incidents": false,
+    "live-alert-pins": false,
     "air-traffic-commercial": false,
     "air-traffic-private": false,
     "air-traffic-military": false,
@@ -532,7 +585,6 @@ export default function LiveIntelView() {
     "satellites-earth-observation": false,
     "satellites-stations-telescopes": false,
     "my-incidents": false,
-    "my-alerts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
     // chokepoints) — this toggles the shipping-lane arcs (SHIPPING_LANES)
     // instead, matching OSIRIS's own real product having a separate
