@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import Globe, { type GlobeMethods } from "react-globe.gl";
+import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
+import { BASEMAPS } from "./mapConstants";
 
 /**
  * "Live Intelligence" — a new, separate view rather than a restyle of the
  * existing (light) dashboards/choropleth. Modeled on OSIRIS's own dark HUD
- * aesthetic (osirisai.live): a rotating 3D globe, a real day/night
- * terminator, monospace status readouts, and a toggleable layer rail
- * instead of a fixed legend. Nothing here touches IncidentsMap/
- * IncidentSearch or their data.
+ * aesthetic (osirisai.live): a grouped, toggleable layer panel on the left,
+ * a rotating 3D globe (or a flat 2D/Map/Sat projection, switchable) with a
+ * real day/night terminator, and monospace status readouts. Nothing here
+ * touches IncidentsMap/IncidentSearch or their data.
  *
  * Layer sourcing, and why each one either is or isn't here:
  *  - Earthquakes / Natural Events / Conflict Reports / Air Traffic: real
@@ -31,17 +34,13 @@ import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
  *    (github.com/enzg/osiris-live) rather than assumed to have live AIS —
  *    it turns out OSIRIS's "Maritime" layer is itself a static reference
  *    dataset (major ports, naval bases, shipping chokepoints with real
- *    published stats), refreshed once a day, zero external API calls. This
- *    reproduces that same kind of dataset rather than chasing a live-AIS
- *    parity that was never actually there. A genuine live-AIS layer stays
- *    a possible future upgrade (would need a registered key, e.g.
- *    aisstream.io, plus a Durable Object to hold its WebSocket open).
- *  - Deliberately NOT included, despite being on OSIRIS's own toggle list:
- *    live CCTV (aggregating public/private cameras without consent is a
- *    surveillance capability this app isn't going to carry, independent of
- *    whether a feed for it exists). Submarine cables: a real open dataset
- *    exists but wasn't confirmed reachable in time for this pass — a
- *    reasonable fast-follow.
+ *    published stats), refreshed once a day, zero external API calls.
+ *  - Deliberately NOT included: live CCTV, and the "Recon Toolkit" /
+ *    "Marauder" style device-scanning tools OSIRIS's own UI shows — those
+ *    are active reconnaissance/surveillance capabilities, not data layers,
+ *    and this app isn't going to carry them regardless of whether a
+ *    backend exists to power them. Submarine cables: a real open dataset
+ *    exists but wasn't confirmed reachable in time for this pass.
  */
 
 interface GlobePoint {
@@ -57,9 +56,12 @@ interface GlobePoint {
   url: string | null;
 }
 
+type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Aviation" | "Maritime" | "My Data";
+
 interface LayerDef {
   key: string;
   label: string;
+  group: LayerGroup;
   color: string;
   fetcher: () => Promise<GlobePoint[]>;
 }
@@ -86,25 +88,28 @@ function fromGateway(color: string, label: string) {
 }
 
 const LAYER_DEFS: LayerDef[] = [
-  { key: "earthquakes", label: "Earthquakes", color: "#ff5d5d", fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
-  { key: "natural-events", label: "Natural Events", color: "#ffb020", fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
-  { key: "conflict-events", label: "Conflict Reports", color: "#7c9cff", fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
-  { key: "air-traffic", label: "Air Traffic", color: "#2fe0c8", fetcher: async () => fromGateway("#2fe0c8", "Air Traffic")(await api.getLiveAirTraffic()) },
+  { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
+  { key: "natural-events", label: "Active Fires & Storms", group: "Natural Hazards", color: "#ffb020", fetcher: async () => fromGateway("#ffb020", "Natural Events")(await api.getLiveNaturalEvents()) },
+  { key: "conflict-events", label: "Conflict Reports", group: "Threats & Intel", color: "#7c9cff", fetcher: async () => fromGateway("#7c9cff", "Conflict Reports")(await api.getLiveConflictEvents()) },
   {
     key: "malware-infrastructure",
-    label: "Botnet C2s",
+    label: "Botnet C2 Servers",
+    group: "Threats & Intel",
     color: "#ff4fa3",
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
   },
+  { key: "air-traffic", label: "Air Traffic", group: "Aviation", color: "#2fe0c8", fetcher: async () => fromGateway("#2fe0c8", "Air Traffic")(await api.getLiveAirTraffic()) },
   {
     key: "maritime",
-    label: "Maritime",
+    label: "Ports, Bases & Chokepoints",
+    group: "Maritime",
     color: "#3fd0ff",
     fetcher: async () => fromGateway("#3fd0ff", "Maritime")(await api.getLiveMaritime()),
   },
   {
     key: "my-incidents",
     label: "My Incidents",
+    group: "My Data",
     color: "#ff9de2",
     fetcher: async () => {
       const rows = await api.getIncidents({ limit: 2000 });
@@ -130,6 +135,7 @@ const LAYER_DEFS: LayerDef[] = [
   {
     key: "my-alerts",
     label: "My Alerts",
+    group: "My Data",
     color: "#ffd23f",
     fetcher: async () => {
       const rows = await api.getAlerts({ status: "open" });
@@ -154,13 +160,19 @@ const LAYER_DEFS: LayerDef[] = [
   },
 ];
 
+const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Aviation", "Maritime", "My Data"];
+
 /** Major real global container-shipping trunk routes, drawn as arcs
  *  between the hub ports the backend's /maritime layer already lists.
  *  OSIRIS itself has no shipping-lane rendering at all (checked directly
  *  against its source — no lane/route code exists there, and its "ship"
  *  layer is wired to a backend field that's never actually populated), so
  *  this isn't matching something OSIRIS has; it's a legitimate addition of
- *  well-known real trade routes, tied to the same Maritime toggle. */
+ *  well-known real trade routes, tied to the same Maritime toggle. Only
+ *  drawn in 3D mode — a flat equirectangular Polyline through these same
+ *  raw coordinates would visibly wrap the wrong way around the antimeridian
+ *  on several of these Pacific-crossing routes, which is worse than not
+ *  showing them there at all. */
 const SHIPPING_LANES: { points: [number, number][]; label: string }[] = [
   { points: [[31.23, 121.47], [33.74, -118.27]], label: "Transpacific — Shanghai–Los Angeles" },
   { points: [[35.10, 129.04], [33.74, -118.27]], label: "Transpacific — Busan–Los Angeles" },
@@ -173,6 +185,7 @@ const SHIPPING_LANES: { points: [number, number][]; label: string }[] = [
 const POLL_MS = 60_000;
 
 type LayerState = { data: GlobePoint[] | null; loading: boolean; error: string | null };
+type MapMode = "3d" | "2d" | "map" | "sat";
 
 /** Standard low-precision solar position formula (accurate to well within
  *  a degree — the same approach used by widely-deployed day/night
@@ -283,6 +296,7 @@ export default function LiveIntelView() {
     "my-incidents": false,
     "my-alerts": false,
   });
+  const [mapMode, setMapMode] = useState<MapMode>("3d");
   const [layers, setLayers] = useState<Record<string, LayerState>>(() =>
     Object.fromEntries(LAYER_DEFS.map((d) => [d.key, { data: null, loading: true, error: null }]))
   );
@@ -303,12 +317,13 @@ export default function LiveIntelView() {
   }, []);
 
   useEffect(() => {
+    if (mapMode !== "3d") return;
     const controls = globeRef.current?.controls?.();
     if (controls) {
       controls.autoRotate = true;
       controls.autoRotateSpeed = 0.35;
     }
-  }, [size]);
+  }, [size, mapMode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -359,56 +374,83 @@ export default function LiveIntelView() {
         fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
       }}
     >
-      <HudToolbar
-        defs={LAYER_DEFS}
-        enabled={enabled}
-        layers={layers}
-        onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))}
-      />
-
       <div ref={containerRef} style={{ position: "relative", flex: 1 }}>
-        <Globe
-          ref={globeRef}
-          width={size.width}
-          height={size.height}
-          backgroundColor="#000308"
-          globeMaterial={dayNightMaterial ?? undefined}
-          globeImageUrl={dayNightMaterial ? undefined : "//unpkg.com/three-globe/example/img/earth-night.jpg"}
-          showAtmosphere
-          atmosphereColor="#5d8cff"
-          atmosphereAltitude={0.18}
-          pointsData={points}
-          pointLat={(d: object) => (d as GlobePoint).lat}
-          pointLng={(d: object) => (d as GlobePoint).lng}
-          pointColor={(d: object) => (d as GlobePoint).color}
-          pointRadius={(d: object) => (d as GlobePoint).size}
-          pointAltitude={0.002}
-          pointResolution={16}
-          pathsData={enabled.maritime ? SHIPPING_LANES : []}
-          pathPoints={(d: object) => (d as { points: [number, number][] }).points}
-          pathPointLat={(p: unknown) => (p as [number, number])[0]}
-          pathPointLng={(p: unknown) => (p as [number, number])[1]}
-          pathColor={() => "#3fd0ff"}
-          pathLabel={(d: object) => (d as { label: string }).label}
-          pathStroke={0.4}
-          pathDashLength={0.4}
-          pathDashGap={0.2}
-          pathDashAnimateTime={6000}
-          pathTransitionDuration={0}
-          pointLabel={(d: object) => {
-            const p = d as GlobePoint;
-            return `<div style="font-family:monospace;font-size:12px;max-width:220px">
-              <b>${escapeHtml(p.title)}</b><br/>
-              <span style="opacity:0.75">${escapeHtml(p.layerKey)}</span><br/>
-              ${escapeHtml(p.subtitle)}
-              ${p.time ? `<br/>${new Date(p.time).toLocaleString()}` : ""}
-            </div>`;
-          }}
-        />
+        {mapMode === "3d" ? (
+          <Globe
+            ref={globeRef}
+            width={size.width}
+            height={size.height}
+            backgroundColor="#000308"
+            globeMaterial={dayNightMaterial ?? undefined}
+            globeImageUrl={dayNightMaterial ? undefined : "//unpkg.com/three-globe/example/img/earth-night.jpg"}
+            showAtmosphere
+            atmosphereColor="#5d8cff"
+            atmosphereAltitude={0.18}
+            pointsData={points}
+            pointLat={(d: object) => (d as GlobePoint).lat}
+            pointLng={(d: object) => (d as GlobePoint).lng}
+            pointColor={(d: object) => (d as GlobePoint).color}
+            pointRadius={(d: object) => (d as GlobePoint).size}
+            pointAltitude={0.002}
+            pointResolution={16}
+            pathsData={enabled.maritime ? SHIPPING_LANES : []}
+            pathPoints={(d: object) => (d as { points: [number, number][] }).points}
+            pathPointLat={(p: unknown) => (p as [number, number])[0]}
+            pathPointLng={(p: unknown) => (p as [number, number])[1]}
+            pathColor={() => "#3fd0ff"}
+            pathLabel={(d: object) => (d as { label: string }).label}
+            pathStroke={0.4}
+            pathDashLength={0.4}
+            pathDashGap={0.2}
+            pathDashAnimateTime={6000}
+            pathTransitionDuration={0}
+            pointLabel={(d: object) => {
+              const p = d as GlobePoint;
+              return `<div style="font-family:monospace;font-size:12px;max-width:220px">
+                <b>${escapeHtml(p.title)}</b><br/>
+                <span style="opacity:0.75">${escapeHtml(p.layerKey)}</span><br/>
+                ${escapeHtml(p.subtitle)}
+                ${p.time ? `<br/>${new Date(p.time).toLocaleString()}` : ""}
+              </div>`;
+            }}
+          />
+        ) : (
+          <FlatMap mode={mapMode} points={points} />
+        )}
 
+        <LayerPanel defs={LAYER_DEFS} enabled={enabled} layers={layers} onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))} />
+        <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
         <StatusBar totalFeatures={points.length} clock={clock} />
       </div>
     </div>
+  );
+}
+
+/** The flat-projection modes (2D / Map / Sat) reuse the same Leaflet stack
+ *  already powering IncidentsMap/IncidentSearch elsewhere in this app,
+ *  rather than trying to make three-globe fake a flat view — it's a real
+ *  2D map, not a globe photographed from directly above. "2D" and "Map"
+ *  both use street-style tiles (2D dark, Map light) — Sat uses satellite
+ *  imagery, matching what the three style buttons mean on OSIRIS itself. */
+function FlatMap({ mode, points }: { mode: Exclude<MapMode, "3d">; points: GlobePoint[] }) {
+  const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
+  return (
+    <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump style={{ height: "100%", width: "100%", background: "#000308" }}>
+      <TileLayer url={tile.url} attribution={tile.attribution} />
+      {points.map((p) => (
+        <CircleMarker key={`${p.layerKey}:${p.id}`} center={[p.lat, p.lng]} radius={3 + p.size * 18} pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}>
+          <LeafletTooltip direction="top">
+            <div style={{ fontFamily: "monospace", fontSize: 12 }}>
+              <b>{p.title}</b>
+              <br />
+              <span style={{ opacity: 0.7 }}>{p.layerKey}</span>
+              <br />
+              {p.subtitle}
+            </div>
+          </LeafletTooltip>
+        </CircleMarker>
+      ))}
+    </MapContainer>
   );
 }
 
@@ -416,7 +458,12 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }
 
-function HudToolbar({
+/** Grouped, collapsible left-side toggle panel — OSIRIS's own layout, one
+ *  card per category with a switch + live count per row, rather than the
+ *  earlier flat row of chips. Kept as plain CSS toggles (not a heavier
+ *  component) since this can hold a couple dozen rows and needs to stay
+ *  fast to click through. */
+function LayerPanel({
   defs,
   enabled,
   layers,
@@ -427,68 +474,174 @@ function HudToolbar({
   layers: Record<string, LayerState>;
   onToggle: (key: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const byGroup = useMemo(() => {
+    const map = new Map<LayerGroup, LayerDef[]>();
+    for (const def of defs) {
+      if (!map.has(def.group)) map.set(def.group, []);
+      map.get(def.group)!.push(def);
+    }
+    return map;
+  }, [defs]);
+
   return (
     <div
       style={{
+        position: "absolute",
+        top: 12,
+        left: 12,
+        zIndex: 500,
+        width: 240,
+        maxHeight: "calc(100% - 90px)",
+        overflowY: "auto",
         display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "10px 16px",
-        borderBottom: "1px solid rgba(124,156,255,0.18)",
-        background: "linear-gradient(180deg, #05070d, #000308)",
-        flexWrap: "wrap",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "#7c9cff", fontWeight: 700, padding: "2px 4px 4px" }}>
+        Live Intelligence
+      </div>
+
+      {GROUP_ORDER.map((group) => {
+        const rows = byGroup.get(group);
+        if (!rows || rows.length === 0) return null;
+        const isCollapsed = collapsed[group];
+        return (
+          <div key={group} style={{ background: "rgba(6,10,18,0.82)", border: "1px solid rgba(124,156,255,0.18)", borderRadius: 8, backdropFilter: "blur(4px)", overflow: "hidden" }}>
+            <button
+              onClick={() => setCollapsed((prev) => ({ ...prev, [group]: !prev[group] }))}
+              style={{
+                width: "100%",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "7px 10px",
+                background: "transparent",
+                border: "none",
+                borderBottom: isCollapsed ? "none" : "1px solid rgba(124,156,255,0.12)",
+                color: "#9fb3d9",
+                fontSize: 10.5,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                fontFamily: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              {group}
+              <span style={{ opacity: 0.5 }}>{isCollapsed ? "▸" : "▾"}</span>
+            </button>
+            {!isCollapsed &&
+              rows.map((def) => {
+                const state = layers[def.key];
+                const isOn = enabled[def.key];
+                const count = state?.data?.length ?? 0;
+                return (
+                  <button
+                    key={def.key}
+                    onClick={() => onToggle(def.key)}
+                    title={state?.error ?? undefined}
+                    style={{
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 10px",
+                      background: "transparent",
+                      border: "none",
+                      borderTop: "1px solid rgba(124,156,255,0.06)",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                    }}
+                  >
+                    <ToggleSwitch on={isOn} color={def.color} />
+                    <span style={{ flex: 1, fontSize: 12, color: isOn ? "#eef3ff" : "#7f8ea3" }}>{def.label}</span>
+                    <span style={{ fontSize: 11, color: state?.error ? "#ff5d5d" : "#7f8ea3" }}>
+                      {state?.loading ? "…" : state?.error ? "ERR" : count}
+                    </span>
+                  </button>
+                );
+              })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToggleSwitch({ on, color }: { on: boolean; color: string }) {
+  return (
+    <span
+      style={{
+        position: "relative",
+        width: 26,
+        height: 14,
+        borderRadius: 999,
+        background: on ? `${color}44` : "rgba(255,255,255,0.12)",
+        border: `1px solid ${on ? color : "rgba(255,255,255,0.2)"}`,
+        flexShrink: 0,
+        transition: "background 0.15s",
       }}
     >
       <span
         style={{
-          fontSize: 11,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
-          color: "#7c9cff",
-          fontWeight: 700,
-          marginRight: 4,
+          position: "absolute",
+          top: 1,
+          left: on ? 12 : 1,
+          width: 10,
+          height: 10,
+          borderRadius: "50%",
+          background: on ? color : "#8a97ab",
+          transition: "left 0.15s",
         }}
-      >
-        Live Intelligence
-      </span>
+      />
+    </span>
+  );
+}
 
-      {defs.map((def) => {
-        const state = layers[def.key];
-        const isOn = enabled[def.key];
-        const count = state?.data?.length;
-        return (
-          <button
-            key={def.key}
-            onClick={() => onToggle(def.key)}
-            title={state?.error ?? undefined}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              padding: "5px 10px",
-              borderRadius: 999,
-              border: `1px solid ${isOn ? def.color : "rgba(215,228,242,0.25)"}`,
-              background: isOn ? `${def.color}22` : "transparent",
-              color: isOn ? "#eef3ff" : "#7f8ea3",
-              cursor: "pointer",
-              fontFamily: "inherit",
-            }}
-          >
-            <span
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: state?.error ? "#ff5d5d" : def.color,
-                opacity: isOn ? 1 : 0.35,
-              }}
-            />
-            {def.label}
-            <span style={{ opacity: 0.65 }}>{state?.loading ? "…" : state?.error ? "ERR" : (count ?? 0)}</span>
-          </button>
-        );
-      })}
+function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapMode) => void }) {
+  const options: { key: MapMode; label: string }[] = [
+    { key: "3d", label: "3D" },
+    { key: "2d", label: "2D" },
+    { key: "map", label: "Map" },
+    { key: "sat", label: "Sat" },
+  ];
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 12,
+        bottom: 44,
+        zIndex: 500,
+        display: "flex",
+        gap: 2,
+        background: "rgba(6,10,18,0.82)",
+        border: "1px solid rgba(124,156,255,0.18)",
+        borderRadius: 8,
+        padding: 3,
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      {options.map((opt) => (
+        <button
+          key={opt.key}
+          onClick={() => onChange(opt.key)}
+          style={{
+            fontSize: 11,
+            padding: "5px 10px",
+            borderRadius: 6,
+            border: "none",
+            background: mode === opt.key ? "#7c9cff33" : "transparent",
+            color: mode === opt.key ? "#eef3ff" : "#7f8ea3",
+            fontWeight: mode === opt.key ? 700 : 400,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          }}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -500,6 +653,7 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
         position: "absolute",
         left: 12,
         bottom: 12,
+        zIndex: 500,
         display: "flex",
         gap: 16,
         fontSize: 11,
@@ -509,7 +663,6 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
         borderRadius: 6,
         padding: "6px 12px",
         backdropFilter: "blur(4px)",
-        zIndex: 500,
       }}
     >
       <span>
