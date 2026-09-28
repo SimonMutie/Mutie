@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as THREE from "three";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { feature } from "topojson-client";
+import type { Topology, GeometryCollection } from "topojson-specification";
+import worldTopology from "world-atlas/countries-110m.json?url";
 import { api, type LiveLayerCollection, type LiveLayerFeature } from "../api";
 import { BASEMAPS } from "./mapConstants";
 
@@ -10,9 +12,19 @@ import { BASEMAPS } from "./mapConstants";
  * "Live Intelligence" — a new, separate view rather than a restyle of the
  * existing (light) dashboards/choropleth. Modeled on OSIRIS's own dark HUD
  * aesthetic (osirisai.live): a grouped, toggleable layer panel on the left,
- * a rotating 3D globe (or a flat 2D/Map/Sat projection, switchable) with a
- * real day/night terminator, and monospace status readouts. Nothing here
- * touches IncidentsMap/IncidentSearch or their data.
+ * a rotating 3D globe (or a flat 2D/Map/Sat projection, switchable) with
+ * crisp country-level boundary lines, and monospace status readouts.
+ * Nothing here touches IncidentsMap/IncidentSearch or their data.
+ *
+ * The 3D globe deliberately does NOT use a photographic/satellite Earth
+ * texture — that's a "Sat" look, and OSIRIS's own 3D view is a dark
+ * data-vis map (flat black sphere, thin white national borders, a subtle
+ * lat/lng graticule), not imagery. Country outlines come from the same
+ * world-atlas topology already bundled for the choropleth/GlobeWidget
+ * elsewhere in this app (world-atlas/countries-110m.json), rendered as
+ * three-globe polygons with a transparent fill and a visible stroke only —
+ * "Sat" as an actual satellite photo basemap is reserved for the flat 2D
+ * mode switcher below, matching what OSIRIS's own 3D/2D/Map/Sat buttons do.
  *
  * Layer sourcing, and why each one either is or isn't here:
  *  - Earthquakes / Natural Events / Conflict Reports / Air Traffic: real
@@ -187,102 +199,27 @@ const POLL_MS = 60_000;
 type LayerState = { data: GlobePoint[] | null; loading: boolean; error: string | null };
 type MapMode = "3d" | "2d" | "map" | "sat";
 
-/** Standard low-precision solar position formula (accurate to well within
- *  a degree — the same approach used by widely-deployed day/night
- *  terminator visualizations), used to point the globe's shader at the
- *  real current subsolar point rather than a fixed or fake light source. */
-function subsolarDirection(date: Date): THREE.Vector3 {
-  const rad = Math.PI / 180;
-  const jd = date.getTime() / 86400000 + 2440587.5;
-  const d = jd - 2451545.0;
-  const g = (357.529 + 0.98560028 * d) * rad;
-  const q = 280.459 + 0.98564736 * d;
-  const L = (q + 1.915 * Math.sin(g) + 0.02 * Math.sin(2 * g)) * rad;
-  const e = (23.439 - 0.00000036 * d) * rad;
-  const RA = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / rad;
-  const decl = Math.asin(Math.sin(e) * Math.sin(L)) / rad;
-  const gmst = (280.46061837 + 360.98564736629 * d) % 360;
-  const lng = (((RA - gmst) % 360) + 540) % 360 - 180;
-  const lat = decl;
-
-  // Same lat/lng -> unit-sphere convention three-globe itself uses.
-  const phi = (90 - lat) * rad;
-  const theta = (lng + 180) * rad;
-  return new THREE.Vector3(-Math.sin(phi) * Math.cos(theta), Math.cos(phi), Math.sin(phi) * Math.sin(theta)).normalize();
-}
-
-/** A day/night globe material: the same day and night Earth textures used
- *  elsewhere in this app's globe widget, blended per-fragment by how much
- *  each point on the sphere currently faces the sun. Because the blend
- *  uses the mesh's own model matrix, it stays correct as the globe
- *  auto-rotates — no per-frame camera bookkeeping needed, only a periodic
- *  update to the sun direction itself as real time passes. */
-function useDayNightMaterial() {
-  const [material, setMaterial] = useState<THREE.ShaderMaterial | null>(null);
-  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
-
+/** Country border polygons for the 3D globe — same world-atlas topology and
+ *  topojson-client conversion GlobeWidget already uses for its choropleth,
+ *  loaded independently here since this view is code-split from that one
+ *  and shouldn't need to import a whole other component to reuse a JSON
+ *  file. Fetched once; never changes at runtime. */
+function useCountryBorders(): GeoJSON.Feature[] | null {
+  const [features, setFeatures] = useState<GeoJSON.Feature[] | null>(null);
   useEffect(() => {
     let cancelled = false;
-    const loader = new THREE.TextureLoader();
-    loader.setCrossOrigin("anonymous");
-    Promise.all([
-      loader.loadAsync("//unpkg.com/three-globe/example/img/earth-blue-marble.jpg"),
-      loader.loadAsync("//unpkg.com/three-globe/example/img/earth-night.jpg"),
-    ]).then(([dayTexture, nightTexture]) => {
-      if (cancelled) return;
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          dayTexture: { value: dayTexture },
-          nightTexture: { value: nightTexture },
-          sunDirection: { value: subsolarDirection(new Date()) },
-        },
-        vertexShader: `
-          varying vec3 vWorldNormal;
-          varying vec2 vUv;
-          void main() {
-            vWorldNormal = normalize(mat3(modelMatrix) * normal);
-            vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          uniform sampler2D dayTexture;
-          uniform sampler2D nightTexture;
-          uniform vec3 sunDirection;
-          varying vec3 vWorldNormal;
-          varying vec2 vUv;
-          void main() {
-            float intensity = dot(normalize(vWorldNormal), normalize(sunDirection));
-            vec4 dayColor = texture2D(dayTexture, vUv);
-            vec4 nightColor = texture2D(nightTexture, vUv) * vec4(0.55, 0.6, 0.8, 1.0);
-            float blend = smoothstep(-0.15, 0.15, intensity);
-            gl_FragColor = mix(nightColor, dayColor, blend);
-          }
-        `,
+    fetch(worldTopology)
+      .then((r) => r.json())
+      .then((topo: Topology) => {
+        if (cancelled) return;
+        const collection = feature(topo, topo.objects.countries as GeometryCollection) as unknown as GeoJSON.FeatureCollection;
+        setFeatures(collection.features);
       });
-      materialRef.current = mat;
-      setMaterial(mat);
-    }).catch((err) => {
-      // Falls back to the plain night-texture globeImageUrl below (material
-      // stays null) rather than leaving an unhandled rejection — a texture
-      // CDN hiccup should degrade the view, not crash it.
-      console.warn("Live Intel: day/night textures failed to load, falling back to static night globe", err);
-    });
     return () => {
       cancelled = true;
     };
   }, []);
-
-  // Real time passing, not the render loop — the sun moves on the order of
-  // minutes, so there's nothing to gain from updating this every frame.
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (materialRef.current) materialRef.current.uniforms.sunDirection.value = subsolarDirection(new Date());
-    }, 60_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return material;
+  return features;
 }
 
 export default function LiveIntelView() {
@@ -304,7 +241,7 @@ export default function LiveIntelView() {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const dayNightMaterial = useDayNightMaterial();
+  const countryBorders = useCountryBorders();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -381,11 +318,21 @@ export default function LiveIntelView() {
             width={size.width}
             height={size.height}
             backgroundColor="#000308"
-            globeMaterial={dayNightMaterial ?? undefined}
-            globeImageUrl={dayNightMaterial ? undefined : "//unpkg.com/three-globe/example/img/earth-night.jpg"}
+            globeImageUrl={null}
+            showGlobe
+            showGraticules
             showAtmosphere
             atmosphereColor="#5d8cff"
             atmosphereAltitude={0.18}
+            polygonsData={countryBorders ?? []}
+            polygonCapColor={() => "rgba(10,16,28,0.55)"}
+            polygonSideColor={() => "rgba(0,0,0,0.2)"}
+            polygonStrokeColor={() => "rgba(210,225,255,0.55)"}
+            polygonAltitude={0.001}
+            polygonLabel={(f: object) => {
+              const name = (f as GeoJSON.Feature).properties?.name as string | undefined;
+              return name ? `<div style="font-family:monospace;font-size:12px">${escapeHtml(name)}</div>` : "";
+            }}
             pointsData={points}
             pointLat={(d: object) => (d as GlobePoint).lat}
             pointLng={(d: object) => (d as GlobePoint).lng}
