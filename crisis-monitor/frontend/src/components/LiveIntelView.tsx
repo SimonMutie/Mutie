@@ -154,6 +154,17 @@ interface GlobePoint {
 
 type LayerGroup = "Natural Hazards" | "Threats & Infra" | "Aviation" | "Maritime" | "My Data";
 
+/** Icon + accent for a group's own rail button, shown when the group has
+ *  more than one layer (see LayerPanel/GroupRailButton — a single-layer
+ *  group just renders that one layer's own icon directly instead). */
+const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
+  "Natural Hazards": { icon: Activity, color: HUD.alertOrange },
+  "Threats & Infra": { icon: AlertTriangle, color: HUD.alertRed },
+  Aviation: { icon: Plane, color: HUD.cyan },
+  Maritime: { icon: Ship, color: "#00BCD4" },
+  "My Data": { icon: Bell, color: HUD.gold },
+};
+
 interface LayerDef {
   key: string;
   label: string;
@@ -163,25 +174,27 @@ interface LayerDef {
   fetcher: () => Promise<GlobePoint[]>;
 }
 
-function fromGateway(color: string, label: string) {
+function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeature) => boolean) {
   return (collection: LiveLayerCollection): GlobePoint[] =>
-    collection.features.map((f: LiveLayerFeature) => ({
-      id: f.properties.id,
-      layerKey: label,
-      lat: f.geometry.coordinates[1],
-      lng: f.geometry.coordinates[0],
-      color,
-      // OSIRIS's own points render as tiny flat 2D circles (roughly 3-9px,
-      // via MapLibre) — three-globe's pointsData markers are real 3D
-      // discs, which read as chunky next to that at any size much above
-      // this. Kept small and in a narrow range on purpose to match that
-      // crisp, minimal feel rather than the bigger default scale.
-      size: 0.1 + f.properties.intensity * 0.16,
-      title: f.properties.title,
-      subtitle: `${f.properties.intensityLabel}${f.properties.detail ? ` — ${f.properties.detail}` : ""}`,
-      time: f.properties.time,
-      url: f.properties.url,
-    }));
+    collection.features
+      .filter((f) => (predicate ? predicate(f) : true))
+      .map((f: LiveLayerFeature) => ({
+        id: f.properties.id,
+        layerKey: label,
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        color,
+        // OSIRIS's own points render as tiny flat 2D circles (roughly 3-9px,
+        // via MapLibre) — three-globe's pointsData markers are real 3D
+        // discs, which read as chunky next to that at any size much above
+        // this. Kept small and in a narrow range on purpose to match that
+        // crisp, minimal feel rather than the bigger default scale.
+        size: 0.1 + f.properties.intensity * 0.16,
+        title: f.properties.title,
+        subtitle: `${f.properties.intensityLabel}${f.properties.detail ? ` — ${f.properties.detail}` : ""}`,
+        time: f.properties.time,
+        url: f.properties.url,
+      }));
 }
 
 const LAYER_DEFS: LayerDef[] = [
@@ -196,7 +209,39 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Shield,
     fetcher: async () => fromGateway("#ff4fa3", "Botnet C2 Infrastructure")(await api.getLiveMalwareInfrastructure()),
   },
-  { key: "air-traffic", label: "Air Traffic", group: "Aviation", color: "#2fe0c8", icon: Plane, fetcher: async () => fromGateway("#2fe0c8", "Air Traffic")(await api.getLiveAirTraffic()) },
+  // Three real, sourced categories rather than OSIRIS's full four — see
+  // classifyAviation() on the backend (liveLayers.ts) for exactly what
+  // each one can and can't actually tell apart, and why "Private Jets"
+  // specifically isn't split out from general aviation (it would need a
+  // per-aircraft type lookup, infeasible at this data volume on an
+  // anonymous, rate-limited OpenSky quota). All three share the same
+  // underlying OpenSky fetch — the backend's own cache (15 min TTL, one
+  // shared entry for every viewer) means three client-side calls to the
+  // same endpoint don't cost three times the upstream credit budget.
+  {
+    key: "air-traffic-commercial",
+    label: "Commercial",
+    group: "Aviation",
+    color: "#2fe0c8",
+    icon: Plane,
+    fetcher: async () => fromGateway("#2fe0c8", "Commercial Flights", (f) => f.properties.aviationClass === "commercial")(await api.getLiveAirTraffic()),
+  },
+  {
+    key: "air-traffic-private",
+    label: "Private",
+    group: "Aviation",
+    color: "#00E676",
+    icon: Plane,
+    fetcher: async () => fromGateway("#00E676", "Private Aircraft", (f) => f.properties.aviationClass === "private")(await api.getLiveAirTraffic()),
+  },
+  {
+    key: "air-traffic-military",
+    label: "Military",
+    group: "Aviation",
+    color: "#FF3D3D",
+    icon: Shield,
+    fetcher: async () => fromGateway("#FF3D3D", "Military Aircraft", (f) => f.properties.aviationClass === "military")(await api.getLiveAirTraffic()),
+  },
   {
     key: "maritime",
     label: "Ports, Bases & Chokepoints",
@@ -382,7 +427,9 @@ export default function LiveIntelView() {
     earthquakes: true,
     "natural-events": true,
     "conflict-events": true,
-    "air-traffic": false,
+    "air-traffic-commercial": false,
+    "air-traffic-private": false,
+    "air-traffic-military": false,
     "malware-infrastructure": false,
     maritime: false,
     "my-incidents": false,
@@ -663,6 +710,13 @@ export default function LiveIntelView() {
           enabled={enabled}
           layers={layers}
           onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))}
+          onToggleGroup={(group, nextOn) =>
+            setEnabled((prev) => {
+              const next = { ...prev };
+              for (const def of LAYER_DEFS) if (def.group === group) next[def.key] = nextOn;
+              return next;
+            })
+          }
           maritimeLinesOn={enabled["maritime-lines"]}
           maritimeLinesCount={SHIPPING_LANES.length}
           onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
@@ -826,6 +880,7 @@ function LayerPanel({
   enabled,
   layers,
   onToggle,
+  onToggleGroup,
   maritimeLinesOn,
   maritimeLinesCount,
   onToggleMaritimeLines,
@@ -834,6 +889,7 @@ function LayerPanel({
   enabled: Record<string, boolean>;
   layers: Record<string, LayerState>;
   onToggle: (key: string) => void;
+  onToggleGroup: (group: LayerGroup, nextOn: boolean) => void;
   maritimeLinesOn: boolean;
   maritimeLinesCount: number;
   onToggleMaritimeLines: () => void;
@@ -861,67 +917,203 @@ function LayerPanel({
             ...(gi > 0 ? { borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 } : {}),
           }}
         >
-          {rows.map((def) => {
-            const state = layers[def.key];
-            const isOn = enabled[def.key];
-            const count = state?.data?.length ?? 0;
-            const Icon = def.icon;
-            const hasError = Boolean(state?.error);
-            return (
-              <button
-                key={def.key}
-                onClick={() => onToggle(def.key)}
-                title={`${def.label}${hasError ? ` — ${state?.error}` : isOn ? ` — ${count.toLocaleString()} tracked` : " — off"}`}
-                style={{
-                  position: "relative",
-                  width: 42,
-                  height: 38,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  background: isOn ? "rgba(212,175,55,0.14)" : "transparent",
-                  border: "none",
-                  borderRadius: 8,
-                  cursor: "pointer",
-                  transition: "background 0.15s",
-                }}
-              >
-                <Icon size={17} color={isOn ? def.color : HUD.textMuted} strokeWidth={isOn ? 2.25 : 1.75} />
-                {isOn && count > 0 && !hasError && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: 2,
-                      right: 2,
-                      minWidth: 15,
-                      height: 15,
-                      padding: "0 3px",
-                      borderRadius: 999,
-                      background: HUD.cyan,
-                      color: "#04121a",
-                      fontSize: 9,
-                      fontWeight: 800,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      lineHeight: 1,
-                      boxShadow: "0 0 6px rgba(0,229,255,0.5)",
-                    }}
-                  >
-                    {count > 99 ? "99+" : count}
-                  </span>
-                )}
-                {isOn && state?.loading && (
-                  <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.textMuted }} />
-                )}
-                {hasError && (
-                  <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.alertRed, boxShadow: `0 0 6px ${HUD.alertRed}99` }} />
-                )}
-              </button>
-            );
-          })}
+          {rows.length === 1 ? (
+            <LayerRailButton def={rows[0]} state={layers[rows[0].key]} isOn={enabled[rows[0].key]} onToggle={() => onToggle(rows[0].key)} />
+          ) : (
+            <GroupRailButton
+              group={rows[0].group}
+              rows={rows}
+              enabled={enabled}
+              layers={layers}
+              onToggle={onToggle}
+              onToggleAll={(nextOn) => onToggleGroup(rows[0].group, nextOn)}
+            />
+          )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** A single layer's own rail button — no group flyout, since there's
+ *  nothing else in its group to list. Direct click toggles it. Factored
+ *  out of LayerPanel so the same badge/error/loading treatment is shared
+ *  with GroupRailButton's per-row buttons below rather than duplicated. */
+function LayerRailButton({ def, state, isOn, onToggle }: { def: LayerDef; state: LayerState | undefined; isOn: boolean; onToggle: () => void }) {
+  const count = state?.data?.length ?? 0;
+  const Icon = def.icon;
+  const hasError = Boolean(state?.error);
+  return (
+    <button
+      onClick={onToggle}
+      title={`${def.label}${hasError ? ` — ${state?.error}` : isOn ? ` — ${count.toLocaleString()} tracked` : " — off"}`}
+      style={{
+        position: "relative",
+        width: 42,
+        height: 38,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: isOn ? "rgba(212,175,55,0.14)" : "transparent",
+        border: "none",
+        borderRadius: 8,
+        cursor: "pointer",
+        transition: "background 0.15s",
+      }}
+    >
+      <Icon size={17} color={isOn ? def.color : HUD.textMuted} strokeWidth={isOn ? 2.25 : 1.75} />
+      {isOn && count > 0 && !hasError && (
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            right: 2,
+            minWidth: 15,
+            height: 15,
+            padding: "0 3px",
+            borderRadius: 999,
+            background: HUD.cyan,
+            color: "#04121a",
+            fontSize: 9,
+            fontWeight: 800,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            lineHeight: 1,
+            boxShadow: "0 0 6px rgba(0,229,255,0.5)",
+          }}
+        >
+          {count > 99 ? "99+" : count}
+        </span>
+      )}
+      {isOn && state?.loading && (
+        <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.textMuted }} />
+      )}
+      {hasError && (
+        <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.alertRed, boxShadow: `0 0 6px ${HUD.alertRed}99` }} />
+      )}
+    </button>
+  );
+}
+
+/** A group's rail button — one icon standing in for several layers, exactly
+ *  matching a direct screenshot of OSIRIS's own AVIATION flyout: hovering
+ *  opens a card with the group name, an "ALL" enable/disable-everything
+ *  button, a close (×), and one row per layer (its own icon, toggle, and
+ *  live count). The rail icon itself shows the group's combined live count
+ *  across whichever of its layers are on, so the rail stays informative
+ *  even with the flyout closed. */
+function GroupRailButton({
+  group,
+  rows,
+  enabled,
+  layers,
+  onToggle,
+  onToggleAll,
+}: {
+  group: LayerGroup;
+  rows: LayerDef[];
+  enabled: Record<string, boolean>;
+  layers: Record<string, LayerState>;
+  onToggle: (key: string) => void;
+  onToggleAll: (nextOn: boolean) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const meta = GROUP_META[group];
+  const GroupIcon = meta.icon;
+  const activeRows = rows.filter((d) => enabled[d.key]);
+  const allActive = activeRows.length === rows.length;
+  const totalCount = activeRows.reduce((sum, d) => sum + (layers[d.key]?.data?.length ?? 0), 0);
+
+  return (
+    <div style={{ position: "relative" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button
+        onClick={() => onToggleAll(!allActive)}
+        title={`${group}${activeRows.length ? ` — ${activeRows.length}/${rows.length} on` : " — off"}`}
+        style={{
+          position: "relative",
+          width: 42,
+          height: 38,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: activeRows.length > 0 ? "rgba(212,175,55,0.14)" : "transparent",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+          transition: "background 0.15s",
+        }}
+      >
+        <GroupIcon size={17} color={activeRows.length > 0 ? meta.color : HUD.textMuted} strokeWidth={activeRows.length > 0 ? 2.25 : 1.75} />
+        {activeRows.length > 0 && totalCount > 0 && (
+          <span
+            style={{
+              position: "absolute",
+              top: 2,
+              right: 2,
+              minWidth: 15,
+              height: 15,
+              padding: "0 3px",
+              borderRadius: 999,
+              background: HUD.cyan,
+              color: "#04121a",
+              fontSize: 9,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              lineHeight: 1,
+              boxShadow: "0 0 6px rgba(0,229,255,0.5)",
+            }}
+          >
+            {totalCount > 99 ? "99+" : totalCount}
+          </span>
+        )}
+      </button>
+      {hovered && (
+        <div style={{ ...glassPanel(), position: "absolute", left: "100%", top: 0, marginLeft: 8, width: 220, padding: 10, zIndex: 600 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>{group}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                onClick={() => onToggleAll(!allActive)}
+                style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontSize: 9.5, letterSpacing: "0.1em", fontWeight: 700, color: allActive ? meta.color : HUD.textMuted, fontFamily: "inherit" }}
+              >
+                ALL
+              </button>
+              <button onClick={() => setHovered(false)} style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0, display: "flex" }}>
+                <CloseGlyph size={13} />
+              </button>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {rows.map((def) => {
+              const state = layers[def.key];
+              const isOn = enabled[def.key];
+              const count = state?.data?.length ?? 0;
+              const Icon = def.icon;
+              return (
+                <button
+                  key={def.key}
+                  onClick={() => onToggle(def.key)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", padding: "3px 0", fontFamily: "inherit", textAlign: "left" }}
+                >
+                  <LayerToggleSwitch on={isOn} />
+                  <Icon size={13} color={isOn ? def.color : HUD.textMuted} />
+                  <span style={{ flex: 1, fontSize: 11, color: isOn ? HUD.textPrimary : HUD.textSecondary }}>{def.label}</span>
+                  {state?.error ? (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: HUD.alertRed }}>ERR</span>
+                  ) : (
+                    <span style={{ fontSize: 10, fontWeight: 700, fontVariantNumeric: "tabular-nums", color: isOn ? def.color : HUD.textMuted }}>
+                      {state?.loading ? "…" : count.toLocaleString()}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

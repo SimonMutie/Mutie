@@ -39,6 +39,10 @@ interface NormalizedFeature {
     intensityLabel: string;
     detail: string;
     url: string | null;
+    /** Air-traffic only — see the classifier just above the /air-traffic
+     *  route for exactly what each value means and how confident it is.
+     *  Every other layer leaves this undefined. */
+    aviationClass?: "commercial" | "private" | "military";
   };
 }
 
@@ -239,6 +243,45 @@ liveLayersRouter.get("/conflict-events", async (c) => {
 
 const AIR_TRAFFIC_TTL_SECONDS = 900; // 15 min
 
+/** Real, sourced (not invented) signals for splitting OpenSky's one global
+ *  feed into Commercial / Private / Military, used by the frontend's
+ *  Aviation group. Each function documents exactly what it can and can't
+ *  actually tell — this is deliberately NOT a "Private Jets" 4th category:
+ *  telling a business jet apart from an ordinary private aircraft needs a
+ *  real aircraft-type lookup (make/model), which would mean one API call
+ *  per aircraft against OpenSky's separate metadata endpoint — completely
+ *  infeasible against thousands of aircraft on an anonymous, rate-limited
+ *  quota, so that split isn't attempted rather than being faked.
+ *
+ *  - Military: icao24 falls in the ICAO24 address block the US DoD is
+ *    documented to use (0xADF000–0xAFFFFF — cross-checked against real
+ *    assigned military tail numbers, e.g. AE219D/ADFD74/AE2B43, published
+ *    by live-mobile-mode-s.eu's own military Mode-S registry for the US).
+ *    This only ever catches broadcasting US military aircraft in this one
+ *    documented block — most military aircraft worldwide don't broadcast
+ *    ADS-B at all, and no comparably well-documented public block exists
+ *    for other countries' forces, so this is a real but partial signal,
+ *    not a claim of global military coverage.
+ *  - Commercial: callsign matches the standard ICAO scheduled-flight
+ *    callsign shape (ICAO Doc 8585's 3-letter operator designator + a
+ *    numeric flight number, e.g. "UAL2451") — a real, standardized
+ *    convention, not a guess, and one that doesn't depend on an airline
+ *    code allowlist that could itself be wrong or incomplete.
+ *  - Everything else (an aircraft registration as its own callsign, like
+ *    "N12345" or "G-ABCD", or no callsign at all) is general aviation —
+ *    labeled "Private" here, business jets included. */
+const US_MILITARY_ICAO24_MIN = 0xadf000;
+const US_MILITARY_ICAO24_MAX = 0xafffff;
+const COMMERCIAL_CALLSIGN_RE = /^[A-Z]{3}\d{1,4}[A-Z]?$/;
+
+function classifyAviation(icao24: string, callsign: string | null): "commercial" | "private" | "military" {
+  const hex = Number.parseInt(icao24, 16);
+  if (!Number.isNaN(hex) && hex >= US_MILITARY_ICAO24_MIN && hex <= US_MILITARY_ICAO24_MAX) return "military";
+  const trimmed = callsign?.trim().toUpperCase() ?? "";
+  if (COMMERCIAL_CALLSIGN_RE.test(trimmed)) return "commercial";
+  return "private";
+}
+
 /** OpenSky Network's anonymous (keyless) global state vector snapshot.
  *  Anonymous accounts get a much smaller daily credit budget than a
  *  registered account would, and a full-globe query costs several credits
@@ -303,6 +346,7 @@ liveLayersRouter.get("/air-traffic", async (c) => {
             intensityLabel: velocity != null ? `${Math.round(speedKts)} kt` : "in flight",
             detail: originCountry,
             url: null,
+            aviationClass: classifyAviation(icao24, callsign),
           },
         });
       }

@@ -593,6 +593,10 @@ export interface LiveLayerFeature {
     intensityLabel: string;
     detail: string;
     url: string | null;
+    /** Air-traffic only — see the backend's classifyAviation() for exactly
+     *  what each value means and how it's derived. Undefined on every
+     *  other layer. */
+    aviationClass?: "commercial" | "private" | "military";
   };
 }
 
