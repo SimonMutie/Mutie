@@ -244,7 +244,11 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     key: "maritime",
-    label: "Ports, Bases & Chokepoints",
+    // OSIRIS's own real label for this layer (a screenshot of its
+    // MARITIME group flyout shows "MARITIME / NAVAL" as the one row) —
+    // this app's data is still the same real static reference set (major
+    // ports, naval bases, shipping chokepoints), just named to match.
+    label: "Maritime / Naval",
     group: "Maritime",
     color: "#3fd0ff",
     icon: Anchor,
@@ -863,18 +867,16 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }
 
-/** Left-side layer panel — rebuilt as OSIRIS's own collapsed icon rail
- *  (its real left sidebar, seen icon-only) rather than the wide labeled
- *  list this view first shipped: one small square button per layer,
- *  vertically stacked in group order, each an icon (colored + filled when
- *  the layer is on, muted outline when off) with a small cyan badge
- *  showing its live feature count — badge appears only once the layer is
- *  both on and has data, exactly matching the reference screenshot (an
- *  off/empty layer shows a bare icon, no badge). Clicking a button toggles
- *  that layer; the label lives in the native title tooltip since there's
- *  no room for text in an icon-only rail. A thin gold hairline separates
- *  each layer group, standing in for OSIRIS's own group boundaries without
- *  needing full header rows at this width. */
+/** Left-side layer panel — OSIRIS's own collapsed icon rail (its real left
+ *  sidebar, seen icon-only) rather than the wide labeled list this view
+ *  first shipped: one group per rail icon, vertically stacked in group
+ *  order. Every group — even a group with only one real layer, like
+ *  Maritime — renders through the same GroupRailButton: a live-count badge
+ *  on the rail icon itself, and hovering opens a flyout with the group
+ *  name, an "ALL" enable/disable-everything button, a close (×), and one
+ *  toggle+count row per layer, matching direct screenshots of OSIRIS's own
+ *  AVIATION and MARITIME flyouts down to that one-row-is-still-a-flyout
+ *  detail. A thin gold hairline separates each group in the rail. */
 function LayerPanel({
   defs,
   enabled,
@@ -917,82 +919,17 @@ function LayerPanel({
             ...(gi > 0 ? { borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 } : {}),
           }}
         >
-          {rows.length === 1 ? (
-            <LayerRailButton def={rows[0]} state={layers[rows[0].key]} isOn={enabled[rows[0].key]} onToggle={() => onToggle(rows[0].key)} />
-          ) : (
-            <GroupRailButton
-              group={rows[0].group}
-              rows={rows}
-              enabled={enabled}
-              layers={layers}
-              onToggle={onToggle}
-              onToggleAll={(nextOn) => onToggleGroup(rows[0].group, nextOn)}
-            />
-          )}
+          <GroupRailButton
+            group={rows[0].group}
+            rows={rows}
+            enabled={enabled}
+            layers={layers}
+            onToggle={onToggle}
+            onToggleAll={(nextOn) => onToggleGroup(rows[0].group, nextOn)}
+          />
         </div>
       ))}
     </div>
-  );
-}
-
-/** A single layer's own rail button — no group flyout, since there's
- *  nothing else in its group to list. Direct click toggles it. Factored
- *  out of LayerPanel so the same badge/error/loading treatment is shared
- *  with GroupRailButton's per-row buttons below rather than duplicated. */
-function LayerRailButton({ def, state, isOn, onToggle }: { def: LayerDef; state: LayerState | undefined; isOn: boolean; onToggle: () => void }) {
-  const count = state?.data?.length ?? 0;
-  const Icon = def.icon;
-  const hasError = Boolean(state?.error);
-  return (
-    <button
-      onClick={onToggle}
-      title={`${def.label}${hasError ? ` — ${state?.error}` : isOn ? ` — ${count.toLocaleString()} tracked` : " — off"}`}
-      style={{
-        position: "relative",
-        width: 42,
-        height: 38,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: isOn ? "rgba(212,175,55,0.14)" : "transparent",
-        border: "none",
-        borderRadius: 8,
-        cursor: "pointer",
-        transition: "background 0.15s",
-      }}
-    >
-      <Icon size={17} color={isOn ? def.color : HUD.textMuted} strokeWidth={isOn ? 2.25 : 1.75} />
-      {isOn && count > 0 && !hasError && (
-        <span
-          style={{
-            position: "absolute",
-            top: 2,
-            right: 2,
-            minWidth: 15,
-            height: 15,
-            padding: "0 3px",
-            borderRadius: 999,
-            background: HUD.cyan,
-            color: "#04121a",
-            fontSize: 9,
-            fontWeight: 800,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            lineHeight: 1,
-            boxShadow: "0 0 6px rgba(0,229,255,0.5)",
-          }}
-        >
-          {count > 99 ? "99+" : count}
-        </span>
-      )}
-      {isOn && state?.loading && (
-        <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.textMuted }} />
-      )}
-      {hasError && (
-        <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: "50%", background: HUD.alertRed, boxShadow: `0 0 6px ${HUD.alertRed}99` }} />
-      )}
-    </button>
   );
 }
 
