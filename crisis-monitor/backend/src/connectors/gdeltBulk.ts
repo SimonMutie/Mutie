@@ -16,10 +16,14 @@ import type { Env } from "../bindings";
  * already tracks non-African hotspots (Ukraine, Myanmar, etc.) via GDELT,
  * and Global Incidents/Conflict Events are both advertised as global layers
  * — scoping ingestion to Africa would silently break those. What keeps row
- * volume manageable instead is a content filter: only CAMEO QuadClass 3
- * ("Verbal Conflict") and 4 ("Material Conflict") events are kept, since
- * that's the actual signal all three of these features are looking for —
- * most GDELT events are routine/cooperative and irrelevant to them anyway.
+ * volume manageable instead is a content filter: a row is kept if it's
+ * CAMEO QuadClass 3 ("Verbal Conflict") or 4 ("Material Conflict") coded,
+ * OR its AvgTone is sharply negative (see TONE_OVERRIDE_THRESHOLD) — the
+ * tone check exists because CAMEO coding needs a clearly identified pair of
+ * actors interacting, which plenty of real conflict coverage doesn't have
+ * (an unattributed drone strike, an accident, a disaster), so QuadClass
+ * alone would silently drop it. Most GDELT events are routine/cooperative
+ * and irrelevant to these features either way.
  *
  * What this does NOT replace: Social Listening's arbitrary boolean-query
  * search. GDELT's bulk export/GKG files carry structured event fields only
@@ -51,6 +55,14 @@ const EXPORT_COLUMN_COUNT = 61;
 // than each redefining "conflict-toned" slightly differently.
 export const TONE_OVERRIDE_THRESHOLD = -5;
 export const BROAD_CONFLICT_SQL = `(quad_class >= 3 OR avg_tone <= ${TONE_OVERRIDE_THRESHOLD})`;
+// Conflict Events' own "material conflict only" narrowing (QuadClass >= 4)
+// has the exact same blind spot: an attack with no identified actor pair —
+// a drone strike, an unattributed bombing — often can't get CAMEO-coded as
+// a Material Conflict interaction at all, whatever actually happened on the
+// ground. Same tone-override fix, just layered on top of the stricter
+// QuadClass floor rather than replacing it, so this stays the narrower of
+// the two feeds (see queryBulkEvents' doc comment).
+export const STRICT_CONFLICT_SQL = `(quad_class >= 4 OR avg_tone <= ${TONE_OVERRIDE_THRESHOLD})`;
 
 // Column indices in GDELT's Event Export CSV (tab-separated, no header) —
 // this exact 61-column layout has been stable since the 2.0 format launched
@@ -239,18 +251,18 @@ interface BulkEventRow {
   date_added: string;
 }
 
-/** Reads back ingested events for the map layers — `minQuadClass: 4` for a
- *  narrower "material conflict only" feed (Conflict Events, precision over
- *  recall on purpose), `minQuadClass: 3` for the broader net (Global
- *  Incidents, Activity Index — uses BROAD_CONFLICT_SQL, so it also picks up
- *  the sharply-negative-tone rows that a strict QuadClass check would miss),
- *  omitted for no filter at all. */
+/** Reads back ingested events for the map layers — `minQuadClass: 4` for the
+ *  narrower feed (Conflict Events — uses STRICT_CONFLICT_SQL: QuadClass >= 4
+ *  OR sharply negative tone, so an unattributed attack with no coded actor
+ *  pair still shows up), `minQuadClass: 3` for the broader net (Global
+ *  Incidents, Activity Index — BROAD_CONFLICT_SQL, same tone override on top
+ *  of a lower QuadClass floor), omitted for no filter at all. */
 export async function queryBulkEvents(env: Env, opts: { hours: number; minQuadClass?: number }): Promise<BulkEventPoint[]> {
   const cutoff = toGdeltTimestamp(new Date(Date.now() - opts.hours * 60 * 60 * 1000));
   const base = "SELECT id, lat, lon, place_name, goldstein, num_mentions, avg_tone, quad_class, source_url, date_added FROM gdelt_bulk_events WHERE date_added >= ?";
   const stmt =
     opts.minQuadClass === 4
-      ? env.DB.prepare(`${base} AND quad_class >= 4 ORDER BY date_added DESC LIMIT 2000`).bind(cutoff)
+      ? env.DB.prepare(`${base} AND ${STRICT_CONFLICT_SQL} ORDER BY date_added DESC LIMIT 2000`).bind(cutoff)
       : opts.minQuadClass
         ? env.DB.prepare(`${base} AND ${BROAD_CONFLICT_SQL} ORDER BY date_added DESC LIMIT 2000`).bind(cutoff)
         : env.DB.prepare(`${base} ORDER BY date_added DESC LIMIT 2000`).bind(cutoff);
