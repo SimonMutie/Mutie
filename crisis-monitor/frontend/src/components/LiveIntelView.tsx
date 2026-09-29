@@ -14,6 +14,7 @@ import {
   Hexagon,
   Landmark,
   MapPin,
+  Megaphone,
   Mountain,
   Navigation,
   Network,
@@ -56,6 +57,7 @@ import {
   type SavedShape,
   type SavedRoute,
   type EconomicIndicators,
+  type SocialListeningResult,
 } from "../api";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -580,7 +582,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | null;
+type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | null;
 type DrawMode = "distance" | "area" | null;
 
 /** [lat, lng] tuples throughout the drawing/route tools — matches how a
@@ -755,6 +757,29 @@ export default function LiveIntelView() {
       .catch((err) => setEconError(err instanceof Error ? err.message : "World Bank feed unavailable"))
       .finally(() => setEconLoading(false));
   }, [activeTool, econData, econLoading]);
+
+  // --- Social Listening tool: keyword-driven, not auto-polled — a search
+  // box, not a fixed feed, since there's no single "right" keyword to
+  // watch by default. See socialListening.ts for the source breakdown
+  // (GDELT tone/volume + optional Mastodon posts). ---
+  const [listenQuery, setListenQuery] = useState("");
+  const [listenResult, setListenResult] = useState<SocialListeningResult | null>(null);
+  const [listenLoading, setListenLoading] = useState(false);
+  const [listenError, setListenError] = useState<string | null>(null);
+  function runSocialListening(query: string) {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setListenLoading(true);
+    setListenError(null);
+    api
+      .getSocialListening(trimmed)
+      .then((r) => {
+        setListenResult(r);
+        setListenError(null);
+      })
+      .catch((err) => setListenError(err instanceof Error ? err.message : "Social listening feed unavailable"))
+      .finally(() => setListenLoading(false));
+  }
 
   // --- Incidents tool: search/filter the same incident set "My Incidents"
   // polls, plus the Add/Bulk-upload intake modal. ---
@@ -1274,6 +1299,16 @@ export default function LiveIntelView() {
         )}
         {activeTool === "economy" && (
           <EconomicIndicatorsPanel data={econData} loading={econLoading} error={econError} sortKey={econSortKey} onSortKeyChange={setEconSortKey} />
+        )}
+        {activeTool === "listen" && (
+          <SocialListeningPanel
+            query={listenQuery}
+            onQueryChange={setListenQuery}
+            onSearch={() => runSocialListening(listenQuery)}
+            result={listenResult}
+            loading={listenLoading}
+            error={listenError}
+          />
         )}
         {activeTool === "shapes" && (
           <ShapesToolPanel
@@ -2000,6 +2035,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
     { key: "shapes", icon: Hexagon, label: "AOI" },
     { key: "economy", icon: Landmark, label: "Economy" },
+    { key: "listen", icon: Megaphone, label: "Listen" },
     { key: "draw", icon: Ruler, label: "Draw" },
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
@@ -2531,6 +2567,137 @@ function EconomicIndicatorsPanel({
                 </div>
               );
             })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Tone score → a short human label + color, since "-3.7" means nothing to
+ *  someone reading a HUD panel — GDELT's tone scale runs roughly -10 (very
+ *  negative) to +10 (very positive), with most real-world coverage
+ *  clustering close to 0. */
+function toneLabel(tone: number): { label: string; color: string } {
+  if (tone <= -5) return { label: "Very negative", color: HUD.alertRed };
+  if (tone <= -1.5) return { label: "Negative", color: HUD.alertOrange };
+  if (tone < 1.5) return { label: "Neutral", color: HUD.textSecondary };
+  if (tone < 5) return { label: "Positive", color: HUD.alertGreen };
+  return { label: "Very positive", color: HUD.alertGreen };
+}
+
+/** Social Listening tool — keyword search across GDELT (news/blog tone +
+ *  volume trend) and, if configured, Mastodon (real public posts). See
+ *  socialListening.ts for exactly what was checked and why each source was
+ *  included/excluded. A search box rather than a fixed feed, since there's
+ *  no single default keyword that makes sense for every user. */
+function SocialListeningPanel({
+  query,
+  onQueryChange,
+  onSearch,
+  result,
+  loading,
+  error,
+}: {
+  query: string;
+  onQueryChange: (v: string) => void;
+  onSearch: () => void;
+  result: SocialListeningResult | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  const maxVolume = result ? Math.max(1, ...result.volumeTimeline.map((p) => p.count)) : 1;
+  return (
+    <div
+      style={{
+        ...glassPanel(),
+        position: "absolute",
+        top: 12,
+        right: 76,
+        zIndex: 500,
+        width: 340,
+        maxHeight: "calc(100% - 24px)",
+        overflowY: "auto",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Social Listening</div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSearch();
+        }}
+        style={{ display: "flex", gap: 6 }}
+      >
+        <input
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="Keyword, actor, or event…"
+          style={{ ...hudInputStyle, flex: 1 }}
+        />
+        <ToolButton onClick={onSearch}>{loading ? "…" : "Go"}</ToolButton>
+      </form>
+      <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
+        Sentiment/volume from GDELT's worldwide news & blog coverage (7-day window) — Reddit and X/Twitter aren't included (checked directly: Reddit's
+        Data API Terms bar commercial use without a paid license, and X requires a paid enterprise tier).
+      </div>
+      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
+      {result && (
+        <>
+          {result.latestTone !== null && (
+            <div style={{ fontSize: 12, color: HUD.textSecondary }}>
+              Latest tone:{" "}
+              <b style={{ color: toneLabel(result.latestTone).color }}>
+                {toneLabel(result.latestTone).label} ({result.latestTone.toFixed(1)})
+              </b>
+            </div>
+          )}
+          {result.volumeTimeline.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted, marginBottom: 4 }}>
+                Coverage volume (7d)
+              </div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 36 }}>
+                {result.volumeTimeline.map((p, i) => (
+                  <div
+                    key={i}
+                    title={`${new Date(p.date).toLocaleDateString()}: ${p.count}`}
+                    style={{ flex: 1, height: `${Math.max(6, (p.count / maxVolume) * 36)}px`, background: HUD.gold, opacity: 0.6, borderRadius: 2 }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          {result.topArticles.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Top coverage</div>
+              {result.topArticles.slice(0, 8).map((a, i) => (
+                <a key={i} href={a.url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                  <div style={{ fontSize: 11.5, color: HUD.textPrimary, lineHeight: 1.35 }}>{a.title}</div>
+                  <div style={{ fontSize: 10, color: HUD.textMuted }}>{a.domain}</div>
+                </a>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Public social posts (Mastodon)</div>
+            {!result.mastodonAvailable && (
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>Not configured — set MASTODON_ACCESS_TOKEN to enable.</div>
+            )}
+            {result.mastodonAvailable && result.mastodonPosts.length === 0 && (
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>No recent public posts found for this keyword.</div>
+            )}
+            {result.mastodonPosts.map((p) => (
+              <a key={p.id} href={p.url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                <div style={{ fontSize: 11, color: HUD.textPrimary, lineHeight: 1.35 }}>{p.content}</div>
+                <div style={{ fontSize: 10, color: HUD.textMuted }}>
+                  {p.author} · {new Date(p.createdAt).toLocaleString()}
+                </div>
+              </a>
+            ))}
           </div>
         </>
       )}

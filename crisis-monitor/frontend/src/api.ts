@@ -673,6 +673,17 @@ export interface EconomicIndicators {
   fetchedAt: string;
 }
 
+export interface SocialListeningResult {
+  query: string;
+  latestTone: number | null;
+  toneTimeline: { date: string; avgTone: number }[];
+  volumeTimeline: { date: string; count: number }[];
+  topArticles: { title: string; url: string; domain: string; seenAt: string | null; language: string | null }[];
+  mastodonPosts: { id: string; url: string; author: string; content: string; createdAt: string }[];
+  mastodonAvailable: boolean;
+  fetchedAt: string;
+}
+
 export interface MaritimeLane {
   label: string;
   points: [number, number][];
@@ -999,6 +1010,7 @@ export const api = {
   getMarkets: () => req<MarketsStatus>("/api/global-status/markets"),
   getActivityIndex: () => req<ActivityIndex>("/api/global-status/activity-index"),
   getEconomicIndicators: () => req<EconomicIndicators>("/api/global-status/economic-indicators"),
+  getSocialListening: (query: string) => req<SocialListeningResult>(`/api/social-listening?q=${encodeURIComponent(query)}`),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

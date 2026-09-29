@@ -53,4 +53,14 @@ export interface Env {
    *  one. Optional: the route reports it's unconfigured until this is set,
    *  same pattern as ABUSECH_AUTH_KEY/AISSTREAM_API_KEY. */
   UCDP_API_TOKEN?: string;
+  /** Personal access token for a Mastodon account, used by
+   *  /api/social-listening to search public posts for a keyword (full-text
+   *  status search needs an authenticated call even for public posts).
+   *  Unlike UCDP, this is instant and self-serve: on mastodon.social (or
+   *  any instance), go to Settings > Development > New Application, leave
+   *  the default "read" scope, create it, then copy the "Your access
+   *  token" value shown immediately — no approval wait. Optional: the
+   *  route works without it, just without the Mastodon section of the
+   *  results (mastodonAvailable: false). */
+  MASTODON_ACCESS_TOKEN?: string;
 }
