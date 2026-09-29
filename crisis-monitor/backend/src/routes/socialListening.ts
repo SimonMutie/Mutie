@@ -113,11 +113,11 @@ interface MastodonPost {
   content: string;
   createdAt: string;
 }
-/** One geocoded location where coverage of this query clusters — plots the
- *  query as a map layer rather than leaving results confined to a side
- *  panel, using the same GDELT GEO 2.0 endpoint /api/live-layers's own
- *  conflict-events/global-incidents layers already rely on (see
- *  fetchGdeltPoints in liveLayers.ts). A flat shape (not GeoJSON) since the
+/** One country where coverage of this query clusters (aggregated from
+ *  article sourcecountry, one point per country — see fetchGdeltPoints in
+ *  liveLayers.ts for why: GDELT's separate true-geocoding GEO 2.0 API turned
+ *  out to be dead) — plots the query as a map layer rather than leaving
+ *  results confined to a side panel. A flat shape (not GeoJSON) since the
  *  frontend consumes this straight into a GlobePoint, same as every other
  *  layer. */
 interface GeoPoint {
@@ -233,11 +233,11 @@ async function fetchGdeltArticles(query: string): Promise<ListArticle[]> {
   }));
 }
 
-/** Geocoded coverage locations for the query, for plotting on the map —
- *  same timeout-and-one-retry treatment as the other GDELT calls above,
- *  since it hits the same upstream. GDELT's GEO API only covers the last
- *  24h (vs. the 7d window for tone/volume/articles), which is noted in the
- *  frontend rather than silently mismatched. */
+/** Country-level coverage locations for the query, for plotting on the
+ *  map — country-level, not city-level (see fetchGdeltPoints's own comment
+ *  for why). Only covers the last 24h (vs. the 7d window for
+ *  tone/volume/articles), which is noted in the frontend rather than
+ *  silently mismatched. */
 async function fetchListeningGeoPoints(query: string): Promise<GeoPoint[]> {
   // fetchGdeltPoints (liveLayers.ts) already applies its own timeout + retry
   // — no need to duplicate that here.

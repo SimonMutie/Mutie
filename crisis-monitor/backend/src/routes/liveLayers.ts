@@ -5,6 +5,7 @@ import { Buffer } from "node:buffer";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
+import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -215,32 +216,28 @@ liveLayersRouter.get("/natural-events", async (c) => {
   });
 });
 
-/** GDELT's GEO 2.0 API, in PointData mode: every geocoded news article
- *  worldwide from the last 24h matching a query, one point per distinct
- *  location. Free, keyless, but a shared public service — this is exactly
- *  the fixed query approach OSIRIS itself needs for a general "incidents"
- *  layer (there's no single upstream endpoint for "all incidents," only a
- *  search). `html` in GDELT's response is a ready-made link/snippet blob
- *  meant for direct display; it's stripped down to plain text here rather
- *  than passed through, since rendering arbitrary upstream HTML in the
- *  frontend would be an XSS surface for no real gain. Shared by both
- *  /conflict-events (a narrow, armed-conflict-specific query) and
- *  /global-incidents (a deliberately broader one — see the comment there
- *  for why that's GDELT too, rather than ACLED: ACLED's EULA blocks
- *  exactly this app's use case — a commercial entity embedding it in its
- *  own dashboard — without a paid corporate license). */
-// GDELT's free API is noticeably slower than most (its point-geocoding scan
-// runs against its full rolling archive) — this route had NO explicit
-// timeout at all until this fix, which for a Cloudflare Worker meant a slow
-// GDELT response either eventually rode out the Worker's own subrequest/CPU
-// limit and came back as an opaque network failure, or hung until the
-// person gave up — either way, this is almost certainly what "GDELT Events
-// not firing anything, error says Upstream feed unavailable" was: that
-// generic 502 in cachedJson's catch block is exactly what a fetch()
-// rejection turns into, with no detail surfaced anywhere in the UI. Fixed
-// the same way as socialListening.ts's identical problem: an explicit 20s
-// timeout plus one retry specifically for a timeout (a real HTTP error from
-// GDELT itself isn't retried, since retrying won't fix that).
+/** BROKEN-ENDPOINT FIX: this used to call GDELT's separate GEO 2.0 API
+ *  (api/v2/geo/geo, mode=PointData) for true per-location geocoding, one
+ *  point per distinct place. Live-testing it directly (while chasing
+ *  "GDELT events not firing anything") found that endpoint now returns a
+ *  bare HTTP 404 unconditionally — including for GDELT's own documented
+ *  example URLs from its 2017 announcement post
+ *  (https://blog.gdeltproject.org/gdelt-geo-2-0-api-debuts/), which all
+ *  404 the same way. It's been retired or moved at some point since then
+ *  without anything in this codebase noticing (the one other caller,
+ *  /activity-index in globalStatus.ts, degraded silently because its
+ *  result just feeds a best-effort score with no visible error surface —
+ *  this route wasn't so lucky, since it's a real map layer).
+ *
+ *  Replaced with GDELT's DOC 2.0 API (api/v2/doc/doc, mode=artlist) —
+ *  confirmed live and already proven in production by this app's own
+ *  ingestion pipeline (connectors/gdelt.ts) — aggregated by each article's
+ *  `sourcecountry` field into one point per country, using the same
+ *  country-name→centroid table already used there. This is a real,
+ *  functioning tradeoff, not a silent downgrade: country-level rather than
+ *  city-level granularity, and only for countries in that centroid table
+ *  (a country outside it is silently skipped, same "skip rather than
+ *  mislocate" policy as every other centroid lookup in this file). */
 const GDELT_TIMEOUT_MS = 20000;
 
 function isGdeltTimeout(err: unknown): boolean {
@@ -248,41 +245,44 @@ function isGdeltTimeout(err: unknown): boolean {
 }
 
 async function fetchGdeltPointsOnce(query: string): Promise<NormalizedFeature[]> {
-  const res = await fetch(
-    `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=PointData&format=geojson&timespan=24h`,
-    { signal: AbortSignal.timeout(GDELT_TIMEOUT_MS) }
-  );
+  const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=250&sort=hybridrel&timespan=24h`;
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(GDELT_TIMEOUT_MS),
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLensBot/1.0)" },
+  });
   if (!res.ok) throw new Error(`GDELT returned ${res.status}`);
   const raw = (await res.json()) as {
-    features: Array<{
-      properties: { name?: string; count?: number; html?: string };
-      geometry: { type: string; coordinates: [number, number] };
-    }>;
+    articles?: Array<{ title?: string; sourcecountry?: string }>;
   };
 
+  const byCountry = new Map<string, { count: number; titles: string[] }>();
+  for (const a of raw.articles ?? []) {
+    if (!a.sourcecountry) continue;
+    const entry = byCountry.get(a.sourcecountry) ?? { count: 0, titles: [] };
+    entry.count += 1;
+    if (a.title && entry.titles.length < 3) entry.titles.push(a.title);
+    byCountry.set(a.sourcecountry, entry);
+  }
+
   const features: NormalizedFeature[] = [];
-  for (const [i, f] of raw.features.entries()) {
-    if (f.geometry?.type !== "Point") continue;
-    const [lon, lat] = f.geometry.coordinates;
-    const count = f.properties.count ?? 1;
-    const plainText = (f.properties.html ?? "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  for (const [country, entry] of byCountry.entries()) {
+    const centroid = GDELT_SOURCE_COUNTRY_CENTROIDS[country];
+    if (!centroid) continue; // not in the known-name table — skip rather than mislocate
+    const [lat, lng] = centroid;
     features.push({
       type: "Feature",
-      geometry: { type: "Point", coordinates: [lon, lat] },
+      geometry: { type: "Point", coordinates: [lng, lat] },
       properties: {
-        id: `${f.properties.name ?? "gdelt"}-${i}`,
-        title: f.properties.name ?? "Unnamed location",
-        time: null, // GDELT's PointData mode reports a 24h aggregate, not a per-point timestamp
+        id: `gdelt-${country}`,
+        title: country,
+        time: null, // aggregated over the whole 24h window, not per-article
         // Reference ceiling picked empirically from typical daily GDELT
-        // point-count spread, same reasoning as the earthquake magnitude
-        // clamp above — an outlier hub city shouldn't flatten every
-        // other point's relative sizing to zero.
-        intensity: Math.max(0, Math.min(1, count / 40)),
-        intensityLabel: `${count} report${count === 1 ? "" : "s"}`,
-        detail: plainText.slice(0, 240),
+        // article-count spread per country, same reasoning as the
+        // earthquake magnitude clamp above — one outlier country
+        // shouldn't flatten every other point's relative sizing to zero.
+        intensity: Math.max(0, Math.min(1, entry.count / 40)),
+        intensityLabel: `${entry.count} report${entry.count === 1 ? "" : "s"}`,
+        detail: entry.titles.join(" · ").slice(0, 240),
         url: null,
       },
     });

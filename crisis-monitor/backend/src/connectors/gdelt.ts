@@ -32,7 +32,15 @@ const GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc";
 // Rough centroids for GDELT's `sourcecountry` field, used only so articles have
 // *something* plottable on the map. This is a coarse stand-in for real geocoding —
 // a production pipeline should extract location from article text/NLP instead.
-const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
+// Exported for reuse by liveLayers.ts's fetchGdeltPoints, which used to call
+// GDELT's separate GEO 2.0 API (api/v2/geo/geo) for true per-location
+// geocoding — confirmed via a live test that this endpoint now 404s
+// unconditionally, including GDELT's own documented example URLs from its
+// announcement post, so it's been retired/moved at some point since 2017
+// without a corresponding update here. This same country-centroid fallback
+// (already proven in production for the main ingestion pipeline below) is
+// now shared by every GDELT-point-plotting route in this app.
+export const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
   Kenya: [-1.2864, 36.8172],
   Nigeria: [9.082, 8.6753],
   Philippines: [12.8797, 121.774],

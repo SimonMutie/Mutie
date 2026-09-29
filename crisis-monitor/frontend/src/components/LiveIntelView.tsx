@@ -3114,7 +3114,7 @@ function SocialListeningSearchTab({
         Sentiment/volume from GDELT's worldwide news & blog coverage (7-day window), which understands the boolean query above natively — AND/OR/NOT and
         "quoted phrases" work exactly as typed. Mastodon's post search does <b>not</b> support boolean operators, so it matches your terms as plain text.
         Reddit and X/Twitter aren't included (checked directly: Reddit's Data API Terms bar commercial use without a paid license, and X requires a paid
-        enterprise tier). Geocoded coverage locations (last 24h) are plotted directly on the map while this panel is open.
+        enterprise tier). Coverage is also plotted on the map by country (last 24h) while this panel is open — country-level, not exact article locations.
       </div>
       {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
 
@@ -3168,9 +3168,9 @@ function SocialListeningSearchTab({
             {result.sourceErrors?.geo ? (
               <span style={{ color: HUD.alertRed }}>Map points unavailable: {result.sourceErrors.geo}</span>
             ) : result.geoPoints.length > 0 ? (
-              <span style={{ color: HUD.cyan }}>{result.geoPoints.length} location{result.geoPoints.length === 1 ? "" : "s"} plotted on the map (last 24h)</span>
+              <span style={{ color: HUD.cyan }}>{result.geoPoints.length} countr{result.geoPoints.length === 1 ? "y" : "ies"} plotted on the map (last 24h, country-level)</span>
             ) : (
-              "No geocoded locations for this query in the last 24h."
+              "No country-level coverage for this query in the last 24h."
             )}
           </div>
 
