@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { fetchGdeltPoints } from "./liveLayers";
+import { queryBulkEvents } from "../connectors/gdeltBulk";
 
 /**
  * Real-data HUD status feeds — not map layers, but the same status-ticker
@@ -254,11 +254,13 @@ globalStatusRouter.get("/activity-index", async (c) => {
       fetch("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_week.geojson", {
         signal: AbortSignal.timeout(8000),
       }),
-      // Was a direct call to GDELT's GEO 2.0 API (api/v2/geo/geo) — confirmed
-      // dead (unconditional HTTP 404, see the comment above fetchGdeltPoints
-      // in liveLayers.ts) — now goes through that same shared, fixed helper
-      // instead of duplicating a call to a live endpoint here.
-      fetchGdeltPoints("incident OR explosion OR protest OR unrest OR riot OR crime OR terrorism"),
+      // Was a direct live call to GDELT (first the dead GEO 2.0 API, then
+      // the DOC 2.0 query API via fetchGdeltPoints) — now reads D1 instead,
+      // bulk-ingested from GDELT's own 15-minute export file rather than
+      // its shared, rate-limited query API (see connectors/gdeltBulk.ts).
+      // No text query here anymore since the bulk pipeline already filters
+      // to conflict-toned events (CAMEO QuadClass 3/4) at ingest time.
+      queryBulkEvents(c.env, { hours: 24, minQuadClass: 3 }),
     ]);
 
     const scores: Record<string, number> = {};
@@ -278,11 +280,12 @@ globalStatusRouter.get("/activity-index", async (c) => {
     }
 
     if (gdeltRes.status === "fulfilled") {
-      // fetchGdeltPoints now returns one aggregated point per country (see
-      // its own comment) with the country name in `title` — coarser than
-      // the old per-location `name` this matched against, but real.
-      for (const f of gdeltRes.value) {
-        const name = f.properties.title.toLowerCase();
+      // Each bulk event's placeName is GDELT's own free-text location
+      // string (e.g. "Nairobi, Nairobi Area, Kenya") — a substring match
+      // against the country name works the same way it did against the
+      // old per-country aggregate's title.
+      for (const e of gdeltRes.value) {
+        const name = e.placeName.toLowerCase();
         for (const [code, countryName] of Object.entries(RISK_COUNTRY_HINTS)) {
           if (name.includes(countryName.toLowerCase())) bump(code, 1);
         }

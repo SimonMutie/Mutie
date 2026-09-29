@@ -19,6 +19,7 @@ import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
+import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
 export { IngestionActor } from "./durableObjects/ingestionActor";
@@ -90,6 +91,20 @@ export default {
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
+
+    // Bulk event-export ingestion (see connectors/gdeltBulk.ts) — a plain
+    // file download against GDELT's own 15-minute export, not its shared
+    // query API, so this runs unconditionally (not gated behind
+    // GDELT_ENABLED, which only controls the query-based per-saved-query
+    // ingestion below). It's a cheap no-op on ticks where GDELT hasn't
+    // published a new export yet.
+    ctx.waitUntil(
+      ingestGdeltBulkEvents(env)
+        .then((result) => {
+          if (!result.skipped) console.log(`[gdelt-bulk] ingested ${result.insertedRows} conflict-toned events from export ${result.fileTimestamp}`);
+        })
+        .catch((err) => console.error("[gdelt-bulk] ingestion failed", err))
+    );
 
     if ((env.GDELT_ENABLED ?? "false") !== "true") return;
 

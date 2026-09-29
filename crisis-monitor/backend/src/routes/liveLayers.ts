@@ -6,6 +6,7 @@ import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
+import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -322,23 +323,51 @@ export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature
   }
 }
 
-// GDELT's own index refreshes every 15 minutes, and its free API rate-limits
-// aggressively under concurrent load — polling it every 60s (this app's
-// standard layer-poll cadence) was almost certainly what tipped it into 429s
-// once conflict-events, global-incidents, activity-index, and Social
-// Listening's map points were all hitting it independently. A 10-minute
-// cache means the frontend can still poll every 60s without each of those
-// polls becoming a real upstream request more than once per 10 minutes.
-const GDELT_LAYER_CACHE_TTL_SECONDS = 600;
+// /conflict-events and /global-incidents used to live-query GDELT directly
+// here and leaned on a long (10-minute) cache to survive its rate limit.
+// They now read from D1 (bulk-ingested by connectors/gdeltBulk.ts on a
+// separate, unthrottled pipeline), so a short 30s cache below is just to
+// spare D1 read units on repeated polls, not to dodge a rate limit.
 
+/** Converts one bulk-ingested GDELT event row (see connectors/gdeltBulk.ts)
+ *  into this file's shared NormalizedFeature shape. `numMentions` drives
+ *  intensity the same way the old live-query point-per-country aggregate
+ *  did (ceiling picked empirically, same reasoning as elsewhere in this
+ *  file: one outlier event shouldn't flatten every other point's relative
+ *  sizing to zero). */
+function bulkEventToFeature(e: BulkEventPoint): NormalizedFeature {
+  const mentions = e.numMentions ?? 1;
+  return {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [e.lon, e.lat] },
+    properties: {
+      id: `gdelt-bulk-${e.id}`,
+      title: e.placeName,
+      time: null, // DATEADDED isn't a clean ISO string (GDELT's own YYYYMMDDHHMMSS) — omitted rather than mis-formatted
+      intensity: Math.max(0, Math.min(1, mentions / 20)),
+      intensityLabel: `${mentions} mention${mentions === 1 ? "" : "s"}`,
+      detail: e.avgTone !== null ? `Tone ${e.avgTone.toFixed(1)}${e.goldstein !== null ? ` · Goldstein ${e.goldstein.toFixed(1)}` : ""}` : e.placeName,
+      url: e.sourceUrl || null,
+    },
+  };
+}
+
+/** Now served straight from D1 (bulk-ingested from GDELT's own 15-minute
+ *  export file — see connectors/gdeltBulk.ts) instead of live-querying
+ *  GDELT's shared, rate-limited query API on every poll. QuadClass >= 4
+ *  narrows this to "Material Conflict" only (armed clashes, attacks,
+ *  strikes — CAMEO's own most severe conflict category), matching this
+ *  layer's original "conflict OR violence OR attack..." keyword intent
+ *  more precisely than a keyword search ever could. */
 liveLayersRouter.get("/conflict-events", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const features = await fetchGdeltPoints("conflict OR violence OR attack OR airstrike OR shelling OR clashes");
+      const events = await queryBulkEvents(c.env, { hours: 48, minQuadClass: 4 });
+      const features = events.map(bulkEventToFeature);
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
-    GDELT_LAYER_CACHE_TTL_SECONDS
+    30
   );
 });
 
@@ -354,17 +383,21 @@ liveLayersRouter.get("/conflict-events", async (c) => {
  *  /conflict-events casts. The two counts will legitimately differ from
  *  whatever OSIRIS's own two rows show, same as every other layer in this
  *  app that reproduces OSIRIS's UI structure with this app's own real,
- *  independently-sourced data rather than its exact numbers. */
+ *  independently-sourced data rather than its exact numbers.
+ *
+ *  Also now served from D1 (see /conflict-events above) — this row is the
+ *  broader net, QuadClass >= 3 ("Verbal Conflict" or "Material Conflict"),
+ *  over a longer 72h window, rather than /conflict-events' narrower
+ *  Material-Conflict-only, 48h feed. */
 liveLayersRouter.get("/global-incidents", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const features = await fetchGdeltPoints(
-        "incident OR explosion OR protest OR unrest OR riot OR disaster OR accident OR crime OR terrorism OR emergency"
-      );
+      const events = await queryBulkEvents(c.env, { hours: 72, minQuadClass: 3 });
+      const features = events.map(bulkEventToFeature);
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
-    GDELT_LAYER_CACHE_TTL_SECONDS
+    30
   );
 });
 
