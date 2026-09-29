@@ -8,6 +8,9 @@ export interface Env {
    *  in-memory snapshot of recent vessel positions — see
    *  durableObjects/aisIngestionActor.ts. */
   AIS_INGESTION_ACTOR: DurableObjectNamespace;
+  /** Crawls the ~260 African country/pan-African/institutional sources in
+   *  data/africaSources.ts — see durableObjects/africaWireActor.ts. */
+  AFRICA_WIRE_ACTOR: DurableObjectNamespace;
   MOCK_MODE: string;
   GDELT_ENABLED: string;
   /** Set as an encrypted Worker secret (never in wrangler.toml [vars]) — signs session tokens. */

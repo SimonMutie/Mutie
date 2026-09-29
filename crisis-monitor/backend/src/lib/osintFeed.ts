@@ -70,6 +70,13 @@ const WIRE_FEEDS: (Feed & { url: string })[] = [
   { handle: "scmp", url: "https://www.scmp.com/rss/91/feed", name: "SCMP", lean: "Hong Kong newsroom", bloc: "regional" },
   { handle: "cna", url: "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml", name: "CNA", lean: "Singaporean broadcaster", bloc: "regional" },
   { handle: "africanews", url: "https://www.africanews.com/feed/rss", name: "Africanews", lean: "Pan-African newsroom", bloc: "regional" },
+  // Added at Simon's request for deeper Africa coverage. Each URL below was
+  // individually fetched and confirmed to return live, parseable RSS/RDF
+  // XML before being hardcoded here (2026-09-29) — none of this is guessed.
+  { handle: "allafrica", url: "https://allafrica.com/tools/headlines/rdf/africa/headlines.rdf", name: "AllAfrica", lean: "Pan-African wire aggregator", bloc: "regional" },
+  { handle: "dabanga", url: "https://www.dabangasudan.org/en/feed", name: "Radio Dabanga", lean: "Sudan-focused exile newsroom", bloc: "regional" },
+  { handle: "sudantribune", url: "https://sudantribune.com/feed", name: "Sudan Tribune", lean: "Sudanese diaspora newsroom", bloc: "regional" },
+  { handle: "dw", url: "https://rss.dw.com/rdf/rss-en-all", name: "DW (Deutsche Welle)", lean: "German public broadcaster", bloc: "western" },
 ];
 
 const POSTS_PER_CHANNEL = 8;
@@ -91,7 +98,25 @@ const KEYWORD_COORDS: Record<string, [number, number]> = {
   sudan: [12.863, 30.218], somalia: [5.152, 46.199], ethiopia: [9.145, 40.49], drc: [-4.038, 21.759],
   "democratic republic of congo": [-4.038, 21.759], mali: [17.571, -3.996], niger: [17.608, 8.082],
   nigeria: [9.082, 8.675], "burkina faso": [12.238, -1.561], libya: [26.336, 17.229], africa: [1.0, 20.0],
+  "south sudan": [7.862, 29.918], kenya: [-0.023, 37.906], uganda: [1.373, 32.29], rwanda: [-1.94, 29.874],
+  burundi: [-3.373, 29.919], "central african republic": [6.611, 20.939], chad: [15.454, 18.732],
+  cameroon: [7.37, 12.35], "cote d'ivoire": [7.54, -5.55], "ivory coast": [7.54, -5.55], senegal: [14.497, -14.452],
+  mozambique: [-18.665, 35.529], zimbabwe: [-19.015, 29.155], egypt: [26.82, 30.802], tunisia: [33.887, 9.537],
+  algeria: [28.033, 1.659], morocco: [31.792, -7.093], "south africa": [-30.559, 22.937], eritrea: [15.179, 39.782],
+  djibouti: [11.825, 42.59], mauritania: [21.007, -10.94], guinea: [9.946, -9.696], togo: [8.619, 0.825],
+  gabon: [-0.804, 11.609], congo: [-0.228, 15.827], angola: [-11.202, 17.874], zambia: [-13.134, 27.849],
+  madagascar: [-18.767, 46.869], benin: [9.307, 2.315], ghana: [7.947, -1.023], liberia: [6.428, -9.43],
+  "sierra leone": [8.461, -11.779], gambia: [13.444, -15.31], pakistan: [30.375, 69.345], afghanistan: [33.939, 67.71],
+  "north korea": [40.34, 127.51], venezuela: [6.424, -66.59], myanmar: [21.914, 95.956], haiti: [18.971, -72.285],
+  india: [20.594, 78.963], armenia: [40.069, 45.038], azerbaijan: [40.143, 47.577], georgia: [42.315, 43.357],
+  "north macedonia": [41.608, 21.745], serbia: [44.017, 21.006], kosovo: [42.603, 20.903], bosnia: [43.916, 17.679],
 };
+
+/** Public entry points reused by africaWireCrawl.ts (the deeper-coverage
+ *  African country/pan-African/institutional source crawl) so it produces
+ *  items in exactly the same shape as this module's own feed, rather than
+ *  duplicating the RSS parsing and text-cleanup logic. */
+export { parseRSSItems, hashId, BROWSER_UA };
 
 /** One point of base, two per distinct risk term matched, capped at 10 — matched terms travel with the score. */
 export function scoreRisk(text: string): { score: number; matched: string[] } {

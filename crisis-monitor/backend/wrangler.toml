@@ -26,6 +26,10 @@ class_name = "AlertingActor"
 name = "AIS_INGESTION_ACTOR"
 class_name = "AisIngestionActor"
 
+[[durable_objects.bindings]]
+name = "AFRICA_WIRE_ACTOR"
+class_name = "AfricaWireActor"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["LiveFeedHub", "IngestionActor", "AlertingActor"]
@@ -35,6 +39,10 @@ new_sqlite_classes = ["LiveFeedHub", "IngestionActor", "AlertingActor"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["AisIngestionActor"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["AfricaWireActor"]
 
 # Polls GDELT every 5 minutes when GDELT_ENABLED=true, and re-kicks the
 # ingestion/alerting Durable Object alarms as a safety net (see src/index.ts).

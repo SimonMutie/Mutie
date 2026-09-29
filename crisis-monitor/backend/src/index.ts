@@ -26,6 +26,7 @@ export { LiveFeedHub } from "./durableObjects/liveFeedHub";
 export { IngestionActor } from "./durableObjects/ingestionActor";
 export { AlertingActor } from "./durableObjects/alertingActor";
 export { AisIngestionActor } from "./durableObjects/aisIngestionActor";
+export { AfricaWireActor } from "./durableObjects/africaWireActor";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -112,6 +113,15 @@ export default {
     // every tick regardless of whether this particular tick found a new
     // GDELT export (cheap D1 aggregate queries, no external calls).
     ctx.waitUntil(scoreCountryEscalations(env).catch((err) => console.error("[country-escalation] scoring failed", err)));
+
+    // Africa Wire crawl (see durableObjects/africaWireActor.ts) — processes
+    // one batch of the ~260-source list per tick, so a full cycle spreads
+    // across many 5-minute ticks rather than fetching all of them at once.
+    ctx.waitUntil(
+      env.AFRICA_WIRE_ACTOR.get(env.AFRICA_WIRE_ACTOR.idFromName("global"))
+        .fetch("http://africa-wire-actor/tick")
+        .catch((err) => console.error("[africa-wire] tick failed", err))
+    );
 
     if ((env.GDELT_ENABLED ?? "false") !== "true") return;
 

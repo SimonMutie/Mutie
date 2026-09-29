@@ -815,6 +815,11 @@ export interface OsintFeedPayload {
   total: number;
   sources: { handle: string; name: string; lean: string; bloc: NewsBloc; kind: "telegram" | "wire"; count: number; latest: string | null }[];
   fetchedAt: string;
+  /** Background crawl status for the ~260-source African country/pan-African/
+   *  institutional list (data/africaSources.ts on the backend) — null until
+   *  the crawl has processed at least one batch. "pending" sources haven't
+   *  been checked yet; a full cycle fills in over time (see africaWireActor.ts). */
+  africaWireHealth?: { total: number; ok: number; no_feed: number; error: number; pending: number } | null;
 }
 
 // --- Live Broadcasts (backend: /api/live-layers/live-broadcasts, adapted from OSIRIS) ---

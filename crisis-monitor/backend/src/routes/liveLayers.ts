@@ -9,7 +9,7 @@ import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connecto
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getLatestCountryEscalations, getCountryEscalationEvidence, AFRICA_CENTROIDS } from "../countryEscalation";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
-import { buildOsintFeed } from "../lib/osintFeed";
+import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -1763,14 +1763,76 @@ liveLayersRouter.get("/crypto-intel", async (c) => {
   }
 });
 
+/** Shape returned by AfricaWireActor's /snapshot — see durableObjects/africaWireActor.ts. */
+interface AfricaWireSnapshot {
+  alerts: { id: string; index: number; country: string; domain: string; title: string; link: string; published: string; description: string; risk_score: number; risk_keywords: string[]; coords: [number, number] | null; coords_default: boolean }[];
+  sourceHealth: { total: number; ok: number; no_feed: number; error: number; pending: number };
+  fetchedAt: string;
+}
+
 /**
- * Merged public Telegram OSINT channels + wire-service RSS — see
- * backend/src/lib/osintFeed.ts for the full roster and reasoning (adapted
- * from OSIRIS, MIT-licensed). 60s cache — a shared build serves every
- * viewer inside the window rather than each polling every upstream source.
+ * Merged public Telegram OSINT channels + wire-service RSS (see
+ * backend/src/lib/osintFeed.ts, adapted from OSIRIS, MIT-licensed) +
+ * Simon's own ~260-source African country/pan-African/institutional list
+ * (data/africaSources.ts, crawled in the background by
+ * durableObjects/africaWireActor.ts — see that file for why this can't
+ * just live-fetch 260 sites per request). 60s cache on the merge — the
+ * Africa Wire side is already just a Durable Object storage read, so this
+ * stays fast even with the extra sources folded in.
  */
 liveLayersRouter.get("/osint-alerts", async (c) => {
-  return cachedJson(c.req.raw, () => buildOsintFeed(), 60);
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const [wireFeed, africaSnapshot] = await Promise.all([
+        buildOsintFeed(),
+        c.env.AFRICA_WIRE_ACTOR.get(c.env.AFRICA_WIRE_ACTOR.idFromName("global"))
+          .fetch("http://africa-wire-actor/snapshot")
+          .then((r) => r.json<AfricaWireSnapshot>())
+          .catch(() => null),
+      ]);
+
+      if (!africaSnapshot) return { ...wireFeed, africaWireHealth: null };
+
+      const africaAlerts: OsintAlertItem[] = africaSnapshot.alerts.map((a) => ({
+        id: a.id,
+        title: a.title,
+        summary: a.description.length > 220 ? `${a.description.slice(0, 220)}…` : a.description,
+        description: a.description,
+        link: a.link,
+        published: a.published,
+        source: a.domain,
+        source_name: a.domain,
+        lean: `Africa Wire — ${a.country}`,
+        bloc: "regional",
+        flag: /\bbreaking\b/i.test(a.title) ? "BREAKING" : null,
+        also_reported_by: [],
+        risk_score: a.risk_score,
+        risk_method: "keyword-count",
+        risk_keywords: a.risk_keywords,
+        coords: a.coords,
+        coords_default: a.coords_default,
+        coords_anchor: a.country,
+      }));
+
+      const alerts = [...wireFeed.alerts, ...africaAlerts].sort((x, y) => Date.parse(y.published) - Date.parse(x.published));
+      const sources = [
+        ...wireFeed.sources,
+        {
+          handle: "africa-wire",
+          name: `Africa Wire (${africaSnapshot.sourceHealth.ok} of ${africaSnapshot.sourceHealth.total} sources live)`,
+          lean: "260 African country newsrooms, pan-African outlets & institutions",
+          bloc: "regional" as const,
+          kind: "wire" as const,
+          count: africaAlerts.length,
+          latest: africaAlerts[0]?.published ?? null,
+        },
+      ];
+
+      return { alerts, total: alerts.length, sources, fetchedAt: wireFeed.fetchedAt, africaWireHealth: africaSnapshot.sourceHealth };
+    },
+    60
+  );
 });
 
 /**
