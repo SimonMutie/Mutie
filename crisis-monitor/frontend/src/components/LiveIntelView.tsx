@@ -99,6 +99,30 @@ const HUD = {
 
 const HUD_PANEL_SHADOW = "0 4px 30px rgba(0,0,0,0.5), 0 1px 0 rgba(212,175,55,0.06) inset, 0 -1px 0 rgba(0,0,0,0.3) inset";
 
+/** Every field the Incidents tool's search can filter on — the same 15
+ *  categorical fields IncidentSearch's full-page search offers, plus a
+ *  date-of-occurrence range. Mirrors api.getIncidents' own params so any
+ *  key here can be spread straight into that call. */
+type IncidentFilterState = {
+  country?: string;
+  province?: string;
+  county?: string;
+  district?: string;
+  city?: string;
+  suburb?: string;
+  sector?: string;
+  actor?: string;
+  tactic?: string;
+  severity?: string;
+  operation?: string;
+  target?: string;
+  interest_group?: string;
+  actual_main_victim?: string;
+  intended_primary_target?: string;
+  from?: string;
+  to?: string;
+};
+
 /** A glass-panel container, OSIRIS's own .glass-panel rule ported to inline
  *  styles (blur+saturate backdrop, gold hairline border, layered shadow,
  *  14px corners) — every floating HUD card in this view is built on this. */
@@ -899,11 +923,16 @@ export default function LiveIntelView() {
   // --- Incidents tool: search/filter the same incident set "My Incidents"
   // polls, plus the Add/Bulk-upload intake modal. ---
   const [incidentFilterOptions, setIncidentFilterOptions] = useState<IncidentFilterOptions | null>(null);
-  const [incidentFilters, setIncidentFilters] = useState<{ sector?: string; actor?: string; severity?: string; country?: string }>({});
+  // Applied filters — what's actually been searched, drives the map/result
+  // count. Separate from the draft below so picking several dropdowns
+  // doesn't fire a search per click; only the Search button applies them.
+  const [incidentFilters, setIncidentFilters] = useState<IncidentFilterState>({});
+  const [incidentFilterDraft, setIncidentFilterDraft] = useState<IncidentFilterState>({});
   const [incidentSearchResults, setIncidentSearchResults] = useState<IncidentItem[] | null>(null);
   const [incidentSearchLoading, setIncidentSearchLoading] = useState(false);
   const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
   const [incidentBulkDeleting, setIncidentBulkDeleting] = useState(false);
+  const [incidentExporting, setIncidentExporting] = useState<"xlsx" | "csv" | null>(null);
 
   // --- Shapes tool: persisted AOI overlays (map_shapes), drawn here and
   // shown on the map alongside every live layer and incident. ---
@@ -990,9 +1019,10 @@ export default function LiveIntelView() {
     api.getIncidentFilters().then(setIncidentFilterOptions).catch(() => {});
   }, [activeTool, incidentFilterOptions]);
 
-  // Debounced live search — filters change fairly often as someone clicks
-  // through dropdowns, so this waits a beat rather than firing a request
-  // per click.
+  // Fires only when the applied filters change — i.e. when Search or Clear
+  // is clicked below, not on every dropdown/date edit (the draft holds
+  // those in between). The map view is capped at 2000 rendered points for
+  // performance; export (below) is never capped.
   useEffect(() => {
     const hasFilter = Object.values(incidentFilters).some(Boolean);
     if (!hasFilter) {
@@ -1001,24 +1031,101 @@ export default function LiveIntelView() {
     }
     let cancelled = false;
     setIncidentSearchLoading(true);
-    const t = setTimeout(() => {
-      api
-        .getIncidents({ ...incidentFilters, limit: 2000 })
-        .then((rows) => {
-          if (!cancelled) setIncidentSearchResults(rows);
-        })
-        .catch(() => {
-          if (!cancelled) setIncidentSearchResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setIncidentSearchLoading(false);
-        });
-    }, 400);
+    api
+      .getIncidents({ ...incidentFilters, limit: 2000 })
+      .then((rows) => {
+        if (!cancelled) setIncidentSearchResults(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setIncidentSearchResults([]);
+      })
+      .finally(() => {
+        if (!cancelled) setIncidentSearchLoading(false);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(t);
     };
   }, [incidentFilters]);
+
+  function handleIncidentSearch() {
+    setIncidentFilters(incidentFilterDraft);
+  }
+
+  function handleIncidentClearFilters() {
+    setIncidentFilterDraft({});
+    setIncidentFilters({});
+  }
+
+  // Exports every incident currently matched by the applied filters — the
+  // full set, not just the 2000-point cap the map itself renders. Fetches
+  // fresh at click-time so the export always reflects "Search" having been
+  // pressed, not whatever's mid-edit in the draft.
+  async function handleIncidentExport(format: "xlsx" | "csv") {
+    setIncidentExporting(format);
+    try {
+      const rows = await api.getIncidents({ ...incidentFilters, limit: 250000 });
+      const records = rows.map((i) => ({
+        Date: i.occurred_date,
+        Time: i.occurred_time,
+        Country: i.country,
+        Province: i.province,
+        County: i.county,
+        District: i.district,
+        City: i.city,
+        Suburb: i.suburb,
+        "Precise Location": i.precise_location,
+        Latitude: i.latitude,
+        Longitude: i.longitude,
+        Sector: i.sector,
+        Actor: i.actor,
+        Operation: i.operation,
+        Tactic: i.tactic,
+        Severity: i.severity,
+        Details: i.details,
+        Target: i.target,
+        "Interest Group": i.interest_group,
+        "Actual Main Victim": i.actual_main_victim,
+        "Intended Primary Target": i.intended_primary_target,
+        "Civilian Death - Child": i.civilian_death_child,
+        "Civilian Death - Female": i.civilian_death_female,
+        "Civilian Death - Male": i.civilian_death_male,
+        "Civilian Death - Unknown": i.civilian_death_unknown,
+        "Civilian Injury - Female": i.civilian_injury_female,
+        "Civilian Injury - Male": i.civilian_injury_male,
+        "Civilian Injury - Unknown": i.civilian_injury_unknown,
+        "Kidnappings - Ngo": i.kidnappings_ngo,
+      }));
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (format === "xlsx") {
+        // Lazy-imported — keeps the ~400KB xlsx parser out of this view's
+        // main chunk for the (common) case export is never clicked.
+        const XLSX = await import("xlsx");
+        const sheet = XLSX.utils.json_to_sheet(records);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, sheet, "Incidents");
+        XLSX.writeFile(workbook, `incidents_${stamp}.xlsx`);
+      } else {
+        const headers = records.length > 0 ? Object.keys(records[0]) : [];
+        const escape = (v: unknown) => {
+          const s = v === null || v === undefined ? "" : String(v);
+          return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const csv = [headers.join(","), ...records.map((r) => headers.map((h) => escape((r as Record<string, unknown>)[h])).join(","))].join("\n");
+        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `incidents_${stamp}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      // best-effort export; the panel's disabled state already prevents
+      // double-clicks, nothing further to surface on failure here
+    } finally {
+      setIncidentExporting(null);
+    }
+  }
 
   // A click on the map/globe means something different depending on which
   // right-side tool is open: adds the next drawing vertex, or sets
@@ -1521,14 +1628,19 @@ export default function LiveIntelView() {
         {activeTool === "incidents" && (
           <IncidentsToolPanel
             filterOptions={incidentFilterOptions}
-            filters={incidentFilters}
-            onFiltersChange={setIncidentFilters}
+            draft={incidentFilterDraft}
+            onDraftChange={setIncidentFilterDraft}
+            appliedCount={Object.values(incidentFilters).filter(Boolean).length}
             resultCount={incidentSearchResults?.length ?? null}
             loading={incidentSearchLoading}
+            onSearch={handleIncidentSearch}
+            onClear={handleIncidentClearFilters}
             onAdd={() => setIncidentModalTab("add")}
             onBulkUpload={() => setIncidentModalTab("bulk")}
             onBulkDelete={handleBulkDeleteFilteredIncidents}
             bulkDeleting={incidentBulkDeleting}
+            onExport={handleIncidentExport}
+            exporting={incidentExporting}
           />
         )}
         {activeTool === "economy" && (
@@ -2793,41 +2905,78 @@ function NewsFeedPanel({ items, loading, error }: { items: NewsItem[] | null; lo
   );
 }
 
-/** Incidents tool — search/filter the same "My Incidents" set the left rail
- *  toggles, plus the two intake paths (Add one / Bulk upload) that reuse
- *  IncidentManualEntry/IncidentUpload unmodified via the intake modal
- *  below, since both are full-page forms not built for this 260px rail. */
+/** Every categorical field the Incidents tool's search offers, in display
+ *  order — label plus the matching key in both IncidentFilterState and
+ *  IncidentFilterOptions (api's IncidentFilters). Kept as one ordered list
+ *  so the select-building loop below and any future field addition stay
+ *  in one place. */
+const INCIDENT_FILTER_FIELDS: { key: keyof IncidentFilterOptions & keyof IncidentFilterState; label: string }[] = [
+  { key: "country", label: "Country" },
+  { key: "province", label: "Province" },
+  { key: "county", label: "County" },
+  { key: "district", label: "District" },
+  { key: "city", label: "City" },
+  { key: "suburb", label: "Suburb" },
+  { key: "sector", label: "Sector" },
+  { key: "actor", label: "Actor" },
+  { key: "tactic", label: "Tactic" },
+  { key: "severity", label: "Severity" },
+  { key: "operation", label: "Operation" },
+  { key: "target", label: "Target" },
+  { key: "interest_group", label: "Interest Group" },
+  { key: "actual_main_victim", label: "Main Victim" },
+  { key: "intended_primary_target", label: "Intended Target" },
+];
+
+/** Incidents tool — full search across every categorical field plus a date
+ *  range (same set IncidentSearch's full-page view offers, just in this
+ *  260px rail), export to Excel/CSV of the complete matching set, bulk
+ *  delete of the same, and the two intake paths (Add one / Bulk upload)
+ *  that reuse IncidentManualEntry/IncidentUpload unmodified via the intake
+ *  modal below, since both are full-page forms not built for this rail. */
 function IncidentsToolPanel({
   filterOptions,
-  filters,
-  onFiltersChange,
+  draft,
+  onDraftChange,
+  appliedCount,
   resultCount,
   loading,
+  onSearch,
+  onClear,
   onAdd,
   onBulkUpload,
   onBulkDelete,
   bulkDeleting,
+  onExport,
+  exporting,
 }: {
   filterOptions: IncidentFilterOptions | null;
-  filters: { sector?: string; actor?: string; severity?: string; country?: string };
-  onFiltersChange: (f: { sector?: string; actor?: string; severity?: string; country?: string }) => void;
+  draft: IncidentFilterState;
+  onDraftChange: (f: IncidentFilterState) => void;
+  appliedCount: number;
   resultCount: number | null;
   loading: boolean;
+  onSearch: () => void;
+  onClear: () => void;
   onAdd: () => void;
   onBulkUpload: () => void;
   onBulkDelete: () => void;
   bulkDeleting: boolean;
+  onExport: (format: "xlsx" | "csv") => void;
+  exporting: "xlsx" | "csv" | null;
 }) {
-  const hasFilters = Object.values(filters).some(Boolean);
-  function select(key: keyof typeof filters, options?: string[]) {
+  const hasDraft = Object.values(draft).some(Boolean);
+  const hasApplied = appliedCount > 0;
+  function select(field: (typeof INCIDENT_FILTER_FIELDS)[number]) {
     return (
       <select
-        value={filters[key] ?? ""}
-        onChange={(e) => onFiltersChange({ ...filters, [key]: e.target.value || undefined })}
+        key={field.key}
+        value={draft[field.key] ?? ""}
+        onChange={(e) => onDraftChange({ ...draft, [field.key]: e.target.value || undefined })}
         style={{ ...hudInputStyle, cursor: "pointer" }}
       >
-        <option value="">{key[0].toUpperCase() + key.slice(1)}: All</option>
-        {options?.map((o) => (
+        <option value="">{field.label}: All</option>
+        {filterOptions?.[field.key]?.map((o) => (
           <option key={o} value={o}>
             {o}
           </option>
@@ -2844,30 +2993,62 @@ function IncidentsToolPanel({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
         <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted, display: "flex", alignItems: "center", gap: 5 }}>
-          <SearchGlyph size={11} /> Search / filter
+          <SearchGlyph size={11} /> Search all incidents
         </div>
-        {select("country", filterOptions?.country)}
-        {select("sector", filterOptions?.sector)}
-        {select("actor", filterOptions?.actor)}
-        {select("severity", filterOptions?.severity)}
-        {hasFilters && <ToolButton onClick={() => onFiltersChange({})}>Clear filters</ToolButton>}
+
+        {INCIDENT_FILTER_FIELDS.map(select)}
+
+        <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted, paddingTop: 4 }}>
+          Date of occurrence
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            type="date"
+            value={draft.from ?? ""}
+            onChange={(e) => onDraftChange({ ...draft, from: e.target.value || undefined })}
+            style={{ ...hudInputStyle, flex: 1 }}
+          />
+          <input
+            type="date"
+            value={draft.to ?? ""}
+            onChange={(e) => onDraftChange({ ...draft, to: e.target.value || undefined })}
+            style={{ ...hudInputStyle, flex: 1 }}
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 6, paddingTop: 4 }}>
+          <ToolButton active onClick={onSearch} disabled={loading}>
+            {loading ? "Searching…" : "Search"}
+          </ToolButton>
+          {(hasDraft || hasApplied) && <ToolButton onClick={onClear}>Clear</ToolButton>}
+        </div>
       </div>
 
       <div style={{ fontSize: 11, color: HUD.textSecondary }}>
         {loading
           ? "Searching…"
-          : hasFilters
-          ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — shown on the map`
-          : "Enable \"My Incidents\" (under My Data, left rail) to see every uploaded/logged incident on the map. Filters above narrow that view down to a search."}
+          : hasApplied
+          ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — shown on the map (capped at 2,000 points on-screen; export has the full set)`
+          : "Enable \"My Incidents\" (under My Data, left rail) to see every uploaded/logged incident on the map. Set filters above and press Search to narrow that down."}
       </div>
 
-      {hasFilters && !loading && (resultCount ?? 0) > 0 && (
-        <div style={{ paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
-          <ToolButton onClick={onBulkDelete}>
+      {hasApplied && !loading && (resultCount ?? 0) > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Download matching incidents</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <ToolButton onClick={() => onExport("xlsx")} disabled={exporting !== null}>
+              {exporting === "xlsx" ? "Exporting…" : "Excel"}
+            </ToolButton>
+            <ToolButton onClick={() => onExport("csv")} disabled={exporting !== null}>
+              {exporting === "csv" ? "Exporting…" : "CSV"}
+            </ToolButton>
+          </div>
+
+          <ToolButton onClick={onBulkDelete} disabled={bulkDeleting}>
             {bulkDeleting ? "Deleting…" : `Delete all ${(resultCount ?? 0).toLocaleString()} matching`}
           </ToolButton>
-          <div style={{ fontSize: 10, color: HUD.textMuted, paddingTop: 4 }}>
-            Deletes every incident currently matched by the filters above — not just what's visible on screen.
+          <div style={{ fontSize: 10, color: HUD.textMuted }}>
+            Both act on every incident currently matched by the filters above — not just what's visible on screen.
           </div>
         </div>
       )}
