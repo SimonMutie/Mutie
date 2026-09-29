@@ -20,6 +20,7 @@ import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
+import { scoreCountryEscalations } from "./countryEscalation";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
 export { IngestionActor } from "./durableObjects/ingestionActor";
@@ -105,6 +106,12 @@ export default {
         })
         .catch((err) => console.error("[gdelt-bulk] ingestion failed", err))
     );
+
+    // Country-level escalation scoring (see countryEscalation.ts) — reads
+    // back whatever the ingestion above has accumulated in D1, so it runs
+    // every tick regardless of whether this particular tick found a new
+    // GDELT export (cheap D1 aggregate queries, no external calls).
+    ctx.waitUntil(scoreCountryEscalations(env).catch((err) => console.error("[country-escalation] scoring failed", err)));
 
     if ((env.GDELT_ENABLED ?? "false") !== "true") return;
 

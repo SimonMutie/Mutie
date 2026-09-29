@@ -13,9 +13,17 @@ alertsRouter.get("/", async (c) => {
   const status = c.req.query("status") ?? "open";
   const limit = Math.min(Number(c.req.query("limit")) || 100, 500);
   const queryId = c.req.query("query_id") ?? null;
+  // Country-level escalation alerts (countryEscalation.ts) are unscoped —
+  // query_id IS NULL — since they're a standing Africa-wide watch, not tied
+  // to any one client's saved query. They're a shared "house" signal (like
+  // house monitoring queries with owner_id NULL), so any authenticated user
+  // can ask for just those via ?unscoped=1 without needing admin — the
+  // query_id-required rule below is only there to stop a non-admin client
+  // from requesting *every* alert across every client's private queries.
+  const unscopedOnly = c.req.query("unscoped") === "1";
   const isAdmin = c.get("role") === "admin";
 
-  if (!queryId && !isAdmin) {
+  if (!queryId && !unscopedOnly && !isAdmin) {
     return c.json({ error: "query_id is required" }, 400);
   }
   if (queryId && !(await canAccessQuery(c.env, c.get("userId"), c.get("role"), queryId))) {
@@ -31,6 +39,8 @@ alertsRouter.get("/", async (c) => {
   if (queryId) {
     conditions.push("a.query_id = ?");
     params.push(queryId);
+  } else if (unscopedOnly) {
+    conditions.push("a.query_id IS NULL");
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";

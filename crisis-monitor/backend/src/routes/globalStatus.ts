@@ -303,8 +303,9 @@ globalStatusRouter.get("/activity-index", async (c) => {
 
 /** ISO-3166-1 alpha-2 codes for Afrilens's core coverage area — every
  *  UN-recognized African state, matching this app's actual focus (African
- *  security monitoring) rather than the whole world. */
-const AFRICA_COUNTRIES: Record<string, string> = {
+ *  security monitoring) rather than the whole world. Exported for reuse by
+ *  countryEscalation.ts's country-level danger-icon/alerting layer. */
+export const AFRICA_COUNTRIES: Record<string, string> = {
   DZ: "Algeria", AO: "Angola", BJ: "Benin", BW: "Botswana", BF: "Burkina Faso", BI: "Burundi",
   CM: "Cameroon", CV: "Cabo Verde", CF: "Central African Republic", TD: "Chad", KM: "Comoros",
   CG: "Congo (Rep.)", CD: "Congo (DRC)", CI: "Côte d'Ivoire", DJ: "Djibouti", EG: "Egypt",

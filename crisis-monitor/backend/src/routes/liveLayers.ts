@@ -7,6 +7,7 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
+import { getLatestCountryEscalations, getCountryEscalationEvidence, AFRICA_CENTROIDS } from "../countryEscalation";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -61,6 +62,9 @@ export interface NormalizedFeature {
      *  OSIRIS's real Natural Hazards flyout only exposes these two plus
      *  Earthquakes (which comes from a separate feed entirely). */
     naturalHazardCategory?: "wildfire" | "severe-weather";
+    /** Country Escalation only — see /conflict-escalation below. Every
+     *  other layer leaves this undefined. */
+    escalationLevel?: "elevated" | "critical";
   };
 }
 
@@ -399,6 +403,64 @@ liveLayersRouter.get("/global-incidents", async (c) => {
     },
     30
   );
+});
+
+/** Country-level "is this deteriorating right now" overlay — one point per
+ *  African country currently flagged Elevated/Critical, placed at that
+ *  country's centroid (see countryEscalation.ts's AFRICA_CENTROIDS), not
+ *  one point per raw event like /conflict-events and /global-incidents
+ *  above. Scored on the same 5-minute cron that ingests bulk events (see
+ *  index.ts's scheduled() and countryEscalation.ts's scoreCountryEscalations)
+ *  — this route only reads back whatever that last wrote, no live GDELT
+ *  call of its own. `detail` carries the same analytical summary text used
+ *  in the alert this scoring may have raised, so clicking the marker on the
+ *  map shows the real reasoning (current vs. baseline count, tone, sample
+ *  locations) without a second request — see /conflict-escalation/:code for
+ *  the fuller, itemized version of that evidence. */
+liveLayersRouter.get("/conflict-escalation", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const snapshots = await getLatestCountryEscalations(c.env);
+      const features: NormalizedFeature[] = [];
+      for (const s of snapshots) {
+        if (s.level === "none") continue;
+        const centroid = AFRICA_CENTROIDS[s.countryCode];
+        if (!centroid) continue;
+        const [lat, lng] = centroid;
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [lng, lat] },
+          properties: {
+            id: `escalation-${s.countryCode}`,
+            title: s.countryName,
+            time: s.windowEnd,
+            intensity: s.level === "critical" ? 1 : 0.6,
+            intensityLabel: s.level === "critical" ? "Critical" : "Elevated",
+            detail:
+              `${s.currentCount} conflict-related report${s.currentCount === 1 ? "" : "s"} in last 24h ` +
+              `(baseline ${s.baselineCount.toFixed(0)}/24h)${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`,
+            url: null,
+            escalationLevel: s.level,
+          },
+        });
+      }
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    30
+  );
+});
+
+/** The itemized drill-down behind a given country's danger icon — the
+ *  actual contributing reports (place, tone, mentions, source link), most-
+ *  mentioned first. There's no literal saved "query" behind this feature
+ *  (unlike Social Listening's boolean search) since it comes from the
+ *  QuadClass-filtered bulk pipeline, not a keyword search — this is the
+ *  honest equivalent: the real evidence, not a fabricated query string. */
+liveLayersRouter.get("/conflict-escalation/:code/evidence", async (c) => {
+  const code = c.req.param("code");
+  const items = await getCountryEscalationEvidence(c.env, code);
+  return c.json({ countryCode: code.toUpperCase(), items, fetchedAt: new Date().toISOString() });
 });
 
 const AIR_TRAFFIC_TTL_SECONDS = 900; // 15 min

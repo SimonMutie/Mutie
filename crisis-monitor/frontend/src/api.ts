@@ -605,7 +605,24 @@ export interface LiveLayerFeature {
      *  exactly how this is derived from NASA EONET's own category field.
      *  Undefined on every other layer. */
     naturalHazardCategory?: "wildfire" | "severe-weather";
+    /** Conflict Escalation only — see the backend's countryEscalation.ts.
+     *  Undefined on every other layer. */
+    escalationLevel?: "elevated" | "critical";
   };
+}
+
+/** One contributing bulk-ingested GDELT event behind a country's escalation
+ *  score — see the backend's getCountryEscalationEvidence(). There's no
+ *  literal saved query behind this (unlike Social Listening's boolean
+ *  search), since it comes from the QuadClass-filtered bulk pipeline — this
+ *  is the real evidence instead. */
+export interface EscalationEvidenceItem {
+  placeName: string;
+  eventCode: string;
+  avgTone: number | null;
+  numMentions: number | null;
+  sourceUrl: string;
+  dateAdded: string;
 }
 
 export interface LiveLayerCollection {
@@ -832,7 +849,7 @@ export const api = {
     const qs = new URLSearchParams(params as unknown as Record<string, string>).toString();
     return req<EventItem[]>(`/api/events/geo${qs ? `?${qs}` : ""}`);
   },
-  getAlerts: (params: { status?: "open" | "resolved" | "all"; query_id?: string } = {}) => {
+  getAlerts: (params: { status?: "open" | "resolved" | "all"; query_id?: string; unscoped?: "1" } = {}) => {
     const qs = new URLSearchParams({ status: "open", ...params } as Record<string, string>).toString();
     return req<AlertItem[]>(`/api/alerts?${qs}`);
   },
@@ -1012,6 +1029,13 @@ export const api = {
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
+  // Country-level "deteriorating right now" overlay — one point per African
+  // country currently Elevated/Critical (see backend's countryEscalation.ts).
+  getConflictEscalation: () => req<LiveLayerCollection>("/api/live-layers/conflict-escalation"),
+  getConflictEscalationEvidence: (countryCode: string) =>
+    req<{ countryCode: string; items: EscalationEvidenceItem[]; fetchedAt: string }>(
+      `/api/live-layers/conflict-escalation/${encodeURIComponent(countryCode)}/evidence`
+    ),
   // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
   // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key
   // and MaxMind license key are set as Worker secrets (see liveLayers.ts).

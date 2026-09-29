@@ -50,8 +50,10 @@ const COL_DATE_ADDED = 59;
 const COL_SOURCE_URL = 60;
 
 /** Formats a Date as GDELT's own DATEADDED shape (YYYYMMDDHHMMSS, UTC) so it
- *  string-compares correctly against that column. */
-function toGdeltTimestamp(d: Date): string {
+ *  string-compares correctly against that column. Exported for reuse by
+ *  countryEscalation.ts, which runs its own aggregate queries against this
+ *  table rather than going through queryBulkEvents(). */
+export function toGdeltTimestamp(d: Date): string {
   const iso = d.toISOString(); // "2026-09-29T05:20:00.000Z"
   return iso.slice(0, 4) + iso.slice(5, 7) + iso.slice(8, 10) + iso.slice(11, 13) + iso.slice(14, 16) + iso.slice(17, 19);
 }

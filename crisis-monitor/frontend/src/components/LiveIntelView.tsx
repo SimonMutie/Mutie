@@ -329,9 +329,15 @@ const LAYER_DEFS: LayerDef[] = [
       // Same real per-query alert data "My Alerts" always used (see
       // below) — regrouped and relabeled here to match OSIRIS's real
       // "Live Alert Pins" row living under Threats & Intel rather than a
-      // separate "My Data" group.
+      // separate "My Data" group. Also pulls in the unscoped (query_id
+      // NULL) country-escalation alerts from countryEscalation.ts — a
+      // standing Africa-wide watch that isn't tied to any saved query, so
+      // it wouldn't otherwise show up here at all.
       const queries = await api.getQueries();
-      const perQuery = await Promise.allSettled(queries.map((q) => api.getAlerts({ query_id: q.id, status: "open" })));
+      const perQuery = await Promise.allSettled([
+        ...queries.map((q) => api.getAlerts({ query_id: q.id, status: "open" })),
+        api.getAlerts({ unscoped: "1", status: "open" }),
+      ]);
       const rows = perQuery.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
       const out: GlobePoint[] = [];
       for (const r of rows) {
@@ -353,6 +359,29 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
+  // Country-level "is this deteriorating right now" overlay (backend:
+  // countryEscalation.ts) — one point per African country currently flagged
+  // Elevated/Critical, placed at that country's centroid, not one point per
+  // raw event like GDELT Events/Global Incidents above. Popup detail already
+  // carries the analytical breakdown (current vs. baseline count, tone,
+  // sample locations) behind the flag — the same text used in the alert
+  // this scoring raises, so there's no separate click-to-drill-down step
+  // needed to see the reasoning.
+  {
+    key: "conflict-escalation",
+    label: "Conflict Escalation",
+    group: "Threats & Intel",
+    color: "#ff2d55",
+    icon: AlertTriangle,
+    fetcher: async () =>
+      fromGateway("#ff2d55", "Conflict Escalation", () => true)(await api.getConflictEscalation()).map((p) => ({
+        ...p,
+        // Bigger and pinned to a fixed size (not intensity-scaled like the
+        // point layers) — this is meant to read as a deliberate warning
+        // marker, not just another dot in the swarm.
+        size: 0.32,
+      })),
+  },
   // Deliberately separate from GDELT Events above — GDELT is a real-time,
   // unverified news-mention feed; this is UCDP's own academically-coded
   // Georeferenced Event Dataset (CC BY 4.0, verified commercial-safe), with
@@ -665,6 +694,7 @@ export default function LiveIntelView() {
     "active-fires": true,
     "severe-weather": true,
     "conflict-events": true,
+    "conflict-escalation": true,
     "nuclear-facilities": false,
     "global-incidents": false,
     "live-alert-pins": false,
