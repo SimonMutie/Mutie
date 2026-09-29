@@ -158,6 +158,7 @@ export const AFRICA_SOURCES: AfricaSource[] = [
   { url: "https://www.radiotamazuj.org/", country: "SS" },
   { url: "https://www.suna-sd.net/", country: "SD" },
   { url: "https://www.alrakoba.net/", country: "SD" },
+  { url: "https://darfur24.com/en/", country: "SD" },
   // ── Somalia ──
   { url: "https://www.hiiraan.com/", country: "SO" },
   { url: "https://www.garoweonline.com/", country: "SO" },
