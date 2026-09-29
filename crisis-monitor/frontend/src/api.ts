@@ -736,6 +736,106 @@ export interface SubmarineCableData {
   fetchedAt: string;
 }
 
+// --- Crypto Intelligence (backend: lib/chainIntel.ts, adapted from OSIRIS) ---
+export type ChainKind = "bitcoin" | "ethereum" | "solana";
+export type RiskSeverity = "info" | "low" | "medium" | "high" | "critical";
+
+export interface RiskFactor {
+  code: string;
+  label: string;
+  severity: RiskSeverity;
+  weight: number;
+  detail: string;
+}
+
+export interface SanctionEntry {
+  id: string;
+  schema: string;
+  name: string;
+  aliases: string[];
+  countries: string[];
+  programs: string[];
+  sanctions: string;
+}
+
+export interface WalletIntel {
+  address: string;
+  chain: ChainKind;
+  chain_label: string;
+  symbol: string;
+  ambiguous_chain: boolean;
+  balance: { native: number; usd: number | null; price_usd: number | null };
+  activity: {
+    tx_count: number;
+    first_seen: string | null;
+    last_seen: string | null;
+    age_days: number | null;
+    dormant_days: number | null;
+    sample_size: number;
+    history_complete: boolean;
+  };
+  flow: { total_in: number; total_out: number; net: number } | null;
+  counterparties: { address: string; direction: "in" | "out" | "both"; txs: number; value: number }[];
+  transactions: { hash: string; time: string | null; direction: "in" | "out" | "self" | "unknown"; value: number; counterparty: string | null; fee?: number; failed?: boolean }[];
+  sanctions: { screened: boolean; hit: boolean; entries: SanctionEntry[] };
+  risk: { score: number; level: RiskSeverity; factors: RiskFactor[] };
+  labels: string[];
+  tokens: { symbol: string; name: string; amount: number | null }[];
+  sources: string[];
+  partial: string[];
+  timestamp: string;
+}
+
+// --- OSINT Alerts (backend: lib/osintFeed.ts, adapted from OSIRIS) ---
+export type NewsBloc = "western" | "russian" | "regional" | "independent";
+
+export interface OsintAlertItem {
+  id: string;
+  title: string;
+  summary: string;
+  description: string;
+  link: string;
+  published: string;
+  source: string;
+  source_name: string;
+  lean: string | null;
+  bloc: NewsBloc | null;
+  flag: "BREAKING" | null;
+  also_reported_by: { source: string; source_name: string; lean: string; bloc: NewsBloc; link: string; published: string }[];
+  risk_score: number;
+  risk_method: string;
+  risk_keywords: string[];
+  coords: [number, number] | null;
+  coords_default: boolean;
+  coords_anchor: string | null;
+}
+
+export interface OsintFeedPayload {
+  alerts: OsintAlertItem[];
+  total: number;
+  sources: { handle: string; name: string; lean: string; bloc: NewsBloc; kind: "telegram" | "wire"; count: number; latest: string | null }[];
+  fetchedAt: string;
+}
+
+// --- Live Broadcasts (backend: /api/live-layers/live-broadcasts, adapted from OSIRIS) ---
+export interface LiveBroadcast {
+  id: string;
+  name: string;
+  city: string;
+  country: string;
+  lat: number;
+  lng: number;
+  url: string;
+  embedAllowed: boolean;
+  category: string;
+}
+
+export interface LiveBroadcastData {
+  broadcasts: LiveBroadcast[];
+  total: number;
+  fetchedAt: string;
+}
+
 export type RouteProfile = "driving" | "walking" | "cycling";
 
 export interface RouteResult {
@@ -1043,6 +1143,14 @@ export const api = {
   // the backend route's own comment for why this is OSM rather than
   // TeleGeography's submarinecablemap.com data, and what that trades off.
   getSubmarineCables: () => req<SubmarineCableData>("/api/live-layers/submarine-cables"),
+  // On-chain wallet lookup — BTC/ETH/SOL balance, activity, counterparties
+  // and OFAC screening. Not cached client-side; every address is a fresh lookup.
+  getCryptoIntel: (address: string, chain?: ChainKind) =>
+    req<WalletIntel>(`/api/live-layers/crypto-intel?address=${encodeURIComponent(address)}${chain ? `&chain=${chain}` : ""}`),
+  // Public Telegram OSINT channels + wire RSS, merged and risk-scored.
+  getOsintAlerts: () => req<OsintFeedPayload>("/api/live-layers/osint-alerts"),
+  // Static list of major newsrooms' live YouTube broadcasts.
+  getLiveBroadcasts: () => req<LiveBroadcastData>("/api/live-layers/live-broadcasts"),
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),

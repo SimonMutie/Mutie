@@ -8,6 +8,8 @@ import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getLatestCountryEscalations, getCountryEscalationEvidence, AFRICA_CENTROIDS } from "../countryEscalation";
+import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
+import { buildOsintFeed } from "../lib/osintFeed";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -1726,5 +1728,92 @@ liveLayersRouter.get("/route", async (c) => {
       return { coordinates: route.geometry.coordinates, distanceMeters: route.distance, durationSeconds: route.duration };
     },
     120 // 2 min — same from/to/mode requested again shortly after (e.g. a re-render) shouldn't re-hit the shared demo server
+  );
+});
+
+/**
+ * On-chain wallet intelligence — see backend/src/lib/chainIntel.ts for the
+ * full source list and reasoning (adapted from OSIRIS, MIT-licensed,
+ * keyless). Not cached like the other routes here: every lookup is a
+ * different address, so there's nothing shared to cache, and a stale wallet
+ * balance would be actively misleading.
+ */
+liveLayersRouter.get("/crypto-intel", async (c) => {
+  const address = (c.req.query("address") || "").trim();
+  if (c.req.query("probe") === "1") {
+    return Response.json({ configured: true, ...chainCapabilities() });
+  }
+  if (!address) return Response.json({ error: "address query param is required" }, { status: 400 });
+  if (address.length > 128) return Response.json({ error: "address too long" }, { status: 400 });
+
+  const chainParam = c.req.query("chain") as "bitcoin" | "ethereum" | "solana" | undefined;
+  if (chainParam && !["bitcoin", "ethereum", "solana"].includes(chainParam)) {
+    return Response.json({ error: "chain must be bitcoin, ethereum or solana" }, { status: 400 });
+  }
+  if (!chainParam && !detectChain(address).chain) {
+    return Response.json({ error: "Unrecognised address format. Expected a Bitcoin, Ethereum or Solana address." }, { status: 400 });
+  }
+
+  try {
+    const intel = await analyseAddress(address, chainParam);
+    return Response.json({ ...intel, timestamp: new Date().toISOString() });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return Response.json({ error: message }, { status: 502 });
+  }
+});
+
+/**
+ * Merged public Telegram OSINT channels + wire-service RSS — see
+ * backend/src/lib/osintFeed.ts for the full roster and reasoning (adapted
+ * from OSIRIS, MIT-licensed). 60s cache — a shared build serves every
+ * viewer inside the window rather than each polling every upstream source.
+ */
+liveLayersRouter.get("/osint-alerts", async (c) => {
+  return cachedJson(c.req.raw, () => buildOsintFeed(), 60);
+});
+
+/**
+ * Live 24/7 news broadcasts — a static, hand-verified list of major
+ * newsrooms' official YouTube live streams, embedded via YouTube's own
+ * public embed API (youtube.com/embed/live_stream?channel=…), which is
+ * how YouTube itself supports embedding a channel's current livestream —
+ * not a scrape of anything. `embed_allowed` reflects broadcasters that
+ * block iframe embedding (checked against X-Frame-Options/YouTube's own
+ * embed restrictions) — those still get a real link, just opened
+ * externally instead of embedded in the map's popup.
+ *
+ * List and per-channel embeddability adapted (MIT license permits reuse)
+ * from OSIRIS (github.com/simplifaisoul/osiris, src/app/api/live-news/
+ * route.ts) — this is a list of public YouTube channel IDs and cities, not
+ * creative content, but the license notice is kept regardless.
+ */
+const LIVE_BROADCASTS: Array<{ id: string; name: string; city: string; country: string; lat: number; lng: number; url: string; embedAllowed: boolean; category: string }> = [
+  { id: "nbcnews", name: "NBC News NOW", city: "New York", country: "US", lat: 40.759, lng: -73.98, url: "https://www.youtube.com/channel/UCeY0bbntWzzVIaj2z3QigXg/live", embedAllowed: false, category: "mainstream" },
+  { id: "cbsnews", name: "CBS News 24/7", city: "New York", country: "US", lat: 40.764, lng: -73.973, url: "https://www.youtube.com/channel/UC8p1vwvWtl6T73JiExfWs1g/live", embedAllowed: false, category: "mainstream" },
+  { id: "abcnews", name: "ABC News Live", city: "New York", country: "US", lat: 40.763, lng: -73.979, url: "https://www.youtube.com/channel/UCBi2mrWuNuyYy4gbM6fU18Q/live", embedAllowed: false, category: "mainstream" },
+  { id: "bloomberg", name: "Bloomberg TV", city: "New York", country: "US", lat: 40.756, lng: -73.988, url: "https://www.youtube.com/channel/UC_vQ72b7v5n2938v9d5c80w/live", embedAllowed: false, category: "finance" },
+  { id: "cspan", name: "C-SPAN", city: "Washington DC", country: "US", lat: 38.897, lng: -77.036, url: "https://www.youtube.com/channel/UCb--64Gl51jIEVE-GLDAVTg/live", embedAllowed: false, category: "government" },
+  { id: "cbc", name: "CBC News", city: "Toronto", country: "CA", lat: 43.644, lng: -79.387, url: "https://www.youtube.com/channel/UCKy1dAqELon0zgzZPOz9SVw/live", embedAllowed: false, category: "mainstream" },
+  { id: "skynews", name: "Sky News", city: "London", country: "GB", lat: 51.5, lng: -0.118, url: "https://www.youtube.com/embed/live_stream?channel=UCoMdktPbSTixAyNGwb-UYkQ&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "france24en", name: "France 24 EN", city: "Paris", country: "FR", lat: 48.83, lng: 2.28, url: "https://www.youtube.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "dwnews", name: "DW News", city: "Berlin", country: "DE", lat: 52.508, lng: 13.376, url: "https://www.youtube.com/embed/live_stream?channel=UCknLrEdhRCp1aegoMqRaCZg&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "aljazeera", name: "Al Jazeera EN", city: "Doha", country: "QA", lat: 25.286, lng: 51.534, url: "https://www.youtube.com/embed/live_stream?channel=UCNye-wNBqNL5ZzHSJj3l8Bg&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "nhkworld", name: "NHK World", city: "Tokyo", country: "JP", lat: 35.69, lng: 139.692, url: "https://www.youtube.com/embed/live_stream?channel=UCSPEjw8F2nQDtmUKPFNF7_A&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "cna", name: "CNA 24/7", city: "Singapore", country: "SG", lat: 1.29, lng: 103.852, url: "https://www.youtube.com/embed/live_stream?channel=UC83jt4dlz1Gjl58fzQrrKZg&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "wion", name: "WION", city: "New Delhi", country: "IN", lat: 28.614, lng: 77.209, url: "https://www.youtube.com/embed/live_stream?channel=UC_gUM8rL-Lrg6O3adPW9K1g&autoplay=1&mute=1", embedAllowed: true, category: "mainstream" },
+  { id: "cgtn", name: "CGTN", city: "Beijing", country: "CN", lat: 39.904, lng: 116.407, url: "https://www.youtube.com/channel/UCgrNz-aDmcr2uuto8_DL2jg/live", embedAllowed: false, category: "state" },
+  { id: "rt", name: "RT News", city: "Moscow", country: "RU", lat: 55.755, lng: 37.617, url: "https://rumble.com/c/RTNewsEN", embedAllowed: false, category: "state" },
+];
+// Note: this list is exactly OSIRIS's own verified roster — no entries added
+// or channel IDs guessed. Africanews' RSS text feed is already in the OSINT
+// Alerts roster above; it has no live-stream channel here because its
+// YouTube live channel ID wasn't independently verified as embeddable.
+
+liveLayersRouter.get("/live-broadcasts", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => ({ broadcasts: LIVE_BROADCASTS, total: LIVE_BROADCASTS.length, fetchedAt: new Date().toISOString() }),
+    86400 // static reference list, same as /maritime and /nuclear-facilities
   );
 });

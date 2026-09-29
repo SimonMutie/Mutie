@@ -36,7 +36,9 @@ import {
   Telescope,
   TrendingDown,
   TrendingUp,
+  Tv,
   Upload as UploadGlyph,
+  Wallet,
   Waypoints,
   X as CloseGlyph,
   type LucideIcon,
@@ -61,6 +63,10 @@ import {
   type EconomicIndicators,
   type SocialListeningResult,
   type SavedListeningQuery,
+  type WalletIntel,
+  type ChainKind,
+  type OsintAlertItem,
+  type LiveBroadcast,
 } from "../api";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -240,7 +246,7 @@ interface GlobePoint {
   escalationLevel?: "elevated" | "critical";
 }
 
-type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Network Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
+type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Network Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data" | "Media";
 
 /** Icon + accent for a group's own rail button — every group renders
  *  through the same flyout treatment now (see LayerPanel/GroupRailButton),
@@ -261,6 +267,10 @@ const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
   Maritime: { icon: Ship, color: "#00BCD4" },
   "Space Tracking": { icon: Satellite, color: "#9d7bff" },
   "My Data": { icon: Bell, color: HUD.gold },
+  // Live broadcasts + merged OSINT alerts — both are "what's being reported
+  // right now", distinct from the raw structured event feeds in Threats &
+  // Intel above.
+  Media: { icon: Tv, color: "#4fd1ff" },
 };
 
 interface LayerDef {
@@ -596,6 +606,62 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Telescope,
     fetcher: async () => fromGateway("#ffd23f", "Stations / Telescopes", (f) => f.properties.satelliteCategory === "stations-telescopes")(await api.getLiveSatellites()),
   },
+  // "OSINT Alerts" and "Live Broadcasts" — Media group. Both adapted from
+  // OSIRIS (github.com/simplifaisoul/osiris, MIT license); see the backend
+  // routes (osint-alerts, live-broadcasts) for the full source roster and
+  // what's deliberately different from OSIRIS's own version.
+  {
+    key: "osint-alerts",
+    label: "OSINT Alerts",
+    group: "Media",
+    color: "#ff9d4f",
+    icon: Radio,
+    // Not fromGateway() — this feed's own shape (bloc/lean labels, risk
+    // score, cross-posting) doesn't fit NormalizedFeature, and every point
+    // needs its own popup fields (bloc-colored, not layer-colored).
+    fetcher: async () => {
+      const feed = await api.getOsintAlerts();
+      return feed.alerts
+        .filter((a) => a.coords)
+        .map((a): GlobePoint => {
+          const blocColor: Record<string, string> = { western: "#4fd1ff", russian: "#ff5d5d", regional: "#ffd23f", independent: "#00E676" };
+          return {
+            id: a.id,
+            layerKey: "OSINT Alerts",
+            lat: a.coords![0],
+            lng: a.coords![1],
+            color: (a.bloc && blocColor[a.bloc]) || "#ff9d4f",
+            size: a.flag === "BREAKING" ? 0.22 : 0.14,
+            title: `${a.flag === "BREAKING" ? "⚠ BREAKING — " : ""}${a.title}`,
+            subtitle: `${a.source_name}${a.lean ? ` (${a.lean})` : ""}${a.coords_default ? " — country-anchor, not precise" : ""}${a.also_reported_by.length ? ` · also carried by ${a.also_reported_by.length} other source(s)` : ""}`,
+            time: a.published,
+            url: a.link,
+          };
+        });
+    },
+  },
+  {
+    key: "live-broadcasts",
+    label: "Live Broadcasts",
+    group: "Media",
+    color: "#7c9cff",
+    icon: Tv,
+    fetcher: async () => {
+      const data = await api.getLiveBroadcasts();
+      return data.broadcasts.map((b): GlobePoint => ({
+        id: `broadcast:${b.id}`,
+        layerKey: "Live Broadcasts",
+        lat: b.lat,
+        lng: b.lng,
+        color: "#7c9cff",
+        size: 0.14,
+        title: b.name,
+        subtitle: `${b.city}, ${b.country} — ${b.category}${b.embedAllowed ? "" : " (opens externally)"}`,
+        time: null,
+        url: b.url,
+      }));
+    },
+  },
   {
     key: "my-incidents",
     label: "My Incidents",
@@ -642,7 +708,7 @@ function shapeRingLatLng(shape: SavedShape): LatLng[] {
   return geom.coordinates[0].map(([lng, lat]) => [lat, lng] as LatLng);
 }
 
-const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Network Intel", "Aviation", "Maritime", "Space Tracking", "My Data"];
+const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Network Intel", "Aviation", "Maritime", "Media", "Space Tracking", "My Data"];
 
 /** Real global shipping-lane geometries now come from the backend's
  *  /api/live-layers/maritime-lines (see LayerState below and
@@ -672,7 +738,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | null;
+type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | "crypto" | null;
 type DrawMode = "distance" | "area" | null;
 
 /** [lat, lng] tuples throughout the drawing/route tools — matches how a
@@ -770,6 +836,8 @@ export default function LiveIntelView() {
     "satellites-earth-observation": false,
     "satellites-stations-telescopes": false,
     "my-incidents": false,
+    "osint-alerts": false,
+    "live-broadcasts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
     // chokepoints) — this toggles the shipping-lane arcs (maritimeLanes,
     // fetched from the backend) instead, matching OSIRIS's own real
@@ -963,6 +1031,27 @@ export default function LiveIntelView() {
   const [incidentSearchLoading, setIncidentSearchLoading] = useState(false);
   const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
   const [incidentBulkDeleting, setIncidentBulkDeleting] = useState(false);
+
+  // --- Crypto Intel tool: on-chain wallet lookup (BTC/ETH/SOL), adapted
+  // from OSIRIS's chainIntel — see api.getCryptoIntel's own comment. Not a
+  // map layer: this is a one-off lookup a user runs, not a polled feed. ---
+  const [cryptoAddress, setCryptoAddress] = useState("");
+  const [cryptoChain, setCryptoChain] = useState<ChainKind | "">("");
+  const [cryptoResult, setCryptoResult] = useState<WalletIntel | null>(null);
+  const [cryptoLoading, setCryptoLoading] = useState(false);
+  const [cryptoError, setCryptoError] = useState<string | null>(null);
+
+  function runCryptoLookup() {
+    const address = cryptoAddress.trim();
+    if (!address) return;
+    setCryptoLoading(true);
+    setCryptoError(null);
+    api
+      .getCryptoIntel(address, cryptoChain || undefined)
+      .then(setCryptoResult)
+      .catch((e) => setCryptoError(e instanceof Error ? e.message : "Lookup failed"))
+      .finally(() => setCryptoLoading(false));
+  }
   const [incidentExporting, setIncidentExporting] = useState<"xlsx" | "csv" | null>(null);
 
   // --- Shapes tool: persisted AOI overlays (map_shapes), drawn here and
@@ -1733,6 +1822,18 @@ export default function LiveIntelView() {
             liveErrors={listeningLiveErrors}
             liveLoading={listeningLiveLoading}
             onRefreshSaved={refreshListeningById}
+          />
+        )}
+        {activeTool === "crypto" && (
+          <CryptoToolPanel
+            address={cryptoAddress}
+            onAddressChange={setCryptoAddress}
+            chain={cryptoChain}
+            onChainChange={setCryptoChain}
+            onLookup={runCryptoLookup}
+            result={cryptoResult}
+            loading={cryptoLoading}
+            error={cryptoError}
           />
         )}
         {activeTool === "shapes" && (
@@ -2668,6 +2769,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
     { key: "news", icon: Newspaper, label: "Alerts" },
+    { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   return (
     <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 4, padding: 4 }}>
@@ -3112,6 +3214,110 @@ function IncidentsToolPanel({
           <div style={{ fontSize: 10, color: HUD.textMuted }}>
             Both act on every incident currently matched by the filters above — not just what's visible on screen.
           </div>
+        </div>
+      )}
+    </ToolPanelShell>
+  );
+}
+
+const RISK_COLOR: Record<string, string> = { critical: HUD.alertRed, high: HUD.alertOrange, medium: "#ffd23f", low: HUD.textSecondary, info: HUD.textMuted };
+
+/** Crypto Intel tool — on-chain wallet lookup (BTC/ETH/SOL) via
+ *  api.getCryptoIntel, adapted from OSIRIS's chainIntel module. A one-off
+ *  address lookup, not a polled map layer — see that module's own comment
+ *  for the full (entirely keyless) source list. */
+function CryptoToolPanel({
+  address,
+  onAddressChange,
+  chain,
+  onChainChange,
+  onLookup,
+  result,
+  loading,
+  error,
+}: {
+  address: string;
+  onAddressChange: (v: string) => void;
+  chain: ChainKind | "";
+  onChainChange: (v: ChainKind | "") => void;
+  onLookup: () => void;
+  result: WalletIntel | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <ToolPanelShell title="Crypto Intel">
+      <div style={{ fontSize: 11, color: HUD.textSecondary }}>
+        Look up a Bitcoin, Ethereum or Solana address: balance, activity, counterparties, and an OFAC sanctions screen.
+      </div>
+      <input
+        value={address}
+        onChange={(e) => onAddressChange(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && onLookup()}
+        placeholder="Wallet address…"
+        style={hudInputStyle}
+      />
+      <select value={chain} onChange={(e) => onChainChange(e.target.value as ChainKind | "")} style={{ ...hudInputStyle, cursor: "pointer" }}>
+        <option value="">Auto-detect chain</option>
+        <option value="bitcoin">Bitcoin</option>
+        <option value="ethereum">Ethereum</option>
+        <option value="solana">Solana</option>
+      </select>
+      <ToolButton active onClick={onLookup} disabled={loading || !address.trim()}>
+        {loading ? "Looking up…" : "Look up"}
+      </ToolButton>
+
+      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
+
+      {result && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+            <span style={{ color: HUD.textPrimary, fontWeight: 700 }}>{result.chain_label}</span>
+            <span style={{ color: RISK_COLOR[result.risk.level], fontWeight: 700, textTransform: "uppercase" }}>{result.risk.level}</span>
+          </div>
+
+          {result.sanctions.hit && (
+            <div style={{ fontSize: 11, color: HUD.alertRed, background: "rgba(255,61,61,0.12)", padding: 6, borderRadius: 6 }}>
+              ⚠ OFAC SDN match: {result.sanctions.entries.map((e) => e.name).join("; ")}
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: HUD.textSecondary }}>
+            Balance: {result.balance.native.toLocaleString(undefined, { maximumFractionDigits: 6 })} {result.symbol}
+            {result.balance.usd !== null && ` (~$${result.balance.usd.toLocaleString(undefined, { maximumFractionDigits: 0 })})`}
+          </div>
+          <div style={{ fontSize: 11, color: HUD.textSecondary }}>
+            {result.activity.tx_count.toLocaleString()} transactions
+            {result.activity.age_days !== null && ` · ${result.activity.age_days}d old`}
+            {result.activity.dormant_days !== null && ` · last active ${result.activity.dormant_days}d ago`}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Risk factors ({result.risk.score}/100)</div>
+            {result.risk.factors.map((f) => (
+              <div key={f.code} style={{ fontSize: 11, color: HUD.textSecondary }}>
+                <span style={{ color: RISK_COLOR[f.severity], fontWeight: 600 }}>{f.label}</span> — {f.detail}
+              </div>
+            ))}
+          </div>
+
+          {result.counterparties.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>
+                Top counterparties ({result.counterparties.length})
+              </div>
+              {result.counterparties.slice(0, 6).map((cp) => (
+                <div key={cp.address} style={{ fontSize: 10.5, color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={cp.address}>
+                  {cp.address.slice(0, 10)}…{cp.address.slice(-6)} — {cp.txs} tx, {cp.direction}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {result.partial.length > 0 && (
+            <div style={{ fontSize: 10, color: HUD.textMuted }}>{result.partial.join(" · ")}</div>
+          )}
+          <div style={{ fontSize: 10, color: HUD.textMuted }}>Sources: {result.sources.join(", ")}</div>
         </div>
       )}
     </ToolPanelShell>
