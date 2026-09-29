@@ -148,10 +148,21 @@ function extractGdeltErrorMessage(data: unknown): string | null {
   return null;
 }
 
-async function fetchGdeltJson(query: string, params: Record<string, string>, label: string): Promise<unknown> {
+// GDELT's free API is noticeably slower than most (its timeline modes scan
+// its full rolling archive on every call) and has occasional slow spells —
+// 10s was too tight and was aborting essentially every request, which is
+// what produced the "timeout" errors across all three sections at once
+// (tone/volume/articles are three separate GDELT calls, so if GDELT itself
+// is briefly slow, all three fail together, exactly as observed). Bumped to
+// 20s, plus one retry specifically for a timeout (not for a real HTTP
+// error, which retrying won't fix) since a single slow response shouldn't
+// need the person to manually hit Search again.
+const GDELT_TIMEOUT_MS = 20000;
+
+async function fetchGdeltJsonOnce(query: string, params: Record<string, string>, label: string): Promise<unknown> {
   const search = new URLSearchParams({ query, format: "json", timespan: "7d", ...params });
   const url = `https://api.gdeltproject.org/api/v2/doc/doc?${search.toString()}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLensBot/1.0)" } });
+  const res = await fetch(url, { signal: AbortSignal.timeout(GDELT_TIMEOUT_MS), headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLensBot/1.0)" } });
   const text = await res.text();
   if (!res.ok) throw new Error(`${label}: GDELT returned HTTP ${res.status}`);
   let data: unknown;
@@ -165,6 +176,24 @@ async function fetchGdeltJson(query: string, params: Record<string, string>, lab
   const gdeltError = extractGdeltErrorMessage(data);
   if (gdeltError) throw new Error(`${label}: ${gdeltError}`);
   return data;
+}
+
+function isTimeoutError(err: unknown): boolean {
+  return err instanceof Error && /abort|timeout/i.test(err.message + err.name);
+}
+
+async function fetchGdeltJson(query: string, params: Record<string, string>, label: string): Promise<unknown> {
+  try {
+    return await fetchGdeltJsonOnce(query, params, label);
+  } catch (err) {
+    if (!isTimeoutError(err)) throw err;
+    try {
+      return await fetchGdeltJsonOnce(query, params, label);
+    } catch (retryErr) {
+      if (isTimeoutError(retryErr)) throw new Error(`${label}: GDELT did not respond within ${GDELT_TIMEOUT_MS / 1000}s (tried twice) — it may be under load, try again shortly`);
+      throw retryErr;
+    }
+  }
 }
 
 async function fetchGdeltTimeline(query: string, mode: "timelinetone" | "timelinevolraw"): Promise<Array<{ date: string; value: number }>> {
