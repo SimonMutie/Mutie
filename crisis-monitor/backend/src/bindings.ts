@@ -63,4 +63,13 @@ export interface Env {
    *  route works without it, just without the Mastodon section of the
    *  results (mastodonAvailable: false). */
   MASTODON_ACCESS_TOKEN?: string;
+  /** Anthropic API key (console.anthropic.com -> API Keys), used by
+   *  countryEscalation.ts to turn a country's escalation numbers (current
+   *  vs. baseline report count, tone, sample locations) into a short
+   *  analyst-style narrative brief for the alert, instead of the plain
+   *  templated sentence. Optional: alerts still fire and still carry a
+   *  real, accurate (just more mechanical) description without this set —
+   *  same "degrades, never breaks" pattern as every other optional key in
+   *  this file. */
+  ANTHROPIC_API_KEY?: string;
 }

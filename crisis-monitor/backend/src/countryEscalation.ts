@@ -55,6 +55,73 @@ export const AFRICA_CENTROIDS: Record<string, [number, number]> = {
   UG: [1.4, 32.3], ZM: [-13.1, 27.8], ZW: [-19.0, 29.8],
 };
 
+const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"; // fast + cheap — this fires at most a few times/hour, per country, never a chat-scale workload
+const ANTHROPIC_TIMEOUT_MS = 8000;
+
+/** Turns one country's escalation numbers into a short analyst-style brief
+ *  via the Anthropic API, in place of the plain templated sentence. Returns
+ *  null (never throws) whenever this can't produce a real answer — no key
+ *  configured, a timeout, a non-200 response, or an unexpected response
+ *  shape — so the caller always has the templated description to fall back
+ *  on and an alert never fails to fire just because this enhancement did.
+ *  Deliberately fed only the numbers already computed above (no invented
+ *  context, no speculation beyond the data) — this is meant to read the
+ *  same numbers a human analyst would see, phrased better, not to add
+ *  claims nothing here actually knows. */
+async function generateAnalyticalSummary(
+  env: Env,
+  params: {
+    countryName: string;
+    currentCount: number;
+    baselineCount: number;
+    avgTone: number | null;
+    escalationScore: number;
+    level: "elevated" | "critical";
+    sampleLocations: string[];
+  }
+): Promise<string | null> {
+  if (!env.ANTHROPIC_API_KEY) return null;
+
+  const prompt =
+    `You are drafting one short paragraph (2-3 sentences, no markdown, no headings, no bullet points) for a security-monitoring alert ` +
+    `on an African conflict-monitoring dashboard. Use only the facts given below — do not add locations, causes, actors, or context not stated here. ` +
+    `Write it the way a conflict analyst would phrase a terse situation note, not a headline and not a hedge-filled disclaimer.\n\n` +
+    `Country: ${params.countryName}\n` +
+    `Alert level: ${params.level}\n` +
+    `Conflict-toned reports in the last 24h: ${params.currentCount}\n` +
+    `Baseline (previous 24h): ${params.baselineCount.toFixed(0)}\n` +
+    `Escalation score: ${params.escalationScore.toFixed(2)}\n` +
+    `Average report tone (GDELT scale, negative = more negative coverage): ${params.avgTone !== null ? params.avgTone.toFixed(1) : "not available"}\n` +
+    `Sample reported locations: ${params.sampleLocations.length > 0 ? params.sampleLocations.join("; ") : "none captured"}\n`;
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      signal: AbortSignal.timeout(ANTHROPIC_TIMEOUT_MS),
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODEL,
+        max_tokens: 220,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!res.ok) {
+      console.error(`[country-escalation] Anthropic summary request failed: ${res.status}`);
+      return null;
+    }
+    const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
+    const text = data.content?.find((b) => b.type === "text")?.text?.trim();
+    return text || null;
+  } catch (err) {
+    console.error("[country-escalation] Anthropic summary request errored", err);
+    return null;
+  }
+}
+
 async function broadcast(env: Env, type: string, payload: unknown) {
   const id = env.LIVE_FEED.idFromName("global");
   await env.LIVE_FEED.get(id).fetch("http://live-feed/broadcast", {
@@ -133,13 +200,28 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
           `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE quad_class >= 3 AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
           [currentStart, likePattern]
         );
-        const sampleLocations = sample.map((r) => r.place_name).join("; ");
+        const sampleLocationList = sample.map((r) => r.place_name);
+        const sampleLocations = sampleLocationList.join("; ");
         const alertId = newId();
-        const description =
+        const templatedDescription =
           `Conflict-related reporting in ${name} has risen to ${currentCount} report${currentCount === 1 ? "" : "s"} in the last ${CURRENT_WINDOW_HOURS}h, ` +
           `versus a baseline of ${baselineCount} in the previous ${BASELINE_WINDOW_HOURS}h (escalation score ${escalationScore.toFixed(2)})` +
           `${avgTone !== null ? `, average tone ${avgTone.toFixed(1)} (${avgTone < -3 ? "sharply negative" : avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
           `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}`;
+
+        // AI-written brief when ANTHROPIC_API_KEY is configured, falling
+        // back to the plain templated sentence above otherwise or on any
+        // failure — see generateAnalyticalSummary's own doc comment.
+        const aiSummary = await generateAnalyticalSummary(env, {
+          countryName: name,
+          currentCount,
+          baselineCount,
+          avgTone,
+          escalationScore,
+          level,
+          sampleLocations: sampleLocationList,
+        });
+        const description = aiSummary ?? templatedDescription;
 
         const alertRows = await all<Record<string, unknown>>(
           env.DB,
@@ -150,7 +232,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
             level,
             `${level === "critical" ? "Critical" : "Elevated"} escalation: ${name}`,
             description,
-            JSON.stringify({ currentCount, baselineCount, avgTone, escalationScore }),
+            JSON.stringify({ currentCount, baselineCount, avgTone, escalationScore, aiGenerated: aiSummary !== null }),
             name,
             lat,
             lng,
