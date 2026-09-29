@@ -35,6 +35,17 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
         <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
           Mapping
         </button>
+        <button onClick={() => setTab("upload")} style={tabBtnStyle(tab === "upload")}>
+          Upload
+        </button>
+        {/* Previously only reachable through a hidden "Incident Log" icon
+         *  button buried inside the Mapping tab's map toolbar — a bulk
+         *  upload (e.g. a 70k-row file) completed successfully there with
+         *  no obvious way back to see it, since this bar only ever showed
+         *  Dashboard/Mapping. Uploads and their row counts live here. */}
+        <button onClick={() => setTab("manage")} style={tabBtnStyle(tab === "manage")}>
+          Manage / Uploads
+        </button>
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
