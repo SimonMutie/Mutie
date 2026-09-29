@@ -734,7 +734,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`, res.status);
+    // Routes that wrap upstream calls (liveLayers.ts, socialListening.ts,
+    // globalStatus.ts) send { error: "<generic label>", detail: "<actual
+    // reason>" } on a 502 — previously only `error` was surfaced, so every
+    // failure showed the same generic "Upstream feed unavailable" with no
+    // way to tell a timeout from a real HTTP error from a bad query. Both
+    // are now included, so the visible message is actually diagnostic.
+    const label = typeof body.error === "string" ? body.error : body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`;
+    const message = typeof body.detail === "string" && body.detail ? `${label}: ${body.detail}` : label;
+    throw new ApiError(message, res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
