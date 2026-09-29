@@ -33,6 +33,25 @@ const LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt";
 const RETENTION_DAYS = 14;
 const EXPORT_COLUMN_COUNT = 61;
 
+// GDELT's CAMEO QuadClass only fires for actor-to-actor coded events
+// (protests, clashes, strikes between two identified actors) — it does NOT
+// reliably cover a lot of what "conflict/security media coverage" actually
+// means day to day: a bombing with no clearly coded actor pair, a natural
+// disaster, an accident, a terrorism story that GDELT's NLP didn't code as a
+// CAMEO interaction at all. The old live DOC-API keyword search (before the
+// bulk-ingestion switch) caught these because it searched raw article text
+// for words like "disaster"/"explosion"/"accident" directly, independent of
+// CAMEO coding — a real capability the QuadClass-only filter below doesn't
+// have. AvgTone is GDELT's per-article sentiment score (roughly -10..+10 in
+// practice) computed straight from the article text, so a sharply negative
+// tone is a second, CAMEO-independent signal for "this is bad news" that
+// catches a lot of what QuadClass alone misses. A row is kept if EITHER
+// signal fires. Exported so downstream broad-net queries (Global Incidents,
+// Activity Index, country escalation) apply the identical definition rather
+// than each redefining "conflict-toned" slightly differently.
+export const TONE_OVERRIDE_THRESHOLD = -5;
+export const BROAD_CONFLICT_SQL = `(quad_class >= 3 OR avg_tone <= ${TONE_OVERRIDE_THRESHOLD})`;
+
 // Column indices in GDELT's Event Export CSV (tab-separated, no header) —
 // this exact 61-column layout has been stable since the 2.0 format launched
 // in 2015; see the GDELT 2.0 Event codebook.
@@ -118,7 +137,10 @@ function parseExportCsv(csvText: string): ParsedRow[] {
     const cols = line.split("\t");
     if (cols.length < EXPORT_COLUMN_COUNT) continue;
     const quadClass = Number.parseInt(cols[COL_QUAD_CLASS], 10);
-    if (quadClass !== 3 && quadClass !== 4) continue; // conflict-toned only — see module doc comment
+    const avgTone = parseFloatOrNull(cols[COL_AVG_TONE]);
+    const isConflictCoded = quadClass === 3 || quadClass === 4;
+    const isSharplyNegative = avgTone !== null && avgTone <= TONE_OVERRIDE_THRESHOLD;
+    if (!isConflictCoded && !isSharplyNegative) continue; // neither signal fired — see module doc comment
     const lat = Number.parseFloat(cols[COL_ACTION_GEO_LAT]);
     const lon = Number.parseFloat(cols[COL_ACTION_GEO_LONG]);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue; // no usable point to plot
@@ -134,9 +156,9 @@ function parseExportCsv(csvText: string): ParsedRow[] {
       placeName: cols[COL_ACTION_GEO_FULLNAME] || "Unknown location",
       goldstein: parseFloatOrNull(cols[COL_GOLDSTEIN]),
       numMentions: parseIntOrNull(cols[COL_NUM_MENTIONS]),
-      avgTone: parseFloatOrNull(cols[COL_AVG_TONE]),
+      avgTone,
       eventCode: cols[COL_EVENT_CODE] || "",
-      quadClass,
+      quadClass: Number.isFinite(quadClass) ? quadClass : 0,
       sourceUrl: cols[COL_SOURCE_URL] || "",
     });
   }
@@ -218,15 +240,20 @@ interface BulkEventRow {
 }
 
 /** Reads back ingested events for the map layers — `minQuadClass: 4` for a
- *  narrower "material conflict only" feed (Conflict Events), omitted for
- *  the broader "verbal or material conflict" feed (Global Incidents,
- *  Activity Index). */
+ *  narrower "material conflict only" feed (Conflict Events, precision over
+ *  recall on purpose), `minQuadClass: 3` for the broader net (Global
+ *  Incidents, Activity Index — uses BROAD_CONFLICT_SQL, so it also picks up
+ *  the sharply-negative-tone rows that a strict QuadClass check would miss),
+ *  omitted for no filter at all. */
 export async function queryBulkEvents(env: Env, opts: { hours: number; minQuadClass?: number }): Promise<BulkEventPoint[]> {
   const cutoff = toGdeltTimestamp(new Date(Date.now() - opts.hours * 60 * 60 * 1000));
   const base = "SELECT id, lat, lon, place_name, goldstein, num_mentions, avg_tone, quad_class, source_url, date_added FROM gdelt_bulk_events WHERE date_added >= ?";
-  const stmt = opts.minQuadClass
-    ? env.DB.prepare(`${base} AND quad_class >= ? ORDER BY date_added DESC LIMIT 2000`).bind(cutoff, opts.minQuadClass)
-    : env.DB.prepare(`${base} ORDER BY date_added DESC LIMIT 2000`).bind(cutoff);
+  const stmt =
+    opts.minQuadClass === 4
+      ? env.DB.prepare(`${base} AND quad_class >= 4 ORDER BY date_added DESC LIMIT 2000`).bind(cutoff)
+      : opts.minQuadClass
+        ? env.DB.prepare(`${base} AND ${BROAD_CONFLICT_SQL} ORDER BY date_added DESC LIMIT 2000`).bind(cutoff)
+        : env.DB.prepare(`${base} ORDER BY date_added DESC LIMIT 2000`).bind(cutoff);
   const { results } = await stmt.all<BulkEventRow>();
   return (results ?? []).map((r) => ({
     id: r.id,

@@ -1,6 +1,6 @@
 import { all, first, run, nowIso, isoMinutesAgo } from "./db";
 import { newId } from "./ids";
-import { toGdeltTimestamp } from "./connectors/gdeltBulk";
+import { toGdeltTimestamp, BROAD_CONFLICT_SQL } from "./connectors/gdeltBulk";
 import { AFRICA_COUNTRIES } from "./routes/globalStatus";
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
@@ -153,13 +153,13 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     const current = await first<CountBucket>(
       env.DB,
       `SELECT COUNT(*) AS count, AVG(avg_tone) AS avg_tone FROM gdelt_bulk_events
-       WHERE quad_class >= 3 AND date_added >= ? AND place_name LIKE ?`,
+       WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND place_name LIKE ?`,
       [currentStart, likePattern]
     );
     const baseline = await first<CountBucket>(
       env.DB,
       `SELECT COUNT(*) AS count FROM gdelt_bulk_events
-       WHERE quad_class >= 3 AND date_added >= ? AND date_added < ? AND place_name LIKE ?`,
+       WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND date_added < ? AND place_name LIKE ?`,
       [baselineStart, currentStart, likePattern]
     );
 
@@ -197,7 +197,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         const lng = centroid ? centroid[1] : null;
         const sample = await all<{ place_name: string }>(
           env.DB,
-          `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE quad_class >= 3 AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
+          `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
           [currentStart, likePattern]
         );
         const sampleLocationList = sample.map((r) => r.place_name);
@@ -311,7 +311,7 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
   const rows = await all<{ place_name: string; event_code: string; avg_tone: number | null; num_mentions: number | null; source_url: string; date_added: string }>(
     env.DB,
     `SELECT place_name, event_code, avg_tone, num_mentions, source_url, date_added FROM gdelt_bulk_events
-     WHERE quad_class >= 3 AND date_added >= ? AND place_name LIKE ?
+     WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND place_name LIKE ?
      ORDER BY num_mentions DESC LIMIT ?`,
     [currentStart, `%${name}%`, limit]
   );
