@@ -102,7 +102,14 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
         subtitle: p.subtitle,
         time: p.time,
         url: p.url,
-        escalationLevel: p.escalationLevel ?? null,
+        // Deliberately omitted (not set to null) on every layer except
+        // Conflict Escalation: the warning-label symbol layer below filters
+        // on ["has", "escalationLevel"], which checks whether the property
+        // KEY is present at all — a `null` value still counts as present.
+        // Setting it unconditionally made every single layer's points (every
+        // earthquake, every GDELT event, every aircraft...) sprout a
+        // permanent floating title label across the whole map.
+        ...(p.escalationLevel ? { escalationLevel: p.escalationLevel } : {}),
       },
     })),
   };
