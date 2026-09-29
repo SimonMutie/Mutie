@@ -79,14 +79,42 @@ const WIRE_FEEDS: (Feed & { url: string })[] = [
   { handle: "dw", url: "https://rss.dw.com/rdf/rss-en-all", name: "DW (Deutsche Welle)", lean: "German public broadcaster", bloc: "western" },
 ];
 
-const POSTS_PER_CHANNEL = 8;
-const ITEMS_PER_WIRE = 5;
+// Raised from 8/5 at Simon's request ("only pulling a few" — nothing was
+// being filtered out by keyword or topic here; these two counts were
+// simply how many of each source's most-recent items got kept per fetch
+// cycle). Telegram channels post far more than 8 times in a 72h window and
+// wire RSS feeds carry far more than 5 items — this just stops throwing
+// the rest away. t.me/s/<channel> only ever serves ~20 posts per page
+// regardless of this cap, which is the real ceiling on the Telegram side.
+const POSTS_PER_CHANNEL = 20;
+const ITEMS_PER_WIRE = 25;
 const CHANNEL_TTL_MS = 3 * 60_000;
 const WIRE_TTL_MS = 5 * 60_000;
 export const MAX_POST_AGE_MS = 72 * 3_600_000;
 const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-const RISK_KEYWORDS = ["war", "missile", "strike", "attack", "crisis", "tension", "military", "conflict", "defense", "clash", "nuclear", "invasion", "bomb", "drone", "weapon", "sanctions", "ceasefire", "escalation", "killed", "destroyed", "operation", "casualty", "frontline", "threat"];
+// Scoring only — nothing here ever excludes an item from the feed, it only
+// decides how each already-included item's risk_score/risk_keywords look.
+// Broadened at Simon's request to cover security and humanitarian
+// vocabulary, not just direct-conflict/military terms, since analysts
+// reading this feed care about displacement and famine reporting as much
+// as strikes and shelling.
+const RISK_KEYWORDS = [
+  // conflict / military
+  "war", "missile", "strike", "attack", "crisis", "tension", "military", "conflict", "defense", "clash",
+  "nuclear", "invasion", "bomb", "drone", "weapon", "sanctions", "ceasefire", "escalation", "killed",
+  "destroyed", "operation", "casualty", "frontline", "threat", "shelling", "airstrike", "ambush",
+  "offensive", "insurgency", "militia", "mutiny", "coup", "rebel", "warlord", "artillery", "gunfire",
+  "explosion", "landmine", "siege", "occupation", "annexation",
+  // security / crime / civil unrest
+  "terrorism", "extremist", "kidnap", "abduction", "hostage", "banditry", "smuggling", "trafficking",
+  "riot", "protest", "unrest", "crackdown", "arrest", "detain", "curfew", "blockade", "sabotage",
+  "assassination", "massacre", "atrocity", "genocide", "ethnic cleansing", "piracy",
+  // humanitarian
+  "famine", "starvation", "malnutrition", "displaced", "displacement", "refugee", "asylum", "idp",
+  "humanitarian", "aid", "relief", "epidemic", "outbreak", "cholera", "drought", "flood", "food insecurity",
+  "shortage", "evacuation", "disaster", "emergency", "crisis response",
+];
 
 const RISK_PATTERNS = RISK_KEYWORDS.map((kw) => ({ kw, rx: new RegExp(`\\b${kw === "casualty" ? "casualt(?:y|ies)" : `${kw}(?:s|es|ed|ing)?`}\\b`, "i") }));
 
@@ -124,11 +152,26 @@ export function scoreRisk(text: string): { score: number; matched: string[] } {
   return { score: Math.min(10, 1 + matched.length * 2), matched };
 }
 
+/**
+ * Sorted longest-keyword-first, once at module load, and matched on word
+ * boundaries — fixes a real mispin bug: "sudan" is a plain substring of
+ * "south sudan", and (separately) "africa" is a substring of "african",
+ * so a naive first-match-wins scan over the object's declaration order
+ * pinned every South Sudan report to Sudan's centroid, and every mention of
+ * "African Union"/"South Africa"/"Central African Republic" to the generic
+ * continent centroid. Checking the longest keyword first means "south
+ * sudan" and "central african republic" win over their shorter substrings
+ * whenever both are present in the text, and \b word boundaries stop
+ * "africa" from matching inside "african" at all.
+ */
+const KEYWORD_COORDS_BY_LENGTH = Object.entries(KEYWORD_COORDS)
+  .sort((a, b) => b[0].length - a[0].length)
+  .map(([keyword, coords]) => ({ keyword, coords, rx: new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i") }));
+
 /** Resolves a place name to a preset country/region centroid — not the location of the reported event. */
 export function findCoords(text: string): { coords: [number, number]; anchor: string } | null {
-  const lower = text.toLowerCase();
-  for (const [keyword, coords] of Object.entries(KEYWORD_COORDS)) {
-    if (lower.includes(keyword)) return { coords, anchor: keyword };
+  for (const { keyword, coords, rx } of KEYWORD_COORDS_BY_LENGTH) {
+    if (rx.test(text)) return { coords, anchor: keyword };
   }
   return null;
 }

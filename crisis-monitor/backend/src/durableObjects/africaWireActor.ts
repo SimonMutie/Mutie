@@ -27,7 +27,10 @@ import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
  */
 
 const BATCH_SIZE = 15;
-const ITEMS_PER_SOURCE = 5;
+// Raised from 5 at Simon's request for deeper coverage — most of these
+// sites' RSS feeds carry 15-20+ items per fetch already, so 5 was throwing
+// most of each cycle's haul away for no reason.
+const ITEMS_PER_SOURCE = 20;
 const MAX_ITEM_AGE_MS = 5 * 24 * 3_600_000; // country papers publish far less often than a wire service
 /** Re-run discovery for a source (rather than trusting its last discovered
  *  feedUrl) after this long, in case a site restructures. */
