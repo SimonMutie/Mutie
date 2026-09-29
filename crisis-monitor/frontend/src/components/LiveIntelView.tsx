@@ -22,6 +22,7 @@ import {
   Plane,
   Radiation,
   Radio,
+  RefreshCw,
   Route as RouteGlyph,
   Rss,
   Ruler,
@@ -795,6 +796,7 @@ export default function LiveIntelView() {
   const [activeListeningIds, setActiveListeningIds] = useState<Set<string>>(new Set());
   const [listeningLiveData, setListeningLiveData] = useState<Record<string, SocialListeningResult | null>>({});
   const [listeningLiveErrors, setListeningLiveErrors] = useState<Record<string, string | null>>({});
+  const [listeningLiveLoading, setListeningLiveLoading] = useState<Record<string, boolean>>({});
 
   function refreshListeningQueries() {
     api.getListeningQueries().then(setSavedListeningQueries).catch(() => {});
@@ -803,26 +805,30 @@ export default function LiveIntelView() {
     refreshListeningQueries();
   }, []);
 
+  // Manual, not auto-polled: this used to re-fetch every pinned query every
+  // 60s on its own, which — stacked on top of GDELT Events, Global
+  // Incidents, and Activity Index all independently hitting the same free,
+  // shared-rate-limited GDELT API — was directly contributing to the 429s.
+  // Toggling a query on in the left rail now just marks it "on" (so it
+  // stays plotted on the map with whatever data it last fetched); getting
+  // fresh data is an explicit click, here or from the Dashboard tab, so the
+  // person controls exactly when another GDELT request goes out instead of
+  // it happening on a timer they don't see.
   function pollListeningQuery(sq: SavedListeningQuery) {
+    setListeningLiveLoading((prev) => ({ ...prev, [sq.id]: true }));
     api
       .getSocialListening(sq.query)
       .then((r) => {
         setListeningLiveData((prev) => ({ ...prev, [sq.id]: r }));
         setListeningLiveErrors((prev) => ({ ...prev, [sq.id]: null }));
       })
-      .catch((err) => setListeningLiveErrors((prev) => ({ ...prev, [sq.id]: err instanceof Error ? err.message : "Unavailable" })));
+      .catch((err) => setListeningLiveErrors((prev) => ({ ...prev, [sq.id]: err instanceof Error ? err.message : "Unavailable" })))
+      .finally(() => setListeningLiveLoading((prev) => ({ ...prev, [sq.id]: false })));
   }
-  // Polls every pinned-and-toggled-on saved query on the same cadence as
-  // every other live layer, so the left-rail badge (tone/volume) stays
-  // current without the user having to reopen the Listen tool.
-  useEffect(() => {
-    const active = savedListeningQueries.filter((sq) => activeListeningIds.has(sq.id));
-    if (active.length === 0) return;
-    active.forEach(pollListeningQuery);
-    const interval = setInterval(() => active.forEach(pollListeningQuery), POLL_MS);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [savedListeningQueries, activeListeningIds]);
+  function refreshListeningById(id: string) {
+    const sq = savedListeningQueries.find((q) => q.id === id);
+    if (sq) pollListeningQuery(sq);
+  }
 
   function handleSaveListeningQuery() {
     const name = listenSaveName.trim();
@@ -1332,14 +1338,25 @@ export default function LiveIntelView() {
           activeListeningIds={activeListeningIds}
           listeningLiveData={listeningLiveData}
           listeningLiveErrors={listeningLiveErrors}
-          onToggleListening={(id) =>
+          listeningLiveLoading={listeningLiveLoading}
+          onToggleListening={(id) => {
+            const turningOn = !activeListeningIds.has(id);
             setActiveListeningIds((prev) => {
               const next = new Set(prev);
               if (next.has(id)) next.delete(id);
               else next.add(id);
               return next;
-            })
-          }
+            });
+            // Turning on fetches once immediately (so the toggle isn't just
+            // a blank "…" until someone remembers to hit refresh) — but
+            // does NOT start a recurring poll; see pollListeningQuery's own
+            // comment for why that's now a manual, explicit action.
+            if (turningOn) {
+              const sq = savedListeningQueries.find((q) => q.id === id);
+              if (sq) pollListeningQuery(sq);
+            }
+          }}
+          onRefreshListening={refreshListeningById}
           onOpenListeningDashboard={() => {
             setActiveTool("listen");
             setListenTab("dashboard");
@@ -1476,6 +1493,8 @@ export default function LiveIntelView() {
             }
             liveData={listeningLiveData}
             liveErrors={listeningLiveErrors}
+            liveLoading={listeningLiveLoading}
+            onRefreshSaved={refreshListeningById}
           />
         )}
         {activeTool === "shapes" && (
@@ -1647,7 +1666,9 @@ function LayerPanel({
   activeListeningIds,
   listeningLiveData,
   listeningLiveErrors,
+  listeningLiveLoading,
   onToggleListening,
+  onRefreshListening,
   onOpenListeningDashboard,
 }: {
   defs: LayerDef[];
@@ -1662,7 +1683,9 @@ function LayerPanel({
   activeListeningIds: Set<string>;
   listeningLiveData: Record<string, SocialListeningResult | null>;
   listeningLiveErrors: Record<string, string | null>;
+  listeningLiveLoading: Record<string, boolean>;
   onToggleListening: (id: string) => void;
+  onRefreshListening: (id: string) => void;
   onOpenListeningDashboard: () => void;
 }) {
   const groupedRows = useMemo(() => GROUP_ORDER.map((group) => defs.filter((d) => d.group === group)).filter((rows) => rows.length > 0), [defs]);
@@ -1706,7 +1729,9 @@ function LayerPanel({
             activeIds={activeListeningIds}
             liveData={listeningLiveData}
             liveErrors={listeningLiveErrors}
+            liveLoading={listeningLiveLoading}
             onToggle={onToggleListening}
+            onRefresh={onRefreshListening}
             onOpenDashboard={onOpenListeningDashboard}
           />
         </div>
@@ -1726,14 +1751,18 @@ function ListeningRailButton({
   activeIds,
   liveData,
   liveErrors,
+  liveLoading,
   onToggle,
+  onRefresh,
   onOpenDashboard,
 }: {
   queries: SavedListeningQuery[];
   activeIds: Set<string>;
   liveData: Record<string, SocialListeningResult | null>;
   liveErrors: Record<string, string | null>;
+  liveLoading: Record<string, boolean>;
   onToggle: (id: string) => void;
+  onRefresh: (id: string) => void;
   onOpenDashboard: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -1809,27 +1838,39 @@ function ListeningRailButton({
               const isOn = activeIds.has(q.id);
               const live = liveData[q.id];
               const err = liveErrors[q.id];
+              const loading = liveLoading[q.id];
               const tone = live?.latestTone ?? null;
               return (
-                <button
-                  key={q.id}
-                  onClick={() => onToggle(q.id)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", padding: "3px 0", fontFamily: "inherit", textAlign: "left" }}
-                >
-                  <LayerToggleSwitch on={isOn} />
-                  <span style={{ flex: 1, fontSize: 11, color: isOn ? HUD.textPrimary : HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {q.name}
-                  </span>
-                  {isOn && err ? (
-                    <span title={err} style={{ fontSize: 9, fontWeight: 700, color: HUD.alertRed, cursor: "help" }}>
-                      ERR
+                <div key={q.id} style={{ width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "3px 0" }}>
+                  <button
+                    onClick={() => onToggle(q.id)}
+                    style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", textAlign: "left" }}
+                  >
+                    <LayerToggleSwitch on={isOn} />
+                    <span style={{ flex: 1, fontSize: 11, color: isOn ? HUD.textPrimary : HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {q.name}
                     </span>
-                  ) : isOn && tone !== null ? (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: toneLabel(tone).color }}>{tone.toFixed(1)}</span>
-                  ) : (
-                    <span style={{ fontSize: 10, color: HUD.textMuted }}>{isOn ? "…" : "off"}</span>
+                    {isOn && err ? (
+                      <span title={err} style={{ fontSize: 9, fontWeight: 700, color: HUD.alertRed, cursor: "help" }}>
+                        ERR
+                      </span>
+                    ) : isOn && tone !== null ? (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: toneLabel(tone).color }}>{tone.toFixed(1)}</span>
+                    ) : (
+                      <span style={{ fontSize: 10, color: HUD.textMuted }}>{isOn ? "no data" : "off"}</span>
+                    )}
+                  </button>
+                  {isOn && (
+                    <button
+                      onClick={() => onRefresh(q.id)}
+                      disabled={loading}
+                      title="Fetch latest now (manual — this doesn't auto-poll, to avoid piling onto GDELT's shared rate limit)"
+                      style={{ background: "transparent", border: "none", color: loading ? HUD.textMuted : HUD.cyan, cursor: loading ? "wait" : "pointer", padding: 0, display: "flex", flexShrink: 0 }}
+                    >
+                      <RefreshCw size={11} />
+                    </button>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>
@@ -2969,6 +3010,8 @@ function SocialListeningPanel({
   onDeleteSaved,
   liveData,
   liveErrors,
+  liveLoading,
+  onRefreshSaved,
 }: {
   tab: "search" | "dashboard";
   onTabChange: (t: "search" | "dashboard") => void;
@@ -2988,6 +3031,8 @@ function SocialListeningPanel({
   onDeleteSaved: (id: string) => void;
   liveData: Record<string, SocialListeningResult | null>;
   liveErrors: Record<string, string | null>;
+  liveLoading: Record<string, boolean>;
+  onRefreshSaved: (id: string) => void;
 }) {
   return (
     <div
@@ -3054,6 +3099,8 @@ function SocialListeningPanel({
           onDeleteSaved={onDeleteSaved}
           liveData={liveData}
           liveErrors={liveErrors}
+          liveLoading={liveLoading}
+          onRefresh={onRefreshSaved}
         />
       )}
     </div>
@@ -3245,6 +3292,8 @@ function SocialListeningDashboardTab({
   onDeleteSaved,
   liveData,
   liveErrors,
+  liveLoading,
+  onRefresh,
 }: {
   savedQueries: SavedListeningQuery[];
   onRunSaved: (q: SavedListeningQuery) => void;
@@ -3252,6 +3301,8 @@ function SocialListeningDashboardTab({
   onDeleteSaved: (id: string) => void;
   liveData: Record<string, SocialListeningResult | null>;
   liveErrors: Record<string, string | null>;
+  liveLoading: Record<string, boolean>;
+  onRefresh: (id: string) => void;
 }) {
   if (savedQueries.length === 0) {
     return (
@@ -3277,6 +3328,21 @@ function SocialListeningDashboardTab({
                 <div style={{ fontSize: 12, fontWeight: 700, color: HUD.textPrimary }}>{q.name}</div>
               </button>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  onClick={() => onRefresh(q.id)}
+                  disabled={liveLoading[q.id]}
+                  title="Fetch latest now (manual — this doesn't auto-poll, to avoid piling onto GDELT's shared rate limit)"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: liveLoading[q.id] ? HUD.textMuted : HUD.cyan,
+                    cursor: liveLoading[q.id] ? "wait" : "pointer",
+                    padding: 0,
+                    display: "flex",
+                  }}
+                >
+                  <RefreshCw size={12} />
+                </button>
                 <button
                   onClick={() => onTogglePinned(q)}
                   title={q.pinned ? "Unpin from left rail" : "Pin to left rail"}
@@ -3317,8 +3383,10 @@ function SocialListeningDashboardTab({
                 <span style={{ color: HUD.textSecondary }}>{live.topArticles.length} articles</span>
                 {live.mastodonAvailable && <span style={{ color: HUD.textSecondary }}>{live.mastodonPosts.length} posts</span>}
               </div>
+            ) : liveLoading[q.id] ? (
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>Fetching…</div>
             ) : (
-              <div style={{ fontSize: 10, color: HUD.textMuted }}>Pin to start live tracking, or open in Search to check now.</div>
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>No data yet — hit the refresh icon to fetch (fetching is manual, not automatic).</div>
             )}
           </div>
         );
