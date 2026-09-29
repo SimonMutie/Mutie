@@ -903,6 +903,7 @@ export default function LiveIntelView() {
   const [incidentSearchResults, setIncidentSearchResults] = useState<IncidentItem[] | null>(null);
   const [incidentSearchLoading, setIncidentSearchLoading] = useState(false);
   const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
+  const [incidentBulkDeleting, setIncidentBulkDeleting] = useState(false);
 
   // --- Shapes tool: persisted AOI overlays (map_shapes), drawn here and
   // shown on the map alongside every live layer and incident. ---
@@ -959,6 +960,29 @@ export default function LiveIntelView() {
     if (Object.values(incidentFilters).some(Boolean)) {
       api.getIncidents({ ...incidentFilters, limit: 2000 }).then(setIncidentSearchResults).catch(() => {});
     }
+  }
+
+  // Bulk-deletes every incident currently matched by the Incidents tool's
+  // filters (i.e. exactly what's highlighted on the map right now). Reuses
+  // the same /api/incidents/bulk-delete endpoint as the Manage/Uploads
+  // table, just scoped to the live-search result set instead of a manual
+  // checkbox selection.
+  function handleBulkDeleteFilteredIncidents() {
+    const rows = incidentSearchResults;
+    if (!rows || rows.length === 0) return;
+    const count = rows.length;
+    if (!window.confirm(`Delete all ${count.toLocaleString()} matching incident${count === 1 ? "" : "s"} from the map? This can't be undone.`)) {
+      return;
+    }
+    setIncidentBulkDeleting(true);
+    api
+      .bulkDeleteIncidents(rows.map((r) => r.id))
+      .then(() => {
+        setIncidentSearchResults([]);
+        refreshMyIncidents();
+      })
+      .catch(() => {})
+      .finally(() => setIncidentBulkDeleting(false));
   }
 
   useEffect(() => {
@@ -1503,6 +1527,8 @@ export default function LiveIntelView() {
             loading={incidentSearchLoading}
             onAdd={() => setIncidentModalTab("add")}
             onBulkUpload={() => setIncidentModalTab("bulk")}
+            onBulkDelete={handleBulkDeleteFilteredIncidents}
+            bulkDeleting={incidentBulkDeleting}
           />
         )}
         {activeTool === "economy" && (
@@ -2779,6 +2805,8 @@ function IncidentsToolPanel({
   loading,
   onAdd,
   onBulkUpload,
+  onBulkDelete,
+  bulkDeleting,
 }: {
   filterOptions: IncidentFilterOptions | null;
   filters: { sector?: string; actor?: string; severity?: string; country?: string };
@@ -2787,6 +2815,8 @@ function IncidentsToolPanel({
   loading: boolean;
   onAdd: () => void;
   onBulkUpload: () => void;
+  onBulkDelete: () => void;
+  bulkDeleting: boolean;
 }) {
   const hasFilters = Object.values(filters).some(Boolean);
   function select(key: keyof typeof filters, options?: string[]) {
@@ -2828,8 +2858,19 @@ function IncidentsToolPanel({
           ? "Searching…"
           : hasFilters
           ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — shown on the map`
-          : "Enable \"My Incidents\" on the left rail to see them on the map. Filters above narrow that view."}
+          : "Enable \"My Incidents\" (under My Data, left rail) to see every uploaded/logged incident on the map. Filters above narrow that view down to a search."}
       </div>
+
+      {hasFilters && !loading && (resultCount ?? 0) > 0 && (
+        <div style={{ paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+          <ToolButton onClick={onBulkDelete}>
+            {bulkDeleting ? "Deleting…" : `Delete all ${(resultCount ?? 0).toLocaleString()} matching`}
+          </ToolButton>
+          <div style={{ fontSize: 10, color: HUD.textMuted, paddingTop: 4 }}>
+            Deletes every incident currently matched by the filters above — not just what's visible on screen.
+          </div>
+        </div>
+      )}
     </ToolPanelShell>
   );
 }
