@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
+import { fetchGdeltPoints } from "./liveLayers";
 
 /**
  * Keyword-driven "social listening" — the one piece of Sprinklr's product
@@ -112,11 +113,27 @@ interface MastodonPost {
   content: string;
   createdAt: string;
 }
+/** One geocoded location where coverage of this query clusters — plots the
+ *  query as a map layer rather than leaving results confined to a side
+ *  panel, using the same GDELT GEO 2.0 endpoint /api/live-layers's own
+ *  conflict-events/global-incidents layers already rely on (see
+ *  fetchGdeltPoints in liveLayers.ts). A flat shape (not GeoJSON) since the
+ *  frontend consumes this straight into a GlobePoint, same as every other
+ *  layer. */
+interface GeoPoint {
+  id: string;
+  lat: number;
+  lng: number;
+  title: string;
+  detail: string;
+  count: number;
+}
 interface SourceErrors {
   tone?: string;
   volume?: string;
   articles?: string;
   mastodon?: string;
+  geo?: string;
 }
 
 /** GDELT timeline dates come back as "YYYYMMDDHHMMSS" — normalized to ISO
@@ -216,6 +233,34 @@ async function fetchGdeltArticles(query: string): Promise<ListArticle[]> {
   }));
 }
 
+/** Geocoded coverage locations for the query, for plotting on the map —
+ *  same timeout-and-one-retry treatment as the other GDELT calls above,
+ *  since it hits the same upstream. GDELT's GEO API only covers the last
+ *  24h (vs. the 7d window for tone/volume/articles), which is noted in the
+ *  frontend rather than silently mismatched. */
+async function fetchListeningGeoPoints(query: string): Promise<GeoPoint[]> {
+  let features;
+  try {
+    features = await fetchGdeltPoints(query);
+  } catch (err) {
+    if (!isTimeoutError(err)) throw err;
+    try {
+      features = await fetchGdeltPoints(query);
+    } catch (retryErr) {
+      if (isTimeoutError(retryErr)) throw new Error(`Map points: GDELT did not respond within ${GDELT_TIMEOUT_MS / 1000}s (tried twice) — it may be under load, try again shortly`);
+      throw retryErr;
+    }
+  }
+  return features.map((f) => ({
+    id: f.properties.id,
+    lat: f.geometry.coordinates[1],
+    lng: f.geometry.coordinates[0],
+    title: f.properties.title,
+    detail: f.properties.detail,
+    count: Math.round(f.properties.intensity * 40) || 1,
+  }));
+}
+
 async function fetchMastodonPosts(query: string, token: string): Promise<MastodonPost[]> {
   const url = `https://mastodon.social/api/v2/search?q=${encodeURIComponent(query)}&type=statuses&limit=15`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) });
@@ -241,11 +286,12 @@ socialListeningRouter.get("/", async (c) => {
   const q = buildBooleanQuery(raw);
 
   return cachedJson(c.req.raw, async () => {
-    const [toneRes, volRes, artRes, mastoRes] = await Promise.allSettled([
+    const [toneRes, volRes, artRes, mastoRes, geoRes] = await Promise.allSettled([
       fetchGdeltTimeline(q, "timelinetone"),
       fetchGdeltTimeline(q, "timelinevolraw"),
       fetchGdeltArticles(q),
       c.env.MASTODON_ACCESS_TOKEN ? fetchMastodonPosts(q, c.env.MASTODON_ACCESS_TOKEN) : Promise.resolve(null as MastodonPost[] | null),
+      fetchListeningGeoPoints(q),
     ]);
 
     const sourceErrors: SourceErrors = {};
@@ -262,6 +308,7 @@ socialListeningRouter.get("/", async (c) => {
         : mastoRes.status === "rejected"
           ? ((sourceErrors.mastodon = reasonMessage(mastoRes)), [])
           : [];
+    const geoPoints: GeoPoint[] = geoRes.status === "fulfilled" ? geoRes.value : ((sourceErrors.geo = reasonMessage(geoRes)), []);
 
     const latestTone = toneTimeline.length > 0 ? toneTimeline[toneTimeline.length - 1].avgTone : null;
 
@@ -274,6 +321,7 @@ socialListeningRouter.get("/", async (c) => {
       topArticles,
       mastodonPosts,
       mastodonAvailable: Boolean(c.env.MASTODON_ACCESS_TOKEN),
+      geoPoints,
       sourceErrors: Object.keys(sourceErrors).length > 0 ? sourceErrors : null,
       fetchedAt: new Date().toISOString(),
     };

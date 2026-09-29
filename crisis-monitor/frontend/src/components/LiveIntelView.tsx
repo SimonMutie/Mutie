@@ -1162,10 +1162,60 @@ export default function LiveIntelView() {
         extra.push({ id: `shape-${i}`, layerKey: "AOI", lat, lng, color: shapeColorDraft, size: 0.14, title: `Vertex ${i + 1}`, subtitle: "", time: null, url: null });
       });
     }
+    // The Listen tool's current ad-hoc search result — geocoded coverage
+    // locations for whatever's in the query box right now, shown only
+    // while the tool is open (a live preview, not a persisted layer; save
+    // + pin the query to keep it on the map after closing the tool — see
+    // listeningLayerPoints below).
+    if (activeTool === "listen" && listenResult) {
+      for (const gp of listenResult.geoPoints) {
+        extra.push({
+          id: `listen-search-${gp.id}`,
+          layerKey: "Listening (search)",
+          lat: gp.lat,
+          lng: gp.lng,
+          color: HUD.cyan,
+          size: Math.max(0.12, Math.min(0.3, gp.count / 40)),
+          title: gp.title,
+          subtitle: `${listenResult.query} — ${gp.detail}`.slice(0, 160),
+          time: null,
+          url: null,
+        });
+      }
+    }
     return extra;
-  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints, shapeDrawPoints, shapeColorDraft]);
+  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints, shapeDrawPoints, shapeColorDraft, listenResult]);
 
-  const mapPoints = useMemo(() => [...points, ...toolPoints], [points, toolPoints]);
+  // Pinned, toggled-on saved listening queries — a persistent map layer
+  // (unlike the ad-hoc search preview above), driven by the same polling
+  // that feeds the left-rail tone badges (listeningLiveData), so turning a
+  // query on in the left rail plots its coverage on the map immediately and
+  // keeps it current, independent of whether the Listen tool panel is open.
+  const listeningLayerPoints = useMemo(() => {
+    const extra: GlobePoint[] = [];
+    for (const sq of savedListeningQueries) {
+      if (!activeListeningIds.has(sq.id)) continue;
+      const live = listeningLiveData[sq.id];
+      if (!live) continue;
+      for (const gp of live.geoPoints) {
+        extra.push({
+          id: `listen-${sq.id}-${gp.id}`,
+          layerKey: `Listening: ${sq.name}`,
+          lat: gp.lat,
+          lng: gp.lng,
+          color: HUD.gold,
+          size: Math.max(0.12, Math.min(0.3, gp.count / 40)),
+          title: gp.title,
+          subtitle: `${sq.name} — ${gp.detail}`.slice(0, 160),
+          time: null,
+          url: null,
+        });
+      }
+    }
+    return extra;
+  }, [savedListeningQueries, activeListeningIds, listeningLiveData]);
+
+  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints], [points, toolPoints, listeningLayerPoints]);
 
   // Draw/route lines, merged alongside the shipping lanes for the 3D globe's
   // single pathsData layer — a color field on each entry (shipping lanes
@@ -3064,7 +3114,7 @@ function SocialListeningSearchTab({
         Sentiment/volume from GDELT's worldwide news & blog coverage (7-day window), which understands the boolean query above natively — AND/OR/NOT and
         "quoted phrases" work exactly as typed. Mastodon's post search does <b>not</b> support boolean operators, so it matches your terms as plain text.
         Reddit and X/Twitter aren't included (checked directly: Reddit's Data API Terms bar commercial use without a paid license, and X requires a paid
-        enterprise tier).
+        enterprise tier). Geocoded coverage locations (last 24h) are plotted directly on the map while this panel is open.
       </div>
       {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
 
@@ -3111,6 +3161,16 @@ function SocialListeningSearchTab({
               <div style={{ fontSize: 10, color: HUD.alertRed }}>Volume unavailable: {result.sourceErrors.volume}</div>
             ) : (
               <div style={{ fontSize: 10, color: HUD.textMuted }}>No coverage volume for this query in the last 7 days.</div>
+            )}
+          </div>
+
+          <div style={{ fontSize: 10, color: HUD.textMuted }}>
+            {result.sourceErrors?.geo ? (
+              <span style={{ color: HUD.alertRed }}>Map points unavailable: {result.sourceErrors.geo}</span>
+            ) : result.geoPoints.length > 0 ? (
+              <span style={{ color: HUD.cyan }}>{result.geoPoints.length} location{result.geoPoints.length === 1 ? "" : "s"} plotted on the map (last 24h)</span>
+            ) : (
+              "No geocoded locations for this query in the last 24h."
             )}
           </div>
 

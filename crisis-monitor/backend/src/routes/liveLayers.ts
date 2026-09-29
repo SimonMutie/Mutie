@@ -27,7 +27,7 @@ liveLayersRouter.use("*", requireAuth);
  *  earthquake- or conflict-specific fields) so the frontend layer renderer
  *  and popup are shared code across all three current layers, and any
  *  layer added later. */
-interface NormalizedFeature {
+export interface NormalizedFeature {
   type: "Feature";
   geometry: { type: "Point"; coordinates: [number, number] };
   properties: {
@@ -229,9 +229,13 @@ liveLayersRouter.get("/natural-events", async (c) => {
  *  for why that's GDELT too, rather than ACLED: ACLED's EULA blocks
  *  exactly this app's use case — a commercial entity embedding it in its
  *  own dashboard — without a paid corporate license). */
-async function fetchGdeltPoints(query: string): Promise<NormalizedFeature[]> {
+export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature[]> {
   const res = await fetch(
-    `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=PointData&format=geojson&timespan=24h`
+    `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=PointData&format=geojson&timespan=24h`,
+    // GDELT's free API can be slow (see socialListening.ts's GDELT_TIMEOUT_MS
+    // comment) — an explicit timeout here rather than letting a hung request
+    // ride out the Worker's own execution limit.
+    { signal: AbortSignal.timeout(20000) }
   );
   if (!res.ok) throw new Error(`GDELT returned ${res.status}`);
   const raw = (await res.json()) as {

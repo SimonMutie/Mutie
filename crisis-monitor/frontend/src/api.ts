@@ -682,7 +682,8 @@ export interface SocialListeningResult {
   topArticles: { title: string; url: string; domain: string; seenAt: string | null; language: string | null }[];
   mastodonPosts: { id: string; url: string; author: string; content: string; createdAt: string }[];
   mastodonAvailable: boolean;
-  sourceErrors: { tone?: string; volume?: string; articles?: string; mastodon?: string } | null;
+  geoPoints: { id: string; lat: number; lng: number; title: string; detail: string; count: number }[];
+  sourceErrors: { tone?: string; volume?: string; articles?: string; mastodon?: string; geo?: string } | null;
   fetchedAt: string;
 }
 
