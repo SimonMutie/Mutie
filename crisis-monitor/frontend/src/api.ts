@@ -675,13 +675,25 @@ export interface EconomicIndicators {
 
 export interface SocialListeningResult {
   query: string;
+  effectiveQuery: string;
   latestTone: number | null;
   toneTimeline: { date: string; avgTone: number }[];
   volumeTimeline: { date: string; count: number }[];
   topArticles: { title: string; url: string; domain: string; seenAt: string | null; language: string | null }[];
   mastodonPosts: { id: string; url: string; author: string; content: string; createdAt: string }[];
   mastodonAvailable: boolean;
+  sourceErrors: { tone?: string; volume?: string; articles?: string; mastodon?: string } | null;
   fetchedAt: string;
+}
+
+export interface SavedListeningQuery {
+  id: string;
+  owner_id: string | null;
+  name: string;
+  query: string;
+  pinned: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface MaritimeLane {
@@ -1011,6 +1023,15 @@ export const api = {
   getActivityIndex: () => req<ActivityIndex>("/api/global-status/activity-index"),
   getEconomicIndicators: () => req<EconomicIndicators>("/api/global-status/economic-indicators"),
   getSocialListening: (query: string) => req<SocialListeningResult>(`/api/social-listening?q=${encodeURIComponent(query)}`),
+
+  // Saved/named Social Listening searches — the "dashboard for listening"
+  // and the left-rail toggleable listening queries are both built on these.
+  getListeningQueries: () => req<SavedListeningQuery[]>("/api/listening-queries"),
+  createListeningQuery: (data: { name: string; query: string; pinned?: boolean }) =>
+    req<SavedListeningQuery>("/api/listening-queries", { method: "POST", body: JSON.stringify(data) }),
+  updateListeningQuery: (id: string, data: Partial<{ name: string; query: string; pinned: boolean }>) =>
+    req<SavedListeningQuery>(`/api/listening-queries/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteListeningQuery: (id: string) => req<{ ok: boolean }>(`/api/listening-queries/${id}`, { method: "DELETE" }),
 };
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {

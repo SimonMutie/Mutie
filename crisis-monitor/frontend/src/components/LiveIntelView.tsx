@@ -58,6 +58,7 @@ import {
   type SavedRoute,
   type EconomicIndicators,
   type SocialListeningResult,
+  type SavedListeningQuery,
 } from "../api";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -781,6 +782,63 @@ export default function LiveIntelView() {
       .finally(() => setListenLoading(false));
   }
 
+  // --- Saved/named listening queries ("dashboard for listening") — persisted
+  // via listening_queries, loaded once and refreshed after any create/
+  // update/delete. A "pinned" query also shows as a toggle on the left rail
+  // (see LayerPanel's Social Listening flyout below); toggling one of those
+  // on adds it to activeListeningIds, which the polling effect below keeps
+  // live-refreshed the same way LAYER_DEFS polls every other layer. ---
+  const [listenTab, setListenTab] = useState<"search" | "dashboard">("search");
+  const [savedListeningQueries, setSavedListeningQueries] = useState<SavedListeningQuery[]>([]);
+  const [listenSaveName, setListenSaveName] = useState("");
+  const [listenSaving, setListenSaving] = useState(false);
+  const [activeListeningIds, setActiveListeningIds] = useState<Set<string>>(new Set());
+  const [listeningLiveData, setListeningLiveData] = useState<Record<string, SocialListeningResult | null>>({});
+  const [listeningLiveErrors, setListeningLiveErrors] = useState<Record<string, string | null>>({});
+
+  function refreshListeningQueries() {
+    api.getListeningQueries().then(setSavedListeningQueries).catch(() => {});
+  }
+  useEffect(() => {
+    refreshListeningQueries();
+  }, []);
+
+  function pollListeningQuery(sq: SavedListeningQuery) {
+    api
+      .getSocialListening(sq.query)
+      .then((r) => {
+        setListeningLiveData((prev) => ({ ...prev, [sq.id]: r }));
+        setListeningLiveErrors((prev) => ({ ...prev, [sq.id]: null }));
+      })
+      .catch((err) => setListeningLiveErrors((prev) => ({ ...prev, [sq.id]: err instanceof Error ? err.message : "Unavailable" })));
+  }
+  // Polls every pinned-and-toggled-on saved query on the same cadence as
+  // every other live layer, so the left-rail badge (tone/volume) stays
+  // current without the user having to reopen the Listen tool.
+  useEffect(() => {
+    const active = savedListeningQueries.filter((sq) => activeListeningIds.has(sq.id));
+    if (active.length === 0) return;
+    active.forEach(pollListeningQuery);
+    const interval = setInterval(() => active.forEach(pollListeningQuery), POLL_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedListeningQueries, activeListeningIds]);
+
+  function handleSaveListeningQuery() {
+    const name = listenSaveName.trim();
+    const query = listenQuery.trim();
+    if (!name || !query) return;
+    setListenSaving(true);
+    api
+      .createListeningQuery({ name, query })
+      .then(() => {
+        setListenSaveName("");
+        refreshListeningQueries();
+      })
+      .catch(() => {})
+      .finally(() => setListenSaving(false));
+  }
+
   // --- Incidents tool: search/filter the same incident set "My Incidents"
   // polls, plus the Add/Bulk-upload intake modal. ---
   const [incidentFilterOptions, setIncidentFilterOptions] = useState<IncidentFilterOptions | null>(null);
@@ -1204,6 +1262,22 @@ export default function LiveIntelView() {
           maritimeLinesOn={enabled["maritime-lines"]}
           maritimeLinesCount={maritimeLanes.length}
           onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
+          listeningQueries={savedListeningQueries}
+          activeListeningIds={activeListeningIds}
+          listeningLiveData={listeningLiveData}
+          listeningLiveErrors={listeningLiveErrors}
+          onToggleListening={(id) =>
+            setActiveListeningIds((prev) => {
+              const next = new Set(prev);
+              if (next.has(id)) next.delete(id);
+              else next.add(id);
+              return next;
+            })
+          }
+          onOpenListeningDashboard={() => {
+            setActiveTool("listen");
+            setListenTab("dashboard");
+          }}
         />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
         {mapMode === "3d" && (
@@ -1302,12 +1376,40 @@ export default function LiveIntelView() {
         )}
         {activeTool === "listen" && (
           <SocialListeningPanel
+            tab={listenTab}
+            onTabChange={setListenTab}
             query={listenQuery}
             onQueryChange={setListenQuery}
             onSearch={() => runSocialListening(listenQuery)}
             result={listenResult}
             loading={listenLoading}
             error={listenError}
+            saveName={listenSaveName}
+            onSaveNameChange={setListenSaveName}
+            onSaveQuery={handleSaveListeningQuery}
+            saving={listenSaving}
+            savedQueries={savedListeningQueries}
+            onRunSaved={(q) => {
+              setListenQuery(q.query);
+              setListenTab("search");
+              runSocialListening(q.query);
+            }}
+            onTogglePinned={(q) => api.updateListeningQuery(q.id, { pinned: !q.pinned }).then(refreshListeningQueries).catch(() => {})}
+            onDeleteSaved={(id) =>
+              api
+                .deleteListeningQuery(id)
+                .then(() => {
+                  setActiveListeningIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                  });
+                  refreshListeningQueries();
+                })
+                .catch(() => {})
+            }
+            liveData={listeningLiveData}
+            liveErrors={listeningLiveErrors}
           />
         )}
         {activeTool === "shapes" && (
@@ -1475,6 +1577,12 @@ function LayerPanel({
   maritimeLinesOn,
   maritimeLinesCount,
   onToggleMaritimeLines,
+  listeningQueries,
+  activeListeningIds,
+  listeningLiveData,
+  listeningLiveErrors,
+  onToggleListening,
+  onOpenListeningDashboard,
 }: {
   defs: LayerDef[];
   enabled: Record<string, boolean>;
@@ -1484,8 +1592,15 @@ function LayerPanel({
   maritimeLinesOn: boolean;
   maritimeLinesCount: number;
   onToggleMaritimeLines: () => void;
+  listeningQueries: SavedListeningQuery[];
+  activeListeningIds: Set<string>;
+  listeningLiveData: Record<string, SocialListeningResult | null>;
+  listeningLiveErrors: Record<string, string | null>;
+  onToggleListening: (id: string) => void;
+  onOpenListeningDashboard: () => void;
 }) {
   const groupedRows = useMemo(() => GROUP_ORDER.map((group) => defs.filter((d) => d.group === group)).filter((rows) => rows.length > 0), [defs]);
+  const pinnedListeningQueries = useMemo(() => listeningQueries.filter((q) => q.pinned), [listeningQueries]);
 
   return (
     <div style={{ ...glassPanel(), position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 2, padding: 5 }}>
@@ -1518,6 +1633,161 @@ function LayerPanel({
           />
         </div>
       ))}
+      {pinnedListeningQueries.length > 0 && (
+        <div style={{ borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 }}>
+          <ListeningRailButton
+            queries={pinnedListeningQueries}
+            activeIds={activeListeningIds}
+            liveData={listeningLiveData}
+            liveErrors={listeningLiveErrors}
+            onToggle={onToggleListening}
+            onOpenDashboard={onOpenListeningDashboard}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Left-rail flyout for pinned Social Listening queries — same visual
+ *  language as GroupRailButton (hover to open, toggle switch per row, a
+ *  live count badge) but the "count" here is coverage volume for the last
+ *  7 days rather than a point count, since listening results aren't
+ *  geographic the way every other layer's are. Only pinned saved queries
+ *  show up here — pin one from the Listen tool's Dashboard tab to add it. */
+function ListeningRailButton({
+  queries,
+  activeIds,
+  liveData,
+  liveErrors,
+  onToggle,
+  onOpenDashboard,
+}: {
+  queries: SavedListeningQuery[];
+  activeIds: Set<string>;
+  liveData: Record<string, SocialListeningResult | null>;
+  liveErrors: Record<string, string | null>;
+  onToggle: (id: string) => void;
+  onOpenDashboard: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const activeCount = queries.filter((q) => activeIds.has(q.id)).length;
+
+  return (
+    <div style={{ position: "relative" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button
+        onClick={onOpenDashboard}
+        title={`Social Listening${activeCount ? ` — ${activeCount}/${queries.length} live` : ""}`}
+        style={{
+          position: "relative",
+          width: 42,
+          height: 38,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: activeCount > 0 ? "rgba(212,175,55,0.14)" : "transparent",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+          transition: "background 0.15s",
+        }}
+      >
+        <Megaphone size={17} color={activeCount > 0 ? HUD.cyan : HUD.textMuted} strokeWidth={activeCount > 0 ? 2.25 : 1.75} />
+        {activeCount > 0 && (
+          <span
+            style={{
+              position: "absolute",
+              top: 2,
+              right: 2,
+              minWidth: 15,
+              height: 15,
+              padding: "0 3px",
+              borderRadius: 999,
+              background: HUD.cyan,
+              color: "#04121a",
+              fontSize: 9,
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              lineHeight: 1,
+              boxShadow: "0 0 6px rgba(0,229,255,0.5)",
+            }}
+          >
+            {activeCount}
+          </span>
+        )}
+      </button>
+      {hovered && (
+        <div
+          style={{
+            ...glassPanel(),
+            position: "absolute",
+            left: "100%",
+            top: 0,
+            width: 240,
+            padding: "10px 10px 10px 18px",
+            zIndex: 600,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>
+              Social Listening
+            </span>
+            <button onClick={() => setHovered(false)} style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0, display: "flex" }}>
+              <CloseGlyph size={13} />
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {queries.map((q) => {
+              const isOn = activeIds.has(q.id);
+              const live = liveData[q.id];
+              const err = liveErrors[q.id];
+              const tone = live?.latestTone ?? null;
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => onToggle(q.id)}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", padding: "3px 0", fontFamily: "inherit", textAlign: "left" }}
+                >
+                  <LayerToggleSwitch on={isOn} />
+                  <span style={{ flex: 1, fontSize: 11, color: isOn ? HUD.textPrimary : HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {q.name}
+                  </span>
+                  {isOn && err ? (
+                    <span title={err} style={{ fontSize: 9, fontWeight: 700, color: HUD.alertRed, cursor: "help" }}>
+                      ERR
+                    </span>
+                  ) : isOn && tone !== null ? (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: toneLabel(tone).color }}>{tone.toFixed(1)}</span>
+                  ) : (
+                    <span style={{ fontSize: 10, color: HUD.textMuted }}>{isOn ? "…" : "off"}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={onOpenDashboard}
+            style={{
+              marginTop: 8,
+              width: "100%",
+              background: "transparent",
+              border: "1px solid rgba(212,175,55,0.25)",
+              borderRadius: 5,
+              color: HUD.gold,
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              padding: "4px 0",
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Open dashboard
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2085,10 +2355,11 @@ function ToolPanelShell({ title, children }: { title: string; children: ReactNod
   );
 }
 
-function ToolButton({ active, onClick, children }: { active?: boolean; onClick: () => void; children: ReactNode }) {
+function ToolButton({ active, onClick, children, disabled }: { active?: boolean; onClick: () => void; children: ReactNode; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       style={{
         flex: 1,
         fontSize: 11,
@@ -2097,7 +2368,8 @@ function ToolButton({ active, onClick, children }: { active?: boolean; onClick: 
         border: `1px solid ${active ? HUD.gold : "rgba(212,175,55,0.2)"}`,
         background: active ? "rgba(212,175,55,0.15)" : "transparent",
         color: active ? HUD.gold : HUD.textSecondary,
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
         fontFamily: "inherit",
       }}
     >
@@ -2586,27 +2858,71 @@ function toneLabel(tone: number): { label: string; color: string } {
   return { label: "Very positive", color: HUD.alertGreen };
 }
 
-/** Social Listening tool — keyword search across GDELT (news/blog tone +
- *  volume trend) and, if configured, Mastodon (real public posts). See
+/** Inserts a boolean-query operator/token at the end of the current query
+ *  string, with a leading space if needed — a lightweight "query builder"
+ *  rather than a full syntax-aware editor, since GDELT's own query grammar
+ *  is simple enough (bare terms=AND, OR, "phrase", -negate, (group)) that a
+ *  handful of insert buttons plus the hint text below covers it. */
+function insertToken(current: string, token: string): string {
+  const trimmed = current.replace(/\s+$/, "");
+  if (!trimmed) return token === "OR" || token === "NOT" ? "" : token;
+  return `${trimmed} ${token} `.replace(/ +/g, " ");
+}
+
+const QUERY_BUILDER_TOKENS: { label: string; token: string; title: string }[] = [
+  { label: "AND", token: "AND", title: "Both terms must appear (GDELT treats adjacent bare terms as AND by default)" },
+  { label: "OR", token: "OR", title: "Either term may appear — must be uppercase" },
+  { label: "NOT", token: "-", title: "Excludes the next term, e.g. -rumor" },
+  { label: '" "', token: '""', title: "Exact phrase — type inside the quotes" },
+  { label: "( )", token: "()", title: "Group terms, e.g. (coup OR mutiny) AND Sahel" },
+];
+
+/** Social Listening tool — a Sprinklr-style query builder plus a Search tab
+ *  (one live search) and a Dashboard tab (every saved query at a glance),
+ *  covering GDELT (news/blog tone + volume trend, boolean-query aware) and,
+ *  if configured, Mastodon (real public posts, plain-text search only). See
  *  socialListening.ts for exactly what was checked and why each source was
- *  included/excluded. A search box rather than a fixed feed, since there's
- *  no single default keyword that makes sense for every user. */
+ *  included/excluded, and for the sourceErrors this panel now surfaces
+ *  instead of silently showing an empty result. */
 function SocialListeningPanel({
+  tab,
+  onTabChange,
   query,
   onQueryChange,
   onSearch,
   result,
   loading,
   error,
+  saveName,
+  onSaveNameChange,
+  onSaveQuery,
+  saving,
+  savedQueries,
+  onRunSaved,
+  onTogglePinned,
+  onDeleteSaved,
+  liveData,
+  liveErrors,
 }: {
+  tab: "search" | "dashboard";
+  onTabChange: (t: "search" | "dashboard") => void;
   query: string;
   onQueryChange: (v: string) => void;
   onSearch: () => void;
   result: SocialListeningResult | null;
   loading: boolean;
   error: string | null;
+  saveName: string;
+  onSaveNameChange: (v: string) => void;
+  onSaveQuery: () => void;
+  saving: boolean;
+  savedQueries: SavedListeningQuery[];
+  onRunSaved: (q: SavedListeningQuery) => void;
+  onTogglePinned: (q: SavedListeningQuery) => void;
+  onDeleteSaved: (id: string) => void;
+  liveData: Record<string, SocialListeningResult | null>;
+  liveErrors: Record<string, string | null>;
 }) {
-  const maxVolume = result ? Math.max(1, ...result.volumeTimeline.map((p) => p.count)) : 1;
   return (
     <div
       style={{
@@ -2615,7 +2931,7 @@ function SocialListeningPanel({
         top: 12,
         right: 76,
         zIndex: 500,
-        width: 340,
+        width: 400,
         maxHeight: "calc(100% - 24px)",
         overflowY: "auto",
         padding: 12,
@@ -2624,42 +2940,164 @@ function SocialListeningPanel({
         gap: 10,
       }}
     >
-      <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Social Listening</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Social Listening</div>
+        <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: 2 }}>
+          {(["search", "dashboard"] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => onTabChange(t)}
+              style={{
+                border: "none",
+                borderRadius: 4,
+                padding: "3px 10px",
+                fontSize: 10,
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                fontWeight: 700,
+                fontFamily: "inherit",
+                cursor: "pointer",
+                background: tab === t ? "rgba(212,175,55,0.2)" : "transparent",
+                color: tab === t ? HUD.gold : HUD.textMuted,
+              }}
+            >
+              {t === "search" ? "Search" : `Dashboard${savedQueries.length ? ` (${savedQueries.length})` : ""}`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {tab === "search" ? (
+        <SocialListeningSearchTab
+          query={query}
+          onQueryChange={onQueryChange}
+          onSearch={onSearch}
+          result={result}
+          loading={loading}
+          error={error}
+          saveName={saveName}
+          onSaveNameChange={onSaveNameChange}
+          onSaveQuery={onSaveQuery}
+          saving={saving}
+        />
+      ) : (
+        <SocialListeningDashboardTab
+          savedQueries={savedQueries}
+          onRunSaved={onRunSaved}
+          onTogglePinned={onTogglePinned}
+          onDeleteSaved={onDeleteSaved}
+          liveData={liveData}
+          liveErrors={liveErrors}
+        />
+      )}
+    </div>
+  );
+}
+
+function SocialListeningSearchTab({
+  query,
+  onQueryChange,
+  onSearch,
+  result,
+  loading,
+  error,
+  saveName,
+  onSaveNameChange,
+  onSaveQuery,
+  saving,
+}: {
+  query: string;
+  onQueryChange: (v: string) => void;
+  onSearch: () => void;
+  result: SocialListeningResult | null;
+  loading: boolean;
+  error: string | null;
+  saveName: string;
+  onSaveNameChange: (v: string) => void;
+  onSaveQuery: () => void;
+  saving: boolean;
+}) {
+  const maxVolume = result ? Math.max(1, ...result.volumeTimeline.map((p) => p.count)) : 1;
+  return (
+    <>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           onSearch();
         }}
-        style={{ display: "flex", gap: 6 }}
+        style={{ display: "flex", flexDirection: "column", gap: 6 }}
       >
-        <input
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="Keyword, actor, or event…"
-          style={{ ...hudInputStyle, flex: 1 }}
-        />
-        <ToolButton onClick={onSearch}>{loading ? "…" : "Go"}</ToolButton>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder='e.g. (coup OR mutiny) AND Sahel -rumor'
+            style={{ ...hudInputStyle, flex: 1, fontFamily: "var(--font-mono, monospace)" }}
+          />
+          <ToolButton onClick={onSearch}>{loading ? "…" : "Search"}</ToolButton>
+        </div>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {QUERY_BUILDER_TOKENS.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              title={t.title}
+              onClick={() => onQueryChange(insertToken(query, t.token))}
+              style={{
+                border: "1px solid rgba(212,175,55,0.25)",
+                background: "rgba(212,175,55,0.06)",
+                color: HUD.gold,
+                borderRadius: 4,
+                fontSize: 10,
+                fontWeight: 700,
+                fontFamily: "var(--font-mono, monospace)",
+                padding: "2px 7px",
+                cursor: "pointer",
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </form>
       <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
-        Sentiment/volume from GDELT's worldwide news & blog coverage (7-day window) — Reddit and X/Twitter aren't included (checked directly: Reddit's
-        Data API Terms bar commercial use without a paid license, and X requires a paid enterprise tier).
+        Sentiment/volume from GDELT's worldwide news & blog coverage (7-day window), which understands the boolean query above natively — AND/OR/NOT and
+        "quoted phrases" work exactly as typed. Mastodon's post search does <b>not</b> support boolean operators, so it matches your terms as plain text.
+        Reddit and X/Twitter aren't included (checked directly: Reddit's Data API Terms bar commercial use without a paid license, and X requires a paid
+        enterprise tier).
       </div>
       {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
+
       {result && (
         <>
-          {result.latestTone !== null && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              value={saveName}
+              onChange={(e) => onSaveNameChange(e.target.value)}
+              placeholder="Name this search to save it…"
+              style={{ ...hudInputStyle, flex: 1 }}
+            />
+            <ToolButton onClick={onSaveQuery} disabled={saving || !saveName.trim()}>
+              {saving ? "…" : "Save"}
+            </ToolButton>
+          </div>
+
+          {result.latestTone !== null ? (
             <div style={{ fontSize: 12, color: HUD.textSecondary }}>
               Latest tone:{" "}
               <b style={{ color: toneLabel(result.latestTone).color }}>
                 {toneLabel(result.latestTone).label} ({result.latestTone.toFixed(1)})
               </b>
             </div>
+          ) : result.sourceErrors?.tone ? (
+            <div style={{ fontSize: 10, color: HUD.alertRed }}>Tone unavailable: {result.sourceErrors.tone}</div>
+          ) : (
+            <div style={{ fontSize: 10, color: HUD.textMuted }}>No tone data — no news/blog coverage found for this query in the last 7 days.</div>
           )}
-          {result.volumeTimeline.length > 0 && (
-            <div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted, marginBottom: 4 }}>
-                Coverage volume (7d)
-              </div>
+
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted, marginBottom: 4 }}>Coverage volume (7d)</div>
+            {result.volumeTimeline.length > 0 ? (
               <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 36 }}>
                 {result.volumeTimeline.map((p, i) => (
                   <div
@@ -2669,25 +3107,38 @@ function SocialListeningPanel({
                   />
                 ))}
               </div>
-            </div>
-          )}
-          {result.topArticles.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Top coverage</div>
-              {result.topArticles.slice(0, 8).map((a, i) => (
+            ) : result.sourceErrors?.volume ? (
+              <div style={{ fontSize: 10, color: HUD.alertRed }}>Volume unavailable: {result.sourceErrors.volume}</div>
+            ) : (
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>No coverage volume for this query in the last 7 days.</div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Top coverage</div>
+            {result.topArticles.length > 0 ? (
+              result.topArticles.slice(0, 8).map((a, i) => (
                 <a key={i} href={a.url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
                   <div style={{ fontSize: 11.5, color: HUD.textPrimary, lineHeight: 1.35 }}>{a.title}</div>
                   <div style={{ fontSize: 10, color: HUD.textMuted }}>{a.domain}</div>
                 </a>
-              ))}
-            </div>
-          )}
+              ))
+            ) : result.sourceErrors?.articles ? (
+              <div style={{ fontSize: 10, color: HUD.alertRed }}>Articles unavailable: {result.sourceErrors.articles}</div>
+            ) : (
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>No articles matched this query.</div>
+            )}
+          </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
             <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>Public social posts (Mastodon)</div>
             {!result.mastodonAvailable && (
               <div style={{ fontSize: 10, color: HUD.textMuted }}>Not configured — set MASTODON_ACCESS_TOKEN to enable.</div>
             )}
-            {result.mastodonAvailable && result.mastodonPosts.length === 0 && (
+            {result.mastodonAvailable && result.sourceErrors?.mastodon && (
+              <div style={{ fontSize: 10, color: HUD.alertRed }}>Mastodon unavailable: {result.sourceErrors.mastodon}</div>
+            )}
+            {result.mastodonAvailable && !result.sourceErrors?.mastodon && result.mastodonPosts.length === 0 && (
               <div style={{ fontSize: 10, color: HUD.textMuted }}>No recent public posts found for this keyword.</div>
             )}
             {result.mastodonPosts.map((p) => (
@@ -2701,6 +3152,101 @@ function SocialListeningPanel({
           </div>
         </>
       )}
+    </>
+  );
+}
+
+/** Dashboard tab — every saved query at a glance (tone + coverage volume),
+ *  each with a pin toggle (pinning adds it to the left rail's Social
+ *  Listening flyout, where it's then live-polled) and a delete. This is
+ *  what makes the tool a "dashboard for listening" rather than one search
+ *  box: several named watches checked side by side instead of re-typing a
+ *  query every time. */
+function SocialListeningDashboardTab({
+  savedQueries,
+  onRunSaved,
+  onTogglePinned,
+  onDeleteSaved,
+  liveData,
+  liveErrors,
+}: {
+  savedQueries: SavedListeningQuery[];
+  onRunSaved: (q: SavedListeningQuery) => void;
+  onTogglePinned: (q: SavedListeningQuery) => void;
+  onDeleteSaved: (id: string) => void;
+  liveData: Record<string, SocialListeningResult | null>;
+  liveErrors: Record<string, string | null>;
+}) {
+  if (savedQueries.length === 0) {
+    return (
+      <div style={{ fontSize: 11, color: HUD.textMuted, lineHeight: 1.5 }}>
+        No saved queries yet. Run a search in the Search tab, name it, and hit Save to add it here — saved queries can then be pinned to the map's left
+        rail as a live toggle.
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {savedQueries.map((q) => {
+        const live = liveData[q.id];
+        const err = liveErrors[q.id];
+        return (
+          <div key={q.id} style={{ border: "1px solid rgba(212,175,55,0.15)", borderRadius: 6, padding: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <button
+                onClick={() => onRunSaved(q)}
+                style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}
+                title="Open in Search"
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: HUD.textPrimary }}>{q.name}</div>
+              </button>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  onClick={() => onTogglePinned(q)}
+                  title={q.pinned ? "Unpin from left rail" : "Pin to left rail"}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid rgba(212,175,55,0.25)",
+                    borderRadius: 4,
+                    color: q.pinned ? HUD.gold : HUD.textMuted,
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    padding: "2px 6px",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {q.pinned ? "Pinned" : "Pin"}
+                </button>
+                <button onClick={() => onDeleteSaved(q.id)} title="Delete" style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0 }}>
+                  <CloseGlyph size={13} />
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: 10, color: HUD.textMuted, fontFamily: "var(--font-mono, monospace)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {q.query}
+            </div>
+            {err ? (
+              <div style={{ fontSize: 10, color: HUD.alertRed }}>{err}</div>
+            ) : live ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 10.5 }}>
+                {live.latestTone !== null ? (
+                  <span style={{ color: toneLabel(live.latestTone).color, fontWeight: 700 }}>
+                    {toneLabel(live.latestTone).label} ({live.latestTone.toFixed(1)})
+                  </span>
+                ) : (
+                  <span style={{ color: HUD.textMuted }}>No tone data</span>
+                )}
+                <span style={{ color: HUD.textSecondary }}>{live.topArticles.length} articles</span>
+                {live.mastodonAvailable && <span style={{ color: HUD.textSecondary }}>{live.mastodonPosts.length} posts</span>}
+              </div>
+            ) : (
+              <div style={{ fontSize: 10, color: HUD.textMuted }}>Pin to start live tracking, or open in Search to check now.</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { mapSettingsRouter } from "./routes/map-settings";
 import { liveLayersRouter } from "./routes/liveLayers";
 import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
+import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 
@@ -72,6 +73,7 @@ app.route("/api/map-settings", mapSettingsRouter);
 app.route("/api/live-layers", liveLayersRouter);
 app.route("/api/global-status", globalStatusRouter);
 app.route("/api/social-listening", socialListeningRouter);
+app.route("/api/listening-queries", listeningQueriesRouter);
 
 // Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off
 // this same URL) — forwarding the raw request preserves that query string.
