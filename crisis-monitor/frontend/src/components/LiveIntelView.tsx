@@ -1081,6 +1081,7 @@ export default function LiveIntelView() {
 
   useEffect(() => {
     let cancelled = false;
+    const pendingTimeouts: ReturnType<typeof setTimeout>[] = [];
     async function loadLayer(def: LayerDef) {
       setLayers((prev) => ({ ...prev, [def.key]: { ...prev[def.key], loading: true } }));
       try {
@@ -1093,11 +1094,26 @@ export default function LiveIntelView() {
         setLayers((prev) => ({ ...prev, [def.key]: { ...prev[def.key], loading: false, error: message } }));
       }
     }
-    LAYER_DEFS.forEach(loadLayer);
-    const interval = setInterval(() => LAYER_DEFS.forEach(loadLayer), POLL_MS);
+    // Staggered rather than all fired in the same tick — several of these
+    // layers (GDELT Events, Global Incidents, plus the Activity Index HUD
+    // ticker elsewhere) all hit GDELT's free API, which rate-limits
+    // aggressively under concurrent load. Loading the page used to fire
+    // every layer's first request in the same instant, which was almost
+    // certainly compounding the 429s on top of GDELT's own shared,
+    // cross-customer rate limit — this spreads that initial burst out
+    // instead of relying on retries alone to paper over it.
+    const LAYER_STAGGER_MS = 400;
+    function loadAllLayersStaggered() {
+      LAYER_DEFS.forEach((def, i) => {
+        pendingTimeouts.push(setTimeout(() => loadLayer(def), i * LAYER_STAGGER_MS));
+      });
+    }
+    loadAllLayersStaggered();
+    const interval = setInterval(loadAllLayersStaggered, POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
+      pendingTimeouts.forEach(clearTimeout);
     };
   }, []);
 
