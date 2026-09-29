@@ -210,6 +210,9 @@ interface GlobePoint {
   subtitle: string;
   time: string | null;
   url: string | null;
+  /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
+   *  Undefined on every other layer. */
+  escalationLevel?: "elevated" | "critical";
 }
 
 type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Network Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data";
@@ -371,16 +374,34 @@ const LAYER_DEFS: LayerDef[] = [
     key: "conflict-escalation",
     label: "Conflict Escalation",
     group: "Threats & Intel",
-    color: "#ff2d55",
+    color: "#ff9d4f",
     icon: AlertTriangle,
-    fetcher: async () =>
-      fromGateway("#ff2d55", "Conflict Escalation", () => true)(await api.getConflictEscalation()).map((p) => ({
-        ...p,
-        // Bigger and pinned to a fixed size (not intensity-scaled like the
-        // point layers) — this is meant to read as a deliberate warning
-        // marker, not just another dot in the swarm.
-        size: 0.32,
-      })),
+    // Built directly rather than through fromGateway() — this is the one
+    // layer that needs a per-point field (escalationLevel) fromGateway's
+    // fixed output shape doesn't carry, since it drives the warning-icon
+    // treatment and severity coloring in Map3D.tsx.
+    fetcher: async () => {
+      const collection = await api.getConflictEscalation();
+      return collection.features.map((f) => {
+        const level = f.properties.escalationLevel ?? "elevated";
+        return {
+          id: f.properties.id,
+          layerKey: "Conflict Escalation",
+          lat: f.geometry.coordinates[1],
+          lng: f.geometry.coordinates[0],
+          color: level === "critical" ? "#ff5d5d" : "#ff9d4f",
+          // Bigger and pinned to a fixed size per level (not intensity-
+          // scaled like the point layers) — this is meant to read as a
+          // deliberate warning marker, not just another dot in the swarm.
+          size: level === "critical" ? 0.4 : 0.3,
+          title: f.properties.title,
+          subtitle: f.properties.detail,
+          time: f.properties.time,
+          url: f.properties.url,
+          escalationLevel: level,
+        };
+      });
+    },
   },
   // Deliberately separate from GDELT Events above — GDELT is a real-time,
   // unverified news-mention feed; this is UCDP's own academically-coded

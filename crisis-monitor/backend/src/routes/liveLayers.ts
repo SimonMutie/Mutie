@@ -428,6 +428,10 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
         const centroid = AFRICA_CENTROIDS[s.countryCode];
         if (!centroid) continue;
         const [lat, lng] = centroid;
+        // Top contributing report's own source link (most-mentioned first —
+        // same ordering as the /evidence endpoint), so "Open source" on the
+        // map popup goes somewhere real instead of nowhere.
+        const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1);
         features.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [lng, lat] },
@@ -440,7 +444,7 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
             detail:
               `${s.currentCount} conflict-related report${s.currentCount === 1 ? "" : "s"} in last 24h ` +
               `(baseline ${s.baselineCount.toFixed(0)}/24h)${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`,
-            url: null,
+            url: topEvidence?.sourceUrl || null,
             escalationLevel: s.level,
           },
         });

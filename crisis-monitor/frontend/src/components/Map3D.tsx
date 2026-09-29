@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./Map3D.css";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
 // runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
@@ -51,6 +52,11 @@ export interface Map3DPoint {
   title: string;
   subtitle: string;
   time: string | null;
+  url: string | null;
+  /** Conflict Escalation only — draws a warning-triangle label above the
+   *  point instead of just the plain colored dot every other layer gets,
+   *  colored by level. Undefined on every other layer. */
+  escalationLevel?: "elevated" | "critical";
 }
 
 export interface Map3DPath {
@@ -87,7 +93,17 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
     features: points.map((p) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [p.lng, p.lat] },
-      properties: { id: p.id, layerKey: p.layerKey, color: p.color, size: p.size, title: p.title, subtitle: p.subtitle, time: p.time },
+      properties: {
+        id: p.id,
+        layerKey: p.layerKey,
+        color: p.color,
+        size: p.size,
+        title: p.title,
+        subtitle: p.subtitle,
+        time: p.time,
+        url: p.url,
+        escalationLevel: p.escalationLevel ?? null,
+      },
     })),
   };
 }
@@ -198,6 +214,31 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
         },
       });
 
+      // Conflict Escalation's danger-icon treatment: a warning-triangle +
+      // country-name label floating above the point, always visible (not
+      // just on hover) — matching the reference design directly, distinct
+      // from every other layer's plain colored dot below it.
+      map.addLayer({
+        id: "osiris-points-warning",
+        type: "symbol",
+        source: "osiris-points",
+        filter: ["has", "escalationLevel"],
+        layout: {
+          "text-field": ["concat", "⚠ ", ["get", "title"]],
+          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+          "text-size": 12,
+          "text-offset": [0, -1.6],
+          "text-anchor": "bottom",
+          "text-allow-overlap": true,
+          "text-ignore-placement": true,
+        },
+        paint: {
+          "text-color": ["match", ["get", "escalationLevel"], "critical", "#ff3d3d", "elevated", "#ff9d4f", "#ff9d4f"],
+          "text-halo-color": "#000000",
+          "text-halo-width": 1.4,
+        },
+      });
+
       map.addSource("osiris-paths", { type: "geojson", data: toGeoJsonPaths([]) });
       map.addLayer({
         id: "osiris-paths-line",
@@ -256,37 +297,49 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
 
       map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
+      const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning"];
+
       map.on("click", (e) => {
-        const hits = map.queryRenderedFeatures(e.point, { layers: ["osiris-points-circle"] });
+        const hits = map.queryRenderedFeatures(e.point, { layers: POINT_LAYERS });
         if (hits.length > 0) return; // a point's own click handler below deals with this
         onClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
+        popupRef.current?.remove();
       });
 
-      map.on("mouseenter", "osiris-points-circle", () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", "osiris-points-circle", () => {
-        map.getCanvas().style.cursor = "";
-        popupRef.current?.remove();
-      });
-      map.on("click", "osiris-points-circle", (e) => {
-        const f = e.features?.[0];
-        if (!f || f.geometry.type !== "Point") return;
-        const props = f.properties as { title: string; layerKey: string; subtitle: string; time: string | null };
-        const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
-        popupRef.current?.remove();
-        popupRef.current = new Popup({ closeButton: false, className: "osiris-popup" })
-          .setLngLat(coords)
-          .setHTML(
-            `<div style="font-family:monospace;font-size:12px;max-width:220px">
-              <b>${escapeHtml(props.title)}</b><br/>
-              <span style="opacity:0.75">${escapeHtml(props.layerKey)}</span><br/>
-              ${escapeHtml(props.subtitle ?? "")}
-              ${props.time ? `<br/>${new Date(props.time).toLocaleString()}` : ""}
-            </div>`
-          )
-          .addTo(map);
-      });
+      for (const layerId of POINT_LAYERS) {
+        map.on("mouseenter", layerId, () => {
+          map.getCanvas().style.cursor = "pointer";
+        });
+        // Deliberately NOT closing the popup here — it used to remove the
+        // popup the instant the cursor left the marker, which meant moving
+        // the mouse toward the popup itself (to read it or reach the "Open
+        // source" link) closed it before you could. A popup now only closes
+        // when you click elsewhere on the map, click its own close button,
+        // or open a different point's popup (MapLibre's default
+        // closeOnClick, still in effect) — the cursor reset is all that
+        // belongs here.
+        map.on("mouseleave", layerId, () => {
+          map.getCanvas().style.cursor = "";
+        });
+        map.on("click", layerId, (e) => {
+          const f = e.features?.[0];
+          if (!f || f.geometry.type !== "Point") return;
+          const props = f.properties as {
+            title: string;
+            layerKey: string;
+            subtitle: string;
+            time: string | null;
+            url: string | null;
+            escalationLevel: "elevated" | "critical" | null;
+          };
+          const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+          popupRef.current?.remove();
+          popupRef.current = new Popup({ closeButton: true, closeOnClick: true, className: "osiris-popup", maxWidth: "320px" })
+            .setLngLat(coords)
+            .setHTML(buildPopupHtml(props, coords))
+            .addTo(map);
+        });
+      }
 
       readyRef.current = true;
     });
@@ -350,6 +403,50 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
   }, [showTerrain]);
 
   return <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />;
+}
+
+const LEVEL_LABEL: Record<"elevated" | "critical", string> = { elevated: "ELEVATED", critical: "CRITICAL" };
+
+/** Builds the popup card's inner HTML — styling lives in Map3D.css (the
+ *  `.osiris-popup` classes below), not inline, so it's one place to keep
+ *  consistent and easy to re-theme. Escalation points (Conflict Escalation
+ *  layer) get the fuller SEVERITY/COORDS layout from the reference design;
+ *  every other layer keeps the simpler title/subtitle/time card it already
+ *  had, just restyled onto a readable dark background. Either shape gets an
+ *  "OPEN SOURCE" link whenever the point actually has one — previously
+ *  dropped entirely, since Map3DPoint didn't even carry `url`. */
+function buildPopupHtml(
+  props: { title: string; layerKey: string; subtitle: string; time: string | null; url: string | null; escalationLevel: "elevated" | "critical" | null },
+  coords: [number, number]
+): string {
+  const linkHtml = props.url
+    ? `<a class="osiris-popup-link" href="${escapeHtml(props.url)}" target="_blank" rel="noopener noreferrer">[ OPEN SOURCE ↗ ]</a>`
+    : "";
+
+  if (props.escalationLevel) {
+    const [lng, lat] = coords;
+    return (
+      `<div class="osiris-popup-card">` +
+      `<div class="osiris-popup-title osiris-popup-title--${props.escalationLevel}">⚠ ${escapeHtml(props.title)}</div>` +
+      `<div class="osiris-popup-desc">${escapeHtml(props.subtitle ?? "")}</div>` +
+      `<div class="osiris-popup-grid">` +
+      `<div><div class="osiris-popup-label">SEVERITY</div><div class="osiris-popup-value osiris-popup-value--${props.escalationLevel}">${LEVEL_LABEL[props.escalationLevel]}</div></div>` +
+      `<div><div class="osiris-popup-label">COORDS</div><div class="osiris-popup-value">${lat.toFixed(3)}°, ${lng.toFixed(3)}°</div></div>` +
+      `</div>` +
+      linkHtml +
+      `</div>`
+    );
+  }
+
+  return (
+    `<div class="osiris-popup-card">` +
+    `<div class="osiris-popup-title">${escapeHtml(props.title)}</div>` +
+    `<div class="osiris-popup-layer">${escapeHtml(props.layerKey)}</div>` +
+    `<div class="osiris-popup-desc">${escapeHtml(props.subtitle ?? "")}</div>` +
+    (props.time ? `<div class="osiris-popup-time">${new Date(props.time).toLocaleString()}</div>` : "") +
+    linkHtml +
+    `</div>`
+  );
 }
 
 function escapeHtml(s: string): string {
