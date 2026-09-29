@@ -243,6 +243,9 @@ const GDELT_TIMEOUT_MS = 20000;
 function isGdeltTimeout(err: unknown): boolean {
   return err instanceof Error && /abort|timeout/i.test(err.message + err.name);
 }
+function isGdeltRateLimited(err: unknown): boolean {
+  return err instanceof Error && /\b429\b/.test(err.message);
+}
 
 async function fetchGdeltPointsOnce(query: string): Promise<NormalizedFeature[]> {
   const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=250&sort=hybridrel&timespan=24h`;
@@ -294,6 +297,21 @@ export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature
   try {
     return await fetchGdeltPointsOnce(query);
   } catch (err) {
+    // GDELT's free API rate-limits aggressively under load — already
+    // observed and documented for the cron ingestion loop (see index.ts's
+    // scheduled() comment: "has been observed returning 429 under fairly
+    // light load"). A short backoff before the one retry gives it a moment
+    // instead of hammering straight back into the same limit; retrying a
+    // timeout immediately is fine since that's not a load-shedding signal.
+    if (isGdeltRateLimited(err)) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      try {
+        return await fetchGdeltPointsOnce(query);
+      } catch (retryErr) {
+        if (isGdeltRateLimited(retryErr)) throw new Error("GDELT rate-limited this request (429) even after backing off — its free API is shared and under load; try again in a minute");
+        throw retryErr;
+      }
+    }
     if (!isGdeltTimeout(err)) throw err;
     try {
       return await fetchGdeltPointsOnce(query);
@@ -304,11 +322,24 @@ export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature
   }
 }
 
+// GDELT's own index refreshes every 15 minutes, and its free API rate-limits
+// aggressively under concurrent load — polling it every 60s (this app's
+// standard layer-poll cadence) was almost certainly what tipped it into 429s
+// once conflict-events, global-incidents, activity-index, and Social
+// Listening's map points were all hitting it independently. A 10-minute
+// cache means the frontend can still poll every 60s without each of those
+// polls becoming a real upstream request more than once per 10 minutes.
+const GDELT_LAYER_CACHE_TTL_SECONDS = 600;
+
 liveLayersRouter.get("/conflict-events", async (c) => {
-  return cachedJson(c.req.raw, async () => {
-    const features = await fetchGdeltPoints("conflict OR violence OR attack OR airstrike OR shelling OR clashes");
-    return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
-  });
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const features = await fetchGdeltPoints("conflict OR violence OR attack OR airstrike OR shelling OR clashes");
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    GDELT_LAYER_CACHE_TTL_SECONDS
+  );
 });
 
 /** OSIRIS's real THREATS & INTEL flyout has a "Global Incidents" row
@@ -325,12 +356,16 @@ liveLayersRouter.get("/conflict-events", async (c) => {
  *  app that reproduces OSIRIS's UI structure with this app's own real,
  *  independently-sourced data rather than its exact numbers. */
 liveLayersRouter.get("/global-incidents", async (c) => {
-  return cachedJson(c.req.raw, async () => {
-    const features = await fetchGdeltPoints(
-      "incident OR explosion OR protest OR unrest OR riot OR disaster OR accident OR crime OR terrorism OR emergency"
-    );
-    return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
-  });
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const features = await fetchGdeltPoints(
+        "incident OR explosion OR protest OR unrest OR riot OR disaster OR accident OR crime OR terrorism OR emergency"
+      );
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    GDELT_LAYER_CACHE_TTL_SECONDS
+  );
 });
 
 const AIR_TRAFFIC_TTL_SECONDS = 900; // 15 min

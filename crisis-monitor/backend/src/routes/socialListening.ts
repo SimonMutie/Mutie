@@ -70,7 +70,13 @@ export const socialListeningRouter = new Hono<{ Bindings: Env; Variables: Authed
 
 socialListeningRouter.use("*", requireAuth);
 
-const CACHE_TTL_SECONDS = 180;
+// Bumped from 180s: each call here can fire up to 4 parallel GDELT requests
+// (tone, volume, articles, geo), and pinned queries poll this route every
+// 60s from the left rail — GDELT's free API rate-limits aggressively under
+// load (see the 429 handling below), so a longer cache window per unique
+// query cuts real upstream request volume by ~2.5x for anything polled
+// repeatedly, without making a one-off search feel stale.
+const CACHE_TTL_SECONDS = 300;
 
 async function cachedJson<T>(request: Request, build: () => Promise<T>, ttlSeconds = CACHE_TTL_SECONDS): Promise<Response> {
   const cache = caches.default;
@@ -198,11 +204,27 @@ async function fetchGdeltJsonOnce(query: string, params: Record<string, string>,
 function isTimeoutError(err: unknown): boolean {
   return err instanceof Error && /abort|timeout/i.test(err.message + err.name);
 }
+function isRateLimitError(err: unknown): boolean {
+  return err instanceof Error && /\b429\b/.test(err.message);
+}
 
 async function fetchGdeltJson(query: string, params: Record<string, string>, label: string): Promise<unknown> {
   try {
     return await fetchGdeltJsonOnce(query, params, label);
   } catch (err) {
+    // GDELT's free API rate-limits aggressively under concurrent load
+    // (already observed and documented for the cron ingestion loop in
+    // index.ts) — a short backoff before retrying gives it a moment
+    // instead of immediately hitting the same limit again.
+    if (isRateLimitError(err)) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      try {
+        return await fetchGdeltJsonOnce(query, params, label);
+      } catch (retryErr) {
+        if (isRateLimitError(retryErr)) throw new Error(`${label}: GDELT rate-limited this request (429) even after backing off — try again in a minute`);
+        throw retryErr;
+      }
+    }
     if (!isTimeoutError(err)) throw err;
     try {
       return await fetchGdeltJsonOnce(query, params, label);
