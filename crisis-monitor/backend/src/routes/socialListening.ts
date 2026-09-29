@@ -239,18 +239,9 @@ async function fetchGdeltArticles(query: string): Promise<ListArticle[]> {
  *  24h (vs. the 7d window for tone/volume/articles), which is noted in the
  *  frontend rather than silently mismatched. */
 async function fetchListeningGeoPoints(query: string): Promise<GeoPoint[]> {
-  let features;
-  try {
-    features = await fetchGdeltPoints(query);
-  } catch (err) {
-    if (!isTimeoutError(err)) throw err;
-    try {
-      features = await fetchGdeltPoints(query);
-    } catch (retryErr) {
-      if (isTimeoutError(retryErr)) throw new Error(`Map points: GDELT did not respond within ${GDELT_TIMEOUT_MS / 1000}s (tried twice) — it may be under load, try again shortly`);
-      throw retryErr;
-    }
-  }
+  // fetchGdeltPoints (liveLayers.ts) already applies its own timeout + retry
+  // — no need to duplicate that here.
+  const features = await fetchGdeltPoints(query);
   return features.map((f) => ({
     id: f.properties.id,
     lat: f.geometry.coordinates[1],

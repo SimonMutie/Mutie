@@ -229,13 +229,28 @@ liveLayersRouter.get("/natural-events", async (c) => {
  *  for why that's GDELT too, rather than ACLED: ACLED's EULA blocks
  *  exactly this app's use case — a commercial entity embedding it in its
  *  own dashboard — without a paid corporate license). */
-export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature[]> {
+// GDELT's free API is noticeably slower than most (its point-geocoding scan
+// runs against its full rolling archive) — this route had NO explicit
+// timeout at all until this fix, which for a Cloudflare Worker meant a slow
+// GDELT response either eventually rode out the Worker's own subrequest/CPU
+// limit and came back as an opaque network failure, or hung until the
+// person gave up — either way, this is almost certainly what "GDELT Events
+// not firing anything, error says Upstream feed unavailable" was: that
+// generic 502 in cachedJson's catch block is exactly what a fetch()
+// rejection turns into, with no detail surfaced anywhere in the UI. Fixed
+// the same way as socialListening.ts's identical problem: an explicit 20s
+// timeout plus one retry specifically for a timeout (a real HTTP error from
+// GDELT itself isn't retried, since retrying won't fix that).
+const GDELT_TIMEOUT_MS = 20000;
+
+function isGdeltTimeout(err: unknown): boolean {
+  return err instanceof Error && /abort|timeout/i.test(err.message + err.name);
+}
+
+async function fetchGdeltPointsOnce(query: string): Promise<NormalizedFeature[]> {
   const res = await fetch(
     `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodeURIComponent(query)}&mode=PointData&format=geojson&timespan=24h`,
-    // GDELT's free API can be slow (see socialListening.ts's GDELT_TIMEOUT_MS
-    // comment) — an explicit timeout here rather than letting a hung request
-    // ride out the Worker's own execution limit.
-    { signal: AbortSignal.timeout(20000) }
+    { signal: AbortSignal.timeout(GDELT_TIMEOUT_MS) }
   );
   if (!res.ok) throw new Error(`GDELT returned ${res.status}`);
   const raw = (await res.json()) as {
@@ -273,6 +288,20 @@ export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature
     });
   }
   return features;
+}
+
+export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature[]> {
+  try {
+    return await fetchGdeltPointsOnce(query);
+  } catch (err) {
+    if (!isGdeltTimeout(err)) throw err;
+    try {
+      return await fetchGdeltPointsOnce(query);
+    } catch (retryErr) {
+      if (isGdeltTimeout(retryErr)) throw new Error(`GDELT did not respond within ${GDELT_TIMEOUT_MS / 1000}s (tried twice) — it may be under load, try again shortly`);
+      throw retryErr;
+    }
+  }
 }
 
 liveLayersRouter.get("/conflict-events", async (c) => {
