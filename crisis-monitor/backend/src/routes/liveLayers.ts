@@ -1257,6 +1257,110 @@ liveLayersRouter.get("/maritime-lines", async (c) => {
   );
 });
 
+/** Submarine telecom cables — worth documenting exactly why this is
+ *  OpenStreetMap rather than TeleGeography's actual submarinecablemap.com
+ *  data, which is what OSIRIS itself visually resembles and what was
+ *  originally asked for. Checked directly against TeleGeography's own
+ *  licensing page (telegeography.com/license-geocoded-map-data): that
+ *  dataset is an annual, sales-negotiated commercial license delivered
+ *  over a private S3 bucket/SFTP — no self-serve API, no published price,
+ *  no free tier. The various GitHub mirrors of "www.submarinecablemap.com"
+ *  that turn up in a search are unauthorized copies of that same licensed
+ *  data, not a real alternative license — scraping or rehosting those
+ *  would just be using TeleGeography's paid product through a side door,
+ *  so neither is used here.
+ *
+ *  OpenStreetMap has its own real, independently-mapped tagging for this —
+ *  seamark:type=cable_submarine for the routes, telecom=
+ *  cable_landing_station for landing points (openstreetmap wiki) — mapped
+ *  by the volunteer/nautical-charting community, ODbL-licensed, free, no
+ *  key. Coverage is real but genuinely thinner than TeleGeography's
+ *  telecom-operator-sourced dataset, especially away from busy landing
+ *  hubs — this will not visually match submarinecablemap.com cable for
+ *  cable, and that's a data-availability fact, not a bug here.
+ *
+ *  Cable route color is a stable hash of the cable's own OSM name (or its
+ *  way id, if unnamed) into a fixed palette — same idea as
+ *  submarinecablemap.com giving each system its own consistent color, just
+ *  computed rather than manually assigned per system. */
+const SUBMARINE_CABLE_COLORS = [
+  "#3fd0ff", "#ff6b6b", "#4dff9e", "#ffd23f", "#c77dff", "#ff9d4f",
+  "#4fd1ff", "#ff4fa3", "#7c9cff", "#00E676", "#ffb443", "#e0e0e0",
+  "#f06292", "#64dd17", "#ffab40", "#40c4ff",
+];
+
+function stableHashColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
+  return SUBMARINE_CABLE_COLORS[Math.abs(h) % SUBMARINE_CABLE_COLORS.length];
+}
+
+interface OverpassElement {
+  type: "way" | "node" | "relation";
+  id: number;
+  lat?: number;
+  lon?: number;
+  geometry?: Array<{ lat: number; lon: number }>;
+  tags?: Record<string, string>;
+}
+
+liveLayersRouter.get("/submarine-cables", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const query = `[out:json][timeout:60];(way["seamark:type"="cable_submarine"];node["telecom"="cable_landing_station"];);out geom;`;
+      const res = await fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(55000),
+      });
+      if (!res.ok) throw new Error(`Overpass API returned ${res.status}`);
+      const data = (await res.json()) as { elements: OverpassElement[] };
+
+      const cables: Array<{ points: [number, number][]; label: string; color: string }> = [];
+      const landingPoints: NormalizedFeature[] = [];
+
+      for (const el of data.elements ?? []) {
+        const tags = el.tags ?? {};
+        if (el.type === "way" && el.geometry && el.geometry.length >= 2) {
+          // Power-only submarine cables occasionally share the same seamark
+          // tag with a "power" category — excluded so this stays a telecom
+          // layer, matching what submarinecablemap.com itself shows.
+          if (tags["seamark:cable_submarine:category"] === "power") continue;
+          const name = tags.name || tags["seamark:cable_submarine:category"] || `Cable ${el.id}`;
+          cables.push({
+            points: el.geometry.map((g) => [g.lat, g.lon] as [number, number]),
+            label: name,
+            color: stableHashColor(tags.name || String(el.id)),
+          });
+        } else if (el.type === "node" && typeof el.lat === "number" && typeof el.lon === "number") {
+          landingPoints.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [el.lon, el.lat] },
+            properties: {
+              id: `cable-landing:${el.id}`,
+              title: tags.name || "Cable Landing Station",
+              time: null,
+              intensity: 0.4,
+              intensityLabel: "Cable landing station",
+              detail: tags.operator || tags.network || "Submarine cable landing point",
+              url: null,
+            },
+          });
+        }
+      }
+
+      return {
+        cables,
+        landingPoints: { type: "FeatureCollection", features: landingPoints, fetchedAt: new Date().toISOString() },
+        fetchedAt: new Date().toISOString(),
+      };
+    },
+    86400 // 1 day — OSM edits to submarine cables are rare; matches /maritime-lines and /nuclear-facilities' own reasoning
+  );
+});
+
 liveLayersRouter.get("/nuclear-facilities", async (c) => {
   return cachedJson(
     c.req.raw,

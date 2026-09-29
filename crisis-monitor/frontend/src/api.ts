@@ -724,6 +724,18 @@ export interface MaritimeLanes {
   fetchedAt: string;
 }
 
+export interface SubmarineCable {
+  points: [number, number][];
+  label: string;
+  color: string;
+}
+
+export interface SubmarineCableData {
+  cables: SubmarineCable[];
+  landingPoints: LiveLayerCollection;
+  fetchedAt: string;
+}
+
 export type RouteProfile = "driving" | "walking" | "cycling";
 
 export interface RouteResult {
@@ -1026,6 +1038,11 @@ export const api = {
   // Real, computed sea-lane geometries (searoute-js over a real maritime
   // network graph) — see backend/src/data/maritimeLanes.ts.
   getLiveMaritimeLines: () => req<MaritimeLanes>("/api/live-layers/maritime-lines"),
+  // Real OpenStreetMap submarine-cable routes + landing points (Overpass,
+  // seamark:type=cable_submarine / telecom=cable_landing_station) — see
+  // the backend route's own comment for why this is OSM rather than
+  // TeleGeography's submarinecablemap.com data, and what that trades off.
+  getSubmarineCables: () => req<SubmarineCableData>("/api/live-layers/submarine-cables"),
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),

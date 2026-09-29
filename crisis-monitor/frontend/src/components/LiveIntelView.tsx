@@ -8,6 +8,7 @@ import {
   Bell,
   Bug,
   Building2,
+  Cable,
   ClipboardList,
   CloudLightning,
   Flame,
@@ -513,6 +514,19 @@ const LAYER_DEFS: LayerDef[] = [
     fetcher: async () => fromGateway("#3fd0ff", "Maritime")(await api.getLiveMaritime()),
   },
   {
+    key: "cable-landing-points",
+    // The point half of the submarine-cables layer — the line half
+    // (colored cable routes) is a separate rail toggle above the groups,
+    // matching how "Maritime Lines" works alongside this same group. See
+    // api.getSubmarineCables's comment for the OSM-vs-TeleGeography
+    // sourcing note.
+    label: "Cable Landing Points",
+    group: "Maritime",
+    color: "#e0e0e0",
+    icon: Cable,
+    fetcher: async () => fromGateway("#e0e0e0", "Cable Landing Points")((await api.getSubmarineCables()).landingPoints),
+  },
+  {
     key: "ais-vessels",
     // Real live vessel positions from AISstream.io's global AIS feed (see
     // AISSTREAM_API_KEY's comment in bindings.ts) — distinct from the static
@@ -764,6 +778,7 @@ export default function LiveIntelView() {
     // layer (confirmed directly from a screenshot of its actual left rail,
     // not the open-source mirror, which has no lines concept at all).
     "maritime-lines": false,
+    "submarine-cables": false,
     "ais-vessels": false,
     "ucdp-conflict-events": false,
   });
@@ -781,6 +796,22 @@ export default function LiveIntelView() {
     api
       .getLiveMaritimeLines()
       .then((d) => !cancelled && setMaritimeLanes(d.lanes))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Real OpenStreetMap submarine-cable routes (see api.getSubmarineCables's
+  // comment for exactly why OSM, not TeleGeography's submarinecablemap.com
+  // data) — reference data like the shipping lanes above, one fetch on
+  // mount, 24h server-side cache either way.
+  const [submarineCables, setSubmarineCables] = useState<{ points: [number, number][]; label: string; color: string }[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getSubmarineCables()
+      .then((d) => !cancelled && setSubmarineCables(d.cables))
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -1427,6 +1458,7 @@ export default function LiveIntelView() {
   // pathColor apart, rather than needing three separate path layers.
   const globePaths = useMemo(() => {
     const lanes = enabled["maritime-lines"] ? maritimeLanes : [];
+    const cables = enabled["submarine-cables"] ? submarineCables : [];
     const drawPath =
       drawMode === "distance" && drawPoints.length >= 2 ? [{ points: drawPoints, label: "Measured distance", color: "#ffd23f" }] : [];
     const routePath =
@@ -1445,8 +1477,22 @@ export default function LiveIntelView() {
       .filter((r) => r.visible)
       .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
       .filter((p) => p.points.length >= 2);
-    return [...lanes, ...drawPath, ...routePath, ...inProgressShape, ...shapeOverlays, ...routeOverlays];
-  }, [enabled["maritime-lines"], maritimeLanes, drawMode, drawPoints, routeResult, activeTool, shapeDrawPoints, shapeNameDraft, shapeColorDraft, savedShapes, savedRoutes]);
+    return [...lanes, ...cables, ...drawPath, ...routePath, ...inProgressShape, ...shapeOverlays, ...routeOverlays];
+  }, [
+    enabled["maritime-lines"],
+    maritimeLanes,
+    enabled["submarine-cables"],
+    submarineCables,
+    drawMode,
+    drawPoints,
+    routeResult,
+    activeTool,
+    shapeDrawPoints,
+    shapeNameDraft,
+    shapeColorDraft,
+    savedShapes,
+    savedRoutes,
+  ]);
 
   // The in-progress area-drawing shape, as a closed ring — country borders
   // themselves no longer need to be built here at all now that the 3D view
@@ -1516,6 +1562,9 @@ export default function LiveIntelView() {
           maritimeLinesOn={enabled["maritime-lines"]}
           maritimeLinesCount={maritimeLanes.length}
           onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
+          submarineCablesOn={enabled["submarine-cables"]}
+          submarineCablesCount={submarineCables.length}
+          onToggleSubmarineCables={() => setEnabled((prev) => ({ ...prev, "submarine-cables": !prev["submarine-cables"] }))}
           listeningQueries={savedListeningQueries}
           activeListeningIds={activeListeningIds}
           listeningLiveData={listeningLiveData}
@@ -1851,6 +1900,9 @@ function LayerPanel({
   maritimeLinesOn,
   maritimeLinesCount,
   onToggleMaritimeLines,
+  submarineCablesOn,
+  submarineCablesCount,
+  onToggleSubmarineCables,
   listeningQueries,
   activeListeningIds,
   listeningLiveData,
@@ -1868,6 +1920,9 @@ function LayerPanel({
   maritimeLinesOn: boolean;
   maritimeLinesCount: number;
   onToggleMaritimeLines: () => void;
+  submarineCablesOn: boolean;
+  submarineCablesCount: number;
+  onToggleSubmarineCables: () => void;
   listeningQueries: SavedListeningQuery[];
   activeListeningIds: Set<string>;
   listeningLiveData: Record<string, SocialListeningResult | null>;
@@ -1889,6 +1944,13 @@ function LayerPanel({
           on={maritimeLinesOn}
           count={maritimeLinesCount}
           onToggle={onToggleMaritimeLines}
+        />
+        <RailHoverToggle
+          icon={Cable}
+          label="Submarine Cables"
+          on={submarineCablesOn}
+          count={submarineCablesCount}
+          onToggle={onToggleSubmarineCables}
         />
       </div>
       {groupedRows.map((rows, gi) => (
