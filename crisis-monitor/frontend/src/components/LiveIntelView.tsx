@@ -6,6 +6,7 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
+import { useHiddenIncidents, HiddenIncidentsControl, type HiddenIncidents } from "./hiddenIncidents";
 import {
   Activity,
   AlertTriangle,
@@ -1074,6 +1075,26 @@ export default function LiveIntelView() {
     setIncidentAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
   }, []);
 
+  // Hide-on-map (shared with the Mapping/Search maps — see hiddenIncidents.tsx)
+  // and delete-from-popup. A delete is removed from every local copy at once
+  // (flat-map rows, active search results, and the 3D globe's layer points)
+  // rather than waiting for the next poll.
+  const hiddenIncidents = useHiddenIncidents();
+  const { forget: forgetHiddenIncident } = hiddenIncidents;
+  const handleIncidentDeleted = useCallback(
+    (id: string) => {
+      setMyIncidentRows((prev) => prev.filter((r) => r.id !== id));
+      setIncidentSearchResults((prev) => (prev ? prev.filter((r) => r.id !== id) : prev));
+      setLayers((prev) => {
+        const layer = prev["my-incidents"];
+        if (!layer?.data) return prev;
+        return { ...prev, "my-incidents": { ...layer, data: layer.data.filter((p) => p.id !== id) } };
+      });
+      forgetHiddenIncident([id]);
+    },
+    [forgetHiddenIncident]
+  );
+
   // --- Crypto Intel tool: on-chain wallet lookup (BTC/ETH/SOL), adapted
   // from OSIRIS's chainIntel — see api.getCryptoIntel's own comment. Not a
   // map layer: this is a one-off lookup a user runs, not a polled feed. ---
@@ -1480,15 +1501,19 @@ export default function LiveIntelView() {
       // An active incidents search overrides the base poll for this one
       // layer — same marker styling (incidentRowToPoint), just a filtered
       // row set, so search visibly narrows what's on the map itself.
-      if (def.key === "my-incidents" && incidentSearchResults) {
-        all.push(...incidentSearchResults.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null));
+      if (def.key === "my-incidents") {
+        const rows = incidentSearchResults
+          ? incidentSearchResults.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null)
+          : layers[def.key]?.data ?? [];
+        // Hidden incidents stay off the 3D globe too, not just the flat map.
+        all.push(...(hiddenIncidents.hiddenIds.size ? rows.filter((p) => !hiddenIncidents.hiddenIds.has(p.id)) : rows));
         continue;
       }
       const data = layers[def.key]?.data;
       if (data) all.push(...data);
     }
     return all;
-  }, [layers, enabled, incidentSearchResults]);
+  }, [layers, enabled, incidentSearchResults, hiddenIncidents.hiddenIds]);
 
   // Tool overlays rendered as ordinary GlobePoints — the marker rendering
   // (both the 3D pointsData layer and the flat CircleMarker map) is already
@@ -1689,6 +1714,8 @@ export default function LiveIntelView() {
             incidentHeatmapStyle={incidentHeatmapStyle}
             incidentAnnotations={incidentAnnotations}
             onUpdateIncidentAnnotation={updateIncidentAnnotation}
+            hiddenIncidents={hiddenIncidents}
+            onIncidentDeleted={handleIncidentDeleted}
           />
         )}
 
@@ -1961,6 +1988,8 @@ function FlatMap({
   incidentHeatmapStyle,
   incidentAnnotations,
   onUpdateIncidentAnnotation,
+  hiddenIncidents,
+  onIncidentDeleted,
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
@@ -1991,7 +2020,14 @@ function FlatMap({
   incidentHeatmapStyle?: HeatmapStyle;
   incidentAnnotations?: Record<string, PopupAnnotation>;
   onUpdateIncidentAnnotation?: (incidentId: string, patch: Partial<PopupAnnotation>) => void;
+  hiddenIncidents?: HiddenIncidents;
+  onIncidentDeleted?: (incidentId: string) => void;
 }) {
+  const hiddenIds = hiddenIncidents?.hiddenIds;
+  const visibleIncidentRows = useMemo(
+    () => (incidentRows && hiddenIds?.size ? incidentRows.filter((i) => !hiddenIds.has(i.id)) : incidentRows),
+    [incidentRows, hiddenIds]
+  );
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump style={{ height: "100%", width: "100%", background: "#000308" }}>
@@ -2042,9 +2078,9 @@ function FlatMap({
           </LeafletTooltip>
         </CircleMarker>
       ))}
-      {incidentsOn && incidentRows && incidentRows.length > 0 && incidentViewMode === "markers" && (
+      {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (
         <MarkerClusterGroup chunkedLoading>
-          {incidentRows.map((i) => (
+          {visibleIncidentRows.map((i) => (
             <IncidentMarker
               key={i.id}
               incident={i}
@@ -2052,16 +2088,19 @@ function FlatMap({
               iconMode={incidentIconMode ?? "actor"}
               annotation={incidentAnnotations?.[i.id]}
               onUpdateAnnotation={onUpdateIncidentAnnotation ?? (() => {})}
+              onHide={hiddenIncidents?.hide}
+              onDeleted={onIncidentDeleted}
             />
           ))}
         </MarkerClusterGroup>
       )}
-      {incidentsOn && incidentRows && incidentRows.length > 0 && incidentViewMode === "heatmap" && (
+      {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "heatmap" && (
         <HeatmapLayer
-          points={incidentRows.map((i): [number, number, number] => [i.latitude!, i.longitude!, incidentHeatWeighted ? Math.max(1, totalCasualties(i)) : 1])}
+          points={visibleIncidentRows.map((i): [number, number, number] => [i.latitude!, i.longitude!, incidentHeatWeighted ? Math.max(1, totalCasualties(i)) : 1])}
           style={incidentHeatmapStyle}
         />
       )}
+      {incidentsOn && incidentRows && hiddenIncidents && <HiddenIncidentsControl incidents={incidentRows} hidden={hiddenIncidents} />}
     </MapContainer>
   );
 }

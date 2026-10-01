@@ -10,6 +10,7 @@ import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
 import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
+import { useHiddenIncidents, HiddenIncidentsControl } from "./hiddenIncidents";
 
 type ViewMode = "markers" | "heatmap";
 
@@ -61,6 +62,21 @@ export default function IncidentSearch() {
   }, [filters]);
 
   const geoIncidents = useMemo(() => incidents.filter((i) => i.latitude != null && i.longitude != null), [incidents]);
+  const hidden = useHiddenIncidents();
+  const { forget: forgetHidden } = hidden;
+  const handleIncidentDeleted = useCallback(
+    (id: string) => {
+      setIncidents((prev) => prev.filter((i) => i.id !== id));
+      forgetHidden([id]);
+    },
+    [forgetHidden]
+  );
+  // What's actually drawn — hidden incidents are left off the markers and
+  // heatmap but still count as search matches and still export.
+  const visibleGeoIncidents = useMemo(
+    () => (hidden.hiddenIds.size ? geoIncidents.filter((i) => !hidden.hiddenIds.has(i.id)) : geoIncidents),
+    [geoIncidents, hidden.hiddenIds]
+  );
 
   const initialCenter = useMemo((): LatLngExpression => {
     if (geoIncidents.length === 0) return [1, 20];
@@ -70,8 +86,8 @@ export default function IncidentSearch() {
   }, [geoIncidents]);
 
   const heatmapPoints = useMemo((): [number, number, number][] => {
-    return geoIncidents.map((i) => [i.latitude!, i.longitude!, heatWeighted ? Math.max(1, totalCasualties(i)) : 1]);
-  }, [geoIncidents, heatWeighted]);
+    return visibleGeoIncidents.map((i) => [i.latitude!, i.longitude!, heatWeighted ? Math.max(1, totalCasualties(i)) : 1]);
+  }, [visibleGeoIncidents, heatWeighted]);
 
   const hasFilters = Object.values(filters).some(Boolean);
   const mapContainerRef = useRef<HTMLElement | null>(null);
@@ -307,11 +323,22 @@ export default function IncidentSearch() {
 
           {viewMode === "markers" && (
             <MarkerClusterGroup chunkedLoading>
-              {geoIncidents.map((i) => (
-                <IncidentMarker key={i.id} incident={i} highlighted iconMode="actor" annotation={annotations[i.id]} onUpdateAnnotation={updateAnnotation} />
+              {visibleGeoIncidents.map((i) => (
+                <IncidentMarker
+                  key={i.id}
+                  incident={i}
+                  highlighted
+                  iconMode="actor"
+                  annotation={annotations[i.id]}
+                  onUpdateAnnotation={updateAnnotation}
+                  onHide={hidden.hide}
+                  onDeleted={handleIncidentDeleted}
+                />
               ))}
             </MarkerClusterGroup>
           )}
+
+          <HiddenIncidentsControl incidents={geoIncidents} hidden={hidden} />
         </MapContainer>
       </div>
     </div>

@@ -18,6 +18,7 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
 import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
+import { useHiddenIncidents, HiddenIncidentsControl } from "./hiddenIncidents";
 
 /** Local, session-only display overrides for one incident's popup — never
  *  sent to the backend or persisted anywhere, purely a presentation layer
@@ -282,14 +283,42 @@ export const IncidentMarker = memo(function IncidentMarker({
   iconMode,
   annotation,
   onUpdateAnnotation,
+  onHide,
+  onDeleted,
 }: {
   incident: IncidentItem;
   highlighted: boolean;
   iconMode: "actor" | "tactic";
   annotation: PopupAnnotation | undefined;
   onUpdateAnnotation: (incidentId: string, patch: Partial<PopupAnnotation>) => void;
+  /** Hide this incident from the map only (display preference — see
+   *  hiddenIncidents.tsx). The button is omitted when not provided. */
+  onHide?: (incidentId: string) => void;
+  /** Called after the incident has been permanently deleted on the server,
+   *  so the host map can drop it from its own state. The Delete button is
+   *  omitted when not provided. */
+  onDeleted?: (incidentId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function handleDelete() {
+    const label = [incident.occurred_date, incident.city || incident.district || incident.county || incident.province].filter(Boolean).join(" — ");
+    if (!window.confirm(`Permanently delete this incident${label ? ` (${label})` : ""}?\n\nThis removes it from the database, dashboards and exports for everyone, and can't be undone. Use "Hide" instead to just take it off the map.`)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteIncident(incident.id);
+      onDeleted?.(incident.id);
+    } catch (err) {
+      // The backend answers 404 for an incident the caller doesn't own
+      // (non-admins can only delete their own uploads).
+      const status = (err as { status?: number }).status;
+      setDeleteError(status === 404 ? "You can only delete incidents you uploaded." : (err as Error).message || "Delete failed.");
+      setDeleting(false);
+    }
+  }
   const actorCategory = classifyActor(incident.actor);
   const displayCategory = iconMode === "tactic" ? { color: actorCategory.color, shape: classifyTactic(incident.tactic).glyph } : actorCategory;
   const casualties = totalCasualties(incident);
@@ -311,7 +340,7 @@ export const IncidentMarker = memo(function IncidentMarker({
           open at once for a screenshot. */}
       <Popup autoClose={!pinned} closeOnClick={!pinned} minWidth={210}>
         <div style={{ fontSize: 13, minWidth: 190 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: 4, marginBottom: 4 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
             <button
               onClick={() => setEditing((e) => !e)}
               title={editing ? "Done editing" : "Edit this popup"}
@@ -326,7 +355,23 @@ export const IncidentMarker = memo(function IncidentMarker({
             >
               📌 {pinned ? "Pinned" : "Pin"}
             </button>
+            {onHide && (
+              <button onClick={() => onHide(incident.id)} title="Hide from the map (data is kept — restore with “Show all”)" style={popupToolBtnStyle}>
+                🙈 Hide
+              </button>
+            )}
+            {onDeleted && (
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                title="Permanently delete this incident"
+                style={{ ...popupToolBtnStyle, color: "#b3261e", borderColor: "#e6b8b4", opacity: deleting ? 0.6 : 1 }}
+              >
+                {deleting ? "Deleting…" : "🗑 Delete"}
+              </button>
+            )}
           </div>
+          {deleteError && <div style={{ color: "#b3261e", fontSize: 11, marginBottom: 4 }}>{deleteError}</div>}
 
           {editing ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1011,6 +1056,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   const updateAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
     setAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
   }, []);
+  const hidden = useHiddenIncidents();
   const [heatWeighted, setHeatWeighted] = useState(false);
   // Adjustable heatmap look — "max" is the real color-intensity dial (lower
   // = hotspots turn red with fewer incidents stacked), radius/blur shape how
@@ -1068,6 +1114,14 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
 
   // --- incident overlay filters ---
   const [incidents, setIncidents] = useState<IncidentItem[]>(initialIncidents);
+  const { forget: forgetHidden } = hidden;
+  const handleIncidentDeleted = useCallback(
+    (id: string) => {
+      setIncidents((prev) => prev.filter((i) => i.id !== id));
+      forgetHidden([id]);
+    },
+    [forgetHidden]
+  );
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [filters, setFilters] = useState<{
     country?: string;
@@ -1186,10 +1240,13 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
 
   // Shared by both marker and heatmap rendering — the same "what's currently
   // visible" set, whichever view mode is active.
-  const displayIncidents = useMemo(
-    () => ((onlyNearOverlay || focusedOverlay) && nearOverlayIds ? geoIncidents.filter((i) => nearOverlayIds.has(i.id)) : geoIncidents),
-    [onlyNearOverlay, focusedOverlay, nearOverlayIds, geoIncidents]
-  );
+  // Hidden incidents (see hiddenIncidents.tsx) are dropped here, so both
+  // markers and heatmap skip them; geoIncidents itself is left intact so
+  // the "N hidden" control can still list and restore them.
+  const displayIncidents = useMemo(() => {
+    const base = (onlyNearOverlay || focusedOverlay) && nearOverlayIds ? geoIncidents.filter((i) => nearOverlayIds.has(i.id)) : geoIncidents;
+    return hidden.hiddenIds.size ? base.filter((i) => !hidden.hiddenIds.has(i.id)) : base;
+  }, [onlyNearOverlay, focusedOverlay, nearOverlayIds, geoIncidents, hidden.hiddenIds]);
 
   const heatmapPoints = useMemo((): [number, number, number][] => {
     return displayIncidents.map((i) => {
@@ -1217,10 +1274,12 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
             iconMode={iconMode}
             annotation={annotations[i.id]}
             onUpdateAnnotation={updateAnnotation}
+            onHide={hidden.hide}
+            onDeleted={handleIncidentDeleted}
           />
         );
       }),
-    [displayIncidents, nearOverlayIds, iconMode, annotations, updateAnnotation]
+    [displayIncidents, nearOverlayIds, iconMode, annotations, updateAnnotation, hidden.hide, handleIncidentDeleted]
   );
 
   function startDrafting() {
@@ -2060,6 +2119,8 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
         {incidentsVisible && viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} style={heatmapStyle} />}
 
         {incidentsVisible && viewMode === "markers" && <MarkerClusterGroup chunkedLoading>{markerElements}</MarkerClusterGroup>}
+
+        {incidentsVisible && <HiddenIncidentsControl incidents={geoIncidents} hidden={hidden} />}
 
         {/* draft-in-progress waypoints + connecting line */}
         {drafting &&
