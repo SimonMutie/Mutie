@@ -17,7 +17,8 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
-import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
+import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
+import { HeatmapControls } from "./HeatmapControls";
 import { useHiddenIncidents, HiddenIncidentsControl } from "./hiddenIncidents";
 
 /** Local, session-only display overrides for one incident's popup — never
@@ -1057,7 +1058,6 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
     setAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
   }, []);
   const hidden = useHiddenIncidents();
-  const [heatWeighted, setHeatWeighted] = useState(false);
   // Adjustable heatmap look — "max" is the real color-intensity dial (lower
   // = hotspots turn red with fewer incidents stacked), radius/blur shape how
   // the points blend, gradient swaps the color ramp. Session-only, like the
@@ -1249,11 +1249,8 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   }, [onlyNearOverlay, focusedOverlay, nearOverlayIds, geoIncidents, hidden.hiddenIds]);
 
   const heatmapPoints = useMemo((): [number, number, number][] => {
-    return displayIncidents.map((i) => {
-      const intensity = heatWeighted ? Math.max(1, totalCasualties(i)) : 1;
-      return [i.latitude!, i.longitude!, intensity];
-    });
-  }, [displayIncidents, heatWeighted]);
+    return incidentHeatPoints(displayIncidents, heatmapStyle);
+  }, [displayIncidents, heatmapStyle]);
 
   // Memoized on top of IncidentMarker's own memo() wrapper — this avoids
   // even re-running the .map() call itself (and handing React a fresh
@@ -1689,58 +1686,12 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
               </div>
               {viewMode === "heatmap" && (
                 <div style={{ marginTop: 6 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
-                    <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
-                    Weight by casualties, not just count
-                  </label>
-                  <div style={{ marginTop: 8 }}>
-                    <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR INTENSITY (lower = redder sooner)</div>
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={10}
-                      step={0.5}
-                      value={heatmapStyle.max}
-                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, max: Number(e.target.value) }))}
-                      style={{ width: "100%" }}
-                    />
-                  </div>
-                  <div style={{ marginTop: 6 }}>
-                    <div className="eyebrow" style={{ marginBottom: 4 }}>SPREAD (radius)</div>
-                    <input
-                      type="range"
-                      min={8}
-                      max={45}
-                      step={1}
-                      value={heatmapStyle.radius}
-                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, radius: Number(e.target.value) }))}
-                      style={{ width: "100%" }}
-                    />
-                  </div>
-                  <div style={{ marginTop: 6 }}>
-                    <div className="eyebrow" style={{ marginBottom: 4 }}>SOFTNESS (blur)</div>
-                    <input
-                      type="range"
-                      min={2}
-                      max={35}
-                      step={1}
-                      value={heatmapStyle.blur}
-                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, blur: Number(e.target.value) }))}
-                      style={{ width: "100%" }}
-                    />
-                  </div>
-                  <div style={{ marginTop: 6 }}>
-                    <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR THEME</div>
-                    <select
-                      value={heatmapStyle.gradient}
-                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, gradient: e.target.value as HeatmapStyle["gradient"] }))}
-                      style={{ width: "100%", fontSize: 11.5, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border-soft)", background: "var(--bg-elevated)", color: "var(--text)" }}
-                    >
-                      {Object.entries(HEATMAP_GRADIENTS).map(([key, g]) => (
-                        <option key={key} value={key}>{g.label}</option>
-                      ))}
-                    </select>
-                  </div>
+                  <HeatmapControls
+                    style={heatmapStyle}
+                    onChange={setHeatmapStyle}
+                    labelStyle={{ color: "var(--text-muted)" }}
+                    selectStyle={{ fontSize: 11.5, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border-soft)", background: "var(--bg-elevated)", color: "var(--text)" }}
+                  />
                 </div>
               )}
               {viewMode === "markers" && (

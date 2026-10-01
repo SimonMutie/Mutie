@@ -9,7 +9,8 @@ import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
 import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
-import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
+import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
+import { HeatmapControls } from "./HeatmapControls";
 import { useHiddenIncidents, HiddenIncidentsControl } from "./hiddenIncidents";
 
 type ViewMode = "markers" | "heatmap";
@@ -42,7 +43,6 @@ export default function IncidentSearch() {
   const [loading, setLoading] = useState(true);
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
   const [viewMode, setViewMode] = useState<ViewMode>("markers");
-  const [heatWeighted, setHeatWeighted] = useState(false);
   const [heatmapStyle, setHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
   const [annotations, setAnnotations] = useState<Record<string, PopupAnnotation>>({});
   const updateAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
@@ -86,8 +86,8 @@ export default function IncidentSearch() {
   }, [geoIncidents]);
 
   const heatmapPoints = useMemo((): [number, number, number][] => {
-    return visibleGeoIncidents.map((i) => [i.latitude!, i.longitude!, heatWeighted ? Math.max(1, totalCasualties(i)) : 1]);
-  }, [visibleGeoIncidents, heatWeighted]);
+    return incidentHeatPoints(visibleGeoIncidents, heatmapStyle);
+  }, [visibleGeoIncidents, heatmapStyle]);
 
   const hasFilters = Object.values(filters).some(Boolean);
   const mapContainerRef = useRef<HTMLElement | null>(null);
@@ -228,58 +228,7 @@ export default function IncidentSearch() {
           </div>
           {viewMode === "heatmap" && (
             <div style={{ marginTop: 8 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
-                <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
-                Weight by casualties, not just count
-              </label>
-              <div style={{ marginTop: 8 }}>
-                <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR INTENSITY (lower = redder sooner)</div>
-                <input
-                  type="range"
-                  min={0.5}
-                  max={10}
-                  step={0.5}
-                  value={heatmapStyle.max}
-                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, max: Number(e.target.value) }))}
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <div className="eyebrow" style={{ marginBottom: 4 }}>SPREAD (radius)</div>
-                <input
-                  type="range"
-                  min={8}
-                  max={45}
-                  step={1}
-                  value={heatmapStyle.radius}
-                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, radius: Number(e.target.value) }))}
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <div className="eyebrow" style={{ marginBottom: 4 }}>SOFTNESS (blur)</div>
-                <input
-                  type="range"
-                  min={2}
-                  max={35}
-                  step={1}
-                  value={heatmapStyle.blur}
-                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, blur: Number(e.target.value) }))}
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div style={{ marginTop: 6 }}>
-                <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR THEME</div>
-                <select
-                  value={heatmapStyle.gradient}
-                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, gradient: e.target.value as HeatmapStyle["gradient"] }))}
-                  style={selectStyle}
-                >
-                  {Object.entries(HEATMAP_GRADIENTS).map(([key, g]) => (
-                    <option key={key} value={key}>{g.label}</option>
-                  ))}
-                </select>
-              </div>
+              <HeatmapControls style={heatmapStyle} onChange={setHeatmapStyle} labelStyle={{ color: "var(--text-muted)" }} selectStyle={selectStyle} />
             </div>
           )}
         </div>

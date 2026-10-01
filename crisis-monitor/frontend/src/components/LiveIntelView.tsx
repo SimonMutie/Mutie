@@ -5,7 +5,8 @@ import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
-import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
+import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
+import { HeatmapControls } from "./HeatmapControls";
 import { useHiddenIncidents, HiddenIncidentsControl, type HiddenIncidents } from "./hiddenIncidents";
 import {
   Activity,
@@ -1068,7 +1069,6 @@ export default function LiveIntelView() {
   // IncidentSearch.tsx's own view-mode + heatmap controls, session-only.
   const [incidentViewMode, setIncidentViewMode] = useState<"markers" | "heatmap">("markers");
   const [incidentIconMode, setIncidentIconMode] = useState<"actor" | "tactic">("actor");
-  const [incidentHeatWeighted, setIncidentHeatWeighted] = useState(false);
   const [incidentHeatmapStyle, setIncidentHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
   const [incidentAnnotations, setIncidentAnnotations] = useState<Record<string, PopupAnnotation>>({});
   const updateIncidentAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
@@ -1710,7 +1710,6 @@ export default function LiveIntelView() {
             incidentRows={incidentRowsForFlatMap}
             incidentViewMode={incidentViewMode}
             incidentIconMode={incidentIconMode}
-            incidentHeatWeighted={incidentHeatWeighted}
             incidentHeatmapStyle={incidentHeatmapStyle}
             incidentAnnotations={incidentAnnotations}
             onUpdateIncidentAnnotation={updateIncidentAnnotation}
@@ -1866,8 +1865,6 @@ export default function LiveIntelView() {
             onViewModeChange={setIncidentViewMode}
             iconMode={incidentIconMode}
             onIconModeChange={setIncidentIconMode}
-            heatWeighted={incidentHeatWeighted}
-            onHeatWeightedChange={setIncidentHeatWeighted}
             heatmapStyle={incidentHeatmapStyle}
             onHeatmapStyleChange={setIncidentHeatmapStyle}
           />
@@ -1984,7 +1981,6 @@ function FlatMap({
   incidentRows,
   incidentViewMode,
   incidentIconMode,
-  incidentHeatWeighted,
   incidentHeatmapStyle,
   incidentAnnotations,
   onUpdateIncidentAnnotation,
@@ -2016,7 +2012,6 @@ function FlatMap({
   incidentRows?: IncidentItem[];
   incidentViewMode?: "markers" | "heatmap";
   incidentIconMode?: "actor" | "tactic";
-  incidentHeatWeighted?: boolean;
   incidentHeatmapStyle?: HeatmapStyle;
   incidentAnnotations?: Record<string, PopupAnnotation>;
   onUpdateIncidentAnnotation?: (incidentId: string, patch: Partial<PopupAnnotation>) => void;
@@ -2027,6 +2022,10 @@ function FlatMap({
   const visibleIncidentRows = useMemo(
     () => (incidentRows && hiddenIds?.size ? incidentRows.filter((i) => !hiddenIds.has(i.id)) : incidentRows),
     [incidentRows, hiddenIds]
+  );
+  const visibleIncidentHeatPoints = useMemo(
+    () => incidentHeatPoints(visibleIncidentRows ?? [], incidentHeatmapStyle ?? DEFAULT_HEATMAP_STYLE),
+    [visibleIncidentRows, incidentHeatmapStyle]
   );
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
@@ -2096,7 +2095,7 @@ function FlatMap({
       )}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "heatmap" && (
         <HeatmapLayer
-          points={visibleIncidentRows.map((i): [number, number, number] => [i.latitude!, i.longitude!, incidentHeatWeighted ? Math.max(1, totalCasualties(i)) : 1])}
+          points={visibleIncidentHeatPoints}
           style={incidentHeatmapStyle}
         />
       )}
@@ -3259,8 +3258,6 @@ function IncidentsToolPanel({
   onViewModeChange,
   iconMode,
   onIconModeChange,
-  heatWeighted,
-  onHeatWeightedChange,
   heatmapStyle,
   onHeatmapStyleChange,
 }: {
@@ -3282,8 +3279,6 @@ function IncidentsToolPanel({
   onViewModeChange: (m: "markers" | "heatmap") => void;
   iconMode: "actor" | "tactic";
   onIconModeChange: (m: "actor" | "tactic") => void;
-  heatWeighted: boolean;
-  onHeatWeightedChange: (v: boolean) => void;
   heatmapStyle: HeatmapStyle;
   onHeatmapStyleChange: (s: HeatmapStyle | ((prev: HeatmapStyle) => HeatmapStyle)) => void;
 }) {
@@ -3373,58 +3368,12 @@ function IncidentsToolPanel({
         )}
         {viewMode === "heatmap" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: HUD.textSecondary }}>
-              <input type="checkbox" checked={heatWeighted} onChange={(e) => onHeatWeightedChange(e.target.checked)} />
-              Weight by casualties, not just count
-            </label>
-            <div>
-              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Color intensity (lower = redder sooner)</div>
-              <input
-                type="range"
-                min={0.5}
-                max={10}
-                step={0.5}
-                value={heatmapStyle.max}
-                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, max: Number(e.target.value) }))}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Spread (radius)</div>
-              <input
-                type="range"
-                min={8}
-                max={45}
-                step={1}
-                value={heatmapStyle.radius}
-                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, radius: Number(e.target.value) }))}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Softness (blur)</div>
-              <input
-                type="range"
-                min={2}
-                max={35}
-                step={1}
-                value={heatmapStyle.blur}
-                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, blur: Number(e.target.value) }))}
-                style={{ width: "100%" }}
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Color theme</div>
-              <select
-                value={heatmapStyle.gradient}
-                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, gradient: e.target.value as HeatmapStyle["gradient"] }))}
-                style={{ ...hudInputStyle, cursor: "pointer" }}
-              >
-                {Object.entries(HEATMAP_GRADIENTS).map(([key, g]) => (
-                  <option key={key} value={key}>{g.label}</option>
-                ))}
-              </select>
-            </div>
+            <HeatmapControls
+              style={heatmapStyle}
+              onChange={onHeatmapStyleChange}
+              labelStyle={{ color: HUD.textMuted }}
+              selectStyle={{ ...hudInputStyle, cursor: "pointer" }}
+            />
           </div>
         )}
       </div>

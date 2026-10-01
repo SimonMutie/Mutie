@@ -10,6 +10,10 @@ import "leaflet.heat";
  *  distinctly different looks while every one of them still ends on red at
  *  the top of the scale, per Simon's "red where intensity is more" ask. */
 export const HEATMAP_GRADIENTS: Record<string, { label: string; stops: Record<number, string> }> = {
+  // Pale pink at the thin edges → deep red at the core. Paired with a low
+  // `fade` (minOpacity) so low-intensity areas actually fade out to
+  // transparent rather than painting a solid tint over the basemap.
+  redFade: { label: "Red fade (pale → deep red)", stops: { 0.0: "#fee2e2", 0.25: "#fca5a5", 0.5: "#f87171", 0.7: "#ef4444", 0.85: "#dc2626", 1.0: "#7f1d1d" } },
   classic: { label: "Classic (blue → red)", stops: { 0.4: "#2563eb", 0.6: "#22d3ee", 0.75: "#a3e635", 0.9: "#f59e0b", 1.0: "#dc2626" } },
   redOnly: { label: "Amber → Red (subtle low end)", stops: { 0.2: "#fde68a", 0.5: "#f59e0b", 0.75: "#ef4444", 1.0: "#991b1b" } },
   mono: { label: "Monochrome red", stops: { 0.2: "#fecaca", 0.5: "#f87171", 0.75: "#dc2626", 1.0: "#7f1d1d" } },
@@ -30,8 +34,97 @@ export interface HeatmapStyle {
    *  it changes how much counts as "high", not just a cosmetic opacity. */
   max: number;
   gradient: HeatmapGradientKey;
+  /** Minimum opacity of any heat at all — low values let sparse/low-casualty
+   *  areas fade out to transparent; high values give every point a solid
+   *  floor of color. */
+  fade: number;
+  /** What each incident contributes: "count" = every incident equal (pure
+   *  density); "casualties" = fatalities and injuries, weighted below. */
+  weighting: "count" | "casualties";
+  /** Multiplier on each fatality vs. each injury in "casualties" mode. */
+  deathWeight: number;
+  injuryWeight: number;
+  /** 0–1: how much a no-casualty incident still contributes in "casualties"
+   *  mode. 0 = only incidents with fatalities/injuries show at all. */
+  baseline: number;
 }
-export const DEFAULT_HEATMAP_STYLE: HeatmapStyle = { radius: 22, blur: 18, max: 3, gradient: "classic" };
+export const DEFAULT_HEATMAP_STYLE: HeatmapStyle = {
+  radius: 25,
+  blur: 20,
+  max: 1.5,
+  gradient: "redFade",
+  fade: 0.05,
+  weighting: "casualties",
+  deathWeight: 3,
+  injuryWeight: 1,
+  baseline: 0.15,
+};
+
+/** Numeric value from a raw spreadsheet cell — numbers, "12", " 3 " all count. */
+function rawNumber(v: unknown): number {
+  const n = typeof v === "number" ? v : typeof v === "string" ? Number(v.trim()) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Minimal shape the casualty helpers need — kept structural so this file
+ *  doesn't import IncidentItem from api.ts (DashboardWidgetCard pulls this
+ *  file into its own chunk; see the HeatmapLayer comment below). */
+export interface HeatIncident {
+  latitude?: number | null;
+  longitude?: number | null;
+  civilian_death_child?: number | null;
+  civilian_death_female?: number | null;
+  civilian_death_male?: number | null;
+  civilian_death_unknown?: number | null;
+  civilian_injury_female?: number | null;
+  civilian_injury_male?: number | null;
+  civilian_injury_unknown?: number | null;
+  raw_row?: Record<string, unknown> | null;
+}
+
+/** Highest value among raw-row columns whose header matches `pattern` but
+ *  isn't one of the civilian breakdown columns — picks up a total
+ *  "Fatalities"/"Killed"/"Injuries"/"Wounded" column if the uploaded
+ *  spreadsheet had one (combatant + civilian), which the structured
+ *  civilian_* columns alone can't represent. */
+function rawTotal(raw: Record<string, unknown> | null | undefined, pattern: RegExp): number {
+  if (!raw) return 0;
+  let best = 0;
+  for (const [key, value] of Object.entries(raw)) {
+    if (pattern.test(key) && !/civilian/i.test(key)) best = Math.max(best, rawNumber(value));
+  }
+  return best;
+}
+
+export function incidentFatalities(i: HeatIncident): number {
+  const civilian = (i.civilian_death_child ?? 0) + (i.civilian_death_female ?? 0) + (i.civilian_death_male ?? 0) + (i.civilian_death_unknown ?? 0);
+  return Math.max(civilian, rawTotal(i.raw_row, /fatalit|death|killed/i));
+}
+
+export function incidentInjuries(i: HeatIncident): number {
+  const civilian = (i.civilian_injury_female ?? 0) + (i.civilian_injury_male ?? 0) + (i.civilian_injury_unknown ?? 0);
+  return Math.max(civilian, rawTotal(i.raw_row, /injur|wounded/i));
+}
+
+/** Turns incidents into leaflet.heat [lat, lng, weight] points per the
+ *  style's weighting. In "casualties" mode each incident's score
+ *  (fatalities × deathWeight + injuries × injuryWeight) is log-scaled
+ *  against the largest score in the set, so a single mass-casualty event
+ *  doesn't wash every other hotspot out to pale pink — overlapping
+ *  incidents still stack, so clusters of severe incidents go deepest red. */
+export function incidentHeatPoints(incidents: HeatIncident[], style: HeatmapStyle): [number, number, number][] {
+  const located = incidents.filter((i) => i.latitude != null && i.longitude != null);
+  if (style.weighting === "count") return located.map((i) => [i.latitude!, i.longitude!, 1]);
+  const scores = located.map((i) => incidentFatalities(i) * style.deathWeight + incidentInjuries(i) * style.injuryWeight);
+  const maxScore = Math.max(0, ...scores);
+  const denom = Math.log1p(maxScore) || 1;
+  const out: [number, number, number][] = [];
+  located.forEach((i, idx) => {
+    const w = style.baseline + (1 - style.baseline) * (Math.log1p(scores[idx]) / denom);
+    if (w > 0) out.push([i.latitude!, i.longitude!, w]);
+  });
+  return out;
+}
 
 /** Canvas-based heat-density layer, an alternative to plotting individual pins
  *  — useful once there are enough incidents that markers start overlapping and
@@ -59,8 +152,14 @@ export function HeatmapLayer({ points, style }: { points: [number, number, numbe
     const layer = L.heatLayer(points, {
       radius: resolved.radius,
       blur: resolved.blur,
-      maxZoom: 12,
-      minOpacity: 0.35,
+      // leaflet.heat divides every point's weight by 2^(maxZoom − zoom) —
+      // with the old maxZoom of 12, at a typical country view (zoom ~6) each
+      // incident counted 1/64, so heat stayed pale and the intensity dial
+      // barely registered. 0 turns that damping off: a point's heat is its
+      // own weight at every zoom, so the intensity/weight controls mean the
+      // same thing however far in or out the map is.
+      maxZoom: 0,
+      minOpacity: resolved.fade,
       max: resolved.max,
       gradient: HEATMAP_GRADIENTS[resolved.gradient].stops,
     });
@@ -71,7 +170,7 @@ export function HeatmapLayer({ points, style }: { points: [number, number, numbe
       layerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, resolved.radius, resolved.blur, resolved.max, resolved.gradient]);
+  }, [map, resolved.radius, resolved.blur, resolved.max, resolved.gradient, resolved.fade]);
 
   useEffect(() => {
     layerRef.current?.setLatLngs(points);
