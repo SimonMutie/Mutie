@@ -1,6 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import MarkerClusterGroup from "react-leaflet-cluster";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import { IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
+import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
 import {
   Activity,
   AlertTriangle,
@@ -1032,6 +1037,43 @@ export default function LiveIntelView() {
   const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
   const [incidentBulkDeleting, setIncidentBulkDeleting] = useState(false);
 
+  // Raw incident rows backing the "My Incidents" layer on the FLAT map only
+  // (Map3D stays on the generic GlobePoint pipeline — see FlatMap below).
+  // The generic LAYER_DEFS fetcher above only keeps GlobePoints, which have
+  // no room for the fields the rich popup needs (tactic/date/details), so
+  // this is polled separately, the same way refreshMyIncidents already
+  // re-fetches raw rows after an add/upload.
+  const [myIncidentRows, setMyIncidentRows] = useState<IncidentItem[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      api.getIncidents({ limit: 2000 }).then((rows) => !cancelled && setMyIncidentRows(rows)).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+  // An active search narrows the rich layer exactly like it narrows the
+  // generic GlobePoint one above (see `points` memo).
+  const incidentRowsForFlatMap = useMemo(
+    () => (incidentSearchResults ?? myIncidentRows).filter((r) => r.latitude != null && r.longitude != null),
+    [incidentSearchResults, myIncidentRows]
+  );
+
+  // Display options for the rich incident layer — mirrors IncidentsMap.tsx/
+  // IncidentSearch.tsx's own view-mode + heatmap controls, session-only.
+  const [incidentViewMode, setIncidentViewMode] = useState<"markers" | "heatmap">("markers");
+  const [incidentIconMode, setIncidentIconMode] = useState<"actor" | "tactic">("actor");
+  const [incidentHeatWeighted, setIncidentHeatWeighted] = useState(false);
+  const [incidentHeatmapStyle, setIncidentHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
+  const [incidentAnnotations, setIncidentAnnotations] = useState<Record<string, PopupAnnotation>>({});
+  const updateIncidentAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
+    setIncidentAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
+  }, []);
+
   // --- Crypto Intel tool: on-chain wallet lookup (BTC/ETH/SOL), adapted
   // from OSIRIS's chainIntel — see api.getCryptoIntel's own comment. Not a
   // map layer: this is a one-off lookup a user runs, not a polled feed. ---
@@ -1104,6 +1146,7 @@ export default function LiveIntelView() {
           ...prev,
           "my-incidents": { data: rows.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null), loading: false, error: null },
         }));
+        setMyIncidentRows(rows);
       })
       .catch(() => {});
     if (Object.values(incidentFilters).some(Boolean)) {
@@ -1540,6 +1583,11 @@ export default function LiveIntelView() {
   }, [savedListeningQueries, activeListeningIds, listeningLiveData]);
 
   const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints], [points, toolPoints, listeningLayerPoints]);
+  // Flat map renders "My Incidents" through the rich IncidentMarker/heatmap
+  // layer below instead of a generic colored dot — drop the generic version
+  // here so the same incidents don't appear twice on the 2D/map/sat modes.
+  // Map3D (3D mode) keeps the generic GlobePoint version via `mapPoints`.
+  const flatMapPoints = useMemo(() => mapPoints.filter((p) => p.layerKey !== "My Incidents"), [mapPoints]);
 
   // Draw/route lines, merged alongside the shipping lanes for the 3D globe's
   // single pathsData layer — a color field on each entry (shipping lanes
@@ -1623,7 +1671,7 @@ export default function LiveIntelView() {
         ) : (
           <FlatMap
             mode={mapMode}
-            points={mapPoints}
+            points={flatMapPoints}
             onMapClick={activeTool === "draw" || activeTool === "route" || activeTool === "shapes" ? handleMapClick : undefined}
             drawMode={activeTool === "draw" ? drawMode : null}
             drawPoints={drawPoints}
@@ -1633,6 +1681,14 @@ export default function LiveIntelView() {
             shapeDrawPoints={activeTool === "shapes" ? shapeDrawPoints : undefined}
             shapeDrawActive={activeTool === "shapes" && shapeDrawing}
             shapeDraftColor={shapeColorDraft}
+            incidentsOn={enabled["my-incidents"]}
+            incidentRows={incidentRowsForFlatMap}
+            incidentViewMode={incidentViewMode}
+            incidentIconMode={incidentIconMode}
+            incidentHeatWeighted={incidentHeatWeighted}
+            incidentHeatmapStyle={incidentHeatmapStyle}
+            incidentAnnotations={incidentAnnotations}
+            onUpdateIncidentAnnotation={updateIncidentAnnotation}
           />
         )}
 
@@ -1779,6 +1835,14 @@ export default function LiveIntelView() {
             bulkDeleting={incidentBulkDeleting}
             onExport={handleIncidentExport}
             exporting={incidentExporting}
+            viewMode={incidentViewMode}
+            onViewModeChange={setIncidentViewMode}
+            iconMode={incidentIconMode}
+            onIconModeChange={setIncidentIconMode}
+            heatWeighted={incidentHeatWeighted}
+            onHeatWeightedChange={setIncidentHeatWeighted}
+            heatmapStyle={incidentHeatmapStyle}
+            onHeatmapStyleChange={setIncidentHeatmapStyle}
           />
         )}
         {activeTool === "economy" && (
@@ -1889,6 +1953,14 @@ function FlatMap({
   shapeDrawPoints,
   shapeDrawActive,
   shapeDraftColor,
+  incidentsOn,
+  incidentRows,
+  incidentViewMode,
+  incidentIconMode,
+  incidentHeatWeighted,
+  incidentHeatmapStyle,
+  incidentAnnotations,
+  onUpdateIncidentAnnotation,
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
@@ -1908,6 +1980,17 @@ function FlatMap({
   shapeDrawPoints?: LatLng[];
   shapeDrawActive?: boolean;
   shapeDraftColor?: string;
+  /** "My Incidents", rendered rich (bullet icons, editable/pinnable popups,
+   *  adjustable heatmap) instead of as generic GlobePoint dots — see the
+   *  flatMapPoints/incidentRowsForFlatMap comments at the call site. */
+  incidentsOn?: boolean;
+  incidentRows?: IncidentItem[];
+  incidentViewMode?: "markers" | "heatmap";
+  incidentIconMode?: "actor" | "tactic";
+  incidentHeatWeighted?: boolean;
+  incidentHeatmapStyle?: HeatmapStyle;
+  incidentAnnotations?: Record<string, PopupAnnotation>;
+  onUpdateIncidentAnnotation?: (incidentId: string, patch: Partial<PopupAnnotation>) => void;
 }) {
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
@@ -1959,6 +2042,26 @@ function FlatMap({
           </LeafletTooltip>
         </CircleMarker>
       ))}
+      {incidentsOn && incidentRows && incidentRows.length > 0 && incidentViewMode === "markers" && (
+        <MarkerClusterGroup chunkedLoading>
+          {incidentRows.map((i) => (
+            <IncidentMarker
+              key={i.id}
+              incident={i}
+              highlighted
+              iconMode={incidentIconMode ?? "actor"}
+              annotation={incidentAnnotations?.[i.id]}
+              onUpdateAnnotation={onUpdateIncidentAnnotation ?? (() => {})}
+            />
+          ))}
+        </MarkerClusterGroup>
+      )}
+      {incidentsOn && incidentRows && incidentRows.length > 0 && incidentViewMode === "heatmap" && (
+        <HeatmapLayer
+          points={incidentRows.map((i): [number, number, number] => [i.latitude!, i.longitude!, incidentHeatWeighted ? Math.max(1, totalCasualties(i)) : 1])}
+          style={incidentHeatmapStyle}
+        />
+      )}
     </MapContainer>
   );
 }
@@ -3113,6 +3216,14 @@ function IncidentsToolPanel({
   bulkDeleting,
   onExport,
   exporting,
+  viewMode,
+  onViewModeChange,
+  iconMode,
+  onIconModeChange,
+  heatWeighted,
+  onHeatWeightedChange,
+  heatmapStyle,
+  onHeatmapStyleChange,
 }: {
   filterOptions: IncidentFilterOptions | null;
   draft: IncidentFilterState;
@@ -3128,6 +3239,14 @@ function IncidentsToolPanel({
   bulkDeleting: boolean;
   onExport: (format: "xlsx" | "csv") => void;
   exporting: "xlsx" | "csv" | null;
+  viewMode: "markers" | "heatmap";
+  onViewModeChange: (m: "markers" | "heatmap") => void;
+  iconMode: "actor" | "tactic";
+  onIconModeChange: (m: "actor" | "tactic") => void;
+  heatWeighted: boolean;
+  onHeatWeightedChange: (v: boolean) => void;
+  heatmapStyle: HeatmapStyle;
+  onHeatmapStyleChange: (s: HeatmapStyle | ((prev: HeatmapStyle) => HeatmapStyle)) => void;
 }) {
   const hasDraft = Object.values(draft).some(Boolean);
   const hasApplied = appliedCount > 0;
@@ -3179,6 +3298,7 @@ function IncidentsToolPanel({
             style={{ ...hudInputStyle, flex: 1 }}
           />
         </div>
+        <MonthQuickFilter onPick={(bounds) => onDraftChange({ ...draft, ...bounds })} />
 
         <div style={{ display: "flex", gap: 6, paddingTop: 4 }}>
           <ToolButton active onClick={onSearch} disabled={loading}>
@@ -3194,6 +3314,80 @@ function IncidentsToolPanel({
           : hasApplied
           ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — shown on the map (capped at 2,000 points on-screen; export has the full set)`
           : "Enable \"My Incidents\" (under My Data, left rail) to see every uploaded/logged incident on the map. Set filters above and press Search to narrow that down."}
+      </div>
+
+      {/* 2D/map/sat modes only — Map3D keeps the generic colored-dot
+          rendering, since these bullet icons/popups/heatmap are Leaflet-only. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>
+          Display on map (2D / Map / Sat)
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <ToolButton active={viewMode === "markers"} onClick={() => onViewModeChange("markers")}>Icons</ToolButton>
+          <ToolButton active={viewMode === "heatmap"} onClick={() => onViewModeChange("heatmap")}>Heatmap</ToolButton>
+        </div>
+        {viewMode === "markers" && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <ToolButton active={iconMode === "actor"} onClick={() => onIconModeChange("actor")}>Icon: Actor</ToolButton>
+            <ToolButton active={iconMode === "tactic"} onClick={() => onIconModeChange("tactic")}>Icon: Tactic</ToolButton>
+          </div>
+        )}
+        {viewMode === "heatmap" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: HUD.textSecondary }}>
+              <input type="checkbox" checked={heatWeighted} onChange={(e) => onHeatWeightedChange(e.target.checked)} />
+              Weight by casualties, not just count
+            </label>
+            <div>
+              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Color intensity (lower = redder sooner)</div>
+              <input
+                type="range"
+                min={0.5}
+                max={10}
+                step={0.5}
+                value={heatmapStyle.max}
+                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, max: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Spread (radius)</div>
+              <input
+                type="range"
+                min={8}
+                max={45}
+                step={1}
+                value={heatmapStyle.radius}
+                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, radius: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Softness (blur)</div>
+              <input
+                type="range"
+                min={2}
+                max={35}
+                step={1}
+                value={heatmapStyle.blur}
+                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, blur: Number(e.target.value) }))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: HUD.textMuted, marginBottom: 2 }}>Color theme</div>
+              <select
+                value={heatmapStyle.gradient}
+                onChange={(e) => onHeatmapStyleChange((s) => ({ ...s, gradient: e.target.value as HeatmapStyle["gradient"] }))}
+                style={{ ...hudInputStyle, cursor: "pointer" }}
+              >
+                {Object.entries(HEATMAP_GRADIENTS).map(([key, g]) => (
+                  <option key={key} value={key}>{g.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
       </div>
 
       {hasApplied && !loading && (resultCount ?? 0) > 0 && (

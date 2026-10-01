@@ -8,8 +8,8 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
-import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties } from "./IncidentsMap";
-import { HeatmapLayer } from "./HeatmapLayer";
+import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
+import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
 
 type ViewMode = "markers" | "heatmap";
 
@@ -42,6 +42,7 @@ export default function IncidentSearch() {
   const [basemap, setBasemap] = useState<BasemapKey>("osm");
   const [viewMode, setViewMode] = useState<ViewMode>("markers");
   const [heatWeighted, setHeatWeighted] = useState(false);
+  const [heatmapStyle, setHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
   const [annotations, setAnnotations] = useState<Record<string, PopupAnnotation>>({});
   const updateAnnotation = useCallback((incidentId: string, patch: Partial<PopupAnnotation>) => {
     setAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
@@ -186,6 +187,9 @@ export default function IncidentSearch() {
             <input type="date" value={filters.from ?? ""} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))} style={dateInputStyle} />
             <input type="date" value={filters.to ?? ""} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))} style={dateInputStyle} />
           </div>
+          <div style={{ marginTop: 6 }}>
+            <MonthQuickFilter onPick={(bounds) => setFilters((f) => ({ ...f, ...bounds }))} />
+          </div>
         </div>
 
         {hasFilters && (
@@ -207,10 +211,60 @@ export default function IncidentSearch() {
             </button>
           </div>
           {viewMode === "heatmap" && (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
-              <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
-              Weight by casualties, not just count
-            </label>
+            <div style={{ marginTop: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
+                Weight by casualties, not just count
+              </label>
+              <div style={{ marginTop: 8 }}>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR INTENSITY (lower = redder sooner)</div>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={10}
+                  step={0.5}
+                  value={heatmapStyle.max}
+                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, max: Number(e.target.value) }))}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>SPREAD (radius)</div>
+                <input
+                  type="range"
+                  min={8}
+                  max={45}
+                  step={1}
+                  value={heatmapStyle.radius}
+                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, radius: Number(e.target.value) }))}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>SOFTNESS (blur)</div>
+                <input
+                  type="range"
+                  min={2}
+                  max={35}
+                  step={1}
+                  value={heatmapStyle.blur}
+                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, blur: Number(e.target.value) }))}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div style={{ marginTop: 6 }}>
+                <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR THEME</div>
+                <select
+                  value={heatmapStyle.gradient}
+                  onChange={(e) => setHeatmapStyle((s) => ({ ...s, gradient: e.target.value as HeatmapStyle["gradient"] }))}
+                  style={selectStyle}
+                >
+                  {Object.entries(HEATMAP_GRADIENTS).map(([key, g]) => (
+                    <option key={key} value={key}>{g.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           )}
         </div>
 
@@ -249,7 +303,7 @@ export default function IncidentSearch() {
           <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
           <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
 
-          {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
+          {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} style={heatmapStyle} />}
 
           {viewMode === "markers" && (
             <MarkerClusterGroup chunkedLoading>

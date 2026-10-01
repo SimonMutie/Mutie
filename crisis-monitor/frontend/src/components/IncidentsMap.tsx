@@ -17,7 +17,7 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
-import { HeatmapLayer } from "./HeatmapLayer";
+import { HeatmapLayer, HEATMAP_GRADIENTS, DEFAULT_HEATMAP_STYLE, type HeatmapStyle } from "./HeatmapLayer";
 
 /** Local, session-only display overrides for one incident's popup — never
  *  sent to the backend or persisted anywhere, purely a presentation layer
@@ -72,7 +72,7 @@ const ROUTE_COLORS = [
  *  reads green. Pattern-matched (case-insensitive) against common real-world
  *  labels rather than requiring an exact match, since source data is rarely
  *  perfectly consistent. Order matters: first matching pattern wins. */
-export type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "other";
+export type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "intercommunal" | "other";
 /** Conflict-specific icons keyed to the incident's Tactic field — an
  *  alternative to shape-by-actor-category, selectable via the map's icon
  *  mode toggle. Actor-driven color is kept either way; only the glyph swaps. */
@@ -83,10 +83,16 @@ export interface ActorCategory {
   label: string;
   shape: ActorShape;
 }
+// Color theme fixed per Simon's spec: Crime = green, AOG = red, Security
+// Forces = blue, Intercommunal Violence = pink. Order matters — first
+// matching pattern wins, so more specific patterns (intercommunal) are
+// checked before the generic militia/terrorist catch-alls they could
+// otherwise overlap with (e.g. "ethnic militia").
 const ACTOR_CATEGORIES: { pattern: RegExp; color: string; label: string; shape: ActorShape }[] = [
-  { pattern: /\b(aog|armed opposition|non-?state armed|nsag)\b/i, color: "#d1352b", label: "Armed Opposition Group (AOG)", shape: "aog" },
-  { pattern: /\b(criminal|gang|organi[sz]ed crime)\b/i, color: "#2f66f0", label: "Criminal", shape: "criminal" },
-  { pattern: /\b(security forces?|police|military|army|state forces?|law enforcement)\b/i, color: "#17924f", label: "Security Forces", shape: "security" },
+  { pattern: /\b(aog|armed opposition|non-?state armed|nsag)\b/i, color: "#dc2626", label: "Armed Opposition Group (AOG)", shape: "aog" },
+  { pattern: /\b(intercommunal|inter-?communal|communal violence|inter-?ethnic|ethnic clash\w*|farmer-?herder|pastoralist.?(farmer)?)\b/i, color: "#ec4899", label: "Intercommunal Violence", shape: "intercommunal" },
+  { pattern: /\b(criminal|crime|gang|organi[sz]ed crime)\b/i, color: "#16a34a", label: "Crime", shape: "criminal" },
+  { pattern: /\b(security forces?|police|military|army|state forces?|law enforcement)\b/i, color: "#2563eb", label: "Security Forces", shape: "security" },
   { pattern: /\b(terroris\w*|extremis\w*)\b/i, color: "#ea580c", label: "Terrorist / Extremist", shape: "terrorist" },
   { pattern: /\b(militia|self-?defen[cs]e|community defense|vigilante)\b/i, color: "#7c3aed", label: "Militia", shape: "militia" },
 ];
@@ -157,39 +163,79 @@ function shapePathD(shape: IconGlyph): string | null {
   }
 }
 
-// Classic teardrop map-pin outline — 24x32 viewBox, tip points at the exact
-// coordinate. Far more legible at a glance than a flat colored polygon, and
-// matches the convention most mapping tools (Google Maps, ArcGIS, ACLED) use
-// for custom category markers.
-const PIN_PATH_D = "M12 0C5.4 0 0 5.4 0 12c0 9 12 20 12 20s12-11 12-20C24 5.4 18.6 0 12 0z";
-
-function pinSvg(category: { color: string; shape: IconGlyph }, size: number, opacity: number): string {
-  const glyphD = shapePathD(category.shape);
-  const glyph = glyphD ? `<path d="${glyphD}" fill="#fff" />` : `<circle cx="12" cy="11" r="4" fill="#fff" />`;
-  const height = Math.round((size * 32) / 24);
-  return `<svg width="${size}" height="${height}" viewBox="0 0 24 32" xmlns="http://www.w3.org/2000/svg" style="opacity:${opacity}">
-    <path d="${PIN_PATH_D}" fill="${category.color}" stroke="rgba(0,0,0,0.35)" stroke-width="1" />
+// Small flat 2D "bullet" marker — a plain filled circle, not a teardrop pin.
+// Simon asked specifically for small, flat, color-themed bullet icons (not
+// the taller pin-with-glyph look most mapping tools default to), so the
+// category color alone carries the meaning; a tiny glyph is kept inside only
+// in Tactic icon mode, where color alone (still the actor's color) isn't
+// what's being distinguished.
+function bulletSvg(category: { color: string; shape: IconGlyph }, size: number, opacity: number, showGlyph: boolean): string {
+  const r = size / 2;
+  const glyphD = showGlyph ? shapePathD(category.shape) : null;
+  // Glyph paths are authored in a 0-24 box; scale+center them into the
+  // smaller bullet circle rather than drawing at native size.
+  const glyph = glyphD
+    ? `<g transform="translate(${r - r * 0.62},${r - r * 0.62}) scale(${(size * 0.62) / 24})"><path d="${glyphD}" fill="#fff" /></g>`
+    : "";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" style="opacity:${opacity}">
+    <circle cx="${r}" cy="${r}" r="${r - 1}" fill="${category.color}" stroke="#fff" stroke-width="1.4" />
     ${glyph}
   </svg>`;
+}
+// Kept for the legend, which always shows the category's plain color bullet
+// regardless of icon mode.
+function pinSvg(category: { color: string; shape: IconGlyph }, size: number, opacity: number): string {
+  return bulletSvg(category, size, opacity, false);
+}
+
+/** "2026-09" -> the ISO from/to dates spanning that whole calendar month,
+ *  so picking a month is just a shortcut for setting the existing from/to
+ *  filter pair, not a separate filter concept of its own. */
+export function monthBounds(month: string): { from: string; to: string } {
+  const [y, m] = month.split("-").map(Number);
+  const from = `${month}-01`;
+  const lastDay = new Date(y, m, 0).getDate();
+  const to = `${month}-${String(lastDay).padStart(2, "0")}`;
+  return { from, to };
+}
+
+/** Quick "pick a whole month" control that sits alongside the existing
+ *  from/to date inputs — selecting a month just fills them in, so Clear
+ *  filters / manual date tweaks continue to work exactly as before. */
+export function MonthQuickFilter({ onPick }: { onPick: (bounds: { from: string; to: string }) => void }) {
+  return (
+    <input
+      type="month"
+      value=""
+      onChange={(e) => {
+        if (!e.target.value) return;
+        onPick(monthBounds(e.target.value));
+        e.target.value = "";
+      }}
+      title="Jump to a whole month"
+      style={{ ...dateInputStyle, flex: "0 0 auto" }}
+    />
+  );
 }
 
 // Only a handful of (shape × highlighted) combinations exist regardless of how
 // many incidents are on screen, so icons are built once and reused rather than
 // constructed fresh per marker per render.
 const iconCache = new Map<string, L.DivIcon>();
-export function incidentIcon(category: { color: string; shape: IconGlyph }, highlighted: boolean): L.DivIcon {
-  const cacheKey = `${category.shape}-${category.color}-${highlighted}`;
+export function incidentIcon(category: { color: string; shape: IconGlyph }, highlighted: boolean, showGlyph = false): L.DivIcon {
+  const cacheKey = `${category.shape}-${category.color}-${highlighted}-${showGlyph}`;
   const cached = iconCache.get(cacheKey);
   if (cached) return cached;
 
-  const width = highlighted ? 18 : 12;
-  const height = Math.round((width * 32) / 24);
+  // Deliberately small — "small 2D bullet icons", not the bigger pin scale
+  // this used before.
+  const size = highlighted ? 13 : 9;
   const icon = L.divIcon({
-    html: pinSvg(category, width, highlighted ? 1 : 0.55),
+    html: bulletSvg(category, size, highlighted ? 1 : 0.65, showGlyph),
     className: "incident-marker-icon",
-    iconSize: [width, height],
-    iconAnchor: [width / 2, height], // the pin's tip, not its center, marks the exact location
-    popupAnchor: [0, -height * 0.85],
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2], // a bullet marks its location at its own center, not a tip
+    popupAnchor: [0, -size * 0.7],
   });
   iconCache.set(cacheKey, icon);
   return icon;
@@ -258,7 +304,7 @@ export const IncidentMarker = memo(function IncidentMarker({
   const patch = (p: Partial<PopupAnnotation>) => onUpdateAnnotation(incident.id, p);
 
   return (
-    <Marker position={[incident.latitude!, incident.longitude!]} icon={incidentIcon(displayCategory, highlighted)}>
+    <Marker position={[incident.latitude!, incident.longitude!]} icon={incidentIcon(displayCategory, highlighted, iconMode === "tactic")}>
       {/* autoClose/closeOnClick off once pinned — otherwise Leaflet closes
           this the moment another popup opens or the map itself is
           clicked, which would defeat the whole point of pinning several
@@ -966,6 +1012,11 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
     setAnnotations((prev) => ({ ...prev, [incidentId]: { ...prev[incidentId], ...patch } }));
   }, []);
   const [heatWeighted, setHeatWeighted] = useState(false);
+  // Adjustable heatmap look — "max" is the real color-intensity dial (lower
+  // = hotspots turn red with fewer incidents stacked), radius/blur shape how
+  // the points blend, gradient swaps the color ramp. Session-only, like the
+  // popup annotations above.
+  const [heatmapStyle, setHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
   // Applied once, from the admin-configured platform-wide defaults, before
   // the map's own layers render at all — fetching then setting state after
   // the fact would flash incidents/a different basemap briefly before the
@@ -1578,10 +1629,60 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
                 </button>
               </div>
               {viewMode === "heatmap" && (
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-                  <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
-                  Weight by casualties, not just count
-                </label>
+                <div style={{ marginTop: 6 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                    <input type="checkbox" checked={heatWeighted} onChange={(e) => setHeatWeighted(e.target.checked)} />
+                    Weight by casualties, not just count
+                  </label>
+                  <div style={{ marginTop: 8 }}>
+                    <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR INTENSITY (lower = redder sooner)</div>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={10}
+                      step={0.5}
+                      value={heatmapStyle.max}
+                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, max: Number(e.target.value) }))}
+                      style={{ width: "100%" }}
+                    />
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <div className="eyebrow" style={{ marginBottom: 4 }}>SPREAD (radius)</div>
+                    <input
+                      type="range"
+                      min={8}
+                      max={45}
+                      step={1}
+                      value={heatmapStyle.radius}
+                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, radius: Number(e.target.value) }))}
+                      style={{ width: "100%" }}
+                    />
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <div className="eyebrow" style={{ marginBottom: 4 }}>SOFTNESS (blur)</div>
+                    <input
+                      type="range"
+                      min={2}
+                      max={35}
+                      step={1}
+                      value={heatmapStyle.blur}
+                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, blur: Number(e.target.value) }))}
+                      style={{ width: "100%" }}
+                    />
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <div className="eyebrow" style={{ marginBottom: 4 }}>COLOR THEME</div>
+                    <select
+                      value={heatmapStyle.gradient}
+                      onChange={(e) => setHeatmapStyle((s) => ({ ...s, gradient: e.target.value as HeatmapStyle["gradient"] }))}
+                      style={{ width: "100%", fontSize: 11.5, padding: "4px 6px", borderRadius: 6, border: "1px solid var(--border-soft)", background: "var(--bg-elevated)", color: "var(--text)" }}
+                    >
+                      {Object.entries(HEATMAP_GRADIENTS).map(([key, g]) => (
+                        <option key={key} value={key}>{g.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               )}
               {viewMode === "markers" && (
                 <div style={{ marginTop: 8 }}>
@@ -1876,6 +1977,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
               style={dateInputStyle}
             />
           </div>
+          <MonthQuickFilter onPick={(bounds) => setFilters((f) => ({ ...f, ...bounds }))} />
           {Object.values(filters).some(Boolean) && (
             <button onClick={() => setFilters({})} style={secondaryChipStyle}>
               Clear filters
@@ -1955,7 +2057,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
             />
           ))}
 
-        {incidentsVisible && viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} />}
+        {incidentsVisible && viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} style={heatmapStyle} />}
 
         {incidentsVisible && viewMode === "markers" && <MarkerClusterGroup chunkedLoading>{markerElements}</MarkerClusterGroup>}
 
@@ -2150,6 +2252,9 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
             <div style={{ display: "flex", gap: 4 }}>
               <input type="date" value={filters.from ?? ""} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value || undefined }))} style={dateInputStyle} />
               <input type="date" value={filters.to ?? ""} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value || undefined }))} style={dateInputStyle} />
+            </div>
+            <div style={{ marginTop: 4 }}>
+              <MonthQuickFilter onPick={(bounds) => setFilters((f) => ({ ...f, ...bounds }))} />
             </div>
           </div>
 
