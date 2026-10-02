@@ -441,13 +441,28 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
         // fixed centroid (which previously put every flagged country's
         // marker on its capital regardless of where the events actually
         // were — "a deterioration in Ethiopia should not be placed in
-        // Addis when it is actually happening in Tigray"). Falls back to
-        // the country centroid only when GDELT didn't resolve a usable
-        // point for the top event.
+        // Addis when it is actually happening in Tigray").
+        //
+        // This is also, deliberately, this route's live re-confirmation of
+        // the snapshot's level: getCountryEscalationEvidence re-applies the
+        // full isConfirmedEscalationUrl gate against the CURRENT state of
+        // gdelt_bulk_events on every request, not the possibly-stale level
+        // the 5-minute scoring cron last wrote. A country can only reach
+        // "elevated"/"critical" via confirmed posture events in the first
+        // place (see scoreCountryEscalations), so an EMPTY live evidence
+        // list here means either the snapshot is stale (scored by an older
+        // build, or the confirming events have since aged out of the
+        // window) or was a transient edge case — either way, the marker
+        // should not be shown without a real, currently-confirmable report
+        // behind it ("danger only appears where a country has conversations
+        // with escalatory discussions" — a country isn't skipped here, it's
+        // skipped because there is, right now, nothing to show). No
+        // centroid fallback either: a danger marker with no real located
+        // evidence point has nowhere honest to go.
         const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1);
-        const centroid = AFRICA_CENTROIDS[s.countryCode];
-        const lat = topEvidence?.lat ?? centroid?.[0];
-        const lng = topEvidence?.lon ?? centroid?.[1];
+        if (!topEvidence) continue;
+        const lat = topEvidence.lat ?? AFRICA_CENTROIDS[s.countryCode]?.[0];
+        const lng = topEvidence.lon ?? AFRICA_CENTROIDS[s.countryCode]?.[1];
         if (lat == null || lng == null) continue;
         // AI brief when the scorer produced one this tick (see
         // countryEscalation.ts's ai_summary column); the mechanical
