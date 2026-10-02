@@ -517,14 +517,16 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
                 }
                 container.innerHTML = res.items
                   .map((item, i) => {
-                    // Africa Wire items carry a real article title (the
-                    // "combine their reachable links of all articles
-                    // pulled with the specified indicators" link type) —
-                    // GDELT bulk events only ever have a place name, no
-                    // article title, so fall back to that.
-                    const isWire = item.source === "africa-wire";
-                    const label = isWire ? item.title || "Untitled report" : item.placeName || "Unknown location";
-                    const tag = isWire ? `<span class="osiris-popup-evidence-tag">Africa Wire</span>` : "";
+                    // Africa Wire and GDELT-article items both carry a
+                    // real article title (the "combine their reachable
+                    // links of all articles pulled with the specified
+                    // indicators" link type) — plain GDELT bulk events
+                    // only ever have a place name, no article title, so
+                    // fall back to that for those.
+                    const isArticle = item.source === "africa-wire" || item.source === "gdelt-article";
+                    const label = isArticle ? item.title || "Untitled report" : item.placeName || "Unknown location";
+                    const tagText = item.source === "africa-wire" ? "Africa Wire" : item.source === "gdelt-article" ? "GDELT" : "";
+                    const tag = tagText ? `<span class="osiris-popup-evidence-tag">${tagText}</span>` : "";
                     return (
                       `<a class="osiris-popup-evidence-link" href="${escapeHtml(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">` +
                       `${i + 1}. ${escapeHtml(label)}${tag}</a>`

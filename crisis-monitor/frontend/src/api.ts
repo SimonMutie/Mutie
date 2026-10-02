@@ -628,13 +628,14 @@ export interface EscalationEvidenceItem {
   numMentions: number | null;
   sourceUrl: string;
   dateAdded: string;
-  /** "gdelt" (structured bulk event) or "africa-wire" (a real crawled
-   *  article whose text matched an escalation keyword) — absent on older
-   *  cached rows, treat as "gdelt" in that case. */
-  source?: "gdelt" | "africa-wire";
-  /** Real article title — only set for source: "africa-wire" items. */
+  /** "gdelt" (structured bulk event), "africa-wire" (a real crawled
+   *  article whose text matched an escalation keyword), or "gdelt-article"
+   *  (a real article from GDELT's own live text search, same keyword
+   *  match) — absent on older cached rows, treat as "gdelt" in that case. */
+  source?: "gdelt" | "africa-wire" | "gdelt-article";
+  /** Real article title — set for "africa-wire" and "gdelt-article" items. */
   title?: string;
-  /** Which escalation keyword(s) matched — only set for source: "africa-wire" items. */
+  /** Which escalation keyword(s) matched — set for "africa-wire" and "gdelt-article" items. */
   matchedKeywords?: string[];
 }
 

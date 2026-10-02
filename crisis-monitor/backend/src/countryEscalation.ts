@@ -2,6 +2,7 @@ import { all, first, run, nowIso, isoMinutesAgo } from "./db";
 import { newId } from "./ids";
 import { toGdeltTimestamp, BROAD_CONFLICT_SQL } from "./connectors/gdeltBulk";
 import { AFRICA_COUNTRIES } from "./routes/globalStatus";
+import { searchGdeltEscalationArticles } from "./lib/gdeltArticleSearch";
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
 
@@ -635,15 +636,20 @@ export interface EscalationEvidenceItem {
   /** "gdelt" — a structured CAMEO-coded bulk event (getCountryEscalationEvidence).
    *  "africa-wire" — a real crawled article whose title/description literally
    *  matched one of Simon's escalation keywords (see
-   *  lib/escalationKeywords.ts / getAfricaWireEscalationEvidence) — this is
-   *  the "pull these from news aggregated through Africa Wire... to flag
-   *  only when such terms appear" piece, which GDELT's structured-only bulk
-   *  feed can't provide on its own. Optional/absent on older cached rows. */
-  source?: "gdelt" | "africa-wire";
-  /** Real article title — only ever set for source: "africa-wire" items
-   *  (GDELT bulk events carry no article title, only a place name). */
+   *  lib/escalationKeywords.ts / getAfricaWireEscalationEvidence).
+   *  "gdelt-article" — a real GDELT-aggregated news article (GDELT's own
+   *  live DOC 2.0 full-text search, not the structured bulk feed) whose
+   *  title literally matched one of the same keywords (see
+   *  lib/gdeltArticleSearch.ts / getGdeltArticleEscalationEvidence) — the
+   *  direct fix for "GDELT's structured feed has no raw article text": its
+   *  bulk export genuinely has none, but GDELT's separate live search API
+   *  does, and this is that text, keyword-matched the same way Africa
+   *  Wire's is. Optional/absent on older cached rows. */
+  source?: "gdelt" | "africa-wire" | "gdelt-article";
+  /** Real article title — set for source: "africa-wire" and "gdelt-article"
+   *  items (GDELT bulk events carry no article title, only a place name). */
   title?: string;
-  /** Which escalation keyword(s) matched — only set for source: "africa-wire" items. */
+  /** Which escalation keyword(s) matched — set for source: "africa-wire" and "gdelt-article" items. */
   matchedKeywords?: string[];
 }
 
@@ -787,16 +793,50 @@ export async function getAfricaWireEscalationEvidence(env: Env, countryCode: str
   }
 }
 
-/** Combines the structured GDELT evidence and the real Africa-Wire-article
- *  evidence into one newest-first list — "combine their reachable links of
- *  all articles pulled with the specified indicators" under one country's
- *  popup, rather than two separate, disconnected lists. */
+/** A third evidence source alongside the structured GDELT bulk events and
+ *  Africa Wire's crawl: GDELT's OWN live full-text search (DOC 2.0 API),
+ *  which — unlike the structured bulk/GKG export this file scores against —
+ *  does carry real article titles. See lib/gdeltArticleSearch.ts's doc
+ *  comment for the full reasoning and why this stays an on-demand,
+ *  per-country call rather than something the Africa-wide 5-minute scoring
+ *  cron does. A title here only counts as evidence once it's re-checked
+ *  against the actual keyword list (done inside searchGdeltEscalationArticles),
+ *  never from GDELT's relevance ranking alone. */
+export async function getGdeltArticleEscalationEvidence(env: Env, countryCode: string, limit = 20): Promise<EscalationEvidenceItem[]> {
+  const name = AFRICA_COUNTRIES[countryCode.toUpperCase()];
+  if (!name) return [];
+  const hits = await searchGdeltEscalationArticles(name, SLOW_WINDOW_HOURS, limit);
+  return hits.map((h) => ({
+    placeName: h.sourceCountry ?? name,
+    eventCode: "",
+    avgTone: null,
+    numMentions: null,
+    sourceUrl: h.url,
+    dateAdded: h.seenAt ?? new Date().toISOString(),
+    lat: null,
+    lon: null,
+    source: "gdelt-article" as const,
+    title: h.title,
+    matchedKeywords: h.matchedKeywords,
+  }));
+}
+
+/** Combines all three evidence sources into one newest-first list —
+ *  "combine their reachable links of all articles pulled with the
+ *  specified indicators" under one country's popup, rather than several
+ *  separate, disconnected lists: the structured GDELT bulk events
+ *  (getCountryEscalationEvidence), Africa Wire's own crawled articles
+ *  (getAfricaWireEscalationEvidence), and GDELT's own live-searched
+ *  articles (getGdeltArticleEscalationEvidence) — the fix for "GDELT's
+ *  structured feed has no raw article text", since that gap is now filled
+ *  by GDELT's own separate text-search API rather than left unaddressed. */
 export async function getCombinedEscalationEvidence(env: Env, countryCode: string, limit = 500): Promise<EscalationEvidenceItem[]> {
-  const [gdelt, africaWire] = await Promise.all([
+  const [gdelt, africaWire, gdeltArticles] = await Promise.all([
     getCountryEscalationEvidence(env, countryCode, limit),
     getAfricaWireEscalationEvidence(env, countryCode, limit),
+    getGdeltArticleEscalationEvidence(env, countryCode, limit),
   ]);
-  return [...africaWire, ...gdelt]
+  return [...africaWire, ...gdeltArticles, ...gdelt]
     .sort((a, b) => Date.parse(b.dateAdded) - Date.parse(a.dateAdded))
     .slice(0, limit);
 }
