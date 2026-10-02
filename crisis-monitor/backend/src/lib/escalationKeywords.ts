@@ -244,12 +244,10 @@ const AMBIGUOUS_ACTION_PATTERNS: { label: string; rx: RegExp }[] = [
   { label: "ambush", rx: /\bambush(?:ed|es|ing)?\b/i },
   { label: "insurgent attack", rx: /\b(?:insurgents?|militants?|rebels?|jihadists?|gunmen)\s+(?:attack|strike|ambush|kill)\w*\b/i },
   { label: "attack on troops/forces", rx: /\battack(?:ed|s|ing)?\s+(?:on\s+)?(?:troops?|soldiers?|security\s+forces?|army|military\s+base|police\s+station)\b/i },
-  { label: "fighting", rx: /\bfight(?:ing)?\b/i },
   { label: "military mobilisation", rx: /\b(?:military|troops?)\s+mobili[sz](?:ed|ing|ation)\b/i },
-  { label: "mobilization", rx: /\bmobili[sz](?:e|es|ed|ing|ation)\b/i },
   { label: "military reinforcement", rx: /\b(?:military|troop)\s+reinforcements?\b/i },
-  { label: "increased military movement", rx: /\b(?:military|troop)\s+(?:movements?|build-?up|deployment)\b/i },
-  { label: "offensive", rx: /\b(?:rebel|militant|insurgent|junta|military)\s+offensive\b/i },
+  { label: "combat deployment", rx: /\b(?:military|troop)\s+(?:movements?|build-?up)\b/i },
+  { label: "offensive", rx: /\b(?:rebel|militant|insurgent|military)\s+offensive\b/i },
   { label: "advance on/toward", rx: /\badvanc(?:ed|es|ing)\s+(?:on|towards?|into|deeper\s+into)\b/i },
   { label: "heavy weapons", rx: /\bheavy\s+weapons?\b/i },
   { label: "shelling", rx: /\bshell(?:ing|ed)\b/i },
@@ -264,9 +262,40 @@ const AMBIGUOUS_ACTION_PATTERNS: { label: string; rx: RegExp }[] = [
   { label: "overran", rx: /\boverr(?:an|un|unning)\b/i },
   { label: "recaptured", rx: /\brecaptur(?:ed|es|ing)\b/i },
   { label: "retook", rx: /\bretook\b/i },
-  { label: "junta", rx: /\bjunta\b/i },
   { label: "security deterioration", rx: /\bsecurity\s+(?:situation\s+)?(?:deteriorat\w+|worsen\w+|collapsed?)\b/i },
 ];
+// Round 5 (this round) dropped three patterns that were themselves a
+// leftover false-positive source, independent of the Kenya/country-pairing
+// fix above — each one matches constantly in ordinary, non-conflict
+// reporting with no actor-proximity requirement at all:
+//   - bare "fighting"/"fight" (fighting corruption/poverty/crime, a boxer's
+//     "fight", "fighting for his life") — removed outright, no replacement;
+//     the genuinely military sense is already covered by "gun battle",
+//     "firefight", "clash", "insurgent attack" and "attack on troops/forces"
+//     above.
+//   - bare "mobilization"/"mobili[sz]e" with no military/troop qualifier
+//     (mobilizing voters, funds, resources, volunteers, support) — removed;
+//     "military mobilisation" above already requires the military/troop
+//     qualifier immediately present, which is the only form that actually
+//     signals an armed mobilization.
+//   - bare "junta" — removed; it names a TYPE OF GOVERNMENT, not an action
+//     (a junta's cabinet reshuffle, budget, diplomacy, or anniversary are
+//     all routine non-conflict news), so pairing it with any state-military
+//     mention elsewhere in the same article produced false positives with no
+//     real escalation content at all (e.g. a governance story mentioning
+//     both "the junta" and the national army by name). "military coup" and
+//     "mutiny" (STANDALONE_ACTION_PATTERNS above) already cover the actual
+//     seizure-of-power event; "rebel/militant/insurgent/military offensive"
+//     above still catches a junta's own offensive once it's described as one.
+//   - "increased military movement" narrowed to "combat deployment" and
+//     dropped "deployment" from its own wording — a bare "military/troop
+//     deployment" is the standard, constant phrasing for routine peacekeeping
+//     (AU/UN missions), disaster-relief, and training deployments with zero
+//     combat content, which was the second, more specific mechanism behind
+//     the Kenya/KDF false positive (KDF's Somalia AMISOM/ATMIS deployment is
+//     reported as exactly that word). "movements"/"build-up" still require
+//     the military/troop qualifier and don't carry that routine-deployment
+//     reading.
 
 const NON_STATE_ARMED_GROUP_PATTERNS = buildPatterns(NON_STATE_ARMED_GROUPS);
 const STATE_MILITARY_PATTERNS = buildPatterns(STATE_MILITARIES);
@@ -277,6 +306,59 @@ function runPatterns(text: string, patterns: { label: string; rx: RegExp }[]): s
     if (rx.test(text)) matched.push(label);
   }
   return matched;
+}
+
+/** All character offsets in `text` where any pattern in the list matches —
+ *  used only by proximityPairExists below. Each pattern's own regex is
+ *  re-run with a forced global flag so exec() can walk every occurrence
+ *  rather than stopping at the first. */
+function matchOffsets(text: string, patterns: { label: string; rx: RegExp }[]): number[] {
+  const offsets: number[] = [];
+  for (const { rx } of patterns) {
+    const g = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+    let m: RegExpExecArray | null;
+    while ((m = g.exec(text))) {
+      offsets.push(m.index);
+      if (m[0].length === 0) g.lastIndex++; // guard against zero-width infinite loop
+    }
+  }
+  return offsets;
+}
+
+/** How close (in characters) a state-military mention and an ambiguous
+ *  action term need to be, in the SAME text, to count as actually
+ *  describing the same event — roughly a sentence or two of a short
+ *  wire-style article/title. Tuned loosely rather than exactly: too small a
+ *  window starts missing real single-sentence reports that happen to be
+ *  long (a named military plus a qualifying clause plus the action verb);
+ *  too large a window is exactly the bug this exists to fix — a long
+ *  article that mentions a state military in one paragraph and an unrelated
+ *  ambiguous word (a sports "clash", a "security deterioration" in consumer
+ *  confidence, routine troop "movements" for a training exercise) in a
+ *  completely different paragraph. */
+const PROXIMITY_WINDOW_CHARS = 220;
+
+/** True when some match of `patternsA` and some match of `patternsB` occur
+ *  within PROXIMITY_WINDOW_CHARS characters of each other anywhere in
+ *  `text` — not just "both patterns appear somewhere in this text", which
+ *  is what a plain `matchX(text).length>0 && matchY(text).length>0` check
+ *  allows and is a real source of false positives on longer article bodies
+ *  (Africa Wire's crawl includes each item's description, not just its
+ *  headline): a state military named in one sentence and an unrelated
+ *  ambiguous word used elsewhere in the same piece no longer confirms an
+ *  escalation just because both strings happen to occur somewhere in the
+ *  same block of text. */
+function proximityPairExists(text: string, patternsA: { label: string; rx: RegExp }[], patternsB: { label: string; rx: RegExp }[], windowChars: number): boolean {
+  const offsetsA = matchOffsets(text, patternsA);
+  if (offsetsA.length === 0) return false;
+  const offsetsB = matchOffsets(text, patternsB);
+  if (offsetsB.length === 0) return false;
+  for (const a of offsetsA) {
+    for (const b of offsetsB) {
+      if (Math.abs(a - b) <= windowChars) return true;
+    }
+  }
+  return false;
 }
 
 /** Named non-state armed groups/militias/insurgencies found in the text —
@@ -355,11 +437,22 @@ export function matchEscalationKeywords(text: string): string[] {
  * extra check isn't needed (and, unlike a state military, a group like
  * Boko Haram or al-Shabaab is inherently tied to the country it actually
  * operates in, not a visiting peacekeeping contingent's home country).
+ *
+ * Tier 3 also requires the military name and the action term to be near
+ * each other in the text (proximityPairExists, PROXIMITY_WINDOW_CHARS) —
+ * not just both present somewhere in it. A short headline/slug is one
+ * sentence anyway so this changes nothing there, but Africa Wire's crawl
+ * text includes each item's description too, and a longer piece can
+ * legitimately name a state military in one sentence and use an unrelated
+ * ambiguous word (a sports "clash", routine training "movements", a
+ * "security deterioration" in business confidence) somewhere else in the
+ * same piece — that combination used to confirm just from co-occurring
+ * anywhere in the text; now it doesn't.
  */
 export function isConfirmedEscalationText(text: string, targetCountryName?: string): boolean {
   if (matchNonStateArmedGroups(text).length > 0) return true;
   if (matchStandaloneActionTerms(text).length > 0) return true;
-  if (matchStateMilitaries(text).length > 0 && matchAmbiguousActionTerms(text).length > 0) {
+  if (proximityPairExists(text, STATE_MILITARY_PATTERNS, AMBIGUOUS_ACTION_PATTERNS, PROXIMITY_WINDOW_CHARS)) {
     if (targetCountryName && textNamesOtherAfricanCountry(text, targetCountryName)) return false;
     return true;
   }
