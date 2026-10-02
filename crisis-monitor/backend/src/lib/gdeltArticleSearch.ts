@@ -1,4 +1,4 @@
-import { matchEscalationKeywords } from "./escalationKeywords";
+import { matchEscalationKeywords, isConfirmedEscalationText } from "./escalationKeywords";
 
 /**
  * Real GDELT article search — the direct fix for "GDELT's structured feed
@@ -121,8 +121,14 @@ export async function searchGdeltEscalationArticles(countryName: string, windowH
   const hits: GdeltArticleHit[] = [];
   for (const a of data.articles ?? []) {
     if (!a.title || !a.url) continue;
+    // isConfirmedEscalationText, not a bare matchEscalationKeywords().length
+    // check — see escalationKeywords.ts's own doc comment: a named non-state
+    // armed group or an unambiguous action term confirms a title alone, but
+    // an ambiguous phrase (clash, siege, advance on...) only counts once a
+    // real armed actor is also named in the same title. matchEscalationKeywords
+    // is still used below for the display labels once confirmed.
+    if (!isConfirmedEscalationText(a.title)) continue;
     const matchedKeywords = matchEscalationKeywords(a.title);
-    if (matchedKeywords.length === 0) continue;
     hits.push({ title: a.title, url: a.url, seenAt: parseGdeltSeenDate(a.seendate), sourceCountry: a.sourcecountry ?? null, matchedKeywords });
   }
   return hits;

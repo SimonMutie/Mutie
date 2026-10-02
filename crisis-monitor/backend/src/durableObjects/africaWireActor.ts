@@ -4,7 +4,7 @@ import { AFRICA_CENTROIDS } from "../countryEscalation";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
-import { matchEscalationKeywords } from "../lib/escalationKeywords";
+import { matchEscalationKeywords, isConfirmedEscalationText } from "../lib/escalationKeywords";
 
 /**
  * Crawls the ~260 African country/pan-African/institutional homepages in
@@ -156,8 +156,18 @@ export class AfricaWireActor implements DurableObject {
         // translated text catches a non-English source's own report of
         // these terms, same as scoreRisk() does for the general risk score.
         const text = `${it.riskTextEn ?? `${it.title} ${it.description}`}`;
+        // isConfirmedEscalationText, not a bare matchEscalationKeywords().length
+        // check — a named non-state armed group or an unambiguous action term
+        // (drone strike, massacre, car bomb...) confirms alone, but an
+        // ambiguous phrase (clash, siege, took control of...) only counts once
+        // a real armed actor (named group or named state military) is also
+        // present in the same text. This is what keeps this escalation-only
+        // evidence route from flagging a story just because it contains a
+        // word like "clash" or "siege" used in its ordinary, non-military
+        // sense. matchEscalationKeywords is still used for the display labels
+        // once confirmed — see lib/escalationKeywords.ts's own doc comment.
+        if (!isConfirmedEscalationText(text)) continue;
         const matchedKeywords = matchEscalationKeywords(text);
-        if (matchedKeywords.length === 0) continue;
         const list = byCountry[it.country] ?? (byCountry[it.country] = []);
         list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords });
       }
