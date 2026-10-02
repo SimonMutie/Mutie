@@ -608,6 +608,11 @@ export interface LiveLayerFeature {
     /** Conflict Escalation only — see the backend's countryEscalation.ts.
      *  Undefined on every other layer. */
     escalationLevel?: "elevated" | "critical";
+    /** Conflict Escalation only — fetches the full evidence/source-link
+     *  list via getConflictEscalationEvidence. Undefined elsewhere. */
+    countryCode?: string;
+    /** Conflict Escalation only — how many source links are available. */
+    evidenceCount?: number;
   };
 }
 
@@ -628,6 +633,29 @@ export interface EscalationEvidenceItem {
 export interface LiveLayerCollection {
   type: "FeatureCollection";
   features: LiveLayerFeature[];
+  fetchedAt: string;
+}
+
+/** Approximate territory-change marker — see the backend's
+ *  /territory-changes route doc comment for exactly what this is and isn't
+ *  (a fixed-radius circle around one reported point, not a verified control
+ *  boundary). Polygon geometry, unlike every other live layer here. */
+export interface TerritoryChangeFeature {
+  type: "Feature";
+  geometry: { type: "Polygon"; coordinates: [number, number][][] };
+  properties: {
+    id: string;
+    title: string;
+    detail: string;
+    time: string | null;
+    url: string | null;
+    eventCode: string;
+  };
+}
+
+export interface TerritoryChangeCollection {
+  type: "FeatureCollection";
+  features: TerritoryChangeFeature[];
   fetchedAt: string;
 }
 
@@ -1166,6 +1194,10 @@ export const api = {
     req<{ countryCode: string; items: EscalationEvidenceItem[]; fetchedAt: string }>(
       `/api/live-layers/conflict-escalation/${encodeURIComponent(countryCode)}/evidence`
     ),
+  // Approximate "area changed" circles around reported occupy-territory/
+  // blockade events — see TerritoryChangeFeature's own doc comment for the
+  // honesty caveat (not a verified control boundary).
+  getTerritoryChanges: () => req<TerritoryChangeCollection>("/api/live-layers/territory-changes"),
   // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
   // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key
   // and MaxMind license key are set as Worker secrets (see liveLayers.ts).

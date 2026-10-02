@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
+import { api } from "../api";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
 // runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
@@ -57,6 +58,12 @@ export interface Map3DPoint {
    *  point instead of just the plain colored dot every other layer gets,
    *  colored by level. Undefined on every other layer. */
   escalationLevel?: "elevated" | "critical";
+  /** Conflict Escalation only — fetches the full evidence/source-link list
+   *  for this country when its popup opens. Undefined on every other layer. */
+  countryCode?: string;
+  /** Conflict Escalation only — how many source links the evidence endpoint
+   *  has for this country's current window. Undefined on every other layer. */
+  evidenceCount?: number;
 }
 
 export interface Map3DPath {
@@ -65,9 +72,24 @@ export interface Map3DPath {
   color?: string;
 }
 
+/** Approximate territory-change circle — see the backend's
+ *  /territory-changes route for exactly what this represents (a
+ *  fixed-radius circle around one reported point, not a verified control
+ *  boundary). `ring` is already a closed [lat,lng] polygon ring from the
+ *  backend, not computed client-side. */
+export interface Map3DTerritoryChange {
+  id: string;
+  ring: [number, number][]; // [lat, lng], closed
+  title: string;
+  detail: string;
+  time: string | null;
+  url: string | null;
+}
+
 interface Map3DProps {
   points: Map3DPoint[];
   paths: Map3DPath[];
+  territoryChanges: Map3DTerritoryChange[];
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
@@ -153,7 +175,20 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
         // earthquake, every GDELT event, every aircraft...) sprout a
         // permanent floating title label across the whole map.
         ...(p.escalationLevel ? { escalationLevel: p.escalationLevel } : {}),
+        ...(p.countryCode ? { countryCode: p.countryCode } : {}),
+        ...(p.evidenceCount != null ? { evidenceCount: p.evidenceCount } : {}),
       },
+    })),
+  };
+}
+
+function toGeoJsonTerritoryChanges(items: Map3DTerritoryChange[]): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: items.map((t) => ({
+      type: "Feature",
+      geometry: { type: "Polygon", coordinates: [t.ring.map(([lat, lng]) => [lng, lat])] },
+      properties: { id: t.id, title: t.title, detail: t.detail, time: t.time, url: t.url },
     })),
   };
 }
@@ -215,7 +250,7 @@ function nightHemisphereRing(date: Date): [number, number][] {
   return ring;
 }
 
-export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, paths, territoryChanges, drawAreaRing, onMapClick, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -312,6 +347,23 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
         },
       });
 
+      // Approximate territory-change circles ("can this automatically plot a
+      // polygon of what changed") — dashed amber outline + light fill so it
+      // reads as a reported-area marker, not a crisp/precise boundary.
+      map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
+      map.addLayer({
+        id: "osiris-territory-changes-fill",
+        type: "fill",
+        source: "osiris-territory-changes",
+        paint: { "fill-color": "#ff9d4f", "fill-opacity": 0.12 },
+      });
+      map.addLayer({
+        id: "osiris-territory-changes-line",
+        type: "line",
+        source: "osiris-territory-changes",
+        paint: { "line-color": "#ff9d4f", "line-width": 1.5, "line-opacity": 0.75, "line-dasharray": [2, 2] },
+      });
+
       map.addSource("osiris-paths", { type: "geojson", data: toGeoJsonPaths([]) });
       map.addLayer({
         id: "osiris-paths-line",
@@ -371,12 +423,41 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
       map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
       const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning-icon", "osiris-points-warning"];
+      const TERRITORY_LAYER = "osiris-territory-changes-fill";
 
       map.on("click", (e) => {
-        const hits = map.queryRenderedFeatures(e.point, { layers: POINT_LAYERS });
-        if (hits.length > 0) return; // a point's own click handler below deals with this
+        const hits = map.queryRenderedFeatures(e.point, { layers: [...POINT_LAYERS, TERRITORY_LAYER] });
+        if (hits.length > 0) return; // a point's/territory-circle's own click handler below deals with this
         onClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
         popupRef.current?.remove();
+      });
+
+      map.on("mouseenter", TERRITORY_LAYER, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", TERRITORY_LAYER, () => {
+        map.getCanvas().style.cursor = "";
+      });
+      map.on("click", TERRITORY_LAYER, (e) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        const props = f.properties as { title: string; detail: string; time: string | null; url: string | null };
+        popupRef.current?.remove();
+        const popup = new Popup({ closeButton: true, closeOnClick: true, className: "osiris-popup", maxWidth: "300px" })
+          .setLngLat(e.lngLat)
+          .setHTML(
+            `<div class="osiris-popup-card">` +
+              `<div class="osiris-popup-title osiris-popup-title--elevated">◇ ${escapeHtml(props.title)}</div>` +
+              `<div class="osiris-popup-layer">TERRITORY CHANGE (APPROXIMATE)</div>` +
+              `<div class="osiris-popup-desc">${escapeHtml(props.detail ?? "")}</div>` +
+              (props.time ? `<div class="osiris-popup-time">${new Date(props.time).toLocaleString()}</div>` : "") +
+              (props.url
+                ? `<a class="osiris-popup-link" href="${escapeHtml(props.url)}" target="_blank" rel="noopener noreferrer">[ OPEN SOURCE ↗ ]</a>`
+                : "") +
+            `</div>`
+          )
+          .addTo(map);
+        popupRef.current = popup;
       });
 
       for (const layerId of POINT_LAYERS) {
@@ -404,13 +485,50 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
             time: string | null;
             url: string | null;
             escalationLevel: "elevated" | "critical" | null;
+            countryCode?: string;
+            evidenceCount?: number;
           };
           const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
           popupRef.current?.remove();
-          popupRef.current = new Popup({ closeButton: true, closeOnClick: true, className: "osiris-popup", maxWidth: "320px" })
+          const popup = new Popup({ closeButton: true, closeOnClick: true, className: "osiris-popup", maxWidth: props.escalationLevel ? "360px" : "320px" })
             .setLngLat(coords)
             .setHTML(buildPopupHtml(props, coords))
             .addTo(map);
+          popupRef.current = popup;
+
+          // Conflict Escalation: fetch every contributing report's source
+          // link ("can you give all links to them") and fill them into the
+          // placeholder the popup HTML already reserved a slot for, rather
+          // than trying to cram potentially 100+ links into the initial
+          // synchronous popup HTML.
+          if (props.escalationLevel && props.countryCode) {
+            const countryCode = props.countryCode;
+            api
+              .getConflictEscalationEvidence(countryCode)
+              .then((res) => {
+                // The popup may have been closed or replaced by the time this
+                // resolves — only touch the DOM if it's still the live one.
+                if (popupRef.current !== popup) return;
+                const container = popup.getElement()?.querySelector(`[data-evidence-for="${countryCode}"]`);
+                if (!container) return;
+                if (res.items.length === 0) {
+                  container.innerHTML = `<div class="osiris-popup-evidence-empty">No individual source links captured for this window.</div>`;
+                  return;
+                }
+                container.innerHTML = res.items
+                  .map(
+                    (item, i) =>
+                      `<a class="osiris-popup-evidence-link" href="${escapeHtml(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">` +
+                      `${i + 1}. ${escapeHtml(item.placeName || "Unknown location")}</a>`
+                  )
+                  .join("");
+              })
+              .catch(() => {
+                if (popupRef.current !== popup) return;
+                const container = popup.getElement()?.querySelector(`[data-evidence-for="${countryCode}"]`);
+                if (container) container.innerHTML = `<div class="osiris-popup-evidence-empty">Sources failed to load.</div>`;
+              });
+          }
         });
       }
 
@@ -438,6 +556,12 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
     if (!map || !readyRef.current) return;
     (map.getSource("osiris-paths") as GeoJSONSource | undefined)?.setData(toGeoJsonPaths(paths));
   }, [paths]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    (map.getSource("osiris-territory-changes") as GeoJSONSource | undefined)?.setData(toGeoJsonTerritoryChanges(territoryChanges));
+  }, [territoryChanges]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -489,7 +613,16 @@ const LEVEL_LABEL: Record<"elevated" | "critical", string> = { elevated: "ELEVAT
  *  "OPEN SOURCE" link whenever the point actually has one — previously
  *  dropped entirely, since Map3DPoint didn't even carry `url`. */
 function buildPopupHtml(
-  props: { title: string; layerKey: string; subtitle: string; time: string | null; url: string | null; escalationLevel: "elevated" | "critical" | null },
+  props: {
+    title: string;
+    layerKey: string;
+    subtitle: string;
+    time: string | null;
+    url: string | null;
+    escalationLevel: "elevated" | "critical" | null;
+    countryCode?: string;
+    evidenceCount?: number;
+  },
   coords: [number, number]
 ): string {
   const linkHtml = props.url
@@ -498,8 +631,18 @@ function buildPopupHtml(
 
   if (props.escalationLevel) {
     const [lng, lat] = coords;
+    // `subtitle` here is the 2-3 sentence AI ("what changed") brief when the
+    // backend produced one this tick, falling back to the mechanical
+    // numbers sentence otherwise — see countryEscalation.ts's ai_summary.
+    // The evidence list below is filled in asynchronously after this popup
+    // mounts (see the click handler) since fetching 100+ links can't block
+    // the popup's initial synchronous HTML.
+    const evidenceSection = props.countryCode
+      ? `<div class="osiris-popup-evidence-header">SOURCES${props.evidenceCount ? ` (${props.evidenceCount})` : ""}</div>` +
+        `<div class="osiris-popup-evidence-list" data-evidence-for="${escapeHtml(props.countryCode)}">Loading sources…</div>`
+      : "";
     return (
-      `<div class="osiris-popup-card">` +
+      `<div class="osiris-popup-card osiris-popup-card--escalation">` +
       `<div class="osiris-popup-title osiris-popup-title--${props.escalationLevel}">⚠ ${escapeHtml(props.title)}</div>` +
       `<div class="osiris-popup-desc">${escapeHtml(props.subtitle ?? "")}</div>` +
       `<div class="osiris-popup-grid">` +
@@ -507,6 +650,7 @@ function buildPopupHtml(
       `<div><div class="osiris-popup-label">COORDS</div><div class="osiris-popup-value">${lat.toFixed(3)}°, ${lng.toFixed(3)}°</div></div>` +
       `</div>` +
       linkHtml +
+      evidenceSection +
       `</div>`
     );
   }

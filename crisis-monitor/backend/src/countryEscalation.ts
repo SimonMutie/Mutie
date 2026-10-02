@@ -47,32 +47,76 @@ import type { AlertLevel } from "./types";
  */
 
 // CAMEO event codes verified against the official CAMEO codebook
-// (parusanalytics.com/eventdata/cameo.dir/CAMEO.09b6.pdf), category 15
-// "EXHIBIT FORCE POSTURE" and category 19/20 "FIGHT" / "USE UNCONVENTIONAL
-// MASS VIOLENCE" — the closest real, structured equivalent GDELT's bulk
-// data has to the plain-language terms Simon asked for:
+// (parusanalytics.com/eventdata/cameo.dir/CAMEO.09b6.pdf) — the closest
+// real, structured equivalent GDELT's bulk data has to the plain-language
+// deterioration terms Simon asked for ("capture/took control of", "as many
+// words as possible that could demonstrate a deterioration"). There is no
+// raw article text in the bulk feed to literally regex "captured" against
+// (see gdeltBulk.ts's own doc comment on why) — CAMEO code is the
+// structured equivalent, so each line below maps a plain-language signal to
+// its verified code(s):
+//
+// Category 15 EXHIBIT FORCE POSTURE:
 //   150 Demonstrate military or police power, not specified below
 //   151 Increase police alert status
-//   152 Increase military alert status          -> "increased military movement"
+//   152 Increase military alert status            -> "increased military movement"
 //   153 Mobilize or increase police power
-//   154 Mobilize or increase armed forces        -> "military mobilisation" / "reinforcement"
-//   190 Use conventional military force          -> "military clashes" / "armed confrontations"
+//   154 Mobilize or increase armed forces          -> "military mobilisation" / "reinforcement"
+// Category 17 COERCE:
+//   171 Seize or damage property, not specified     -> "seized" (non-territorial)
+//   1711 Confiscate property / 1712 Destroy property
+//   172 Impose administrative sanctions              -> clampdown signals
+//   1721 Impose restrictions on political freedoms
+//   1722 Ban political parties or politicians
+//   1723 Impose curfew
+//   1724 Impose state of emergency or martial law
+//   174 Expel or deport individuals
+//   175 Use tactics of violent repression
+// Category 18 ASSAULT:
+//   180 Use unconventional violence, not specified
+//   181 Abduct, hijack, or take hostage
+//   182 Physically assault / 1821 sexual assault / 1822 torture / 1823 kill by assault
+//   183 Conduct suicide/car/other non-military bombing, not specified
+//   1831 suicide bombing / 1832 vehicular bombing / 1833 roadside bombing / 1834 location bombing
+//   184 Use as human shield
+//   185 Attempt to assassinate / 186 Assassinate
+// Category 19 FIGHT:
+//   190 Use conventional military force            -> "military clashes" / "armed confrontations"
 //   191 Impose blockade, restrict movement
-//   192 Occupy territory
-//   193 Fight with small arms and light weapons  -> "armed confrontations"
-//   194 Fight with artillery and tanks           -> "heavy weapons"
-//   195 Employ aerial weapons, not specified      -> "airstrikes"
-//   1951 Employ precision-guided aerial munitions -> "airstrikes"
-//   1952 Employ remotely piloted aerial munitions -> "drone strikes"
+//   192 Occupy territory                            -> "captured" / "took control of"
+//   193 Fight with small arms and light weapons     -> "armed confrontations"
+//   194 Fight with artillery and tanks               -> "heavy weapons"
+//   195 Employ aerial weapons, not specified          -> "airstrikes"
+//   1951 Employ precision-guided aerial munitions     -> "airstrikes"
+//   1952 Employ remotely piloted aerial munitions     -> "drone strikes"
 //   196 Violate ceasefire
-//   200-204(1/2) Use unconventional mass violence / mass killings / WMD — the most
-//     severe tier; included since these are unambiguous security deterioration
+// Category 20 USE UNCONVENTIONAL MASS VIOLENCE:
+//   200-204(1/2) mass killings, ethnic cleansing, WMD — most severe tier
+//
+// Deliberately NOT included: category 08 "YIELD" (0871 declare truce, 0872
+// ease blockade, 0873 demobilize, 0874 retreat or surrender militarily) —
+// CAMEO itself codes these as DE-escalation, the opposite signal, so
+// folding them into an escalation bucket would misrepresent what the data
+// says. A retreat forced under pressure can still read as deterioration in
+// plain language, but this data can't tell "orderly withdrawal" apart from
+// "routed" — see the chat reply for more on this specific judgment call.
+// 173 "Arrest, detain, or charge with legal action" is also left out:
+// routine law enforcement activity codes the same way a political crackdown
+// does, so it's too noisy a signal on its own to include here.
 const MILITARY_POSTURE_EVENT_CODES = [
   "150", "151", "152", "153", "154",
+  "171", "1711", "1712", "172", "1721", "1722", "1723", "1724", "174", "175",
+  "180", "181", "182", "1821", "1822", "1823", "183", "1831", "1832", "1833", "1834", "184", "185", "186",
   "190", "191", "192", "193", "194", "195", "1951", "1952", "196",
   "200", "201", "202", "203", "204", "2041", "2042",
 ] as const;
 const MILITARY_POSTURE_SQL = `event_code IN (${MILITARY_POSTURE_EVENT_CODES.map(() => "?").join(",")})`;
+// Territory/control-change events specifically — the structured equivalent
+// of "captured"/"took control of"/"seized [a place]" — used separately by
+// the approximate territory-change map layer below (not just folded into
+// the general posture count), since a captured town is a qualitatively
+// different, more specific claim than "an armed clash happened here".
+export const TERRITORY_CHANGE_EVENT_CODES = ["191", "192"] as const;
 
 const FAST_WINDOW_HOURS = 6; // catches a same-day spike
 const SLOW_WINDOW_HOURS = 24; // catches sustained deterioration a short window could miss
@@ -224,6 +268,7 @@ async function ensureTable(env: Env): Promise<void> {
     `ALTER TABLE country_escalation_snapshots ADD COLUMN posture_baseline_count INTEGER NOT NULL DEFAULT 0`,
     `ALTER TABLE country_escalation_snapshots ADD COLUMN triggered_window TEXT NOT NULL DEFAULT 'slow'`,
     `ALTER TABLE country_escalation_snapshots ADD COLUMN window_hours INTEGER NOT NULL DEFAULT ${SLOW_WINDOW_HOURS}`,
+    `ALTER TABLE country_escalation_snapshots ADD COLUMN ai_summary TEXT`,
   ]) {
     try {
       await env.DB.prepare(stmt).run();
@@ -317,16 +362,63 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     if (escalationScore >= CRITICAL_THRESHOLD) level = "critical";
     else if (escalationScore >= ELEVATED_THRESHOLD) level = "elevated";
 
+    // Description + AI summary are now computed for every Elevated/Critical
+    // tick (every 5 minutes), not just the first time an hourly-deduped
+    // alert fires — this is what the map marker's own popup shows on every
+    // click, so it needs to stay current between alerts, not freeze at
+    // whatever text the last NEW alert happened to carry. Anthropic's own
+    // call stays gated behind level !== "none" (a handful of countries at
+    // most, same cost shape as before, just not tied to the alert dedupe
+    // window anymore).
+    let description: string | null = null;
+    let descriptionIsAi = false;
+    let sampleLocationList: string[] = [];
+    if (level !== "none") {
+      const sample = await all<{ place_name: string }>(
+        env.DB,
+        `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
+        [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
+      );
+      sampleLocationList = sample.map((r) => r.place_name);
+      const sampleLocations = sampleLocationList.join("; ");
+      const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
+      const templatedDescription =
+        `${name} shows ${windowLabel} in military-posture reporting (mobilization, clashes, airstrikes, heavy weapons, blockades) — ` +
+        `${winning.current.postureCount} report${winning.current.postureCount === 1 ? "" : "s"} in the last ${windowHours}h ` +
+        `versus a baseline of ${winning.baseline.postureCount} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
+        `${winning.current.avgTone !== null ? `, average tone ${winning.current.avgTone.toFixed(1)} (${winning.current.avgTone < -3 ? "sharply negative" : winning.current.avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
+        `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}`;
+
+      // AI-written brief when ANTHROPIC_API_KEY is configured, falling back
+      // to the plain templated sentence above otherwise or on any failure
+      // — see generateAnalyticalSummary's own doc comment.
+      const aiSummary = await generateAnalyticalSummary(env, {
+        countryName: name,
+        windowHours,
+        triggeredWindow,
+        postureCurrentCount: winning.current.postureCount,
+        postureBaselineCount: winning.baseline.postureCount,
+        currentCount: winning.current.totalCount,
+        baselineCount: winning.baseline.totalCount,
+        avgTone: winning.current.avgTone,
+        escalationScore,
+        level,
+        sampleLocations: sampleLocationList,
+      });
+      description = aiSummary ?? templatedDescription;
+      descriptionIsAi = aiSummary !== null;
+    }
+
     await run(
       env.DB,
       `INSERT INTO country_escalation_snapshots
         (id, country_code, country_name, window_start, window_end, current_count, baseline_count, avg_tone, escalation_score, level, created_at,
-         posture_current_count, posture_baseline_count, triggered_window, window_hours)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         posture_current_count, posture_baseline_count, triggered_window, window_hours, ai_summary)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         newId(), code, name, windowStart, nowTs,
         winning.current.totalCount, winning.baseline.totalCount, winning.current.avgTone, escalationScore, level, nowIso(),
-        winning.current.postureCount, winning.baseline.postureCount, triggeredWindow, windowHours,
+        winning.current.postureCount, winning.baseline.postureCount, triggeredWindow, windowHours, description,
       ]
     );
 
@@ -339,43 +431,11 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         `SELECT id FROM alerts WHERE geo_label = ? AND level = ? AND query_id IS NULL AND created_at > ? LIMIT 1`,
         [name, level, isoMinutesAgo(ALERT_DEDUPE_MINUTES)]
       );
-      if (!recent) {
+      if (!recent && description !== null) {
         const centroid = AFRICA_CENTROIDS[code];
         const lat = centroid ? centroid[0] : null;
         const lng = centroid ? centroid[1] : null;
-        const sample = await all<{ place_name: string }>(
-          env.DB,
-          `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
-          [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
-        );
-        const sampleLocationList = sample.map((r) => r.place_name);
-        const sampleLocations = sampleLocationList.join("; ");
         const alertId = newId();
-        const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
-        const templatedDescription =
-          `${name} shows ${windowLabel} in military-posture reporting (mobilization, clashes, airstrikes, heavy weapons, blockades) — ` +
-          `${winning.current.postureCount} report${winning.current.postureCount === 1 ? "" : "s"} in the last ${windowHours}h ` +
-          `versus a baseline of ${winning.baseline.postureCount} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
-          `${winning.current.avgTone !== null ? `, average tone ${winning.current.avgTone.toFixed(1)} (${winning.current.avgTone < -3 ? "sharply negative" : winning.current.avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
-          `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}`;
-
-        // AI-written brief when ANTHROPIC_API_KEY is configured, falling
-        // back to the plain templated sentence above otherwise or on any
-        // failure — see generateAnalyticalSummary's own doc comment.
-        const aiSummary = await generateAnalyticalSummary(env, {
-          countryName: name,
-          windowHours,
-          triggeredWindow,
-          postureCurrentCount: winning.current.postureCount,
-          postureBaselineCount: winning.baseline.postureCount,
-          currentCount: winning.current.totalCount,
-          baselineCount: winning.baseline.totalCount,
-          avgTone: winning.current.avgTone,
-          escalationScore,
-          level,
-          sampleLocations: sampleLocationList,
-        });
-        const description = aiSummary ?? templatedDescription;
 
         const alertRows = await all<Record<string, unknown>>(
           env.DB,
@@ -395,7 +455,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
               escalationScore,
               triggeredWindow,
               windowHours,
-              aiGenerated: aiSummary !== null,
+              aiGenerated: descriptionIsAi,
             }),
             name,
             lat,
@@ -424,6 +484,12 @@ export interface CountryEscalationSnapshot {
   escalationScore: number;
   level: "none" | "elevated" | "critical";
   windowEnd: string;
+  /** 2-3 sentence AI brief (or the plain templated fallback) refreshed
+   *  every tick this country is Elevated/Critical — what the marker's
+   *  popup shows, so it reflects what changed right now, not just whatever
+   *  text the last hourly-deduped alert happened to carry. Null when the
+   *  country isn't currently flagged. */
+  aiSummary: string | null;
 }
 
 interface SnapshotRow {
@@ -439,6 +505,7 @@ interface SnapshotRow {
   escalation_score: number;
   level: "none" | "elevated" | "critical";
   window_end: string;
+  ai_summary: string | null;
 }
 
 /** Latest snapshot per country — what the danger-icon map layer renders. */
@@ -466,6 +533,7 @@ export async function getLatestCountryEscalations(env: Env): Promise<CountryEsca
     escalationScore: r.escalation_score,
     level: r.level,
     windowEnd: r.window_end,
+    aiSummary: r.ai_summary,
   }));
 }
 
@@ -484,6 +552,55 @@ export interface EscalationEvidenceItem {
  *  comes from the QuadClass-filtered bulk pipeline, not a keyword search —
  *  so this is the honest equivalent: the real underlying reports, not a
  *  fabricated "query string". */
+export interface TerritoryChangeEvent {
+  id: string;
+  lat: number;
+  lon: number;
+  placeName: string;
+  eventCode: string;
+  sourceUrl: string;
+  dateAdded: string;
+  numMentions: number | null;
+}
+
+/** Raw "occupy territory" / "impose blockade, restrict movement" events
+ *  (CAMEO 191/192 — TERRITORY_CHANGE_EVENT_CODES above) within the last
+ *  `hours` — the structured equivalent of "an area was captured/taken
+ *  control of". Each one is a single reported point, not a verified
+ *  boundary — see liveLayers.ts's /territory-changes route for how this
+ *  gets turned into the honestly-labeled approximate map polygon. Not
+ *  scoped to Africa (same as Conflict Events/Global Incidents' own GDELT
+ *  layers) since the underlying event data isn't Africa-specific either. */
+export async function getTerritoryChangeEvents(env: Env, hours: number): Promise<TerritoryChangeEvent[]> {
+  const cutoff = toGdeltTimestamp(new Date(Date.now() - hours * 3600_000));
+  const rows = await all<{
+    id: string;
+    lat: number;
+    lon: number;
+    place_name: string;
+    event_code: string;
+    source_url: string;
+    date_added: string;
+    num_mentions: number | null;
+  }>(
+    env.DB,
+    `SELECT id, lat, lon, place_name, event_code, source_url, date_added, num_mentions FROM gdelt_bulk_events
+     WHERE event_code IN (${TERRITORY_CHANGE_EVENT_CODES.map(() => "?").join(",")}) AND date_added >= ?
+     ORDER BY date_added DESC LIMIT 300`,
+    [...TERRITORY_CHANGE_EVENT_CODES, cutoff]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    lat: r.lat,
+    lon: r.lon,
+    placeName: r.place_name,
+    eventCode: r.event_code,
+    sourceUrl: r.source_url,
+    dateAdded: r.date_added,
+    numMentions: r.num_mentions,
+  }));
+}
+
 export async function getCountryEscalationEvidence(env: Env, countryCode: string, limit = 10): Promise<EscalationEvidenceItem[]> {
   const name = AFRICA_COUNTRIES[countryCode.toUpperCase()];
   if (!name) return [];

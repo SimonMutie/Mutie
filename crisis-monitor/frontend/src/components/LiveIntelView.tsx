@@ -50,7 +50,7 @@ import {
   X as CloseGlyph,
   type LucideIcon,
 } from "lucide-react";
-import Map3D from "./Map3D";
+import Map3D, { type Map3DTerritoryChange } from "./Map3D";
 import {
   api,
   type LiveLayerCollection,
@@ -251,6 +251,12 @@ interface GlobePoint {
   /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
    *  Undefined on every other layer. */
   escalationLevel?: "elevated" | "critical";
+  /** Conflict Escalation only — used to fetch the full evidence/source-link
+   *  list for this country on click. Undefined on every other layer. */
+  countryCode?: string;
+  /** Conflict Escalation only — how many source links the evidence
+   *  endpoint has for this country's current window. Undefined elsewhere. */
+  evidenceCount?: number;
 }
 
 type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Network Intel" | "Aviation" | "Maritime" | "Space Tracking" | "My Data" | "Media";
@@ -441,6 +447,8 @@ const LAYER_DEFS: LayerDef[] = [
           time: f.properties.time,
           url: f.properties.url,
           escalationLevel: level,
+          countryCode: f.properties.countryCode,
+          evidenceCount: f.properties.evidenceCount,
         };
       });
     },
@@ -1058,6 +1066,44 @@ export default function LiveIntelView() {
       clearInterval(interval);
     };
   }, []);
+
+  // Approximate territory-change circles (see Map3D.tsx's Map3DTerritoryChange
+  // doc comment) — polygon geometry, so it can't go through the generic
+  // GlobePoint pipeline above; polled separately the same way myIncidentRows
+  // is, and tied to the same Conflict Escalation toggle rather than adding a
+  // whole new layer checkbox for one closely-related signal.
+  const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
+  useEffect(() => {
+    if (!enabled["conflict-escalation"]) {
+      setTerritoryChangePolygons([]);
+      return;
+    }
+    let cancelled = false;
+    function load() {
+      api
+        .getTerritoryChanges()
+        .then((collection) => {
+          if (cancelled) return;
+          setTerritoryChangePolygons(
+            collection.features.map((f) => ({
+              id: f.properties.id,
+              ring: f.geometry.coordinates[0].map(([lng, lat]) => [lat, lng] as [number, number]),
+              title: f.properties.title,
+              detail: f.properties.detail,
+              time: f.properties.time,
+              url: f.properties.url,
+            }))
+          );
+        })
+        .catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [enabled]);
   // An active search narrows the rich layer exactly like it narrows the
   // generic GlobePoint one above (see `points` memo).
   const incidentRowsForFlatMap = useMemo(
@@ -1687,6 +1733,7 @@ export default function LiveIntelView() {
           <Map3D
             points={mapPoints}
             paths={globePaths}
+            territoryChanges={territoryChangePolygons}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
             showDayNight={showDayNight}

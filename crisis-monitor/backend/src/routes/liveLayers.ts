@@ -7,7 +7,7 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getLatestCountryEscalations, getCountryEscalationEvidence, AFRICA_CENTROIDS } from "../countryEscalation";
+import { getLatestCountryEscalations, getCountryEscalationEvidence, getTerritoryChangeEvents, AFRICA_CENTROIDS } from "../countryEscalation";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 
@@ -67,6 +67,14 @@ export interface NormalizedFeature {
     /** Country Escalation only — see /conflict-escalation below. Every
      *  other layer leaves this undefined. */
     escalationLevel?: "elevated" | "critical";
+    /** Country Escalation only — the ISO country code, used by the
+     *  frontend to fetch the full evidence/source-link list for this
+     *  marker (/conflict-escalation/:code/evidence). */
+    countryCode?: string;
+    /** Country Escalation only — overall conflict-toned report count behind
+     *  this marker's window, i.e. how many source links the evidence
+     *  endpoint has available. */
+    evidenceCount?: number;
   };
 }
 
@@ -434,20 +442,27 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
         // same ordering as the /evidence endpoint), so "Open source" on the
         // map popup goes somewhere real instead of nowhere.
         const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1);
+        // AI brief when the scorer produced one this tick (see
+        // countryEscalation.ts's ai_summary column); the mechanical
+        // fallback sentence otherwise — either way this is a real 2-3
+        // sentence "what changed" line, not just the raw numbers.
+        const mechanicalFallback =
+          `${s.postureCurrentCount} military-posture report${s.postureCurrentCount === 1 ? "" : "s"} (mobilization/clashes/airstrikes/heavy weapons/territory change) ` +
+          `in last ${s.windowHours}h (baseline ${s.postureBaselineCount}/${s.windowHours}h) — ${s.triggeredWindow === "fast" ? "rapid" : "sustained"} signal. ` +
+          `Overall conflict-toned volume ${s.currentCount} vs ${s.baselineCount.toFixed(0)}` +
+          `${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`;
         features.push({
           type: "Feature",
           geometry: { type: "Point", coordinates: [lng, lat] },
           properties: {
             id: `escalation-${s.countryCode}`,
+            countryCode: s.countryCode,
             title: s.countryName,
             time: s.windowEnd,
             intensity: s.level === "critical" ? 1 : 0.6,
             intensityLabel: s.level === "critical" ? "Critical" : "Elevated",
-            detail:
-              `${s.postureCurrentCount} military-posture report${s.postureCurrentCount === 1 ? "" : "s"} (mobilization/clashes/airstrikes/heavy weapons) ` +
-              `in last ${s.windowHours}h (baseline ${s.postureBaselineCount}/${s.windowHours}h) — ${s.triggeredWindow === "fast" ? "rapid" : "sustained"} signal. ` +
-              `Overall conflict-toned volume ${s.currentCount} vs ${s.baselineCount.toFixed(0)}` +
-              `${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`,
+            detail: s.aiSummary ?? mechanicalFallback,
+            evidenceCount: s.currentCount,
             url: topEvidence?.sourceUrl || null,
             escalationLevel: s.level,
           },
@@ -467,8 +482,77 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
  *  honest equivalent: the real evidence, not a fabricated query string. */
 liveLayersRouter.get("/conflict-escalation/:code/evidence", async (c) => {
   const code = c.req.param("code");
-  const items = await getCountryEscalationEvidence(c.env, code);
+  // Raised from the old default of 10 — "168 conflict events reported"
+  // should mean 168 real, clickable source links are available, not just
+  // the top 10. 500 is a safety ceiling (D1 query cost), not an expected
+  // real-world count for one country's window.
+  const items = await getCountryEscalationEvidence(c.env, code, 500);
   return c.json({ countryCode: code.toUpperCase(), items, fetchedAt: new Date().toISOString() });
+});
+
+// Radius for the approximate territory-change circle — deliberately NOT
+// derived from anything (no data source here says how far a reported
+// "occupied"/"blockaded" claim actually extends), so it's a fixed,
+// honestly-arbitrary visual radius, not a claim of measured extent.
+const TERRITORY_CHANGE_RADIUS_KM = 12;
+const EARTH_RADIUS_KM = 6371;
+
+/** A plain circle polygon around [lat, lon] — not a real control boundary
+ *  (GDELT gives a single point, not a shape), just a way to make "an area
+ *  near X" visually legible on the map instead of a point that looks
+ *  identical to every other point layer. 24 vertices is smooth enough at
+ *  any zoom this map actually renders at without bloating the GeoJSON. */
+function approximateCircle(lat: number, lon: number, radiusKm: number, points = 24): [number, number][] {
+  const coords: [number, number][] = [];
+  const latRad = (lat * Math.PI) / 180;
+  for (let i = 0; i <= points; i++) {
+    const angle = (i / points) * 2 * Math.PI;
+    const dLat = (radiusKm / EARTH_RADIUS_KM) * Math.cos(angle);
+    const dLon = ((radiusKm / EARTH_RADIUS_KM) * Math.sin(angle)) / Math.cos(latRad);
+    coords.push([lon + (dLon * 180) / Math.PI, lat + (dLat * 180) / Math.PI]);
+  }
+  return coords;
+}
+
+const TERRITORY_EVENT_LABEL: Record<string, string> = {
+  "191": "Blockade / movement restriction reported",
+  "192": "Territory occupation / control change reported",
+};
+
+/** "Can this automatically plot a polygon of what changed" — this is the
+ *  honest version of that: a fixed-radius circle around each reported
+ *  occupy-territory/blockade event (CAMEO 191/192 — see
+ *  countryEscalation.ts's TERRITORY_CHANGE_EVENT_CODES), clearly labeled as
+ *  an approximation. What this is NOT: a verified front-line or control-
+ *  boundary polygon — that needs a curated source (ACLED's own territorial
+ *  control products, ISW-style terrain maps) built from confirmed ground
+ *  reporting, which isn't something this pipeline has access to. A real
+ *  boundary shape also isn't something a single lat/lon point plus a count
+ *  can ever honestly produce, however it's drawn — so this stays a visibly
+ *  approximate marker, not a map that overclaims precision it doesn't have. */
+liveLayersRouter.get("/territory-changes", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const events = await getTerritoryChangeEvents(c.env, 24);
+      const features = events.map((e) => ({
+        type: "Feature" as const,
+        geometry: { type: "Polygon" as const, coordinates: [approximateCircle(e.lat, e.lon, TERRITORY_CHANGE_RADIUS_KM)] },
+        properties: {
+          id: `territory-${e.id}`,
+          title: e.placeName || "Unknown location",
+          detail:
+            `${TERRITORY_EVENT_LABEL[e.eventCode] ?? "Military control-related event reported"} near ${e.placeName || "this location"}. ` +
+            `Approximate ${TERRITORY_CHANGE_RADIUS_KM}km marker around a single reported point — NOT a verified control boundary.`,
+          time: e.dateAdded,
+          url: e.sourceUrl || null,
+          eventCode: e.eventCode,
+        },
+      }));
+      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    60
+  );
 });
 
 const AIR_TRAFFIC_TTL_SECONDS = 900; // 15 min
