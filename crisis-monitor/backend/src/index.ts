@@ -20,6 +20,7 @@ import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
+import { ingestGdeltGkg } from "./connectors/gdeltGkg";
 import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
 import { scoreCountryEscalations } from "./countryEscalation";
 
@@ -107,6 +108,19 @@ export default {
           if (!result.skipped) console.log(`[gdelt-bulk] ingested ${result.insertedRows} conflict-toned events from export ${result.fileTimestamp}`);
         })
         .catch((err) => console.error("[gdelt-bulk] ingestion failed", err))
+    );
+
+    // GKG bulk ingestion (see connectors/gdeltGkg.ts) — GDELT's second
+    // 15-minute bulk file, carrying real casualty/displacement counts
+    // (KILL/WOUND/DISPLACED/KIDNAP) and per-article tone that Event Export
+    // above has no equivalent of. Same zero-rate-limit static-file pattern,
+    // same "cheap no-op on ticks with nothing new" shape.
+    ctx.waitUntil(
+      ingestGdeltGkg(env)
+        .then((result) => {
+          if (!result.skipped) console.log(`[gdelt-gkg] ingested ${result.insertedRows} impact-toned articles from export ${result.fileTimestamp}`);
+        })
+        .catch((err) => console.error("[gdelt-gkg] ingestion failed", err))
     );
 
     // Country-level escalation scoring (see countryEscalation.ts) — reads

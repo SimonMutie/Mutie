@@ -26,10 +26,26 @@ import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
  * contributes nothing — never a guessed or fabricated feed URL.
  */
 
-const BATCH_SIZE = 15;
-// Raised from 5 at Simon's request for deeper coverage — most of these
-// sites' RSS feeds carry 15-20+ items per fetch already, so 5 was throwing
-// most of each cycle's haul away for no reason.
+const BATCH_SIZE = 60;
+// Raised from 15 — the 15-per-tick figure was never calibrated against a
+// real ceiling, just a conservative starting guess from when this crawler
+// was first built. Sources within a batch already run in parallel
+// (Promise.all below), so batch size was never bottlenecked by sequential
+// fetch time, only by how many outbound requests one Durable Object
+// invocation issues at once — and Cloudflare's own subrequest cap has
+// since been raised from 1,000 to 10,000+ per invocation on paid plans
+// (developers.cloudflare.com/changelog, Feb 2026), so 15 was leaving most
+// of that headroom unused. 60 means a full cycle through all ~260 sources
+// takes roughly 20-25 minutes instead of 85-90, without adding any new
+// infrastructure (Cloudflare Queues would fan this out further still, but
+// that needs a Queue resource provisioned first — see the OSINT
+// collection-scaling research report for that as a follow-up). 60 stays
+// comfortably under the ~1,000 req/s a single Durable Object can sustain,
+// and each source's own fetch still has its own 8s timeout below, so a
+// handful of slow/dead sites in a batch can't stall the rest of it.
+// Raised from 5 to 15 at Simon's original request for deeper coverage —
+// most of these sites' RSS feeds carry 15-20+ items per fetch already, so
+// a small batch was throwing most of each cycle's haul away for no reason.
 const ITEMS_PER_SOURCE = 20;
 const MAX_ITEM_AGE_MS = 5 * 24 * 3_600_000; // country papers publish far less often than a wire service
 /** Re-run discovery for a source (rather than trusting its last discovered
