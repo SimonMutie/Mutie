@@ -73,9 +73,21 @@ const ESCALATION_KEYWORD_PATTERNS: { label: string; rx: RegExp }[] = [
   { label: "territory captured", rx: /\bcaptur(?:ed|es|ing)\s+(?:the\s+)?(?:town|city|village|base|territory|district|region)\b/i },
   { label: "took control of", rx: /\btook\s+control\s+of\b/i },
   { label: "seized control", rx: /\bseiz(?:ed|es|ing)\s+control\b/i },
+  // bare "seize(d/s)/seizing" of a place — doesn't require the word
+  // "control" immediately after (e.g. "rebels seize town", "RSF seizes
+  // El-Obeid"); this was the gap that missed Kordofan falling to SAF-style
+  // phrasing which rarely says "seized control of" verbatim.
+  { label: "seized town/area", rx: /\bseiz(?:ed|es|ing)\s+(?:the\s+)?(?:town|city|village|base|territory|district|region|capital|airport|state)\b/i },
+  // "falls/fell/falling to <actor>" — exactly how Simon described Kordofan
+  // falling to the SAF; "fall" alone is too common in unrelated prose, so
+  // this requires the "to <someone>" construction that is distinctive of
+  // territory-change reporting.
+  { label: "falls/fell to", rx: /\b(?:falls?|fell|falling)\s+to\s+(?:the\s+)?(?:rebels?|militants?|forces?|troops?|fighters?|militia|army|saf\b|rsf\b|endf\b|tdf\b|fano\b)/i },
+  { label: "city/town falls", rx: /\b(?:town|city|village|base|capital|airport|state)\s+(?:falls?|fell|falling)\b/i },
   { label: "overran", rx: /\boverr(?:an|un|unning)\b/i },
   { label: "recaptured", rx: /\brecaptur(?:ed|es|ing)\b/i },
   { label: "retook", rx: /\bretook\b/i },
+  { label: "advances on/toward", rx: /\badvanc(?:ed|es|ing)\s+(?:on|towards?|into|deeper\s+into)\b/i },
   // coup / mutiny / junta
   { label: "coup", rx: /\b(?:military\s+)?coup\b/i },
   { label: "mutiny", rx: /\bmutin(?:y|ies|ous|ied)\b/i },
@@ -91,7 +103,13 @@ const ESCALATION_KEYWORD_PATTERNS: { label: string; rx: RegExp }[] = [
   // confirm a real conflict report, which is exactly what lets the real
   // hotspots (Sudan, eastern DRC, the Sahel, Somalia, Mozambique) surface
   // reliably without reopening the door to generic keyword noise.
-  { label: "named armed group", rx: /\b(?:al[\s-]?shabaab|boko\s*haram|iswap|m23|rsf\b|rapid\s+support\s+forces|janjaweed|tplf|spla\b|splm\b|jnim|isgs|al[\s-]?qaeda|isis|isil|daesh|fardc|wagner\s+group)\b/i },
+  // Added this round per Simon's explicit report ("Kordofan is falling to
+  // SAF" going unflagged, nothing in Tigray despite ongoing fighting):
+  // SAF (Sudanese Armed Forces), ENDF (Ethiopian National Defense Force),
+  // TDF (Tigray Defense Forces), Fano (Amhara militia), Eritrean Defence
+  // Forces, OLA/Oromo Liberation Army, SNA (Somali National Army) — these
+  // are the exact hotspot-specific actor names the previous list lacked.
+  { label: "named armed group", rx: /\b(?:al[\s-]?shabaab|boko\s*haram|iswap|m23\b|rsf\b|rapid\s+support\s+forces|janjaweed|tplf\b|spla\b|splm\b|jnim|isgs|al[\s-]?qaeda|isis|isil|daesh|fardc|wagner\s+group|saf\b|sudanese\s+armed\s+forces|endf\b|ethiopian\s+national\s+defense|tigray\s+defen[cs]e\s+forces|tdf\b|\bfano\b|eritrean\s+defen[cs]e\s+forces|oromo\s+liberation\s+army|\bola\b|somali\s+national\s+army|\bsna\b|al[\s-]?qaeda\s+in\s+the\s+islamic\s+maghreb|ansar\s+(?:al[\s-]?sunna|dine))\b/i },
 ];
 
 /** Returns the distinct matched keyword labels for a piece of text — an

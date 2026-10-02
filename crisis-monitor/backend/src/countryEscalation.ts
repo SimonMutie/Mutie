@@ -372,6 +372,15 @@ async function ensureTable(env: Env): Promise<void> {
 interface WindowBucket {
   totalCount: number;
   postureCount: number;
+  /** Raw CAMEO-code membership count, BEFORE the isConfirmedEscalationUrl
+   *  text check — see the corroboration rescue in scoreCountryEscalations
+   *  below. Kept separately (never used directly for scoring on its own)
+   *  because the slug-confirmation check can legitimately filter out real
+   *  events too: many African wire services use ID-based URLs with no
+   *  descriptive slug text at all, so "no keyword in the slug" doesn't
+   *  always mean "not a real conflict report" — it can also just mean this
+   *  particular source's URLs carry no text signal either way. */
+  rawPostureCount: number;
   avgTone: number | null;
 }
 
@@ -411,8 +420,31 @@ async function queryWindowBucket(env: Env, countryName: string, likePattern: str
   return {
     totalCount: Number(row?.total_count ?? 0),
     postureCount,
+    rawPostureCount: postureRows.length,
     avgTone: row?.avg_tone ?? null,
   };
+}
+
+/** Bounded-cost live corroboration — the second tier of the hybrid design.
+ *  Used only when raw CAMEO-code signal exists for a country/window but the
+ *  slug-text confirmation filtered it all out (see rawPostureCount's doc
+ *  comment above): rather than silently trusting or discarding that raw
+ *  signal, this makes ONE real check against GDELT's own live full-text
+ *  search API (already built for the evidence drill-down,
+ *  lib/gdeltArticleSearch.ts) and only rescues the country's score when that
+ *  search actually turns up a real, keyword-matching headline. This is what
+ *  stops the strict slug check from permanently blind-siding a real,
+ *  ongoing conflict (Tigray, Kordofan/SAF) just because the particular wire
+ *  services reporting on it happen to use ID-based URLs with no descriptive
+ *  slug text — while still never trusting raw CAMEO codes on their own,
+ *  which is exactly the miscoding problem the slug gate was built to stop. */
+async function corroborateWithLiveSearch(countryName: string, windowHours: number): Promise<boolean> {
+  try {
+    const hits = await searchGdeltEscalationArticles(countryName, windowHours, 5);
+    return hits.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 interface WindowScore {
@@ -469,7 +501,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     const winning = triggeredWindow === "fast" ? fast : slow;
     const windowHours = triggeredWindow === "fast" ? FAST_WINDOW_HOURS : SLOW_WINDOW_HOURS;
     const windowStart = triggeredWindow === "fast" ? fastCurrentStart : slowCurrentStart;
-    const escalationScore = winning.score;
+    let escalationScore = winning.score;
 
     // Severity-tier check — independent of the growth math below. See
     // SEVERE_EVENT_CODES's doc comment: one mass-killing/WMD-class event is
@@ -482,9 +514,41 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       `SELECT source_url FROM gdelt_bulk_events WHERE ${SEVERE_EVENT_SQL} AND date_added >= ? AND place_name LIKE ?`,
       [...SEVERE_EVENT_CODES, windowStart, likePattern]
     );
-    const severeCount = severeRows.filter(
+    let severeCount = severeRows.filter(
       (r) => isConfirmedEscalationUrl(r.source_url, name)
     ).length;
+
+    // Second-tier hybrid rescue: the slug-confirmation gate is deliberately
+    // strict (see isConfirmedEscalationUrl's doc comment), but a strict gate
+    // can under-report just as easily as a loose one over-reports — exactly
+    // what Simon flagged ("only danger is in Eritrea, nothing in Ethiopia
+    // Tigray... nothing in Sudan where Kordofan is falling to SAF"). When
+    // there IS real CAMEO posture signal for this country/window but the
+    // slug check filtered all of it out, that's the specific shape of a
+    // source whose URLs simply carry no descriptive text either way — not
+    // proof the events aren't real. Rather than trust raw CAMEO codes
+    // outright (which is exactly how the earlier false-positive rounds
+    // happened), this makes one bounded live check against GDELT's own
+    // full-text search before rescuing the raw count into the score.
+    let corroborated = false;
+    let effectivePostureCurrent = winning.current.postureCount;
+    let effectivePostureBaseline = winning.baseline.postureCount;
+    const rawSevereCount = severeRows.length;
+    if (
+      (winning.current.postureCount < MIN_ABSOLUTE_POSTURE_COUNT && winning.current.rawPostureCount >= MIN_ABSOLUTE_POSTURE_COUNT) ||
+      (severeCount === 0 && rawSevereCount > 0)
+    ) {
+      corroborated = await corroborateWithLiveSearch(name, windowHours);
+      if (corroborated) {
+        effectivePostureCurrent = winning.current.rawPostureCount;
+        effectivePostureBaseline = winning.baseline.rawPostureCount;
+        escalationScore = scoreWindow(
+          { ...winning.current, postureCount: effectivePostureCurrent },
+          { ...winning.baseline, postureCount: effectivePostureBaseline }
+        ).score;
+        if (severeCount === 0 && rawSevereCount > 0) severeCount = rawSevereCount;
+      }
+    }
 
     let level: "none" | AlertLevel = "none";
     // Growth/ratio math only gets to assign a level once there's a real
@@ -492,7 +556,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     // direct fix for a near-zero baseline mathematically exceeding the
     // Elevated threshold off 2-3 noisy events. The severity override below
     // bypasses this floor on purpose.
-    if (winning.current.postureCount >= MIN_ABSOLUTE_POSTURE_COUNT) {
+    if (effectivePostureCurrent >= MIN_ABSOLUTE_POSTURE_COUNT) {
       if (escalationScore >= CRITICAL_THRESHOLD) level = "critical";
       else if (escalationScore >= ELEVATED_THRESHOLD) level = "elevated";
     }
@@ -523,9 +587,16 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
          ORDER BY num_mentions DESC LIMIT 60`,
         [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
       );
-      const filteredSample = rawSample.filter(
-        (r) => isConfirmedEscalationUrl(r.source_url, name)
-      );
+      // When this country's score was rescued via live corroboration (see
+      // above), the slug-confirmation filter would also empty out the
+      // sample/location/event-type breakdown for exactly the same
+      // structural reason (no descriptive slug text) — so the sample uses
+      // the raw, CAMEO-membership rows instead in that case, rather than
+      // showing a confirmed Elevated/Critical level with an empty "Reported
+      // near" line, which is its own version of the Ghana empty-evidence bug.
+      const filteredSample = corroborated
+        ? rawSample
+        : rawSample.filter((r) => isConfirmedEscalationUrl(r.source_url, name));
 
       // Most-mentioned distinct place names, same ordering
       // getCountryEscalationEvidence/the map marker's own geolocation use,
@@ -574,8 +645,8 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       const templatedDescription =
         `${name}${sampleLocationList[0] ? ` (near ${sampleLocationList[0]})` : ""} shows ${windowLabel} in military-posture reporting — ` +
         `${eventTypeSummary ? `${eventTypeSummary}. ` : ""}` +
-        `${winning.current.postureCount} report${winning.current.postureCount === 1 ? "" : "s"} in the last ${windowHours}h ` +
-        `versus a baseline of ${winning.baseline.postureCount} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
+        `${effectivePostureCurrent} report${effectivePostureCurrent === 1 ? "" : "s"} in the last ${windowHours}h ` +
+        `versus a baseline of ${effectivePostureBaseline} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
         `${winning.current.avgTone !== null ? `, average tone ${winning.current.avgTone.toFixed(1)} (${winning.current.avgTone < -3 ? "sharply negative" : winning.current.avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
         `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}` +
         `${severeCount > 0 ? ` Includes ${severeCount} mass-violence-tier report${severeCount === 1 ? "" : "s"} (mass killings/ethnic cleansing/WMD-class).` : ""}` +
@@ -597,8 +668,8 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         countryName: name,
         windowHours,
         triggeredWindow,
-        postureCurrentCount: winning.current.postureCount,
-        postureBaselineCount: winning.baseline.postureCount,
+        postureCurrentCount: effectivePostureCurrent,
+        postureBaselineCount: effectivePostureBaseline,
         currentCount: winning.current.totalCount,
         baselineCount: winning.baseline.totalCount,
         avgTone: winning.current.avgTone,
@@ -622,7 +693,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       [
         newId(), code, name, windowStart, nowTs,
         winning.current.totalCount, winning.baseline.totalCount, winning.current.avgTone, escalationScore, level, nowIso(),
-        winning.current.postureCount, winning.baseline.postureCount, triggeredWindow, windowHours, description,
+        effectivePostureCurrent, effectivePostureBaseline, triggeredWindow, windowHours, description,
       ]
     );
 
@@ -631,7 +702,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     // only posture-coded event this window, since MIN_ABSOLUTE_POSTURE_COUNT
     // would otherwise block a genuine single massacre/WMD report from ever
     // raising an alert.
-    if (level !== "none" && (winning.current.postureCount >= MIN_ABSOLUTE_POSTURE_COUNT || severeCount > 0)) {
+    if (level !== "none" && (effectivePostureCurrent >= MIN_ABSOLUTE_POSTURE_COUNT || severeCount > 0)) {
       const recent = await first<{ id: string }>(
         env.DB,
         `SELECT id FROM alerts WHERE geo_label = ? AND level = ? AND query_id IS NULL AND created_at > ? LIMIT 1`,
@@ -655,13 +726,14 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
             JSON.stringify({
               currentCount: winning.current.totalCount,
               baselineCount: winning.baseline.totalCount,
-              postureCurrentCount: winning.current.postureCount,
-              postureBaselineCount: winning.baseline.postureCount,
+              postureCurrentCount: effectivePostureCurrent,
+              postureBaselineCount: effectivePostureBaseline,
               avgTone: winning.current.avgTone,
               escalationScore,
               triggeredWindow,
               windowHours,
               aiGenerated: descriptionIsAi,
+              liveCorroborated: corroborated,
             }),
             name,
             lat,
@@ -853,8 +925,19 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
      ORDER BY num_mentions DESC LIMIT ?`,
     [...MILITARY_POSTURE_EVENT_CODES, currentStart, `%${name}%`, limit * 3]
   );
-  return rows
-    .filter((r) => isConfirmedEscalationUrl(r.source_url, name))
+  let confirmed = rows.filter((r) => isConfirmedEscalationUrl(r.source_url, name));
+  // Same hybrid rescue as scoreCountryEscalations's corroboration check: if
+  // the slug-confirmation filter zeroed out an otherwise real raw CAMEO
+  // signal, this is called independently/on-demand (liveLayers.ts's map-
+  // marker route calls this directly, not scoreCountryEscalations's own
+  // already-rescued snapshot), so it needs its own corroboration check —
+  // otherwise a country the scoring loop rescued would still show no marker
+  // and no evidence here, right back to the Ghana empty-evidence bug.
+  if (confirmed.length === 0 && rows.length >= MIN_ABSOLUTE_POSTURE_COUNT) {
+    const corroborated = await corroborateWithLiveSearch(name, SLOW_WINDOW_HOURS);
+    if (corroborated) confirmed = rows;
+  }
+  return confirmed
     .slice(0, limit)
     .map((r) => ({
       placeName: r.place_name,
