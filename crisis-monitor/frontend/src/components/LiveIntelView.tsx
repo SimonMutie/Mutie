@@ -50,7 +50,7 @@ import {
   X as CloseGlyph,
   type LucideIcon,
 } from "lucide-react";
-import Map3D, { type Map3DTerritoryChange } from "./Map3D";
+import Map3D, { Map3DDetailPanel, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import {
   api,
   type LiveLayerCollection,
@@ -866,6 +866,14 @@ export default function LiveIntelView() {
     "ucdp-conflict-events": false,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
+  // The 3D map's clicked-feature detail — docked into a left-side panel
+  // (Map3DDetailPanel) instead of a MapLibre Popup floating over the map
+  // itself, per Simon's direction. Cleared whenever the mode switches away
+  // from 3D so a stale selection doesn't linger invisibly in state.
+  const [map3DSelectedFeature, setMap3DSelectedFeature] = useState<Map3DSelectedFeature | null>(null);
+  useEffect(() => {
+    if (mapMode !== "3d") setMap3DSelectedFeature(null);
+  }, [mapMode]);
   const [layers, setLayers] = useState<Record<string, LayerState>>(() =>
     Object.fromEntries(LAYER_DEFS.map((d) => [d.key, { data: null, loading: true, error: null }]))
   );
@@ -1736,6 +1744,7 @@ export default function LiveIntelView() {
             territoryChanges={territoryChangePolygons}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
+            onFeatureSelect={setMap3DSelectedFeature}
             showDayNight={showDayNight}
             showBuildings={showBuildings}
             showTerrain={showTerrain}
@@ -1763,6 +1772,10 @@ export default function LiveIntelView() {
             hiddenIncidents={hiddenIncidents}
             onIncidentDeleted={handleIncidentDeleted}
           />
+        )}
+
+        {mapMode === "3d" && (
+          <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
         <LayerPanel

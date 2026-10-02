@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
+import { useEffect, useRef, useState } from "react";
+import { Map as MapLibreMap, NavigationControl, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
 import { api } from "../api";
@@ -93,10 +93,42 @@ interface Map3DProps {
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
+  /** Fired whenever a point or territory-change shape is clicked (the
+   *  feature's full detail, to be rendered by the caller — see
+   *  Map3DDetailPanel below), or with null when the selection should clear
+   *  (clicking empty map space, or a different mode taking over). Replaces
+   *  the old on-map MapLibre Popup: the detail now collapses into a docked
+   *  left-side panel the caller renders, per Simon's direction — a floating
+   *  bubble anchored to the clicked point could cover nearby markers and
+   *  got clipped at the map's edges, where a fixed side panel never does. */
+  onFeatureSelect?: (feature: Map3DSelectedFeature | null) => void;
   showDayNight: boolean;
   showBuildings: boolean;
   showTerrain: boolean;
 }
+
+/** Everything the detail panel (Map3DDetailPanel) needs to render a
+ *  selected feature — carried out of Map3D via onFeatureSelect instead of
+ *  being turned into an HTML string for a MapLibre Popup. "territory" is
+ *  an approximate territory-change circle; "point" covers every other
+ *  layer, including Conflict Escalation's own richer fields (optional,
+ *  undefined on every other layer's points). */
+export type Map3DSelectedFeature =
+  | { kind: "territory"; id: string; title: string; detail: string; time: string | null; url: string | null }
+  | {
+      kind: "point";
+      id: string;
+      title: string;
+      layerKey: string;
+      subtitle: string;
+      time: string | null;
+      url: string | null;
+      lat: number;
+      lng: number;
+      escalationLevel?: "elevated" | "critical";
+      countryCode?: string;
+      evidenceCount?: number;
+    };
 
 /** CARTO's free, keyless vector basemap CDN — distinct from the raster
  *  Maps API tiles (cartocdn.com/.../dark_all) that started requiring a key
@@ -250,13 +282,14 @@ function nightHemisphereRing(date: Date): [number, number][] {
   return ring;
 }
 
-export default function Map3D({ points, paths, territoryChanges, drawAreaRing, onMapClick, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, paths, territoryChanges, drawAreaRing, onMapClick, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
-  const popupRef = useRef<Popup | null>(null);
   const onClickRef = useRef(onMapClick);
   onClickRef.current = onMapClick;
+  const onFeatureSelectRef = useRef(onFeatureSelect);
+  onFeatureSelectRef.current = onFeatureSelect;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -332,10 +365,10 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
       // points, reading as if the danger marker had "replaced" them even
       // though every other layer's own features are still in the shared
       // GeoJSON source untouched (see toGeoJsonPoints below). The full
-      // place name/country and its detail are still in the click popup
-      // (buildPopupHtml) — this just stops it from being a permanent,
-      // space-consuming map fixture. Only the icon (osiris-points-warning-
-      // icon above) stays always-visible now.
+      // place name/country and its detail are still in the click detail
+      // panel (Map3DDetailPanel) — this just stops it from being a
+      // permanent, space-consuming map fixture. Only the icon
+      // (osiris-points-warning-icon above) stays always-visible now.
 
       // Approximate territory-change circles ("can this automatically plot a
       // polygon of what changed") — dashed amber outline + light fill so it
@@ -419,7 +452,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
         const hits = map.queryRenderedFeatures(e.point, { layers: [...POINT_LAYERS, TERRITORY_LAYER] });
         if (hits.length > 0) return; // a point's/territory-circle's own click handler below deals with this
         onClickRef.current?.(e.lngLat.lat, e.lngLat.lng);
-        popupRef.current?.remove();
+        onFeatureSelectRef.current?.(null);
       });
 
       map.on("mouseenter", TERRITORY_LAYER, () => {
@@ -431,23 +464,8 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
       map.on("click", TERRITORY_LAYER, (e) => {
         const f = e.features?.[0];
         if (!f) return;
-        const props = f.properties as { title: string; detail: string; time: string | null; url: string | null };
-        popupRef.current?.remove();
-        const popup = new Popup({ closeButton: true, closeOnClick: true, className: "osiris-popup", maxWidth: "300px" })
-          .setLngLat(e.lngLat)
-          .setHTML(
-            `<div class="osiris-popup-card">` +
-              `<div class="osiris-popup-title osiris-popup-title--elevated">◇ ${escapeHtml(props.title)}</div>` +
-              `<div class="osiris-popup-layer">TERRITORY CHANGE (APPROXIMATE)</div>` +
-              `<div class="osiris-popup-desc">${escapeHtml(props.detail ?? "")}</div>` +
-              (props.time ? `<div class="osiris-popup-time">${new Date(props.time).toLocaleString()}</div>` : "") +
-              (props.url
-                ? `<a class="osiris-popup-link" href="${escapeHtml(props.url)}" target="_blank" rel="noopener noreferrer">[ OPEN SOURCE ↗ ]</a>`
-                : "") +
-            `</div>`
-          )
-          .addTo(map);
-        popupRef.current = popup;
+        const props = f.properties as { id: string; title: string; detail: string; time: string | null; url: string | null };
+        onFeatureSelectRef.current?.({ kind: "territory", id: props.id, title: props.title, detail: props.detail ?? "", time: props.time, url: props.url });
       });
 
       for (const layerId of POINT_LAYERS) {
@@ -469,6 +487,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
           const f = e.features?.[0];
           if (!f || f.geometry.type !== "Point") return;
           const props = f.properties as {
+            id: string;
             title: string;
             layerKey: string;
             subtitle: string;
@@ -478,58 +497,24 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
             countryCode?: string;
             evidenceCount?: number;
           };
-          const coords = (f.geometry as GeoJSON.Point).coordinates as [number, number];
-          popupRef.current?.remove();
-          const popup = new Popup({ closeButton: true, closeOnClick: true, className: "osiris-popup", maxWidth: props.escalationLevel ? "360px" : "320px" })
-            .setLngLat(coords)
-            .setHTML(buildPopupHtml(props, coords))
-            .addTo(map);
-          popupRef.current = popup;
-
-          // Conflict Escalation: fetch every contributing report's source
-          // link ("can you give all links to them") and fill them into the
-          // placeholder the popup HTML already reserved a slot for, rather
-          // than trying to cram potentially 100+ links into the initial
-          // synchronous popup HTML.
-          if (props.escalationLevel && props.countryCode) {
-            const countryCode = props.countryCode;
-            api
-              .getConflictEscalationEvidence(countryCode)
-              .then((res) => {
-                // The popup may have been closed or replaced by the time this
-                // resolves — only touch the DOM if it's still the live one.
-                if (popupRef.current !== popup) return;
-                const container = popup.getElement()?.querySelector(`[data-evidence-for="${countryCode}"]`);
-                if (!container) return;
-                if (res.items.length === 0) {
-                  container.innerHTML = `<div class="osiris-popup-evidence-empty">No individual source links captured for this window.</div>`;
-                  return;
-                }
-                container.innerHTML = res.items
-                  .map((item, i) => {
-                    // Africa Wire and GDELT-article items both carry a
-                    // real article title (the "combine their reachable
-                    // links of all articles pulled with the specified
-                    // indicators" link type) — plain GDELT bulk events
-                    // only ever have a place name, no article title, so
-                    // fall back to that for those.
-                    const isArticle = item.source === "africa-wire" || item.source === "gdelt-article";
-                    const label = isArticle ? item.title || "Untitled report" : item.placeName || "Unknown location";
-                    const tagText = item.source === "africa-wire" ? "Africa Wire" : item.source === "gdelt-article" ? "GDELT" : "";
-                    const tag = tagText ? `<span class="osiris-popup-evidence-tag">${tagText}</span>` : "";
-                    return (
-                      `<a class="osiris-popup-evidence-link" href="${escapeHtml(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">` +
-                      `${i + 1}. ${escapeHtml(label)}${tag}</a>`
-                    );
-                  })
-                  .join("");
-              })
-              .catch(() => {
-                if (popupRef.current !== popup) return;
-                const container = popup.getElement()?.querySelector(`[data-evidence-for="${countryCode}"]`);
-                if (container) container.innerHTML = `<div class="osiris-popup-evidence-empty">Sources failed to load.</div>`;
-              });
-          }
+          const [lng, lat] = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+          // Evidence fetching (Conflict Escalation's "SOURCES" list) now
+          // happens inside Map3DDetailPanel itself, keyed off countryCode —
+          // this just hands over the feature's own fields.
+          onFeatureSelectRef.current?.({
+            kind: "point",
+            id: props.id,
+            title: props.title,
+            layerKey: props.layerKey,
+            subtitle: props.subtitle ?? "",
+            time: props.time,
+            url: props.url,
+            lat,
+            lng,
+            escalationLevel: props.escalationLevel ?? undefined,
+            countryCode: props.countryCode,
+            evidenceCount: props.evidenceCount,
+          });
         });
       }
 
@@ -605,68 +590,145 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
 
 const LEVEL_LABEL: Record<"elevated" | "critical", string> = { elevated: "ELEVATED", critical: "CRITICAL" };
 
-/** Builds the popup card's inner HTML — styling lives in Map3D.css (the
- *  `.osiris-popup` classes below), not inline, so it's one place to keep
- *  consistent and easy to re-theme. Escalation points (Conflict Escalation
- *  layer) get the fuller SEVERITY/COORDS layout from the reference design;
- *  every other layer keeps the simpler title/subtitle/time card it already
- *  had, just restyled onto a readable dark background. Either shape gets an
- *  "OPEN SOURCE" link whenever the point actually has one — previously
- *  dropped entirely, since Map3DPoint didn't even carry `url`. */
-function buildPopupHtml(
-  props: {
-    title: string;
-    layerKey: string;
-    subtitle: string;
-    time: string | null;
-    url: string | null;
-    escalationLevel: "elevated" | "critical" | null;
-    countryCode?: string;
-    evidenceCount?: number;
-  },
-  coords: [number, number]
-): string {
-  const linkHtml = props.url
-    ? `<a class="osiris-popup-link" href="${escapeHtml(props.url)}" target="_blank" rel="noopener noreferrer">[ OPEN SOURCE ↗ ]</a>`
-    : "";
+/**
+ * The clicked feature's detail, docked to the left side of the map instead
+ * of floating as a MapLibre Popup anchored to the clicked point — a
+ * floating bubble could sit on top of nearby markers and got clipped at the
+ * map's own edges (a point near the right edge would push its popup half
+ * off-screen); a fixed side panel never does either. Renders nothing when
+ * `feature` is null. Conflict Escalation's evidence/"SOURCES" list — up to
+ * 100+ links — is fetched here (not in Map3D's click handler) once a
+ * country's point is selected, the same lazy load the old popup did, just
+ * driven by a real useEffect/useState now instead of patching the popup's
+ * DOM node after the fact.
+ */
+export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedFeature | null; onClose: () => void }) {
+  const countryCode = feature?.kind === "point" ? feature.countryCode : undefined;
+  const [evidence, setEvidence] = useState<EscalationEvidenceItemLike[] | null>(null);
+  const [evidenceError, setEvidenceError] = useState(false);
 
-  if (props.escalationLevel) {
-    const [lng, lat] = coords;
-    // `subtitle` here is the 2-3 sentence AI ("what changed") brief when the
-    // backend produced one this tick, falling back to the mechanical
-    // numbers sentence otherwise — see countryEscalation.ts's ai_summary.
-    // The evidence list below is filled in asynchronously after this popup
-    // mounts (see the click handler) since fetching 100+ links can't block
-    // the popup's initial synchronous HTML.
-    const evidenceSection = props.countryCode
-      ? `<div class="osiris-popup-evidence-header">SOURCES${props.evidenceCount ? ` (${props.evidenceCount})` : ""}</div>` +
-        `<div class="osiris-popup-evidence-list" data-evidence-for="${escapeHtml(props.countryCode)}">Loading sources…</div>`
-      : "";
-    return (
-      `<div class="osiris-popup-card osiris-popup-card--escalation">` +
-      `<div class="osiris-popup-title osiris-popup-title--${props.escalationLevel}">⚠ ${escapeHtml(props.title)}</div>` +
-      `<div class="osiris-popup-desc">${escapeHtml(props.subtitle ?? "")}</div>` +
-      `<div class="osiris-popup-grid">` +
-      `<div><div class="osiris-popup-label">SEVERITY</div><div class="osiris-popup-value osiris-popup-value--${props.escalationLevel}">${LEVEL_LABEL[props.escalationLevel]}</div></div>` +
-      `<div><div class="osiris-popup-label">COORDS</div><div class="osiris-popup-value">${lat.toFixed(3)}°, ${lng.toFixed(3)}°</div></div>` +
-      `</div>` +
-      linkHtml +
-      evidenceSection +
-      `</div>`
-    );
-  }
+  useEffect(() => {
+    setEvidence(null);
+    setEvidenceError(false);
+    if (!countryCode) return;
+    let cancelled = false;
+    api
+      .getConflictEscalationEvidence(countryCode)
+      .then((res) => {
+        if (cancelled) return;
+        setEvidence(res.items);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEvidenceError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [countryCode]);
+
+  if (!feature) return null;
+
+  const title = feature.title;
+  const url = feature.url;
 
   return (
-    `<div class="osiris-popup-card">` +
-    `<div class="osiris-popup-title">${escapeHtml(props.title)}</div>` +
-    `<div class="osiris-popup-layer">${escapeHtml(props.layerKey)}</div>` +
-    `<div class="osiris-popup-desc">${escapeHtml(props.subtitle ?? "")}</div>` +
-    (props.time ? `<div class="osiris-popup-time">${new Date(props.time).toLocaleString()}</div>` : "") +
-    linkHtml +
-    `</div>`
+    <div className="osiris-detail-panel">
+      <button className="osiris-detail-panel-close" onClick={onClose} aria-label="Close">
+        ×
+      </button>
+
+      {feature.kind === "territory" ? (
+        <div className="osiris-popup-card">
+          <div className="osiris-popup-title osiris-popup-title--elevated">◇ {title}</div>
+          <div className="osiris-popup-layer">TERRITORY CHANGE (APPROXIMATE)</div>
+          <div className="osiris-popup-desc">{feature.detail}</div>
+          {feature.time && <div className="osiris-popup-time">{new Date(feature.time).toLocaleString()}</div>}
+          {url && (
+            <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
+              [ OPEN SOURCE ↗ ]
+            </a>
+          )}
+        </div>
+      ) : feature.escalationLevel ? (
+        <div className="osiris-popup-card osiris-popup-card--escalation">
+          <div className={`osiris-popup-title osiris-popup-title--${feature.escalationLevel}`}>⚠ {title}</div>
+          {/* `subtitle` here is the 2-3 sentence AI ("what changed") brief
+           *  when the backend produced one this tick, falling back to the
+           *  mechanical numbers sentence otherwise — see
+           *  countryEscalation.ts's ai_summary. */}
+          <div className="osiris-popup-desc">{feature.subtitle}</div>
+          <div className="osiris-popup-grid">
+            <div>
+              <div className="osiris-popup-label">SEVERITY</div>
+              <div className={`osiris-popup-value osiris-popup-value--${feature.escalationLevel}`}>{LEVEL_LABEL[feature.escalationLevel]}</div>
+            </div>
+            <div>
+              <div className="osiris-popup-label">COORDS</div>
+              <div className="osiris-popup-value">
+                {feature.lat.toFixed(3)}°, {feature.lng.toFixed(3)}°
+              </div>
+            </div>
+          </div>
+          {url && (
+            <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
+              [ OPEN SOURCE ↗ ]
+            </a>
+          )}
+          {countryCode && (
+            <>
+              <div className="osiris-popup-evidence-header">SOURCES{feature.evidenceCount ? ` (${feature.evidenceCount})` : ""}</div>
+              <div className="osiris-popup-evidence-list">
+                {evidenceError ? (
+                  <div className="osiris-popup-evidence-empty">Sources failed to load.</div>
+                ) : evidence === null ? (
+                  <div className="osiris-popup-evidence-empty">Loading sources…</div>
+                ) : evidence.length === 0 ? (
+                  <div className="osiris-popup-evidence-empty">No individual source links captured for this window.</div>
+                ) : (
+                  evidence.map((item, i) => {
+                    // Africa Wire and GDELT-article items both carry a real
+                    // article title (the "combine their reachable links of
+                    // all articles pulled with the specified indicators"
+                    // link type) — plain GDELT bulk events only ever have a
+                    // place name, no article title, so fall back to that.
+                    const isArticle = item.source === "africa-wire" || item.source === "gdelt-article";
+                    const label = isArticle ? item.title || "Untitled report" : item.placeName || "Unknown location";
+                    const tagText = item.source === "africa-wire" ? "Africa Wire" : item.source === "gdelt-article" ? "GDELT" : "";
+                    return (
+                      <a key={i} className="osiris-popup-evidence-link" href={item.sourceUrl} target="_blank" rel="noopener noreferrer">
+                        {i + 1}. {label}
+                        {tagText && <span className="osiris-popup-evidence-tag">{tagText}</span>}
+                      </a>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="osiris-popup-card">
+          <div className="osiris-popup-title">{title}</div>
+          <div className="osiris-popup-layer">{feature.layerKey}</div>
+          <div className="osiris-popup-desc">{feature.subtitle}</div>
+          {feature.time && <div className="osiris-popup-time">{new Date(feature.time).toLocaleString()}</div>}
+          {url && (
+            <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
+              [ OPEN SOURCE ↗ ]
+            </a>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+/** Narrowed shape of api.ts's EscalationEvidenceItem — declared locally so
+ *  this file doesn't need a type-only import just for these few fields. */
+interface EscalationEvidenceItemLike {
+  placeName: string;
+  sourceUrl: string;
+  source?: "gdelt" | "africa-wire" | "gdelt-article";
+  title?: string;
 }

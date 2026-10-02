@@ -1,42 +1,54 @@
-/* Overrides MapLibre GL's own default popup chrome (white background, black
- * text, a light-colored tip arrow) — that default CSS is what made every
- * popup on the map unreadable against this app's dark theme. Everything
- * here targets the `.osiris-popup` class passed to `new Popup({ className:
- * "osiris-popup" })` in Map3D.tsx, so it never touches any other consumer
- * of maplibre-gl's default popup styling. */
-
-.osiris-popup .maplibregl-popup-content {
-  background: #0a0e1a;
+/* The feature-detail panel docked to the left side of the 3D map
+ * (Map3DDetailPanel in Map3D.tsx) — replaces the old MapLibre Popup that
+ * floated over the clicked point itself. A bubble anchored to the marker
+ * could sit on top of nearby markers and got clipped at the map's own
+ * edges (a point near the right edge pushed its popup half off-screen); a
+ * fixed panel on the left never does either, and it's a more natural home
+ * for Conflict Escalation's own, sometimes 100+-link SOURCES list than a
+ * floating card ever was. Positioned just to the right of the layer-icon
+ * rail (LiveIntelView's LayerPanel, a 52px-wide column at left:12) so the
+ * two never overlap; same dark-glass visual language the rest of the HUD's
+ * floating panels already use (LiveIntelView's own glassPanel() helper). */
+.osiris-detail-panel {
+  position: absolute;
+  top: 12px;
+  left: 66px;
+  z-index: 550;
+  width: 320px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  background: rgba(8, 10, 20, 0.92);
   border: 1px solid rgba(212, 175, 55, 0.35);
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 14px 16px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
   color: #e8ecf4;
 }
 
-/* The little triangular pointer connecting the popup to its marker — the
- * default is a light/white wedge that reads as a visual glitch against a
- * dark card, so it's recolored to match the card background on every side
- * MapLibre can anchor the popup from. */
-.osiris-popup .maplibregl-popup-tip {
-  border-top-color: #0a0e1a !important;
-  border-bottom-color: #0a0e1a !important;
-  border-left-color: #0a0e1a !important;
-  border-right-color: #0a0e1a !important;
+.osiris-detail-panel-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: #8892a6;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.osiris-detail-panel-close:hover {
+  color: #e8ecf4;
 }
 
-.osiris-popup .maplibregl-popup-close-button {
-  color: #8892a6;
-  font-size: 16px;
-  padding: 2px 6px;
-  right: 2px;
-  top: 2px;
-}
-.osiris-popup .maplibregl-popup-close-button:hover {
-  color: #e8ecf4;
-  background: transparent;
-}
+/* Below this point: the card-content classes Map3DDetailPanel renders
+ * inside .osiris-detail-panel above (title/desc/grid/evidence list etc.) —
+ * these used to also be wrapped in a MapLibre Popup's own chrome (a
+ * `.osiris-popup` class passed to `new Popup({ className })`), which no
+ * longer exists now that the detail lives in a plain docked panel instead
+ * of an on-map popup; none of the selectors below ever depended on that
+ * wrapper, so they carried over unchanged. */
 
 .osiris-popup-card {
   min-width: 200px;
