@@ -267,11 +267,20 @@ export interface PollGdeltOptions {
   requestBudget?: { remaining: number };
 }
 
+export interface PollGdeltResult {
+  inserted: EventRecord[];
+  /** True if GDELT returned a 429/403 for any chunk this call made — the
+   *  caller's cron loop feeds this into lib/gdeltAdaptiveBudget.ts so the
+   *  per-tick request budget backs off on the server's real signal instead
+   *  of a guessed static ceiling. */
+  rateLimited: boolean;
+}
+
 /** Fetches every chunk of a (possibly multi-chunk, "any size") query, merges
  *  and dedupes the results by URL, enriches a bounded number of new articles
  *  with full-text for better boolean matching, and inserts (deduped again by
  *  the events table's partial unique index), returning the inserted rows. */
-export async function pollGdelt(env: Env, searchTermChunks: string[], opts: PollGdeltOptions = {}): Promise<EventRecord[]> {
+export async function pollGdelt(env: Env, searchTermChunks: string[], opts: PollGdeltOptions = {}): Promise<PollGdeltResult> {
   const sourceId = await getOrCreateGdeltSourceId(env);
 
   const byUrl = new Map<string, GdeltArticle>();
@@ -363,5 +372,5 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
     console.warn(`[gdelt] returning ${inserted.length} article(s) found before hitting the rate limit`);
   }
 
-  return inserted;
+  return { inserted, rateLimited };
 }

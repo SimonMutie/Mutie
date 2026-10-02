@@ -20,6 +20,7 @@ import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
 import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
+import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
 import { scoreCountryEscalations } from "./countryEscalation";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
@@ -137,49 +138,81 @@ export default {
     // (buildQueryChunks) — a query can have any number of terms, it just costs
     // one extra GDELT request per chunk beyond the first. GDELT's free,
     // unauthenticated API rate-limits aggressively (has been observed
-    // returning 429 under fairly light load), so total request *volume* is
-    // capped globally across the whole tick (GDELT_REQUEST_BUDGET_PER_TICK),
-    // not just per query — a handful of large queries could otherwise burn
-    // 100+ requests in five minutes on their own. The starting query rotates
-    // each tick so the budget doesn't always starve the same queries at the
-    // end of the list.
-    const MAX_QUERIES_PER_TICK = 25;
-    const MAX_CHUNKS_PER_QUERY = 15; // safety ceiling per query (150 terms) — the shared budget below is the real limiter
-    const GDELT_REQUEST_STAGGER_MS = 3000;
-    const GDELT_REQUEST_BUDGET_PER_TICK = 20; // total GDELT HTTP requests allowed across ALL queries this tick
-    const compiled = await loadActiveCompiledQueries(env);
-
-    // Shared across every query this tick: if several queries' broad recall
-    // both surface the same trending article, we fetch its full text once,
-    // not once per query.
-    const fulltextCache = new Map<string, string | null>();
-    const requestBudget = { remaining: GDELT_REQUEST_BUDGET_PER_TICK };
-
-    const queue = compiled.slice(0, MAX_QUERIES_PER_TICK);
-    const rotation = queue.length > 0 ? Math.floor(Date.now() / (5 * 60_000)) % queue.length : 0;
-    const rotated = [...queue.slice(rotation), ...queue.slice(0, rotation)];
-
-    for (const [i, q] of rotated.entries()) {
-      if (requestBudget.remaining <= 0) {
-        console.warn(`[gdelt] request budget exhausted for this tick — ${rotated.length - i} quer${rotated.length - i === 1 ? "y" : "ies"} deferred to next tick`);
-        break;
-      }
-      // Be a good citizen of GDELT's free API — spread requests out within
-      // the tick instead of firing them back to back.
-      if (i > 0) await new Promise((resolve) => setTimeout(resolve, GDELT_REQUEST_STAGGER_MS));
-
-      try {
-        const chunks = buildQueryChunks(q.parsed.positiveTerms).slice(0, MAX_CHUNKS_PER_QUERY);
-        const inserted = await pollGdelt(env, chunks, { fulltextCache, requestBudget });
-        for (const event of inserted) {
-          await matchAndBroadcast(env, event);
-        }
-        if (inserted.length > 0) {
-          console.log(`[gdelt] query=${q.id} chunks=${chunks.length} -> ${inserted.length} new articles`);
-        }
-      } catch (err) {
-        console.error(`[gdelt] poll failed for query ${q.id}:`, err);
-      }
-    }
+    // returning 429 under fairly light load) but documents no actual number,
+    // so the total request *volume* allowed across the whole tick is no
+    // longer a guessed constant — lib/gdeltAdaptiveBudget.ts tracks it in D1
+    // across ticks and climbs it for real until a 429/403 actually fires,
+    // then cuts back and cools down, the same additive-increase/
+    // multiplicative-decrease shape TCP uses to discover an unknown shared
+    // capacity. The starting query still rotates each tick so a tight budget
+    // (e.g. just after a cooldown) doesn't always starve the same queries at
+    // the end of the list.
+    //
+    // Previously this whole loop ran as a direct `await` in the scheduled()
+    // body (unlike the three tasks above it, which are all `ctx.waitUntil`),
+    // making it the one piece that blocked the handler from completing. Now
+    // that its budget can legitimately climb well past the old fixed 20, it
+    // moves into `ctx.waitUntil` too, consistent with the rest of this file
+    // — a slow tick here no longer risks the handler itself overrunning.
+    ctx.waitUntil(
+      runGdeltLiveQueries(env).catch((err) => console.error("[gdelt] live-query tick failed", err))
+    );
   },
 };
+
+async function runGdeltLiveQueries(env: Env): Promise<void> {
+  const MAX_CHUNKS_PER_QUERY = 15; // safety ceiling per query (150 terms) — the shared budget below is the real limiter
+  const GDELT_REQUEST_STAGGER_MS = 3000;
+  const compiled = await loadActiveCompiledQueries(env);
+
+  const { budget, cooldownRemainingMs } = await getTickBudget(env);
+  if (budget <= 0) {
+    console.log(`[gdelt] skipping this tick — cooling down ${Math.ceil(cooldownRemainingMs / 60_000)}min after a recent rate limit`);
+    return;
+  }
+
+  // Shared across every query this tick: if several queries' broad recall
+  // both surface the same trending article, we fetch its full text once,
+  // not once per query.
+  const fulltextCache = new Map<string, string | null>();
+  const requestBudget = { remaining: budget };
+  let rateLimitedThisTick = false;
+
+  // No fixed MAX_QUERIES_PER_TICK slice anymore — the adaptive budget above
+  // is the real governor now (the loop below stops the moment it runs out),
+  // so a tick with headroom gets to try every active query, not just the
+  // first N of them regardless of how much budget is actually left.
+  const queue = compiled;
+  const rotation = queue.length > 0 ? Math.floor(Date.now() / (5 * 60_000)) % queue.length : 0;
+  const rotated = [...queue.slice(rotation), ...queue.slice(0, rotation)];
+
+  for (const [i, q] of rotated.entries()) {
+    if (requestBudget.remaining <= 0) {
+      console.warn(`[gdelt] request budget exhausted for this tick — ${rotated.length - i} quer${rotated.length - i === 1 ? "y" : "ies"} deferred to next tick`);
+      break;
+    }
+    // Be a good citizen of GDELT's free API — spread requests out within
+    // the tick instead of firing them back to back.
+    if (i > 0) await new Promise((resolve) => setTimeout(resolve, GDELT_REQUEST_STAGGER_MS));
+
+    try {
+      const chunks = buildQueryChunks(q.parsed.positiveTerms).slice(0, MAX_CHUNKS_PER_QUERY);
+      const { inserted, rateLimited } = await pollGdelt(env, chunks, { fulltextCache, requestBudget });
+      if (rateLimited) rateLimitedThisTick = true;
+      for (const event of inserted) {
+        await matchAndBroadcast(env, event);
+      }
+      if (inserted.length > 0) {
+        console.log(`[gdelt] query=${q.id} chunks=${chunks.length} -> ${inserted.length} new articles`);
+      }
+    } catch (err) {
+      console.error(`[gdelt] poll failed for query ${q.id}:`, err);
+    }
+  }
+
+  await recordTickOutcome(env, {
+    allocatedBudget: budget,
+    requestsUsed: budget - requestBudget.remaining,
+    rateLimited: rateLimitedThisTick,
+  });
+}
