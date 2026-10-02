@@ -444,8 +444,10 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
             intensity: s.level === "critical" ? 1 : 0.6,
             intensityLabel: s.level === "critical" ? "Critical" : "Elevated",
             detail:
-              `${s.currentCount} conflict-related report${s.currentCount === 1 ? "" : "s"} in last 24h ` +
-              `(baseline ${s.baselineCount.toFixed(0)}/24h)${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`,
+              `${s.postureCurrentCount} military-posture report${s.postureCurrentCount === 1 ? "" : "s"} (mobilization/clashes/airstrikes/heavy weapons) ` +
+              `in last ${s.windowHours}h (baseline ${s.postureBaselineCount}/${s.windowHours}h) — ${s.triggeredWindow === "fast" ? "rapid" : "sustained"} signal. ` +
+              `Overall conflict-toned volume ${s.currentCount} vs ${s.baselineCount.toFixed(0)}` +
+              `${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`,
             url: topEvidence?.sourceUrl || null,
             escalationLevel: s.level,
           },

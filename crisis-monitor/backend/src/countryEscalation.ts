@@ -15,13 +15,28 @@ import type { AlertLevel } from "./types";
  * any client having set up a query, matching what was asked for ("danger
  * icon in countries where there is increased mentions... like OSIRIS does").
  *
- * Method: for each African country, compare conflict-toned report volume
- * (CAMEO QuadClass >= 3, i.e. verbal-or-material conflict) in the last 24h
- * ("live") against the 24h immediately before that ("the past 2 days" the
- * request asked for — a rolling day-over-day comparison, not a fixed
- * calendar window). Escalation score is the same shape as the existing
- * per-query scorer in alerting.ts (growth vs baseline, nudged by negative
- * tone) for consistency, not a different, unexplained formula.
+ * Redefined per Simon's direction (previously this scored ALL conflict-toned
+ * report volume equally — a country with lots of routine "criticize/protest"
+ * coverage could outscore one with a real military escalation). "Escalation"
+ * now specifically means a rise in MILITARY-POSTURE reporting: drone
+ * strikes, airstrikes, military clashes/armed confrontations, mobilization,
+ * reinforcement, heavy weapons use, blockades, ceasefire violations —
+ * MILITARY_POSTURE_EVENT_CODES below is that list translated into GDELT's
+ * own CAMEO event-code taxonomy (the structured field this data actually
+ * has — there's no raw article text in the bulk feed to literally keyword-
+ * match "drone strike" against, see gdeltBulk.ts's own doc comment), fetched
+ * and verified directly against the CAMEO codebook rather than guessed from
+ * memory. Overall conflict-toned volume (the old signal) is kept as a
+ * smaller secondary input, not the primary driver anymore.
+ *
+ * Also now a dual-window "fast + slow" signal rather than one fixed 24h
+ * comparison: a FAST_WINDOW_HOURS (6h vs prior 6h) catches a same-day spike
+ * before a full day has passed, a SLOW_WINDOW_HOURS (24h vs prior 24h)
+ * catches a sustained deterioration a short window could miss in a country
+ * with low report volume. Each window gets its own score; the higher of the
+ * two wins, and which window triggered it is recorded (`triggeredWindow`)
+ * so the alert/popup text can say "breaking" vs "sustained" honestly rather
+ * than implying one fixed cadence always applies.
  *
  * Country matching is a plain substring match against each bulk event's
  * `place_name` (GDELT's own free-text location string, e.g. "Khartoum,
@@ -31,8 +46,43 @@ import type { AlertLevel } from "./types";
  * accepted by activity-index's identical matching approach.
  */
 
-const CURRENT_WINDOW_HOURS = 24;
-const BASELINE_WINDOW_HOURS = 24; // the 24h immediately before the current window
+// CAMEO event codes verified against the official CAMEO codebook
+// (parusanalytics.com/eventdata/cameo.dir/CAMEO.09b6.pdf), category 15
+// "EXHIBIT FORCE POSTURE" and category 19/20 "FIGHT" / "USE UNCONVENTIONAL
+// MASS VIOLENCE" — the closest real, structured equivalent GDELT's bulk
+// data has to the plain-language terms Simon asked for:
+//   150 Demonstrate military or police power, not specified below
+//   151 Increase police alert status
+//   152 Increase military alert status          -> "increased military movement"
+//   153 Mobilize or increase police power
+//   154 Mobilize or increase armed forces        -> "military mobilisation" / "reinforcement"
+//   190 Use conventional military force          -> "military clashes" / "armed confrontations"
+//   191 Impose blockade, restrict movement
+//   192 Occupy territory
+//   193 Fight with small arms and light weapons  -> "armed confrontations"
+//   194 Fight with artillery and tanks           -> "heavy weapons"
+//   195 Employ aerial weapons, not specified      -> "airstrikes"
+//   1951 Employ precision-guided aerial munitions -> "airstrikes"
+//   1952 Employ remotely piloted aerial munitions -> "drone strikes"
+//   196 Violate ceasefire
+//   200-204(1/2) Use unconventional mass violence / mass killings / WMD — the most
+//     severe tier; included since these are unambiguous security deterioration
+const MILITARY_POSTURE_EVENT_CODES = [
+  "150", "151", "152", "153", "154",
+  "190", "191", "192", "193", "194", "195", "1951", "1952", "196",
+  "200", "201", "202", "203", "204", "2041", "2042",
+] as const;
+const MILITARY_POSTURE_SQL = `event_code IN (${MILITARY_POSTURE_EVENT_CODES.map(() => "?").join(",")})`;
+
+const FAST_WINDOW_HOURS = 6; // catches a same-day spike
+const SLOW_WINDOW_HOURS = 24; // catches sustained deterioration a short window could miss
+// Posture-report growth is the primary signal now; overall conflict-toned
+// volume growth is kept as smaller secondary context (a country can still
+// be "busy" without military posture actually changing); negative tone
+// keeps its prior weight, unchanged from the original scorer.
+const POSTURE_GROWTH_WEIGHT = 1.6;
+const VOLUME_GROWTH_WEIGHT = 0.4;
+const TONE_WEIGHT = 0.5;
 const ELEVATED_THRESHOLD = 2.5;
 const CRITICAL_THRESHOLD = 4.5;
 const ALERT_DEDUPE_MINUTES = 60; // don't re-alert the same country+level more than once/hour
@@ -72,6 +122,10 @@ async function generateAnalyticalSummary(
   env: Env,
   params: {
     countryName: string;
+    windowHours: number;
+    triggeredWindow: "fast" | "slow";
+    postureCurrentCount: number;
+    postureBaselineCount: number;
     currentCount: number;
     baselineCount: number;
     avgTone: number | null;
@@ -88,8 +142,10 @@ async function generateAnalyticalSummary(
     `Write it the way a conflict analyst would phrase a terse situation note, not a headline and not a hedge-filled disclaimer.\n\n` +
     `Country: ${params.countryName}\n` +
     `Alert level: ${params.level}\n` +
-    `Conflict-toned reports in the last 24h: ${params.currentCount}\n` +
-    `Baseline (previous 24h): ${params.baselineCount.toFixed(0)}\n` +
+    `Signal: ${params.triggeredWindow === "fast" ? "breaking/rapid" : "sustained"} rise over a ${params.windowHours}h window\n` +
+    `Military-posture reports (mobilization, clashes, airstrikes, drone strikes, heavy weapons, blockades, ceasefire violations) in that window: ${params.postureCurrentCount}\n` +
+    `Military-posture baseline (prior ${params.windowHours}h): ${params.postureBaselineCount}\n` +
+    `Overall conflict-toned reports in that window: ${params.currentCount} (baseline ${params.baselineCount.toFixed(0)})\n` +
     `Escalation score: ${params.escalationScore.toFixed(2)}\n` +
     `Average report tone (GDELT scale, negative = more negative coverage): ${params.avgTone !== null ? params.avgTone.toFixed(1) : "not available"}\n` +
     `Sample reported locations: ${params.sampleLocations.length > 0 ? params.sampleLocations.join("; ") : "none captured"}\n`;
@@ -130,11 +186,6 @@ async function broadcast(env: Env, type: string, payload: unknown) {
   });
 }
 
-interface CountBucket {
-  count: number;
-  avg_tone: number | null;
-}
-
 /** Self-provisioned the same way connectors/gdeltGkg.ts's and
  *  lib/gdeltAdaptiveBudget.ts's tables are — this app's D1 schema has no
  *  migration files checked into the repo (changes are normally applied by
@@ -163,6 +214,66 @@ async function ensureTable(env: Env): Promise<void> {
   await env.DB.prepare(
     `CREATE INDEX IF NOT EXISTS idx_country_escalation_country_window ON country_escalation_snapshots (country_code, window_end)`
   ).run();
+
+  // Added when escalation was redefined around military-posture events —
+  // D1/SQLite has no "ADD COLUMN IF NOT EXISTS", so each ALTER is tried and
+  // its "duplicate column name" error (already applied, by an earlier tick
+  // or another isolate) is swallowed; any other error still surfaces.
+  for (const stmt of [
+    `ALTER TABLE country_escalation_snapshots ADD COLUMN posture_current_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE country_escalation_snapshots ADD COLUMN posture_baseline_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE country_escalation_snapshots ADD COLUMN triggered_window TEXT NOT NULL DEFAULT 'slow'`,
+    `ALTER TABLE country_escalation_snapshots ADD COLUMN window_hours INTEGER NOT NULL DEFAULT ${SLOW_WINDOW_HOURS}`,
+  ]) {
+    try {
+      await env.DB.prepare(stmt).run();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!message.includes("duplicate column name")) throw err;
+    }
+  }
+}
+
+interface WindowBucket {
+  totalCount: number;
+  postureCount: number;
+  avgTone: number | null;
+}
+
+async function queryWindowBucket(env: Env, likePattern: string, start: string, end: string | null): Promise<WindowBucket> {
+  const row = await first<{ total_count: number; posture_count: number; avg_tone: number | null }>(
+    env.DB,
+    `SELECT COUNT(*) AS total_count,
+            SUM(CASE WHEN ${MILITARY_POSTURE_SQL} THEN 1 ELSE 0 END) AS posture_count,
+            AVG(avg_tone) AS avg_tone
+     FROM gdelt_bulk_events
+     WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? ${end ? "AND date_added < ?" : ""} AND place_name LIKE ?`,
+    end ? [...MILITARY_POSTURE_EVENT_CODES, start, end, likePattern] : [...MILITARY_POSTURE_EVENT_CODES, start, likePattern]
+  );
+  return {
+    totalCount: Number(row?.total_count ?? 0),
+    postureCount: Number(row?.posture_count ?? 0),
+    avgTone: row?.avg_tone ?? null,
+  };
+}
+
+interface WindowScore {
+  score: number;
+  current: WindowBucket;
+  baseline: WindowBucket;
+}
+
+/** growth is driven primarily by military-posture report growth (the
+ *  redefined signal), with overall conflict-toned volume growth kept as
+ *  smaller secondary context and negative tone nudging it further — same
+ *  sqrt-dampened ratio shape as the original scorer (and alerting.ts's
+ *  per-query scorer) so a near-zero baseline doesn't produce wild swings. */
+function scoreWindow(current: WindowBucket, baseline: WindowBucket): WindowScore {
+  const postureGrowth = Math.max(0, (current.postureCount - baseline.postureCount) / Math.sqrt(baseline.postureCount + 1));
+  const volumeGrowth = Math.max(0, (current.totalCount - baseline.totalCount) / Math.sqrt(baseline.totalCount + 1));
+  const tonePenalty = current.avgTone !== null && current.avgTone < 0 ? Math.abs(current.avgTone) : 0;
+  const score = postureGrowth * POSTURE_GROWTH_WEIGHT + volumeGrowth * VOLUME_GROWTH_WEIGHT + tonePenalty * TONE_WEIGHT;
+  return { score, current, baseline };
 }
 
 /** Scores every African country and writes one snapshot row each per tick;
@@ -170,39 +281,37 @@ async function ensureTable(env: Env): Promise<void> {
  *  from index.ts's scheduled() handler on the same 5-min cron as bulk
  *  ingestion (it's a handful of cheap D1 aggregate queries, no external
  *  calls, so running it every tick regardless of whether ingestion found a
- *  new export is fine). */
+ *  new export is fine).
+ *
+ *  Runs both the fast (6h) and slow (24h) window per country and keeps
+ *  whichever scores higher — see the module doc comment for why. */
 export async function scoreCountryEscalations(env: Env): Promise<void> {
   await ensureTable(env);
   const now = new Date();
-  const currentStart = toGdeltTimestamp(new Date(now.getTime() - CURRENT_WINDOW_HOURS * 3600_000));
-  const baselineStart = toGdeltTimestamp(new Date(now.getTime() - (CURRENT_WINDOW_HOURS + BASELINE_WINDOW_HOURS) * 3600_000));
-  const currentEnd = toGdeltTimestamp(now);
 
   for (const [code, name] of Object.entries(AFRICA_COUNTRIES)) {
     const likePattern = `%${name}%`;
 
-    const current = await first<CountBucket>(
-      env.DB,
-      `SELECT COUNT(*) AS count, AVG(avg_tone) AS avg_tone FROM gdelt_bulk_events
-       WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND place_name LIKE ?`,
-      [currentStart, likePattern]
-    );
-    const baseline = await first<CountBucket>(
-      env.DB,
-      `SELECT COUNT(*) AS count FROM gdelt_bulk_events
-       WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND date_added < ? AND place_name LIKE ?`,
-      [baselineStart, currentStart, likePattern]
-    );
+    const fastCurrentStart = toGdeltTimestamp(new Date(now.getTime() - FAST_WINDOW_HOURS * 3600_000));
+    const fastBaselineStart = toGdeltTimestamp(new Date(now.getTime() - FAST_WINDOW_HOURS * 2 * 3600_000));
+    const slowCurrentStart = toGdeltTimestamp(new Date(now.getTime() - SLOW_WINDOW_HOURS * 3600_000));
+    const slowBaselineStart = toGdeltTimestamp(new Date(now.getTime() - SLOW_WINDOW_HOURS * 2 * 3600_000));
+    const nowTs = toGdeltTimestamp(now);
 
-    const currentCount = Number(current?.count ?? 0);
-    const baselineCount = Number(baseline?.count ?? 0);
-    const avgTone = current?.avg_tone ?? null;
+    const [fastCurrent, fastBaseline, slowCurrent, slowBaseline] = await Promise.all([
+      queryWindowBucket(env, likePattern, fastCurrentStart, null),
+      queryWindowBucket(env, likePattern, fastBaselineStart, fastCurrentStart),
+      queryWindowBucket(env, likePattern, slowCurrentStart, null),
+      queryWindowBucket(env, likePattern, slowBaselineStart, slowCurrentStart),
+    ]);
 
-    // Same shape as alerting.ts's per-query scorer: ratio-based growth,
-    // nudged by negative tone (crises read as bad news, not just busy news).
-    const growth = (currentCount - baselineCount) / Math.sqrt(baselineCount + 1);
-    const tonePenalty = avgTone !== null && avgTone < 0 ? Math.abs(avgTone) : 0;
-    const escalationScore = Math.max(0, growth) + tonePenalty * 0.5;
+    const fast = scoreWindow(fastCurrent, fastBaseline);
+    const slow = scoreWindow(slowCurrent, slowBaseline);
+    const triggeredWindow: "fast" | "slow" = fast.score >= slow.score ? "fast" : "slow";
+    const winning = triggeredWindow === "fast" ? fast : slow;
+    const windowHours = triggeredWindow === "fast" ? FAST_WINDOW_HOURS : SLOW_WINDOW_HOURS;
+    const windowStart = triggeredWindow === "fast" ? fastCurrentStart : slowCurrentStart;
+    const escalationScore = winning.score;
 
     let level: "none" | AlertLevel = "none";
     if (escalationScore >= CRITICAL_THRESHOLD) level = "critical";
@@ -211,12 +320,20 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     await run(
       env.DB,
       `INSERT INTO country_escalation_snapshots
-        (id, country_code, country_name, window_start, window_end, current_count, baseline_count, avg_tone, escalation_score, level, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [newId(), code, name, currentStart, currentEnd, currentCount, baselineCount, avgTone, escalationScore, level, nowIso()]
+        (id, country_code, country_name, window_start, window_end, current_count, baseline_count, avg_tone, escalation_score, level, created_at,
+         posture_current_count, posture_baseline_count, triggered_window, window_hours)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        newId(), code, name, windowStart, nowTs,
+        winning.current.totalCount, winning.baseline.totalCount, winning.current.avgTone, escalationScore, level, nowIso(),
+        winning.current.postureCount, winning.baseline.postureCount, triggeredWindow, windowHours,
+      ]
     );
 
-    if (level !== "none" && currentCount >= 3) {
+    // Gate is on the posture count specifically (the real signal now), not
+    // overall volume — lowered from the old >=3 since posture-coded events
+    // are a narrower, higher-signal set than "any conflict-toned report".
+    if (level !== "none" && winning.current.postureCount >= 2) {
       const recent = await first<{ id: string }>(
         env.DB,
         `SELECT id FROM alerts WHERE geo_label = ? AND level = ? AND query_id IS NULL AND created_at > ? LIMIT 1`,
@@ -228,16 +345,18 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         const lng = centroid ? centroid[1] : null;
         const sample = await all<{ place_name: string }>(
           env.DB,
-          `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
-          [currentStart, likePattern]
+          `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
+          [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
         );
         const sampleLocationList = sample.map((r) => r.place_name);
         const sampleLocations = sampleLocationList.join("; ");
         const alertId = newId();
+        const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
         const templatedDescription =
-          `Conflict-related reporting in ${name} has risen to ${currentCount} report${currentCount === 1 ? "" : "s"} in the last ${CURRENT_WINDOW_HOURS}h, ` +
-          `versus a baseline of ${baselineCount} in the previous ${BASELINE_WINDOW_HOURS}h (escalation score ${escalationScore.toFixed(2)})` +
-          `${avgTone !== null ? `, average tone ${avgTone.toFixed(1)} (${avgTone < -3 ? "sharply negative" : avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
+          `${name} shows ${windowLabel} in military-posture reporting (mobilization, clashes, airstrikes, heavy weapons, blockades) — ` +
+          `${winning.current.postureCount} report${winning.current.postureCount === 1 ? "" : "s"} in the last ${windowHours}h ` +
+          `versus a baseline of ${winning.baseline.postureCount} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
+          `${winning.current.avgTone !== null ? `, average tone ${winning.current.avgTone.toFixed(1)} (${winning.current.avgTone < -3 ? "sharply negative" : winning.current.avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
           `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}`;
 
         // AI-written brief when ANTHROPIC_API_KEY is configured, falling
@@ -245,9 +364,13 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         // failure — see generateAnalyticalSummary's own doc comment.
         const aiSummary = await generateAnalyticalSummary(env, {
           countryName: name,
-          currentCount,
-          baselineCount,
-          avgTone,
+          windowHours,
+          triggeredWindow,
+          postureCurrentCount: winning.current.postureCount,
+          postureBaselineCount: winning.baseline.postureCount,
+          currentCount: winning.current.totalCount,
+          baselineCount: winning.baseline.totalCount,
+          avgTone: winning.current.avgTone,
           escalationScore,
           level,
           sampleLocations: sampleLocationList,
@@ -263,7 +386,17 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
             level,
             `${level === "critical" ? "Critical" : "Elevated"} escalation: ${name}`,
             description,
-            JSON.stringify({ currentCount, baselineCount, avgTone, escalationScore, aiGenerated: aiSummary !== null }),
+            JSON.stringify({
+              currentCount: winning.current.totalCount,
+              baselineCount: winning.baseline.totalCount,
+              postureCurrentCount: winning.current.postureCount,
+              postureBaselineCount: winning.baseline.postureCount,
+              avgTone: winning.current.avgTone,
+              escalationScore,
+              triggeredWindow,
+              windowHours,
+              aiGenerated: aiSummary !== null,
+            }),
             name,
             lat,
             lng,
@@ -283,6 +416,10 @@ export interface CountryEscalationSnapshot {
   countryName: string;
   currentCount: number;
   baselineCount: number;
+  postureCurrentCount: number;
+  postureBaselineCount: number;
+  triggeredWindow: "fast" | "slow";
+  windowHours: number;
   avgTone: number | null;
   escalationScore: number;
   level: "none" | "elevated" | "critical";
@@ -294,6 +431,10 @@ interface SnapshotRow {
   country_name: string;
   current_count: number;
   baseline_count: number;
+  posture_current_count: number;
+  posture_baseline_count: number;
+  triggered_window: "fast" | "slow";
+  window_hours: number;
   avg_tone: number | null;
   escalation_score: number;
   level: "none" | "elevated" | "critical";
@@ -317,6 +458,10 @@ export async function getLatestCountryEscalations(env: Env): Promise<CountryEsca
     countryName: r.country_name,
     currentCount: r.current_count,
     baselineCount: r.baseline_count,
+    postureCurrentCount: r.posture_current_count,
+    postureBaselineCount: r.posture_baseline_count,
+    triggeredWindow: r.triggered_window,
+    windowHours: r.window_hours,
     avgTone: r.avg_tone,
     escalationScore: r.escalation_score,
     level: r.level,
@@ -342,7 +487,10 @@ export interface EscalationEvidenceItem {
 export async function getCountryEscalationEvidence(env: Env, countryCode: string, limit = 10): Promise<EscalationEvidenceItem[]> {
   const name = AFRICA_COUNTRIES[countryCode.toUpperCase()];
   if (!name) return [];
-  const currentStart = toGdeltTimestamp(new Date(Date.now() - CURRENT_WINDOW_HOURS * 3600_000));
+  // The broader of the two scoring windows (SLOW_WINDOW_HOURS) — a drill-
+  // down should show everything that could be behind either a fast or slow
+  // trigger, not just the narrower 6h window.
+  const currentStart = toGdeltTimestamp(new Date(Date.now() - SLOW_WINDOW_HOURS * 3600_000));
   const rows = await all<{ place_name: string; event_code: string; avg_tone: number | null; num_mentions: number | null; source_url: string; date_added: string }>(
     env.DB,
     `SELECT place_name, event_code, avg_tone, num_mentions, source_url, date_added FROM gdelt_bulk_events
