@@ -142,3 +142,54 @@ export function isLikelyNonMilitaryUrl(url: string): boolean {
   if (matchEscalationKeywords(text).length > 0) return false; // the slug itself carries real escalation signal — keep it
   return NON_MILITARY_URL_SIGNALS.some((term) => text.includes(term));
 }
+
+/**
+ * Cross-check for GDELT geocoding misattribution — the concrete answer to
+ * "why is this [Yemen conflict report] misplaced off the coast of Sudan?".
+ * A real battle (Taiz, Yemen — Houthis vs. government forces, CAMEO-coded
+ * as genuine FIGHT-category events, no miscoding issue here) can still get
+ * placed on the WRONG country's map marker: the fighting is near the Bab
+ * al-Mandab strait/Red Sea coast, and GDELT's geocoder resolves a Red
+ * Sea/coastal mention to whichever named administrative unit its gazetteer
+ * matches best — which can be the opposite shore (Sudan's Red Sea State)
+ * rather than Yemen itself, especially for a maritime/strait reference with
+ * no inland city name to anchor it. place_name LIKE '%Sudan%' then — quite
+ * reasonably, given what GDELT itself reported — attributes a Yemen story
+ * to Sudan's evidence list and scoring.
+ *
+ * Same fix shape as isLikelyNonMilitaryUrl: GDELT's bulk export has no
+ * article text, but it does have the real source_url, and most headlines'
+ * own words end up in the URL slug ("battle-in-yemens-taiz-kills-scores-
+ * of-combatants"). If that slug clearly names a DIFFERENT country/conflict
+ * (Yemen, Houthi, Taiz, Gaza, Syria, Ukraine, etc.) and never mentions the
+ * country this event is about to be attributed to, the attribution is
+ * almost certainly a geocoding artifact, not a real report from that
+ * country — so it's dropped from that country's scoring/evidence (it
+ * simply isn't surfaced anywhere else either; this app doesn't score
+ * non-African countries, so there's no "correct" bucket to move it to).
+ */
+const NON_AFRICAN_CONFLICT_TERMS = [
+  "yemen", "houthi", "houthis", "taiz", "sanaa", "sana'a", "aden", "hodeidah", "marib",
+  "saudi-arabia", "saudi", "riyadh",
+  "israel", "israeli", "gaza", "palestine", "palestinian", "west-bank", "hamas", "hezbollah",
+  "syria", "syrian", "damascus", "aleppo",
+  "iraq", "iraqi", "baghdad", "iran", "iranian", "tehran",
+  "lebanon", "lebanese", "beirut", "jordan", "amman",
+  "oman", "qatar", "kuwait", "bahrain", "emirates", "dubai", "abu-dhabi",
+  "turkey", "turkish", "ankara",
+  "ukraine", "ukrainian", "kyiv", "russia", "russian", "moscow",
+  "afghanistan", "afghan", "kabul", "pakistan", "pakistani", "india", "indian",
+  "china", "chinese", "myanmar",
+];
+
+/** True when this event's own article URL slug clearly names a different,
+ *  non-African conflict/country and never mentions `targetCountryName` at
+ *  all — see the doc comment above. Used to drop a GDELT geocoding
+ *  misattribution from `targetCountryName`'s scoring/evidence, the same
+ *  way isLikelyNonMilitaryUrl drops a CAMEO miscoding. */
+export function isLikelyWrongCountryUrl(url: string, targetCountryName: string): boolean {
+  if (!url || !targetCountryName) return false;
+  const text = slugWords(url);
+  if (text.includes(targetCountryName.toLowerCase())) return false; // slug itself names the target — trust the attribution
+  return NON_AFRICAN_CONFLICT_TERMS.some((term) => text.includes(term));
+}
