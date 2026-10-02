@@ -135,6 +135,36 @@ interface CountBucket {
   avg_tone: number | null;
 }
 
+/** Self-provisioned the same way connectors/gdeltGkg.ts's and
+ *  lib/gdeltAdaptiveBudget.ts's tables are — this app's D1 schema has no
+ *  migration files checked into the repo (changes are normally applied by
+ *  hand via `wrangler d1 execute`, which this sandbox can't run), so this
+ *  table creates itself on first use instead. This was the actual cause of
+ *  the "no such table: country_escalation_snapshots" error on the danger-
+ *  marker layer: the table was never created anywhere, by hand or in code,
+ *  when this feature was first built. Cheap no-op (CREATE TABLE/INDEX IF
+ *  NOT EXISTS) on every call once it exists. */
+async function ensureTable(env: Env): Promise<void> {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS country_escalation_snapshots (
+      id TEXT PRIMARY KEY,
+      country_code TEXT NOT NULL,
+      country_name TEXT NOT NULL,
+      window_start TEXT NOT NULL,
+      window_end TEXT NOT NULL,
+      current_count INTEGER NOT NULL,
+      baseline_count INTEGER NOT NULL,
+      avg_tone REAL,
+      escalation_score REAL NOT NULL,
+      level TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+  await env.DB.prepare(
+    `CREATE INDEX IF NOT EXISTS idx_country_escalation_country_window ON country_escalation_snapshots (country_code, window_end)`
+  ).run();
+}
+
 /** Scores every African country and writes one snapshot row each per tick;
  *  raises a deduped alert when a country crosses ELEVATED/CRITICAL. Called
  *  from index.ts's scheduled() handler on the same 5-min cron as bulk
@@ -142,6 +172,7 @@ interface CountBucket {
  *  calls, so running it every tick regardless of whether ingestion found a
  *  new export is fine). */
 export async function scoreCountryEscalations(env: Env): Promise<void> {
+  await ensureTable(env);
   const now = new Date();
   const currentStart = toGdeltTimestamp(new Date(now.getTime() - CURRENT_WINDOW_HOURS * 3600_000));
   const baselineStart = toGdeltTimestamp(new Date(now.getTime() - (CURRENT_WINDOW_HOURS + BASELINE_WINDOW_HOURS) * 3600_000));
@@ -271,6 +302,10 @@ interface SnapshotRow {
 
 /** Latest snapshot per country — what the danger-icon map layer renders. */
 export async function getLatestCountryEscalations(env: Env): Promise<CountryEscalationSnapshot[]> {
+  // The map layer can be opened before the first cron tick has ever called
+  // scoreCountryEscalations (e.g. right after this feature first deploys),
+  // so this read path needs the same self-provisioning, not just the writer.
+  await ensureTable(env);
   const rows = await all<SnapshotRow>(
     env.DB,
     `SELECT s.* FROM country_escalation_snapshots s
