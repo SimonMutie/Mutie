@@ -324,28 +324,18 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
         },
       });
 
-      // Country-name label floating above the icon, always visible (not
-      // just on hover) — matching the reference design.
-      map.addLayer({
-        id: "osiris-points-warning",
-        type: "symbol",
-        source: "osiris-points",
-        filter: ["has", "escalationLevel"],
-        layout: {
-          "text-field": ["get", "title"],
-          "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
-          "text-size": 12,
-          "text-offset": [0, -2.9],
-          "text-anchor": "bottom",
-          "text-allow-overlap": true,
-          "text-ignore-placement": true,
-        },
-        paint: {
-          "text-color": ["match", ["get", "escalationLevel"], "critical", "#ff3d3d", "elevated", "#ff9d4f", "#ff9d4f"],
-          "text-halo-color": "#000000",
-          "text-halo-width": 1.4,
-        },
-      });
+      // Deliberately NO permanent place-name text label on the danger icon
+      // (removed per Simon's "remove the red pop up names of the places" —
+      // a bold, always-on, halo'd red label floating over every flagged
+      // country was also visually dominating/obscuring the smaller
+      // news-aggregation dots from other layers at the same cluster of
+      // points, reading as if the danger marker had "replaced" them even
+      // though every other layer's own features are still in the shared
+      // GeoJSON source untouched (see toGeoJsonPoints below). The full
+      // place name/country and its detail are still in the click popup
+      // (buildPopupHtml) — this just stops it from being a permanent,
+      // space-consuming map fixture. Only the icon (osiris-points-warning-
+      // icon above) stays always-visible now.
 
       // Approximate territory-change circles ("can this automatically plot a
       // polygon of what changed") — dashed amber outline + light fill so it
@@ -422,7 +412,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
 
       map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
-      const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning-icon", "osiris-points-warning"];
+      const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning-icon"];
       const TERRITORY_LAYER = "osiris-territory-changes-fill";
 
       map.on("click", (e) => {

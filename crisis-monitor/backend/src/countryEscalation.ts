@@ -3,7 +3,7 @@ import { newId } from "./ids";
 import { toGdeltTimestamp, BROAD_CONFLICT_SQL } from "./connectors/gdeltBulk";
 import { AFRICA_COUNTRIES } from "./routes/globalStatus";
 import { searchGdeltEscalationArticles } from "./lib/gdeltArticleSearch";
-import { isLikelyNonMilitaryUrl, isLikelyWrongCountryUrl } from "./lib/escalationKeywords";
+import { isConfirmedEscalationUrl } from "./lib/escalationKeywords";
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
 
@@ -339,29 +339,27 @@ async function queryWindowBucket(env: Env, countryName: string, likePattern: str
   );
 
   // Posture count is deliberately NOT a plain SQL SUM anymore — each
-  // candidate posture-coded event's own source_url is cross-checked
-  // against two filters first (lib/escalationKeywords.ts):
-  //   - isLikelyNonMilitaryUrl: GDELT's bulk feed has no article text, only
-  //     a CAMEO code its own shallow verb-phrase parser assigned, and that
-  //     parser demonstrably miscodes unrelated economic/resource/
-  //     diplomatic stories (confirmed case: a mining-investment consortium
-  //     story) into the same 15x/19x codes as a genuine posture report.
-  //   - isLikelyWrongCountryUrl: a REAL military event can still be placed
-  //     on the wrong country's bucket by GDELT's geocoder — confirmed case:
-  //     a Yemen (Taiz/Bab-al-Mandab) battle report geocoded onto Sudan's
-  //     Red Sea coast purely because of maritime/strait-reference geocoding
-  //     ambiguity, with "Sudan" never actually named in the story itself.
-  // The URL slug is the one piece of real signal GDELT's bulk export does
-  // carry per event, so it's used here to drop both classes of false
-  // positive before they can count toward a country's score at all, not
-  // just hide them from the evidence list after the fact.
+  // candidate posture-coded event's own source_url must be POSITIVELY
+  // confirmed by isConfirmedEscalationUrl (lib/escalationKeywords.ts)
+  // before it counts: a real keyword/named-armed-group match in its own
+  // slug AND not a different country's story geocoded here by mistake.
+  // Plain CAMEO-code membership alone is not enough — GDELT's bulk feed
+  // has no article text, only a code its own shallow verb-phrase parser
+  // assigned, and that parser has repeatedly miscoded unrelated stories
+  // (a mining-investment consortium, a helicopter-crash report, a mobile-
+  // data pricing story, a migrant's court case) into the same 15x/19x
+  // "posture" codes a genuine military report gets. Requiring a real,
+  // positive text signal before anything can count is what finally stops
+  // this (see isConfirmedEscalationUrl's own doc comment for the full
+  // reasoning), rather than chasing each new disguise with another
+  // exclusion rule.
   const postureRows = await all<{ source_url: string }>(
     env.DB,
     `SELECT source_url FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? ${end ? "AND date_added < ?" : ""} AND place_name LIKE ?`,
     end ? [...MILITARY_POSTURE_EVENT_CODES, start, end, likePattern] : [...MILITARY_POSTURE_EVENT_CODES, start, likePattern]
   );
   const postureCount = postureRows.filter(
-    (r) => !isLikelyNonMilitaryUrl(r.source_url) && !isLikelyWrongCountryUrl(r.source_url, countryName)
+    (r) => isConfirmedEscalationUrl(r.source_url, countryName)
   ).length;
 
   return {
@@ -439,7 +437,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       [...SEVERE_EVENT_CODES, windowStart, likePattern]
     );
     const severeCount = severeRows.filter(
-      (r) => !isLikelyNonMilitaryUrl(r.source_url) && !isLikelyWrongCountryUrl(r.source_url, name)
+      (r) => isConfirmedEscalationUrl(r.source_url, name)
     ).length;
 
     let level: "none" | AlertLevel = "none";
@@ -467,10 +465,10 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     let sampleLocationList: string[] = [];
     if (level !== "none") {
       // Raw rows (not a GROUP BY aggregate) so each row's own source_url can
-      // be cross-checked with isLikelyNonMilitaryUrl first — the same
-      // CAMEO-miscoding filter applied to scoring/evidence above. A GROUP
-      // BY place_name/event_code done in SQL has no per-row URL to filter
-      // on, so this fetches a bounded raw sample instead and does the
+      // be cross-checked with isConfirmedEscalationUrl first — the same
+      // positive-match gate applied to scoring/evidence above. A GROUP BY
+      // place_name/event_code done in SQL has no per-row URL to filter on,
+      // so this fetches a bounded raw sample instead and does the
       // location/event-type grouping in JS after the filter.
       const rawSample = await all<{ place_name: string; event_code: string; num_mentions: number | null; source_url: string }>(
         env.DB,
@@ -480,7 +478,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
       );
       const filteredSample = rawSample.filter(
-        (r) => !isLikelyNonMilitaryUrl(r.source_url) && !isLikelyWrongCountryUrl(r.source_url, name)
+        (r) => isConfirmedEscalationUrl(r.source_url, name)
       );
 
       // Most-mentioned distinct place names, same ordering
@@ -768,7 +766,7 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
   // down should show everything that could be behind either a fast or slow
   // trigger, not just the narrower 6h window.
   const currentStart = toGdeltTimestamp(new Date(Date.now() - SLOW_WINDOW_HOURS * 3600_000));
-  // Over-fetch (3x) before the isLikelyNonMilitaryUrl filter below, so
+  // Over-fetch (3x) before the isConfirmedEscalationUrl filter below, so
   // dropping confident GDELT CAMEO miscodings (see that function's own doc
   // comment — a mining/trade/diplomatic story coded into a posture bucket
   // with no real military content) doesn't quietly shrink the requested
@@ -781,7 +779,7 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
     [...MILITARY_POSTURE_EVENT_CODES, currentStart, `%${name}%`, limit * 3]
   );
   return rows
-    .filter((r) => !isLikelyNonMilitaryUrl(r.source_url) && !isLikelyWrongCountryUrl(r.source_url, name))
+    .filter((r) => isConfirmedEscalationUrl(r.source_url, name))
     .slice(0, limit)
     .map((r) => ({
       placeName: r.place_name,
