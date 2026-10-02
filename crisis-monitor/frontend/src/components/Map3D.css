@@ -157,6 +157,7 @@
 }
 
 .osiris-popup-evidence-link {
+  display: block;
   color: #9db4ff;
   text-decoration: none;
   white-space: nowrap;
@@ -166,6 +167,20 @@
 .osiris-popup-evidence-link:hover {
   text-decoration: underline;
   color: #c3cfff;
+}
+
+.osiris-popup-evidence-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #0b0d14;
+  background: #ffb55c;
+  text-decoration: none;
+  vertical-align: middle;
 }
 
 .osiris-popup-evidence-empty {

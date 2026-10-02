@@ -7,7 +7,7 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getLatestCountryEscalations, getCountryEscalationEvidence, getTerritoryChangeEvents, AFRICA_CENTROIDS } from "../countryEscalation";
+import { getLatestCountryEscalations, getCountryEscalationEvidence, getCombinedEscalationEvidence, getTerritoryChangeEvents, AFRICA_CENTROIDS } from "../countryEscalation";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 
@@ -435,13 +435,20 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
       const features: NormalizedFeature[] = [];
       for (const s of snapshots) {
         if (s.level === "none") continue;
-        const centroid = AFRICA_CENTROIDS[s.countryCode];
-        if (!centroid) continue;
-        const [lat, lng] = centroid;
-        // Top contributing report's own source link (most-mentioned first —
-        // same ordering as the /evidence endpoint), so "Open source" on the
-        // map popup goes somewhere real instead of nowhere.
+        // Top contributing (most-mentioned) military-posture report — its
+        // own geocoded lat/lon places the marker at the actual reported
+        // location (e.g. Cabo Delgado, Tigray) instead of the country's
+        // fixed centroid (which previously put every flagged country's
+        // marker on its capital regardless of where the events actually
+        // were — "a deterioration in Ethiopia should not be placed in
+        // Addis when it is actually happening in Tigray"). Falls back to
+        // the country centroid only when GDELT didn't resolve a usable
+        // point for the top event.
         const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1);
+        const centroid = AFRICA_CENTROIDS[s.countryCode];
+        const lat = topEvidence?.lat ?? centroid?.[0];
+        const lng = topEvidence?.lon ?? centroid?.[1];
+        if (lat == null || lng == null) continue;
         // AI brief when the scorer produced one this tick (see
         // countryEscalation.ts's ai_summary column); the mechanical
         // fallback sentence otherwise — either way this is a real 2-3
@@ -457,7 +464,10 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
           properties: {
             id: `escalation-${s.countryCode}`,
             countryCode: s.countryCode,
-            title: s.countryName,
+            // Country name alone doesn't say WHERE — append the actual
+            // reported place (e.g. "Mozambique — Cabo Delgado") whenever a
+            // real location is behind this marker, not just its centroid.
+            title: topEvidence?.placeName ? `${s.countryName} — ${topEvidence.placeName}` : s.countryName,
             time: s.windowEnd,
             intensity: s.level === "critical" ? 1 : 0.6,
             intensityLabel: s.level === "critical" ? "Critical" : "Elevated",
@@ -486,7 +496,12 @@ liveLayersRouter.get("/conflict-escalation/:code/evidence", async (c) => {
   // should mean 168 real, clickable source links are available, not just
   // the top 10. 500 is a safety ceiling (D1 query cost), not an expected
   // real-world count for one country's window.
-  const items = await getCountryEscalationEvidence(c.env, code, 500);
+  // Combined now — the structured GDELT evidence plus real Africa Wire
+  // articles whose own text literally matched one of the escalation
+  // keywords (see countryEscalation.ts's getCombinedEscalationEvidence) —
+  // "combine their reachable links of all articles pulled with the
+  // specified indicators" under one list, not two separate ones.
+  const items = await getCombinedEscalationEvidence(c.env, code, 500);
   return c.json({ countryCode: code.toUpperCase(), items, fetchedAt: new Date().toISOString() });
 });
 

@@ -49,12 +49,10 @@ import type { AlertLevel } from "./types";
 // CAMEO event codes verified against the official CAMEO codebook
 // (parusanalytics.com/eventdata/cameo.dir/CAMEO.09b6.pdf) — the closest
 // real, structured equivalent GDELT's bulk data has to the plain-language
-// deterioration terms Simon asked for ("capture/took control of", "as many
-// words as possible that could demonstrate a deterioration"). There is no
-// raw article text in the bulk feed to literally regex "captured" against
-// (see gdeltBulk.ts's own doc comment on why) — CAMEO code is the
-// structured equivalent, so each line below maps a plain-language signal to
-// its verified code(s):
+// deterioration terms Simon asked for ("capture/took control of"). There is
+// no raw article text in the bulk feed to literally regex "captured"
+// against (see gdeltBulk.ts's own doc comment on why), so CAMEO code is the
+// structured equivalent:
 //
 // Category 15 EXHIBIT FORCE POSTURE:
 //   150 Demonstrate military or police power, not specified below
@@ -62,24 +60,6 @@ import type { AlertLevel } from "./types";
 //   152 Increase military alert status            -> "increased military movement"
 //   153 Mobilize or increase police power
 //   154 Mobilize or increase armed forces          -> "military mobilisation" / "reinforcement"
-// Category 17 COERCE:
-//   171 Seize or damage property, not specified     -> "seized" (non-territorial)
-//   1711 Confiscate property / 1712 Destroy property
-//   172 Impose administrative sanctions              -> clampdown signals
-//   1721 Impose restrictions on political freedoms
-//   1722 Ban political parties or politicians
-//   1723 Impose curfew
-//   1724 Impose state of emergency or martial law
-//   174 Expel or deport individuals
-//   175 Use tactics of violent repression
-// Category 18 ASSAULT:
-//   180 Use unconventional violence, not specified
-//   181 Abduct, hijack, or take hostage
-//   182 Physically assault / 1821 sexual assault / 1822 torture / 1823 kill by assault
-//   183 Conduct suicide/car/other non-military bombing, not specified
-//   1831 suicide bombing / 1832 vehicular bombing / 1833 roadside bombing / 1834 location bombing
-//   184 Use as human shield
-//   185 Attempt to assassinate / 186 Assassinate
 // Category 19 FIGHT:
 //   190 Use conventional military force            -> "military clashes" / "armed confrontations"
 //   191 Impose blockade, restrict movement
@@ -90,8 +70,22 @@ import type { AlertLevel } from "./types";
 //   1951 Employ precision-guided aerial munitions     -> "airstrikes"
 //   1952 Employ remotely piloted aerial munitions     -> "drone strikes"
 //   196 Violate ceasefire
-// Category 20 USE UNCONVENTIONAL MASS VIOLENCE:
+// Category 20 USE UNCONVENTIONAL MASS VIOLENCE (the severity-tier override,
+// see SEVERE_EVENT_CODES below):
 //   200-204(1/2) mass killings, ethnic cleansing, WMD — most severe tier
+//
+// Narrowed from an earlier pass that also included category 17 COERCE
+// (property seizure, curfews, party bans) and category 18 ASSAULT (assault,
+// bombings, assassination): those codes fire just as readily for ordinary
+// crime, political repression, or terrorism with no military/conflict actor
+// involved at all, and folding them into "military escalation" was
+// producing false positives across countries with no real security
+// deterioration ("the entire continent showing danger"). This is
+// deliberately a STRICTER, more conservative list now — real military/
+// armed-conflict posture only, per Simon's "strictly use the criteria"
+// direction, even though it means missing some non-military deterioration
+// (a political crackdown, a wave of kidnappings) this layer no longer
+// claims to cover.
 //
 // Deliberately NOT included: category 08 "YIELD" (0871 declare truce, 0872
 // ease blockade, 0873 demobilize, 0874 retreat or surrender militarily) —
@@ -99,18 +93,60 @@ import type { AlertLevel } from "./types";
 // folding them into an escalation bucket would misrepresent what the data
 // says. A retreat forced under pressure can still read as deterioration in
 // plain language, but this data can't tell "orderly withdrawal" apart from
-// "routed" — see the chat reply for more on this specific judgment call.
-// 173 "Arrest, detain, or charge with legal action" is also left out:
-// routine law enforcement activity codes the same way a political crackdown
-// does, so it's too noisy a signal on its own to include here.
+// "routed".
 const MILITARY_POSTURE_EVENT_CODES = [
   "150", "151", "152", "153", "154",
-  "171", "1711", "1712", "172", "1721", "1722", "1723", "1724", "174", "175",
-  "180", "181", "182", "1821", "1822", "1823", "183", "1831", "1832", "1833", "1834", "184", "185", "186",
   "190", "191", "192", "193", "194", "195", "1951", "1952", "196",
   "200", "201", "202", "203", "204", "2041", "2042",
 ] as const;
 const MILITARY_POSTURE_SQL = `event_code IN (${MILITARY_POSTURE_EVENT_CODES.map(() => "?").join(",")})`;
+// The most severe tier (mass killings, ethnic cleansing, WMD) — presence of
+// even ONE of these in a window forces Critical outright, independent of
+// the growth-vs-baseline math below. A single atrocity-class event
+// shouldn't need to "statistically surprise" a baseline to register as
+// critical; see SEVERE_TIER_THRESHOLD and the scoreWindow()/severity-
+// override logic further down.
+const SEVERE_EVENT_CODES = ["200", "201", "202", "203", "204", "2041", "2042"] as const;
+const SEVERE_EVENT_SQL = `event_code IN (${SEVERE_EVENT_CODES.map(() => "?").join(",")})`;
+// No level fires on growth/ratio alone below this many real posture-coded
+// events in the window — this is the direct fix for the "near-zero
+// baseline" bug: with a baseline of 0, going from 0 to just 2 events could
+// mathematically exceed the Elevated threshold (2/sqrt(1) * 1.6 = 3.2) even
+// though 2 events in a country of this size is noise, not a trend. An
+// absolute floor, not just a relative one, is required before the growth
+// score can assign a level at all (the severity override above bypasses
+// this floor deliberately — one mass-killing event is critical regardless
+// of count).
+const MIN_ABSOLUTE_POSTURE_COUNT = 3;
+
+// Human-readable labels for the codes above — used to tell the AI summary
+// (and the templated fallback) WHAT KIND of events actually happened in a
+// country's window, not just a bare count, so two countries both at
+// "Elevated" read as genuinely different situations rather than the same
+// generic sentence with different numbers swapped in.
+const EVENT_CODE_LABEL: Record<string, string> = {
+  "150": "military/police power demonstrated",
+  "151": "police alert status raised",
+  "152": "military alert status raised",
+  "153": "police mobilization",
+  "154": "armed forces mobilization/reinforcement",
+  "190": "conventional military force used",
+  "191": "blockade imposed",
+  "192": "territory occupied / control change",
+  "193": "fighting with small arms",
+  "194": "fighting with artillery/tanks",
+  "195": "aerial weapons employed",
+  "1951": "precision-guided airstrike",
+  "1952": "drone strike",
+  "196": "ceasefire violated",
+  "200": "unconventional mass violence",
+  "201": "mass expulsion",
+  "202": "mass killings",
+  "203": "ethnic cleansing",
+  "204": "weapons of mass destruction used",
+  "2041": "chemical/biological/radiological weapons used",
+  "2042": "nuclear detonation",
+};
 // Territory/control-change events specifically — the structured equivalent
 // of "captured"/"took control of"/"seized [a place]" — used separately by
 // the approximate territory-change map layer below (not just folded into
@@ -176,6 +212,8 @@ async function generateAnalyticalSummary(
     escalationScore: number;
     level: "elevated" | "critical";
     sampleLocations: string[];
+    eventTypeSummary: string;
+    severeCount: number;
   }
 ): Promise<string | null> {
   if (!env.ANTHROPIC_API_KEY) return null;
@@ -183,16 +221,20 @@ async function generateAnalyticalSummary(
   const prompt =
     `You are drafting one short paragraph (2-3 sentences, no markdown, no headings, no bullet points) for a security-monitoring alert ` +
     `on an African conflict-monitoring dashboard. Use only the facts given below — do not add locations, causes, actors, or context not stated here. ` +
+    `Lead with WHAT KIND of event is driving this (the event-type breakdown below), not just the raw counts — two different countries hitting this ` +
+    `alert for different reasons should read as genuinely different situation notes, not the same sentence with swapped-in numbers. ` +
     `Write it the way a conflict analyst would phrase a terse situation note, not a headline and not a hedge-filled disclaimer.\n\n` +
     `Country: ${params.countryName}\n` +
     `Alert level: ${params.level}\n` +
     `Signal: ${params.triggeredWindow === "fast" ? "breaking/rapid" : "sustained"} rise over a ${params.windowHours}h window\n` +
+    `Event types driving this, most frequent first: ${params.eventTypeSummary || "not broken down"}\n` +
     `Military-posture reports (mobilization, clashes, airstrikes, drone strikes, heavy weapons, blockades, ceasefire violations) in that window: ${params.postureCurrentCount}\n` +
     `Military-posture baseline (prior ${params.windowHours}h): ${params.postureBaselineCount}\n` +
     `Overall conflict-toned reports in that window: ${params.currentCount} (baseline ${params.baselineCount.toFixed(0)})\n` +
     `Escalation score: ${params.escalationScore.toFixed(2)}\n` +
     `Average report tone (GDELT scale, negative = more negative coverage): ${params.avgTone !== null ? params.avgTone.toFixed(1) : "not available"}\n` +
-    `Sample reported locations: ${params.sampleLocations.length > 0 ? params.sampleLocations.join("; ") : "none captured"}\n`;
+    `Sample reported locations: ${params.sampleLocations.length > 0 ? params.sampleLocations.join("; ") : "none captured"}\n` +
+    `${params.severeCount > 0 ? `Mass-violence-tier events (mass killings/ethnic cleansing/WMD-class) in that window: ${params.severeCount} — this alone makes the alert critical, say so plainly.\n` : ""}`;
 
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -358,9 +400,27 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     const windowStart = triggeredWindow === "fast" ? fastCurrentStart : slowCurrentStart;
     const escalationScore = winning.score;
 
+    // Severity-tier check — independent of the growth math below. See
+    // SEVERE_EVENT_CODES's doc comment: one mass-killing/WMD-class event is
+    // critical on its own, it doesn't need to "beat a baseline" to count.
+    const severeRow = await first<{ count: number }>(
+      env.DB,
+      `SELECT COUNT(*) AS count FROM gdelt_bulk_events WHERE ${SEVERE_EVENT_SQL} AND date_added >= ? AND place_name LIKE ?`,
+      [...SEVERE_EVENT_CODES, windowStart, likePattern]
+    );
+    const severeCount = Number(severeRow?.count ?? 0);
+
     let level: "none" | AlertLevel = "none";
-    if (escalationScore >= CRITICAL_THRESHOLD) level = "critical";
-    else if (escalationScore >= ELEVATED_THRESHOLD) level = "elevated";
+    // Growth/ratio math only gets to assign a level once there's a real
+    // absolute count behind it (MIN_ABSOLUTE_POSTURE_COUNT) — this is the
+    // direct fix for a near-zero baseline mathematically exceeding the
+    // Elevated threshold off 2-3 noisy events. The severity override below
+    // bypasses this floor on purpose.
+    if (winning.current.postureCount >= MIN_ABSOLUTE_POSTURE_COUNT) {
+      if (escalationScore >= CRITICAL_THRESHOLD) level = "critical";
+      else if (escalationScore >= ELEVATED_THRESHOLD) level = "elevated";
+    }
+    if (severeCount > 0) level = "critical";
 
     // Description + AI summary are now computed for every Elevated/Critical
     // tick (every 5 minutes), not just the first time an hourly-deduped
@@ -374,24 +434,46 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     let descriptionIsAi = false;
     let sampleLocationList: string[] = [];
     if (level !== "none") {
+      // Ordered by mentions (not arbitrary DISTINCT order) so the first
+      // entry is genuinely the most-reported place — same ordering
+      // getCountryEscalationEvidence/the map marker's own geolocation use,
+      // so the summary text and the marker's actual position agree.
       const sample = await all<{ place_name: string }>(
         env.DB,
-        `SELECT DISTINCT place_name FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ? LIMIT 3`,
+        `SELECT place_name FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
+         GROUP BY place_name ORDER BY MAX(num_mentions) DESC LIMIT 3`,
         [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
       );
       sampleLocationList = sample.map((r) => r.place_name);
       const sampleLocations = sampleLocationList.join("; ");
+
+      // What KIND of events, not just how many — this is what makes two
+      // different countries' summaries actually read differently instead of
+      // the same sentence with swapped-in numbers.
+      const eventTypes = await all<{ event_code: string; event_count: number }>(
+        env.DB,
+        `SELECT event_code, COUNT(*) AS event_count FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
+         GROUP BY event_code ORDER BY event_count DESC LIMIT 5`,
+        [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
+      );
+      const eventTypeLabels = eventTypes.map((r) => `${EVENT_CODE_LABEL[r.event_code] ?? `event code ${r.event_code}`} (${r.event_count})`);
+      const eventTypeSummary = eventTypeLabels.join("; ");
+
       const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
       const templatedDescription =
-        `${name} shows ${windowLabel} in military-posture reporting (mobilization, clashes, airstrikes, heavy weapons, blockades) — ` +
+        `${name}${sampleLocationList[0] ? ` (near ${sampleLocationList[0]})` : ""} shows ${windowLabel} in military-posture reporting — ` +
+        `${eventTypeSummary ? `${eventTypeSummary}. ` : ""}` +
         `${winning.current.postureCount} report${winning.current.postureCount === 1 ? "" : "s"} in the last ${windowHours}h ` +
         `versus a baseline of ${winning.baseline.postureCount} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
         `${winning.current.avgTone !== null ? `, average tone ${winning.current.avgTone.toFixed(1)} (${winning.current.avgTone < -3 ? "sharply negative" : winning.current.avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
-        `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}`;
+        `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}` +
+        `${severeCount > 0 ? ` Includes ${severeCount} mass-violence-tier report${severeCount === 1 ? "" : "s"} (mass killings/ethnic cleansing/WMD-class).` : ""}`;
 
       // AI-written brief when ANTHROPIC_API_KEY is configured, falling back
       // to the plain templated sentence above otherwise or on any failure
-      // — see generateAnalyticalSummary's own doc comment.
+      // — see generateAnalyticalSummary's own doc comment. Fed the real
+      // event-type breakdown and top place so the brief reflects what
+      // actually happened in THIS country's window, not a generic shape.
       const aiSummary = await generateAnalyticalSummary(env, {
         countryName: name,
         windowHours,
@@ -404,6 +486,8 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         escalationScore,
         level,
         sampleLocations: sampleLocationList,
+        eventTypeSummary,
+        severeCount,
       });
       description = aiSummary ?? templatedDescription;
       descriptionIsAi = aiSummary !== null;
@@ -422,10 +506,12 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       ]
     );
 
-    // Gate is on the posture count specifically (the real signal now), not
-    // overall volume — lowered from the old >=3 since posture-coded events
-    // are a narrower, higher-signal set than "any conflict-toned report".
-    if (level !== "none" && winning.current.postureCount >= 2) {
+    // Same floor-or-severity-override logic as the level assignment above —
+    // a single severe-tier event (severeCount>0) alerts even if it's the
+    // only posture-coded event this window, since MIN_ABSOLUTE_POSTURE_COUNT
+    // would otherwise block a genuine single massacre/WMD report from ever
+    // raising an alert.
+    if (level !== "none" && (winning.current.postureCount >= MIN_ABSOLUTE_POSTURE_COUNT || severeCount > 0)) {
       const recent = await first<{ id: string }>(
         env.DB,
         `SELECT id FROM alerts WHERE geo_label = ? AND level = ? AND query_id IS NULL AND created_at > ? LIMIT 1`,
@@ -544,6 +630,21 @@ export interface EscalationEvidenceItem {
   numMentions: number | null;
   sourceUrl: string;
   dateAdded: string;
+  lat: number | null;
+  lon: number | null;
+  /** "gdelt" — a structured CAMEO-coded bulk event (getCountryEscalationEvidence).
+   *  "africa-wire" — a real crawled article whose title/description literally
+   *  matched one of Simon's escalation keywords (see
+   *  lib/escalationKeywords.ts / getAfricaWireEscalationEvidence) — this is
+   *  the "pull these from news aggregated through Africa Wire... to flag
+   *  only when such terms appear" piece, which GDELT's structured-only bulk
+   *  feed can't provide on its own. Optional/absent on older cached rows. */
+  source?: "gdelt" | "africa-wire";
+  /** Real article title — only ever set for source: "africa-wire" items
+   *  (GDELT bulk events carry no article title, only a place name). */
+  title?: string;
+  /** Which escalation keyword(s) matched — only set for source: "africa-wire" items. */
+  matchedKeywords?: string[];
 }
 
 /** The "see what's behind this" drill-down: the actual contributing bulk
@@ -601,6 +702,13 @@ export async function getTerritoryChangeEvents(env: Env, hours: number): Promise
   }));
 }
 
+/** Strictly scoped to MILITARY_POSTURE_SQL (not the looser BROAD_CONFLICT_SQL
+ *  every other GDELT layer uses) — this is specifically "what's behind this
+ *  country's military-escalation flag", so a link here should always be
+ *  about something that actually matches the stated criteria. Previously
+ *  this used the broad conflict-toned filter, which could surface a link
+ *  about something negative-toned but conflict-unrelated under a "military
+ *  escalation" marker. */
 export async function getCountryEscalationEvidence(env: Env, countryCode: string, limit = 10): Promise<EscalationEvidenceItem[]> {
   const name = AFRICA_COUNTRIES[countryCode.toUpperCase()];
   if (!name) return [];
@@ -608,12 +716,12 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
   // down should show everything that could be behind either a fast or slow
   // trigger, not just the narrower 6h window.
   const currentStart = toGdeltTimestamp(new Date(Date.now() - SLOW_WINDOW_HOURS * 3600_000));
-  const rows = await all<{ place_name: string; event_code: string; avg_tone: number | null; num_mentions: number | null; source_url: string; date_added: string }>(
+  const rows = await all<{ place_name: string; event_code: string; avg_tone: number | null; num_mentions: number | null; source_url: string; date_added: string; lat: number | null; lon: number | null }>(
     env.DB,
-    `SELECT place_name, event_code, avg_tone, num_mentions, source_url, date_added FROM gdelt_bulk_events
-     WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? AND place_name LIKE ?
+    `SELECT place_name, event_code, avg_tone, num_mentions, source_url, date_added, lat, lon FROM gdelt_bulk_events
+     WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
      ORDER BY num_mentions DESC LIMIT ?`,
-    [currentStart, `%${name}%`, limit]
+    [...MILITARY_POSTURE_EVENT_CODES, currentStart, `%${name}%`, limit]
   );
   return rows.map((r) => ({
     placeName: r.place_name,
@@ -622,5 +730,73 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
     numMentions: r.num_mentions,
     sourceUrl: r.source_url,
     dateAdded: r.date_added,
+    lat: r.lat,
+    lon: r.lon,
+    source: "gdelt" as const,
   }));
+}
+
+/** Shape returned by AfricaWireActor's /keyword-matches — see
+ *  durableObjects/africaWireActor.ts's EscalationArticleMatch. Duplicated
+ *  here (rather than imported) to avoid this module importing a Durable
+ *  Object class file just for a response-shape type. */
+interface AfricaWireKeywordMatch {
+  id: string;
+  title: string;
+  link: string;
+  published: string;
+  domain: string;
+  matchedKeywords: string[];
+}
+
+/** The real-article counterpart to getCountryEscalationEvidence() above:
+ *  queries AfricaWireActor's already-crawled items (durableObjects/
+ *  africaWireActor.ts) for ones whose title/description literally matched
+ *  one of Simon's escalation keywords (lib/escalationKeywords.ts), scoped
+ *  to one country. This is what makes "pulled from news aggregated through
+ *  Africa Wire... to flag only when such terms appear" real: GDELT's bulk
+ *  feed has no raw article text to keyword-match (see this file's own doc
+ *  comment on MILITARY_POSTURE_EVENT_CODES), so this is a second, separate
+ *  evidence source — corroborating real article links, never a second
+ *  scoring path (a keyword match here never changes a country's alert
+ *  level on its own). Never throws: a DO fetch failure just means no Africa
+ *  Wire evidence this call, not a broken evidence endpoint. */
+export async function getAfricaWireEscalationEvidence(env: Env, countryCode: string, limit = 30): Promise<EscalationEvidenceItem[]> {
+  try {
+    const code = countryCode.toUpperCase();
+    const stub = env.AFRICA_WIRE_ACTOR.get(env.AFRICA_WIRE_ACTOR.idFromName("global"));
+    const res = await stub.fetch(`http://africa-wire-actor/keyword-matches?country=${encodeURIComponent(code)}`);
+    if (!res.ok) return [];
+    const data = await res.json<{ matches: Record<string, AfricaWireKeywordMatch[]> }>();
+    const items = data.matches[code] ?? [];
+    return items.slice(0, limit).map((it) => ({
+      placeName: it.domain,
+      eventCode: "",
+      avgTone: null,
+      numMentions: null,
+      sourceUrl: it.link,
+      dateAdded: it.published,
+      lat: null,
+      lon: null,
+      source: "africa-wire" as const,
+      title: it.title,
+      matchedKeywords: it.matchedKeywords,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/** Combines the structured GDELT evidence and the real Africa-Wire-article
+ *  evidence into one newest-first list — "combine their reachable links of
+ *  all articles pulled with the specified indicators" under one country's
+ *  popup, rather than two separate, disconnected lists. */
+export async function getCombinedEscalationEvidence(env: Env, countryCode: string, limit = 500): Promise<EscalationEvidenceItem[]> {
+  const [gdelt, africaWire] = await Promise.all([
+    getCountryEscalationEvidence(env, countryCode, limit),
+    getAfricaWireEscalationEvidence(env, countryCode, limit),
+  ]);
+  return [...africaWire, ...gdelt]
+    .sort((a, b) => Date.parse(b.dateAdded) - Date.parse(a.dateAdded))
+    .slice(0, limit);
 }

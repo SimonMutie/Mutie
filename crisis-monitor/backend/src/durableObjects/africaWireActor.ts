@@ -4,6 +4,7 @@ import { AFRICA_CENTROIDS } from "../countryEscalation";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
+import { matchEscalationKeywords } from "../lib/escalationKeywords";
 
 /**
  * Crawls the ~260 African country/pan-African/institutional homepages in
@@ -80,6 +81,21 @@ interface WireItem {
   riskTextEn?: string;
 }
 
+/** One Africa Wire article that literally matched one or more of Simon's
+ *  escalation keywords (see lib/escalationKeywords.ts) — the real,
+ *  reachable article link + title this keyword flagged, not a GDELT
+ *  structured-event row. Returned grouped by country so
+ *  countryEscalation.ts's getAfricaWireEscalationEvidence() can merge these
+ *  straight into a country's evidence list alongside its GDELT evidence. */
+export interface EscalationArticleMatch {
+  id: string;
+  title: string;
+  link: string;
+  published: string;
+  domain: string;
+  matchedKeywords: string[];
+}
+
 function domainOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -110,7 +126,48 @@ export class AfricaWireActor implements DurableObject {
       return Response.json(await this.buildSnapshot());
     }
 
+    if (url.pathname === "/keyword-matches") {
+      const country = url.searchParams.get("country") ?? undefined;
+      return Response.json({ matches: await this.getKeywordMatches(country) });
+    }
+
     return new Response("not found", { status: 404 });
+  }
+
+  /** Scans every already-crawled Africa Wire item (across whichever of the
+   *  ~260 sources have been processed so far — no re-fetch, this just reads
+   *  back DO storage already populated by processSource()) for a literal
+   *  match against Simon's escalation keyword list, grouped by country code
+   *  — the real-article counterpart to countryEscalation.ts's CAMEO-code-
+   *  based GDELT scoring, which has no raw article text to match against.
+   *  `countryCode` narrows to one country; omitted, every country with at
+   *  least one match is returned. Each country's matches are capped and
+   *  newest-first, same shape as the GDELT evidence list this gets merged
+   *  with (see countryEscalation.ts's getAfricaWireEscalationEvidence). */
+  private async getKeywordMatches(countryCode?: string): Promise<Record<string, EscalationArticleMatch[]>> {
+    const MAX_PER_COUNTRY = 30;
+    const itemEntries = await this.state.storage.list<WireItem[]>({ prefix: "items:" });
+    const byCountry: Record<string, EscalationArticleMatch[]> = {};
+
+    for (const items of itemEntries.values()) {
+      for (const it of items) {
+        if (countryCode && it.country !== countryCode) continue;
+        // riskTextEn (translated) when present — matching the already-
+        // translated text catches a non-English source's own report of
+        // these terms, same as scoreRisk() does for the general risk score.
+        const text = `${it.riskTextEn ?? `${it.title} ${it.description}`}`;
+        const matchedKeywords = matchEscalationKeywords(text);
+        if (matchedKeywords.length === 0) continue;
+        const list = byCountry[it.country] ?? (byCountry[it.country] = []);
+        list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords });
+      }
+    }
+
+    for (const key of Object.keys(byCountry)) {
+      byCountry[key].sort((a, b) => Date.parse(b.published) - Date.parse(a.published));
+      byCountry[key] = byCountry[key].slice(0, MAX_PER_COUNTRY);
+    }
+    return byCountry;
   }
 
   private async processSource(index: number): Promise<void> {

@@ -516,11 +516,20 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
                   return;
                 }
                 container.innerHTML = res.items
-                  .map(
-                    (item, i) =>
+                  .map((item, i) => {
+                    // Africa Wire items carry a real article title (the
+                    // "combine their reachable links of all articles
+                    // pulled with the specified indicators" link type) —
+                    // GDELT bulk events only ever have a place name, no
+                    // article title, so fall back to that.
+                    const isWire = item.source === "africa-wire";
+                    const label = isWire ? item.title || "Untitled report" : item.placeName || "Unknown location";
+                    const tag = isWire ? `<span class="osiris-popup-evidence-tag">Africa Wire</span>` : "";
+                    return (
                       `<a class="osiris-popup-evidence-link" href="${escapeHtml(item.sourceUrl)}" target="_blank" rel="noopener noreferrer">` +
-                      `${i + 1}. ${escapeHtml(item.placeName || "Unknown location")}</a>`
-                  )
+                      `${i + 1}. ${escapeHtml(label)}${tag}</a>`
+                    );
+                  })
                   .join("");
               })
               .catch(() => {

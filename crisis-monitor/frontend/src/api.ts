@@ -628,6 +628,14 @@ export interface EscalationEvidenceItem {
   numMentions: number | null;
   sourceUrl: string;
   dateAdded: string;
+  /** "gdelt" (structured bulk event) or "africa-wire" (a real crawled
+   *  article whose text matched an escalation keyword) — absent on older
+   *  cached rows, treat as "gdelt" in that case. */
+  source?: "gdelt" | "africa-wire";
+  /** Real article title — only set for source: "africa-wire" items. */
+  title?: string;
+  /** Which escalation keyword(s) matched — only set for source: "africa-wire" items. */
+  matchedKeywords?: string[];
 }
 
 export interface LiveLayerCollection {
