@@ -3,7 +3,8 @@ import { newId } from "./ids";
 import { toGdeltTimestamp, BROAD_CONFLICT_SQL } from "./connectors/gdeltBulk";
 import { AFRICA_COUNTRIES } from "./routes/globalStatus";
 import { searchGdeltEscalationArticles } from "./lib/gdeltArticleSearch";
-import { isConfirmedEscalationUrl } from "./lib/escalationKeywords";
+import { isConfirmedEscalationUrl, slugWords } from "./lib/escalationKeywords";
+import { findGazetteerMatches, type GazetteerPlace } from "./lib/conflictGazetteer";
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
 
@@ -375,26 +376,54 @@ async function ensureTable(env: Env): Promise<void> {
  *  to a bare country name (or an even less specific region string) when it
  *  could only resolve the event to the country level, in which case its own
  *  lat/lon is a GDELT-assigned country centroid or geometric fallback, not
- *  any real reported location. Fixes the Ethiopia mis-geolocation report:
- *  `getCountryEscalationEvidence` and the fast-path sample-location logic in
- *  scoreCountryEscalations both order candidate rows by `num_mentions DESC`
- *  alone, and a country-level-only "Ethiopia" entry can rack up more raw
- *  mentions than any single Tigray-specific report (it's the generic bucket
- *  every loosely-located wire story about the country falls into), so it
- *  could win the "top" slot and put the marker/summary on a country
- *  centroid instead of the actual Tigray fighting a specifically-resolved
- *  row would have pointed to. Sorting by specificity first (ties broken by
- *  num_mentions, same as before) means a real sub-national location always
- *  outranks a country-level one, however many raw mentions the latter has. */
+ *  any real reported location. Part of the fix for the Ethiopia mis-
+ *  geolocation report ("Ethiopia forces near Mekelle should not be popping
+ *  up in Djibouti"): `getCountryEscalationEvidence` and the fast-path
+ *  sample-location logic in scoreCountryEscalations both order candidate
+ *  rows by `num_mentions DESC` alone, and a country-level-only "Ethiopia"
+ *  entry can rack up more raw mentions than any single Tigray-specific
+ *  report (it's the generic bucket every loosely-located wire story about
+ *  the country falls into), so it could win the "top" slot and put the
+ *  marker/summary on a country centroid instead of the actual Tigray
+ *  fighting a specifically-resolved row would have pointed to. A row whose
+ *  own article text names a real conflict-gazetteer place (see
+ *  resolveRowLocation below) ranks highest of all — that's a location
+ *  pulled from the article's own text, not GDELT's place_name field, which
+ *  is exactly what "geolocate every incident to locations mentioned in the
+ *  article" asks for. */
 function placeSpecificity(placeName: string | null | undefined): number {
   if (!placeName) return 0;
   return placeName.split(",").filter((part) => part.trim().length > 0).length;
 }
 
-/** Sorts rows most-specifically-located first, falling back to num_mentions
- *  as the tiebreaker — see placeSpecificity's doc comment. */
-function sortBySpecificityThenMentions<T extends { place_name: string; num_mentions: number | null }>(rows: T[]): T[] {
+/** The place this row's own article text actually names, when it names one
+ *  of the known current conflict hotspots (conflictGazetteer.ts) for the
+ *  country being scored — overrides GDELT's own place_name/lat/lon, which
+ *  is what actually produced the Djibouti/Mekelle report: GDELT's bulk
+ *  geocoding resolved the EVENT location, by its own gazetteer logic, to
+ *  Djibouti (plausible — Djibouti's port and the Red Sea corridor are
+ *  mentioned constantly in Ethiopia-related reporting), while the article's
+ *  own text names Mekelle specifically. Checked against the article's URL
+ *  slug (the only real text GDELT's bulk feed carries — see
+ *  escalationKeywords.ts's own doc comment on that limitation); returns null
+ *  when no known hotspot for this country is named, in which case callers
+ *  fall back to GDELT's own place_name/lat/lon untouched. */
+function resolveRowLocation(sourceUrl: string, countryCode: string): GazetteerPlace | null {
+  const hits = findGazetteerMatches(slugWords(sourceUrl));
+  return hits.find((p) => p.country === countryCode) ?? null;
+}
+
+/** Sorts rows most-specifically-located first: a gazetteer-matched row
+ *  (an actual named place from the article text) outranks everything,
+ *  then place_name specificity, then num_mentions as the final tiebreaker.
+ *  See placeSpecificity's and resolveRowLocation's doc comments. */
+function sortByLocationQuality<T extends { place_name: string; num_mentions: number | null; source_url: string }>(
+  rows: T[],
+  countryCode: string
+): T[] {
   return rows.slice().sort((a, b) => {
+    const gazDiff = (resolveRowLocation(b.source_url, countryCode) ? 1 : 0) - (resolveRowLocation(a.source_url, countryCode) ? 1 : 0);
+    if (gazDiff !== 0) return gazDiff;
     const specDiff = placeSpecificity(b.place_name) - placeSpecificity(a.place_name);
     if (specDiff !== 0) return specDiff;
     return (b.num_mentions ?? 0) - (a.num_mentions ?? 0);
@@ -618,6 +647,11 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     let description: string | null = null;
     let descriptionIsAi = false;
     let sampleLocationList: string[] = [];
+    // Set alongside sampleLocationList below when the top sample row's own
+    // article text names a real conflict hotspot — used instead of the
+    // country centroid for this alert's geo_lat/geo_lng further down, same
+    // "geolocate to what the article actually names" fix as the map marker.
+    let topSampleCoord: { lat: number; lon: number } | null = null;
     if (level !== "none") {
       // Raw rows (not a GROUP BY aggregate) so each row's own source_url can
       // be cross-checked with isConfirmedEscalationUrl first — the same
@@ -639,22 +673,29 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       // the raw, CAMEO-membership rows instead in that case, rather than
       // showing a confirmed Elevated/Critical level with an empty "Reported
       // near" line, which is its own version of the Ghana empty-evidence bug.
-      const filteredSample = sortBySpecificityThenMentions(
-        corroborated ? rawSample : rawSample.filter((r) => isConfirmedEscalationUrl(r.source_url, name))
+      const filteredSample = sortByLocationQuality(
+        corroborated ? rawSample : rawSample.filter((r) => isConfirmedEscalationUrl(r.source_url, name)),
+        code
       );
 
       // Most-specifically-located, most-mentioned distinct place names, same
       // ordering getCountryEscalationEvidence/the map marker's own
       // geolocation use, so the summary text and the marker's actual
-      // position agree (see placeSpecificity's doc comment — a country-
-      // level-only entry no longer outranks an actually-located one here
-      // either, same Ethiopia/Tigray fix as the marker's own position).
+      // position agree (see placeSpecificity's/resolveRowLocation's doc
+      // comments — a country-level-only entry no longer outranks an
+      // actually-located one here either, same Ethiopia/Tigray-not-Djibouti
+      // fix as the marker's own position). Displayed name prefers the real
+      // place the article itself names (e.g. "Mekelle") over GDELT's own
+      // place_name field for the same reason.
       const seenPlaces = new Set<string>();
       for (const r of filteredSample) {
         if (sampleLocationList.length >= 3) break;
-        if (seenPlaces.has(r.place_name)) continue;
-        seenPlaces.add(r.place_name);
-        sampleLocationList.push(r.place_name);
+        const hotspot = resolveRowLocation(r.source_url, code);
+        const displayName = hotspot?.name ?? r.place_name;
+        if (seenPlaces.has(displayName)) continue;
+        seenPlaces.add(displayName);
+        sampleLocationList.push(displayName);
+        if (sampleLocationList.length === 1 && hotspot) topSampleCoord = { lat: hotspot.lat, lon: hotspot.lon };
       }
       const sampleLocations = sampleLocationList.join("; ");
 
@@ -757,9 +798,13 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         [name, level, isoMinutesAgo(ALERT_DEDUPE_MINUTES)]
       );
       if (!recent && description !== null) {
+        // The real named place from the top sample's own article text
+        // (topSampleCoord, set above) beats the country centroid — same
+        // "Mekelle, not Djibouti" fix applied to this alert's own stored
+        // coordinates, not just the live map marker.
         const centroid = AFRICA_CENTROIDS[code];
-        const lat = centroid ? centroid[0] : null;
-        const lng = centroid ? centroid[1] : null;
+        const lat = topSampleCoord?.lat ?? (centroid ? centroid[0] : null);
+        const lng = topSampleCoord?.lon ?? (centroid ? centroid[1] : null);
         const alertId = newId();
 
         const alertRows = await all<Record<string, unknown>>(
@@ -985,26 +1030,37 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
     const corroborated = await corroborateWithLiveSearch(env, countryCode.toUpperCase(), name, SLOW_WINDOW_HOURS);
     if (corroborated) confirmed = rows;
   }
-  // Most-specifically-located first (see placeSpecificity's doc comment) —
-  // this is what the map marker's own lat/lon comes from (liveLayers.ts's
-  // /conflict-escalation route takes just the top-ranked item here), so a
-  // country-level "Ethiopia" entry with lots of raw mentions but only a
-  // country centroid for coordinates no longer wins the marker position
-  // over an actually-Tigray-located report with fewer mentions.
-  confirmed = sortBySpecificityThenMentions(confirmed);
+  // Most-specifically-located first (see placeSpecificity's/resolveRowLocation's
+  // doc comments) — this is what the map marker's own lat/lon comes from
+  // (liveLayers.ts's /conflict-escalation route takes just the top-ranked
+  // item here), so a country-level "Ethiopia" entry with lots of raw
+  // mentions but only a country centroid for coordinates no longer wins the
+  // marker position over an actually-Tigray-located report with fewer
+  // mentions.
+  const code = countryCode.toUpperCase();
+  confirmed = sortByLocationQuality(confirmed, code);
   return confirmed
     .slice(0, limit)
-    .map((r) => ({
-      placeName: r.place_name,
-      eventCode: r.event_code,
-      avgTone: r.avg_tone,
-      numMentions: r.num_mentions,
-      sourceUrl: r.source_url,
-      dateAdded: r.date_added,
-      lat: r.lat,
-      lon: r.lon,
-      source: "gdelt" as const,
-    }));
+    .map((r) => {
+      // Article-text-derived location wins over GDELT's own place_name/
+      // lat/lon when the article names one of the known current conflict
+      // hotspots for this country — the direct fix for "Ethiopia forces
+      // near Mekelle popping up in Djibouti": GDELT's own geocoding put
+      // this event in Djibouti's bucket, but the article itself names
+      // Mekelle, and Mekelle is unambiguously in Ethiopia.
+      const hotspot = resolveRowLocation(r.source_url, code);
+      return {
+        placeName: hotspot?.name ?? r.place_name,
+        eventCode: r.event_code,
+        avgTone: r.avg_tone,
+        numMentions: r.num_mentions,
+        sourceUrl: r.source_url,
+        dateAdded: r.date_added,
+        lat: hotspot?.lat ?? r.lat,
+        lon: hotspot?.lon ?? r.lon,
+        source: "gdelt" as const,
+      };
+    });
 }
 
 /** Shape returned by AfricaWireActor's /keyword-matches — see

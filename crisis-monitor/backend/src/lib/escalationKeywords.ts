@@ -54,6 +54,7 @@
  */
 
 import { AFRICA_COUNTRIES } from "../routes/globalStatus";
+import { findGazetteerMatches } from "./conflictGazetteer";
 
 export interface EscalationKeywordMatch {
   label: string;
@@ -448,18 +449,34 @@ export function matchEscalationKeywords(text: string): string[] {
  * "security deterioration" in business confidence) somewhere else in the
  * same piece — that combination used to confirm just from co-occurring
  * anywhere in the text; now it doesn't.
+ *
+ * The other-country rejection itself backs off when the text names a
+ * specific conflict-gazetteer place (conflictGazetteer.ts) belonging to the
+ * TARGET country — e.g. "ENDF clash near Mekelle" mentioning Djibouti
+ * elsewhere (a real, common pairing: Djibouti is Ethiopia's port/trade
+ * corridor) should still confirm for Ethiopia, since Mekelle itself is
+ * unambiguously Ethiopian soil. Without this, the Kenya/Somalia fix above
+ * would wrongly reject a genuine Ethiopia story for the same reason it was
+ * built to catch a genuinely foreign one — the difference is whether a
+ * real place tied to the target country is actually named, not just
+ * whether some other country's name also appears.
  */
 export function isConfirmedEscalationText(text: string, targetCountryName?: string): boolean {
   if (matchNonStateArmedGroups(text).length > 0) return true;
   if (matchStandaloneActionTerms(text).length > 0) return true;
   if (proximityPairExists(text, STATE_MILITARY_PATTERNS, AMBIGUOUS_ACTION_PATTERNS, PROXIMITY_WINDOW_CHARS)) {
-    if (targetCountryName && textNamesOtherAfricanCountry(text, targetCountryName)) return false;
+    if (targetCountryName && textNamesOtherAfricanCountry(text, targetCountryName) && !textNamesOwnGazetteerHotspot(text, targetCountryName)) {
+      return false;
+    }
     return true;
   }
   return false;
 }
 
-function slugWords(url: string): string {
+/** Exported for reuse by countryEscalation.ts, which needs this same
+ *  flattened slug text to look up gazetteer places for its own evidence
+ *  (see conflictGazetteer.ts's findGazetteerMatches). */
+export function slugWords(url: string): string {
   try {
     const u = new URL(url);
     return `${u.pathname} ${u.search}`.replace(/[-_/?=&.]+/g, " ").toLowerCase();
@@ -534,6 +551,15 @@ const AFRICAN_COUNTRY_NAME_PATTERNS: { name: string; rx: RegExp }[] = Array.from
   new Set(Object.values(AFRICA_COUNTRIES).map(cleanCountryName))
 ).map((name) => ({ name, rx: termToRegex(name) }));
 
+/** Cleaned country name -> ISO2 code, the reverse of AFRICA_COUNTRIES — what
+ *  isLikelyWrongCountryUrl needs to compare a gazetteer place's own country
+ *  code (conflictGazetteer.ts uses ISO2 directly) against the target country
+ *  it was given as a plain name. Last-write-wins on a collision is fine:
+ *  AFRICA_COUNTRIES has no two codes sharing a cleaned name in practice. */
+const AFRICA_COUNTRY_NAME_TO_CODE: Record<string, string> = Object.fromEntries(
+  Object.entries(AFRICA_COUNTRIES).map(([code, name]) => [cleanCountryName(name), code])
+);
+
 /** True when `text` names an African country OTHER than `targetCountryName`
  *  — reuses the same AFRICAN_COUNTRY_NAME_PATTERNS built for
  *  isLikelyWrongCountryUrl, but for a different purpose: not "is this whole
@@ -553,6 +579,20 @@ function textNamesOtherAfricanCountry(text: string, targetCountryName: string): 
   return AFRICAN_COUNTRY_NAME_PATTERNS.some(({ name, rx }) => name !== targetClean && rx.test(text));
 }
 
+/** True when `text` names a known conflict-gazetteer place (conflictGazetteer.ts)
+ *  that actually belongs to `targetCountryName` — see isConfirmedEscalationText's
+ *  doc comment for why this overrides textNamesOtherAfricanCountry's
+ *  rejection: a real, specifically-named place tied to the target (Mekelle
+ *  for Ethiopia) is stronger, more direct evidence of where the event
+ *  happened than the mere presence of some OTHER country's name elsewhere
+ *  in the same text (Djibouti, mentioned as Ethiopia's port/trade corridor
+ *  in perfectly ordinary, legitimate context). */
+function textNamesOwnGazetteerHotspot(text: string, targetCountryName: string): boolean {
+  const targetCode = AFRICA_COUNTRY_NAME_TO_CODE[cleanCountryName(targetCountryName)];
+  if (!targetCode) return false;
+  return findGazetteerMatches(text).some((p) => p.country === targetCode);
+}
+
 /** True when this event's own article URL slug clearly names a different
  *  country — African or not — and never mentions `targetCountryName` at
  *  all — see the doc comment above. Word-boundary matching throughout
@@ -566,6 +606,41 @@ export function isLikelyWrongCountryUrl(url: string, targetCountryName: string):
   const text = slugWords(url);
   const targetClean = cleanCountryName(targetCountryName);
   const targetRx = termToRegex(targetClean);
+
+  // Gazetteer check FIRST, before anything else below trusts a bare
+  // country-name mention — this is the direct fix for "Ethiopia forces near
+  // Mekelle popping up in Djibouti": Djibouti is Ethiopia's real-world port/
+  // trade corridor, so a genuine Mekelle/Tigray story can legitimately also
+  // name "Djibouti" (logistics, the Red Sea corridor, refugee routes). The
+  // plain-country-name check a few lines down would see "Djibouti" named in
+  // the slug and immediately trust it as Djibouti's own story, never
+  // noticing "Mekelle" sitting right next to it. A specific NAMED PLACE
+  // overrides that: if the slug names a real place belonging to a different
+  // country than the target, and names no specific place belonging to the
+  // target itself, the event almost certainly happened where the named
+  // place actually is — regardless of which country names also appear in
+  // the surrounding text. (A slug naming specific places in BOTH the target
+  // and another country is left to the checks below rather than guessed at
+  // here — two genuinely named locations is real ambiguity this function
+  // isn't trying to resolve.)
+  //
+  // The reverse also matters and is handled here, not left to the generic
+  // country-name checks below: when the slug DOES name one of the target's
+  // own specific hotspots (Mekelle for Ethiopia), that's trusted outright,
+  // even if some other country's name also appears in the same text — this
+  // is exactly the Mekelle/Djibouti case (the slug never spells out
+  // "Ethiopia" at all, just "Tigray"/"Mekelle" plus "Djibouti" for the port/
+  // trade-corridor context), which the generic checks further down would
+  // otherwise misread as "names a different country, never names the
+  // target" and wrongly flag as wrong-country.
+  const gazetteerHits = findGazetteerMatches(text);
+  if (gazetteerHits.length > 0) {
+    const targetCode = AFRICA_COUNTRY_NAME_TO_CODE[targetClean];
+    const hitsTarget = targetCode ? gazetteerHits.some((p) => p.country === targetCode) : false;
+    const hitsOther = gazetteerHits.some((p) => p.country !== targetCode);
+    if (hitsTarget) return false;
+    if (hitsOther) return true;
+  }
 
   // A country whose own name CONTAINS the target's name as a sub-phrase
   // ("South Sudan" contains "Sudan"; "Guinea-Bissau" and "Equatorial
