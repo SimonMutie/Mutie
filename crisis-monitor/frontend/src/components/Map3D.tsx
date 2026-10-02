@@ -87,6 +87,49 @@ const CARTO_DARK_MATTER_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl
  *  MapLibre's own official terrain examples use. */
 const TERRAIN_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
+/**
+ * Conflict Escalation's danger marker: a real triangle-and-exclamation-mark
+ * icon, not the "⚠" text glyph the layer used before. The text glyph
+ * rendered through MapLibre's text-field, which means it's drawn from
+ * whatever Unicode warning-sign glyph the browser's/OS's font falls back
+ * to — inconsistent in weight and shape across platforms, and on some
+ * fonts closer to a thin outline than a solid "danger" symbol. Drawing it
+ * once on a <canvas> and registering it as a map image (icon-image) makes
+ * it a crisp, identical symbol everywhere, the same way a real pin icon
+ * would be shipped as an asset rather than relying on a text character.
+ */
+function buildWarningIconImageData(fillColor: string): ImageData {
+  const size = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+
+  // Triangle body.
+  ctx.beginPath();
+  ctx.moveTo(size * 0.5, size * 0.06);
+  ctx.lineTo(size * 0.96, size * 0.92);
+  ctx.lineTo(size * 0.04, size * 0.92);
+  ctx.closePath();
+  ctx.fillStyle = fillColor;
+  ctx.fill();
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(0,0,0,0.65)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Exclamation mark: a stem + a dot, drawn as shapes rather than a text
+  // glyph so it stays crisp and centered regardless of font availability.
+  ctx.fillStyle = "#0b0b0b";
+  const stemWidth = size * 0.09;
+  ctx.fillRect(size / 2 - stemWidth / 2, size * 0.32, stemWidth, size * 0.28);
+  ctx.beginPath();
+  ctx.arc(size / 2, size * 0.74, stemWidth * 0.75, 0, Math.PI * 2);
+  ctx.fill();
+
+  return ctx.getImageData(0, 0, size, size);
+}
+
 function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
   return {
     type: "FeatureCollection",
@@ -207,11 +250,18 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
       // These are the same blue tones the old three-globe atmosphere used.
       map.setSky({ "sky-color": "#000308", "horizon-color": "#1a2a4d", "horizon-fog-blend": 0.6, "atmosphere-blend": 0.4 });
 
+      map.addImage("warning-icon-critical", buildWarningIconImageData("#ff3d3d"), { pixelRatio: 2 });
+      map.addImage("warning-icon-elevated", buildWarningIconImageData("#ff9d4f"), { pixelRatio: 2 });
+
       map.addSource("osiris-points", { type: "geojson", data: toGeoJsonPoints([]) });
       map.addLayer({
         id: "osiris-points-circle",
         type: "circle",
         source: "osiris-points",
+        // Conflict Escalation points get the dedicated warning-icon layer
+        // below instead — excluded here so a country isn't marked with both
+        // a plain dot AND the triangle icon stacked on top of each other.
+        filter: ["!", ["has", "escalationLevel"]],
         paint: {
           "circle-color": ["get", "color"],
           "circle-radius": ["+", 3, ["*", ["get", "size"], 14]],
@@ -221,20 +271,36 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
         },
       });
 
-      // Conflict Escalation's danger-icon treatment: a warning-triangle +
-      // country-name label floating above the point, always visible (not
-      // just on hover) — matching the reference design directly, distinct
-      // from every other layer's plain colored dot below it.
+      // Conflict Escalation's danger-icon treatment: a real triangle-and-
+      // exclamation-mark icon (registered above via addImage) planted at
+      // the country's centroid, sized and colored by severity — distinct
+      // from every other layer's plain colored dot.
+      map.addLayer({
+        id: "osiris-points-warning-icon",
+        type: "symbol",
+        source: "osiris-points",
+        filter: ["has", "escalationLevel"],
+        layout: {
+          "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-elevated"],
+          "icon-size": ["match", ["get", "escalationLevel"], "critical", 0.6, "elevated", 0.48, 0.48],
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+      });
+
+      // Country-name label floating above the icon, always visible (not
+      // just on hover) — matching the reference design.
       map.addLayer({
         id: "osiris-points-warning",
         type: "symbol",
         source: "osiris-points",
         filter: ["has", "escalationLevel"],
         layout: {
-          "text-field": ["concat", "⚠ ", ["get", "title"]],
+          "text-field": ["get", "title"],
           "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
           "text-size": 12,
-          "text-offset": [0, -1.6],
+          "text-offset": [0, -2.9],
           "text-anchor": "bottom",
           "text-allow-overlap": true,
           "text-ignore-placement": true,
@@ -304,7 +370,7 @@ export default function Map3D({ points, paths, drawAreaRing, onMapClick, showDay
 
       map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
-      const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning"];
+      const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning-icon", "osiris-points-warning"];
 
       map.on("click", (e) => {
         const hits = map.queryRenderedFeatures(e.point, { layers: POINT_LAYERS });
