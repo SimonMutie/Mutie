@@ -1823,18 +1823,15 @@ export default function LiveIntelView() {
             setActiveTool("listen");
             setListenTab("dashboard");
           }}
+          show3DDisplayGroup={mapMode === "3d"}
+          dayNight={showDayNight}
+          buildings={showBuildings}
+          terrain={showTerrain}
+          onToggleDayNight={() => setShowDayNight((v) => !v)}
+          onToggleBuildings={() => setShowBuildings((v) => !v)}
+          onToggleTerrain={() => setShowTerrain((v) => !v)}
         />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
-        {mapMode === "3d" && (
-          <DisplayPanel
-            dayNight={showDayNight}
-            buildings={showBuildings}
-            terrain={showTerrain}
-            onToggleDayNight={() => setShowDayNight((v) => !v)}
-            onToggleBuildings={() => setShowBuildings((v) => !v)}
-            onToggleTerrain={() => setShowTerrain((v) => !v)}
-          />
-        )}
         <StatusBar totalFeatures={points.length} clock={clock} />
         <GlobalStatusTicker />
 
@@ -2213,6 +2210,13 @@ function LayerPanel({
   onToggleListening,
   onRefreshListening,
   onOpenListeningDashboard,
+  show3DDisplayGroup,
+  dayNight,
+  buildings,
+  terrain,
+  onToggleDayNight,
+  onToggleBuildings,
+  onToggleTerrain,
 }: {
   defs: LayerDef[];
   enabled: Record<string, boolean>;
@@ -2233,6 +2237,20 @@ function LayerPanel({
   onToggleListening: (id: string) => void;
   onRefreshListening: (id: string) => void;
   onOpenListeningDashboard: () => void;
+  /** 3D-mode-only render settings (Day/Night, 3D Buildings, 3D Terrain) —
+   *  previously their own always-visible "Display" box floating separately
+   *  at bottom-left; folded into this same rail as one more hover-flyout
+   *  group per Simon's "collapse it into the left panel... I don't want to
+   *  see it" — so nothing shows until the rail icon itself is hovered,
+   *  same as every other group here. Undefined/false hides the group
+   *  entirely (2D/satellite modes, where none of these three apply). */
+  show3DDisplayGroup?: boolean;
+  dayNight?: boolean;
+  buildings?: boolean;
+  terrain?: boolean;
+  onToggleDayNight?: () => void;
+  onToggleBuildings?: () => void;
+  onToggleTerrain?: () => void;
 }) {
   const groupedRows = useMemo(() => GROUP_ORDER.map((group) => defs.filter((d) => d.group === group)).filter((rows) => rows.length > 0), [defs]);
   const pinnedListeningQueries = useMemo(() => listeningQueries.filter((q) => q.pinned), [listeningQueries]);
@@ -2286,6 +2304,18 @@ function LayerPanel({
             onToggle={onToggleListening}
             onRefresh={onRefreshListening}
             onOpenDashboard={onOpenListeningDashboard}
+          />
+        </div>
+      )}
+      {show3DDisplayGroup && (
+        <div style={{ borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 }}>
+          <DisplayRailGroup
+            dayNight={!!dayNight}
+            buildings={!!buildings}
+            terrain={!!terrain}
+            onToggleDayNight={onToggleDayNight!}
+            onToggleBuildings={onToggleBuildings!}
+            onToggleTerrain={onToggleTerrain!}
           />
         </div>
       )}
@@ -2710,6 +2740,99 @@ function RailHoverToggle({
   );
 }
 
+/** The 3D view's render-setting toggles (Day/Night, 3D Buildings, 3D
+ *  Terrain) — folded into the same hover-flyout rail every other layer
+ *  group uses (same shape as GroupRailButton, just without per-row counts
+ *  since these are view settings, not fetched data layers). Previously its
+ *  own permanently-visible "Display" box floating separately at
+ *  bottom-left; per Simon's "the display pop up, I don't want to see it,
+ *  collapse it into the left panel", nothing shows now until this rail
+ *  icon itself is hovered. */
+function DisplayRailGroup({
+  dayNight,
+  buildings,
+  terrain,
+  onToggleDayNight,
+  onToggleBuildings,
+  onToggleTerrain,
+}: {
+  dayNight: boolean;
+  buildings: boolean;
+  terrain: boolean;
+  onToggleDayNight: () => void;
+  onToggleBuildings: () => void;
+  onToggleTerrain: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const rows: { label: string; hint?: string; icon: LucideIcon; on: boolean; onToggle: () => void }[] = [
+    { label: "Day / Night Cycle", icon: Sun, on: dayNight, onToggle: onToggleDayNight },
+    { label: "3D Buildings", hint: "City detail — zoom 14.5+", icon: Building2, on: buildings, onToggle: onToggleBuildings },
+    { label: "3D Terrain", hint: "Mountains — zoom 10+", icon: Mountain, on: terrain, onToggle: onToggleTerrain },
+  ];
+  const activeCount = rows.filter((r) => r.on).length;
+  const allActive = activeCount === rows.length;
+
+  return (
+    <div style={{ position: "relative" }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button
+        onClick={() => rows.forEach((r) => { if (r.on === allActive) r.onToggle(); })}
+        title={`Display${activeCount ? ` — ${activeCount}/${rows.length} on` : " — off"}`}
+        style={{
+          position: "relative",
+          width: 42,
+          height: 38,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: activeCount > 0 ? "rgba(212,175,55,0.14)" : "transparent",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+          transition: "background 0.15s",
+        }}
+      >
+        <Sun size={17} color={activeCount > 0 ? HUD.gold : HUD.textMuted} strokeWidth={activeCount > 0 ? 2.25 : 1.75} />
+      </button>
+      {hovered && (
+        <div
+          style={{
+            ...glassPanel(),
+            position: "absolute",
+            left: "100%",
+            top: 0,
+            width: 220,
+            padding: "10px 10px 10px 18px",
+            zIndex: 600,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Display</span>
+            <button onClick={() => setHovered(false)} style={{ background: "transparent", border: "none", color: HUD.textMuted, cursor: "pointer", padding: 0, display: "flex" }}>
+              <CloseGlyph size={13} />
+            </button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {rows.map((r) => (
+              <button
+                key={r.label}
+                onClick={r.onToggle}
+                style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}
+              >
+                <r.icon size={13} color={r.on ? HUD.gold : HUD.textMuted} />
+                <span style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+                  <span style={{ fontSize: 11, color: r.on ? HUD.textPrimary : HUD.textSecondary }}>{r.label}</span>
+                  {r.hint && <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{r.hint}</span>}
+                </span>
+                <LayerToggleSwitch on={r.on} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** OSIRIS's own .layer-toggle: a 28×14 pill, gold-tinted + gold-glowing
  *  thumb when active, muted gray otherwise — ported from its exact CSS
  *  rule rather than the generic blue switch this view used before. */
@@ -2773,57 +2896,6 @@ function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapM
           }}
         >
           {opt.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** OSIRIS's own left-panel "DISPLAY" group (its real source: LayerPanel.tsx
- *  — Day/Night Cycle, plus the 3D Buildings/3D Terrain toggles from its own
- *  bottom-left panel screenshots) — visual/rendering switches rather than
- *  data layers, so they get their own small panel next to the mode
- *  switcher instead of living among the data-layer toggles above. Only
- *  meaningful in 3D mode (Map3D is the only renderer that implements any
- *  of the three), hence only shown there. */
-function DisplayPanel({
-  dayNight,
-  buildings,
-  terrain,
-  onToggleDayNight,
-  onToggleBuildings,
-  onToggleTerrain,
-}: {
-  dayNight: boolean;
-  buildings: boolean;
-  terrain: boolean;
-  onToggleDayNight: () => void;
-  onToggleBuildings: () => void;
-  onToggleTerrain: () => void;
-}) {
-  const rows: { label: string; hint?: string; icon: LucideIcon; on: boolean; onToggle: () => void }[] = [
-    { label: "Day / Night Cycle", icon: Sun, on: dayNight, onToggle: onToggleDayNight },
-    { label: "3D Buildings", hint: "City detail — zoom 14.5+", icon: Building2, on: buildings, onToggle: onToggleBuildings },
-    { label: "3D Terrain", hint: "Mountains — zoom 10+", icon: Mountain, on: terrain, onToggle: onToggleTerrain },
-  ];
-  return (
-    <div style={{ ...glassPanel(), position: "absolute", left: 12, bottom: 84, zIndex: 500, width: 210, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>
-        <Sun size={12} color={HUD.gold} />
-        Display
-      </div>
-      {rows.map((r) => (
-        <button
-          key={r.label}
-          onClick={r.onToggle}
-          style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: 0 }}
-        >
-          <r.icon size={13} color={r.on ? HUD.gold : HUD.textMuted} />
-          <span style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-            <span style={{ fontSize: 11.5, color: r.on ? HUD.textPrimary : HUD.textSecondary }}>{r.label}</span>
-            {r.hint && <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{r.hint}</span>}
-          </span>
-          <LayerToggleSwitch on={r.on} />
         </button>
       ))}
     </div>
