@@ -127,7 +127,7 @@ export async function searchGdeltEscalationArticles(countryName: string, windowH
     // an ambiguous phrase (clash, siege, advance on...) only counts once a
     // real armed actor is also named in the same title. matchEscalationKeywords
     // is still used below for the display labels once confirmed.
-    if (!isConfirmedEscalationText(a.title)) continue;
+    if (!isConfirmedEscalationText(a.title, countryName)) continue;
     const matchedKeywords = matchEscalationKeywords(a.title);
     hits.push({ title: a.title, url: a.url, seenAt: parseGdeltSeenDate(a.seendate), sourceCountry: a.sourcecountry ?? null, matchedKeywords });
   }

@@ -369,6 +369,38 @@ async function ensureTable(env: Env): Promise<void> {
   }
 }
 
+/** How specifically a GDELT `place_name` pins down a real location — GDELT's
+ *  own geo-resolution writes this as a comma-separated "City, Admin1,
+ *  Country" string when it could resolve to an actual place, and falls back
+ *  to a bare country name (or an even less specific region string) when it
+ *  could only resolve the event to the country level, in which case its own
+ *  lat/lon is a GDELT-assigned country centroid or geometric fallback, not
+ *  any real reported location. Fixes the Ethiopia mis-geolocation report:
+ *  `getCountryEscalationEvidence` and the fast-path sample-location logic in
+ *  scoreCountryEscalations both order candidate rows by `num_mentions DESC`
+ *  alone, and a country-level-only "Ethiopia" entry can rack up more raw
+ *  mentions than any single Tigray-specific report (it's the generic bucket
+ *  every loosely-located wire story about the country falls into), so it
+ *  could win the "top" slot and put the marker/summary on a country
+ *  centroid instead of the actual Tigray fighting a specifically-resolved
+ *  row would have pointed to. Sorting by specificity first (ties broken by
+ *  num_mentions, same as before) means a real sub-national location always
+ *  outranks a country-level one, however many raw mentions the latter has. */
+function placeSpecificity(placeName: string | null | undefined): number {
+  if (!placeName) return 0;
+  return placeName.split(",").filter((part) => part.trim().length > 0).length;
+}
+
+/** Sorts rows most-specifically-located first, falling back to num_mentions
+ *  as the tiebreaker — see placeSpecificity's doc comment. */
+function sortBySpecificityThenMentions<T extends { place_name: string; num_mentions: number | null }>(rows: T[]): T[] {
+  return rows.slice().sort((a, b) => {
+    const specDiff = placeSpecificity(b.place_name) - placeSpecificity(a.place_name);
+    if (specDiff !== 0) return specDiff;
+    return (b.num_mentions ?? 0) - (a.num_mentions ?? 0);
+  });
+}
+
 interface WindowBucket {
   totalCount: number;
   postureCount: number;
@@ -607,13 +639,16 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       // the raw, CAMEO-membership rows instead in that case, rather than
       // showing a confirmed Elevated/Critical level with an empty "Reported
       // near" line, which is its own version of the Ghana empty-evidence bug.
-      const filteredSample = corroborated
-        ? rawSample
-        : rawSample.filter((r) => isConfirmedEscalationUrl(r.source_url, name));
+      const filteredSample = sortBySpecificityThenMentions(
+        corroborated ? rawSample : rawSample.filter((r) => isConfirmedEscalationUrl(r.source_url, name))
+      );
 
-      // Most-mentioned distinct place names, same ordering
-      // getCountryEscalationEvidence/the map marker's own geolocation use,
-      // so the summary text and the marker's actual position agree.
+      // Most-specifically-located, most-mentioned distinct place names, same
+      // ordering getCountryEscalationEvidence/the map marker's own
+      // geolocation use, so the summary text and the marker's actual
+      // position agree (see placeSpecificity's doc comment — a country-
+      // level-only entry no longer outranks an actually-located one here
+      // either, same Ethiopia/Tigray fix as the marker's own position).
       const seenPlaces = new Set<string>();
       for (const r of filteredSample) {
         if (sampleLocationList.length >= 3) break;
@@ -950,6 +985,13 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
     const corroborated = await corroborateWithLiveSearch(env, countryCode.toUpperCase(), name, SLOW_WINDOW_HOURS);
     if (corroborated) confirmed = rows;
   }
+  // Most-specifically-located first (see placeSpecificity's doc comment) —
+  // this is what the map marker's own lat/lon comes from (liveLayers.ts's
+  // /conflict-escalation route takes just the top-ranked item here), so a
+  // country-level "Ethiopia" entry with lots of raw mentions but only a
+  // country centroid for coordinates no longer wins the marker position
+  // over an actually-Tigray-located report with fewer mentions.
+  confirmed = sortBySpecificityThenMentions(confirmed);
   return confirmed
     .slice(0, limit)
     .map((r) => ({

@@ -1,6 +1,7 @@
 import type { Env } from "../bindings";
 import { AFRICA_SOURCES, PAN_AFRICAN, INSTITUTION } from "../data/africaSources";
 import { AFRICA_CENTROIDS } from "../countryEscalation";
+import { AFRICA_COUNTRIES } from "../routes/globalStatus";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
@@ -166,7 +167,12 @@ export class AfricaWireActor implements DurableObject {
         // word like "clash" or "siege" used in its ordinary, non-military
         // sense. matchEscalationKeywords is still used for the display labels
         // once confirmed — see lib/escalationKeywords.ts's own doc comment.
-        if (!isConfirmedEscalationText(text)) continue;
+        // The country name, when known from it.country, is also passed
+        // through: it's what lets the state-military tier reject a story
+        // about that country's OWN military fighting in a DIFFERENT named
+        // country (Kenya's KDF in Somalia, say) instead of wrongly confirming
+        // an escalation for the military's home country.
+        if (!isConfirmedEscalationText(text, AFRICA_COUNTRIES[it.country])) continue;
         const matchedKeywords = matchEscalationKeywords(text);
         const list = byCountry[it.country] ?? (byCountry[it.country] = []);
         list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords });

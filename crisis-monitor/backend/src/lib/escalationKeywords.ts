@@ -132,9 +132,16 @@ const NON_STATE_ARMED_GROUPS: string[] = [
   // Egypt / Sinai
   "sinai province", "wilayat sinai",
   // Mercenary / foreign fighter groups operating in Africa
-  "wagner group", "africa corps",
+  "wagner group", "africa corps", "pmc wagner", "wagner pmc",
   // Generic Islamic State references (group-name usage, not the Sinai/West-Africa affiliates above)
   "al-qaeda", "isis", "isil", "daesh",
+  // Verified name variations / other-language renderings of groups already
+  // listed above — same actors, the names actually used in French-language
+  // and wire-service reporting on them, added per Simon's direct ask to
+  // match "different name variations and languages", not new actors.
+  "gsim", // JNIM's French-press name (Groupe de Soutien a l'Islam et aux Musulmans)
+  "eigs", // ISGS's French-press name (Etat Islamique au Grand Sahara)
+  "hemedti", // RSF commander's name, used constantly in press as metonymy for the RSF itself
 ];
 
 /**
@@ -156,7 +163,7 @@ const STATE_MILITARIES: string[] = [
   "eritrean defence forces", "eritrean defense forces",
   "south sudan people's defence forces", "sspdf", "spla", "sudan people's liberation army",
   "forces armees de la republique democratique du congo", "fardc",
-  "rwanda defence force", "rdf",
+  "rwanda defence force", "rdf", "force rwandaise de defense",
   "uganda people's defence force", "updf",
   "kenya defence forces", "kdf",
   "somali national army", "sna",
@@ -178,6 +185,17 @@ const STATE_MILITARIES: string[] = [
   "egyptian armed forces",
   "libyan national army",
   "government of national unity forces",
+  // French/Portuguese native-language names — the same armies as above, but
+  // as they're actually named in Francophone/Lusophone reporting rather than
+  // only the English rendering, since this app aggregates sources in their
+  // original language before any translation step runs.
+  "forces de defense nationale", // generic FDN used by several Francophone states (Burundi, Niger...)
+  "forces armees nigeriennes", "fan niger",
+  "forces armees du burkina faso",
+  "forces armees tchadiennes",
+  "forcas armadas da guine-bissau",
+  "forcas armadas de cabo verde",
+  "forcas armadas de sao tome e principe",
 ];
 
 /**
@@ -320,11 +338,31 @@ export function matchEscalationKeywords(text: string): string[] {
  * its own: "the court battle", "the firm took control of its rival", "the
  * president's poll numbers advanced on his rival's" would all have
  * nothing to anchor them to a real conflict and are correctly rejected.
+ *
+ * `targetCountryName`, when passed, adds one more rejection specifically to
+ * tier 3 (state military + ambiguous action term): a state military's own
+ * name is NOT rejected just for appearing, but if the SAME text also names
+ * a DIFFERENT African country, that combination no longer confirms an
+ * escalation for the target country. This is the fix for Kenya showing a
+ * military-posture flag with nothing actually happening in Kenya — Kenya's
+ * KDF serves in Somalia under ATMIS/AMISOM peacekeeping, so "KDF" + "clash"/
+ * "ambush"/"attack on troops" in the same article is routinely a real
+ * escalation story about fighting in SOMALIA, not Kenya; without this check
+ * that story would still confirm for Kenya purely because "KDF" is on the
+ * state-military list. A named NON-STATE armed group or an unambiguous
+ * standalone action term still confirm regardless of what other country is
+ * named — those tiers are already specific enough on their own that this
+ * extra check isn't needed (and, unlike a state military, a group like
+ * Boko Haram or al-Shabaab is inherently tied to the country it actually
+ * operates in, not a visiting peacekeeping contingent's home country).
  */
-export function isConfirmedEscalationText(text: string): boolean {
+export function isConfirmedEscalationText(text: string, targetCountryName?: string): boolean {
   if (matchNonStateArmedGroups(text).length > 0) return true;
   if (matchStandaloneActionTerms(text).length > 0) return true;
-  if (matchStateMilitaries(text).length > 0 && matchAmbiguousActionTerms(text).length > 0) return true;
+  if (matchStateMilitaries(text).length > 0 && matchAmbiguousActionTerms(text).length > 0) {
+    if (targetCountryName && textNamesOtherAfricanCountry(text, targetCountryName)) return false;
+    return true;
+  }
   return false;
 }
 
@@ -403,6 +441,25 @@ const AFRICAN_COUNTRY_NAME_PATTERNS: { name: string; rx: RegExp }[] = Array.from
   new Set(Object.values(AFRICA_COUNTRIES).map(cleanCountryName))
 ).map((name) => ({ name, rx: termToRegex(name) }));
 
+/** True when `text` names an African country OTHER than `targetCountryName`
+ *  — reuses the same AFRICAN_COUNTRY_NAME_PATTERNS built for
+ *  isLikelyWrongCountryUrl, but for a different purpose: not "is this whole
+ *  article about somewhere else" (isLikelyWrongCountryUrl bails out early
+ *  once the target's own name is present at all), but "does this text ALSO
+ *  name a different country alongside the target" — the case a state
+ *  military's home-country name and the foreign country it's actually
+ *  deployed to can both legitimately appear in the same story (see
+ *  isConfirmedEscalationText's doc comment for the Kenya/KDF/Somalia case
+ *  this exists for). Deliberately simple (any other African country name
+ *  present at all) rather than trying to determine which one the event
+ *  actually happened in from text alone — the point is just to stop a bare
+ *  state-military mention from confirming the military's OWN country when
+ *  the text is ambiguous about where the action actually took place. */
+function textNamesOtherAfricanCountry(text: string, targetCountryName: string): boolean {
+  const targetClean = cleanCountryName(targetCountryName);
+  return AFRICAN_COUNTRY_NAME_PATTERNS.some(({ name, rx }) => name !== targetClean && rx.test(text));
+}
+
 /** True when this event's own article URL slug clearly names a different
  *  country — African or not — and never mentions `targetCountryName` at
  *  all — see the doc comment above. Word-boundary matching throughout
@@ -455,5 +512,5 @@ export function isLikelyWrongCountryUrl(url: string, targetCountryName: string):
 export function isConfirmedEscalationUrl(url: string, targetCountryName: string): boolean {
   if (!url) return false;
   if (isLikelyWrongCountryUrl(url, targetCountryName)) return false;
-  return isConfirmedEscalationText(slugWords(url));
+  return isConfirmedEscalationText(slugWords(url), targetCountryName);
 }
