@@ -84,3 +84,61 @@ export function matchEscalationKeywords(text: string): string[] {
   }
   return matched;
 }
+
+/**
+ * Cross-check for GDELT CAMEO miscoding — the concrete answer to "how is
+ * [a mining-investment story] increased posture?". GDELT's bulk event
+ * feed has no article text to literally keyword-match (see
+ * countryEscalation.ts's own doc comment), only a structured event code
+ * assigned by GDELT's own shallow verb-phrase parser (TABARI/PETRARCH-
+ * style, not real semantic understanding). That parser demonstrably
+ * mis-codes economic/resource/diplomatic stories into a 15x/19x
+ * "posture" bucket when they use phrasing that superficially resembles
+ * military verbs — "directed [agencies] to strengthen... sources" /
+ * "national-security concern" / "dispute... revoked... licence" read, to
+ * a shallow parser, similarly enough to real mobilization/coercion verbs
+ * to get miscoded, even though the actual story (e.g. a critical-minerals
+ * mining consortium, a trade dispute, an investment tribunal ruling) has
+ * no military content at all.
+ *
+ * GDELT's bulk export does carry one piece of real signal per event: its
+ * source_url. Most news CMSs embed the headline's own words in the URL
+ * slug (e.g. ".../australian-consortium-mrima-hill-minerals"), so reading
+ * that slug is a real (if partial) look at the actual article — without
+ * an extra network fetch per event. This is used to EXCLUDE a posture-
+ * coded event only when its slug confidently reads as an unrelated
+ * economic/trade/diplomatic/sports/etc. story AND carries none of the
+ * actual escalation keywords itself — never to confirm a true positive on
+ * its own (a slug with no clear signal either way is left alone, matching
+ * this app's general "when genuinely unsure, don't overclaim" posture).
+ */
+const NON_MILITARY_URL_SIGNALS = [
+  "mining", "minerals", "mineral", "consortium", "tender", "licence", "license",
+  "trade", "investment", "investor", "ipo", "shares", "stock-market", "markets",
+  "economy", "economic", "finance", "financial", "budget", "taxation",
+  "agriculture", "tourism", "education", "health", "hospital", "election", "referendum",
+  "football", "cricket", "rugby", "olympics", "business", "banking", "currency",
+  "inflation", "gdp", "export", "import", "supply-chain", "rare-earth", "niobium",
+  "royalty", "royalties", "resources", "exploration",
+];
+
+function slugWords(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.pathname} ${u.search}`.replace(/[-_/?=&.]+/g, " ").toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+
+/** True when this GDELT bulk event's own article URL confidently reads as
+ *  an unrelated economic/trade/diplomatic story rather than a real
+ *  military-posture report — see the doc comment above. Used to drop a
+ *  CAMEO-coded "posture" event from both scoring and evidence when GDELT's
+ *  own coder most likely miscoded it. */
+export function isLikelyNonMilitaryUrl(url: string): boolean {
+  if (!url) return false;
+  const text = slugWords(url);
+  if (matchEscalationKeywords(text).length > 0) return false; // the slug itself carries real escalation signal — keep it
+  return NON_MILITARY_URL_SIGNALS.some((term) => text.includes(term));
+}

@@ -3,6 +3,7 @@ import { newId } from "./ids";
 import { toGdeltTimestamp, BROAD_CONFLICT_SQL } from "./connectors/gdeltBulk";
 import { AFRICA_COUNTRIES } from "./routes/globalStatus";
 import { searchGdeltEscalationArticles } from "./lib/gdeltArticleSearch";
+import { isLikelyNonMilitaryUrl } from "./lib/escalationKeywords";
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
 
@@ -329,18 +330,38 @@ interface WindowBucket {
 }
 
 async function queryWindowBucket(env: Env, likePattern: string, start: string, end: string | null): Promise<WindowBucket> {
-  const row = await first<{ total_count: number; posture_count: number; avg_tone: number | null }>(
+  const row = await first<{ total_count: number; avg_tone: number | null }>(
     env.DB,
-    `SELECT COUNT(*) AS total_count,
-            SUM(CASE WHEN ${MILITARY_POSTURE_SQL} THEN 1 ELSE 0 END) AS posture_count,
-            AVG(avg_tone) AS avg_tone
+    `SELECT COUNT(*) AS total_count, AVG(avg_tone) AS avg_tone
      FROM gdelt_bulk_events
      WHERE ${BROAD_CONFLICT_SQL} AND date_added >= ? ${end ? "AND date_added < ?" : ""} AND place_name LIKE ?`,
+    end ? [start, end, likePattern] : [start, likePattern]
+  );
+
+  // Posture count is deliberately NOT a plain SQL SUM anymore — each
+  // candidate posture-coded event's own source_url is cross-checked
+  // against isLikelyNonMilitaryUrl (lib/escalationKeywords.ts) first.
+  // GDELT's bulk feed has no article text, only a CAMEO code its own
+  // shallow verb-phrase parser assigned — and that parser demonstrably
+  // miscodes unrelated economic/resource/diplomatic stories (a mining-
+  // investment consortium story using phrases like "directed agencies to
+  // strengthen... sources" / "national-security concern" has been
+  // confirmed miscoded into this bucket with zero real military content)
+  // into the same 15x/19x codes as a genuine military posture report. The
+  // URL slug is the one piece of real signal GDELT's bulk export does
+  // carry per event, so it's used here to drop confident false positives
+  // before they can count toward a country's score at all, not just hide
+  // them from the evidence list after the fact.
+  const postureRows = await all<{ source_url: string }>(
+    env.DB,
+    `SELECT source_url FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? ${end ? "AND date_added < ?" : ""} AND place_name LIKE ?`,
     end ? [...MILITARY_POSTURE_EVENT_CODES, start, end, likePattern] : [...MILITARY_POSTURE_EVENT_CODES, start, likePattern]
   );
+  const postureCount = postureRows.filter((r) => !isLikelyNonMilitaryUrl(r.source_url)).length;
+
   return {
     totalCount: Number(row?.total_count ?? 0),
-    postureCount: Number(row?.posture_count ?? 0),
+    postureCount,
     avgTone: row?.avg_tone ?? null,
   };
 }
@@ -404,12 +425,15 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     // Severity-tier check — independent of the growth math below. See
     // SEVERE_EVENT_CODES's doc comment: one mass-killing/WMD-class event is
     // critical on its own, it doesn't need to "beat a baseline" to count.
-    const severeRow = await first<{ count: number }>(
+    // Same URL cross-check as queryWindowBucket's postureCount — a severe-
+    // tier miscoding forcing Critical outright would be an even worse false
+    // positive than a plain posture one, so this gets the same filter.
+    const severeRows = await all<{ source_url: string }>(
       env.DB,
-      `SELECT COUNT(*) AS count FROM gdelt_bulk_events WHERE ${SEVERE_EVENT_SQL} AND date_added >= ? AND place_name LIKE ?`,
+      `SELECT source_url FROM gdelt_bulk_events WHERE ${SEVERE_EVENT_SQL} AND date_added >= ? AND place_name LIKE ?`,
       [...SEVERE_EVENT_CODES, windowStart, likePattern]
     );
-    const severeCount = Number(severeRow?.count ?? 0);
+    const severeCount = severeRows.filter((r) => !isLikelyNonMilitaryUrl(r.source_url)).length;
 
     let level: "none" | AlertLevel = "none";
     // Growth/ratio math only gets to assign a level once there's a real
@@ -435,29 +459,42 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
     let descriptionIsAi = false;
     let sampleLocationList: string[] = [];
     if (level !== "none") {
-      // Ordered by mentions (not arbitrary DISTINCT order) so the first
-      // entry is genuinely the most-reported place — same ordering
-      // getCountryEscalationEvidence/the map marker's own geolocation use,
-      // so the summary text and the marker's actual position agree.
-      const sample = await all<{ place_name: string }>(
+      // Raw rows (not a GROUP BY aggregate) so each row's own source_url can
+      // be cross-checked with isLikelyNonMilitaryUrl first — the same
+      // CAMEO-miscoding filter applied to scoring/evidence above. A GROUP
+      // BY place_name/event_code done in SQL has no per-row URL to filter
+      // on, so this fetches a bounded raw sample instead and does the
+      // location/event-type grouping in JS after the filter.
+      const rawSample = await all<{ place_name: string; event_code: string; num_mentions: number | null; source_url: string }>(
         env.DB,
-        `SELECT place_name FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
-         GROUP BY place_name ORDER BY MAX(num_mentions) DESC LIMIT 3`,
+        `SELECT place_name, event_code, num_mentions, source_url FROM gdelt_bulk_events
+         WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
+         ORDER BY num_mentions DESC LIMIT 60`,
         [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
       );
-      sampleLocationList = sample.map((r) => r.place_name);
+      const filteredSample = rawSample.filter((r) => !isLikelyNonMilitaryUrl(r.source_url));
+
+      // Most-mentioned distinct place names, same ordering
+      // getCountryEscalationEvidence/the map marker's own geolocation use,
+      // so the summary text and the marker's actual position agree.
+      const seenPlaces = new Set<string>();
+      for (const r of filteredSample) {
+        if (sampleLocationList.length >= 3) break;
+        if (seenPlaces.has(r.place_name)) continue;
+        seenPlaces.add(r.place_name);
+        sampleLocationList.push(r.place_name);
+      }
       const sampleLocations = sampleLocationList.join("; ");
 
       // What KIND of events, not just how many — this is what makes two
       // different countries' summaries actually read differently instead of
       // the same sentence with swapped-in numbers.
-      const eventTypes = await all<{ event_code: string; event_count: number }>(
-        env.DB,
-        `SELECT event_code, COUNT(*) AS event_count FROM gdelt_bulk_events WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
-         GROUP BY event_code ORDER BY event_count DESC LIMIT 5`,
-        [...MILITARY_POSTURE_EVENT_CODES, windowStart, likePattern]
-      );
-      const eventTypeLabels = eventTypes.map((r) => `${EVENT_CODE_LABEL[r.event_code] ?? `event code ${r.event_code}`} (${r.event_count})`);
+      const eventTypeCounts = new Map<string, number>();
+      for (const r of filteredSample) eventTypeCounts.set(r.event_code, (eventTypeCounts.get(r.event_code) ?? 0) + 1);
+      const eventTypeLabels = [...eventTypeCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([code, count]) => `${EVENT_CODE_LABEL[code] ?? `event code ${code}`} (${count})`);
       const eventTypeSummary = eventTypeLabels.join("; ");
 
       const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
@@ -722,24 +759,32 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
   // down should show everything that could be behind either a fast or slow
   // trigger, not just the narrower 6h window.
   const currentStart = toGdeltTimestamp(new Date(Date.now() - SLOW_WINDOW_HOURS * 3600_000));
+  // Over-fetch (3x) before the isLikelyNonMilitaryUrl filter below, so
+  // dropping confident GDELT CAMEO miscodings (see that function's own doc
+  // comment — a mining/trade/diplomatic story coded into a posture bucket
+  // with no real military content) doesn't quietly shrink the requested
+  // limit; the final slice still returns at most `limit` real items.
   const rows = await all<{ place_name: string; event_code: string; avg_tone: number | null; num_mentions: number | null; source_url: string; date_added: string; lat: number | null; lon: number | null }>(
     env.DB,
     `SELECT place_name, event_code, avg_tone, num_mentions, source_url, date_added, lat, lon FROM gdelt_bulk_events
      WHERE ${MILITARY_POSTURE_SQL} AND date_added >= ? AND place_name LIKE ?
      ORDER BY num_mentions DESC LIMIT ?`,
-    [...MILITARY_POSTURE_EVENT_CODES, currentStart, `%${name}%`, limit]
+    [...MILITARY_POSTURE_EVENT_CODES, currentStart, `%${name}%`, limit * 3]
   );
-  return rows.map((r) => ({
-    placeName: r.place_name,
-    eventCode: r.event_code,
-    avgTone: r.avg_tone,
-    numMentions: r.num_mentions,
-    sourceUrl: r.source_url,
-    dateAdded: r.date_added,
-    lat: r.lat,
-    lon: r.lon,
-    source: "gdelt" as const,
-  }));
+  return rows
+    .filter((r) => !isLikelyNonMilitaryUrl(r.source_url))
+    .slice(0, limit)
+    .map((r) => ({
+      placeName: r.place_name,
+      eventCode: r.event_code,
+      avgTone: r.avg_tone,
+      numMentions: r.num_mentions,
+      sourceUrl: r.source_url,
+      dateAdded: r.date_added,
+      lat: r.lat,
+      lon: r.lon,
+      source: "gdelt" as const,
+    }));
 }
 
 /** Shape returned by AfricaWireActor's /keyword-matches — see
