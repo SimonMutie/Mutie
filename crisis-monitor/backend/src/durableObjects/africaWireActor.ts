@@ -3,6 +3,7 @@ import { AFRICA_SOURCES, PAN_AFRICAN, INSTITUTION } from "../data/africaSources"
 import { AFRICA_CENTROIDS } from "../countryEscalation";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
+import { detectNonEnglish, translateToEnglish } from "../lib/translate";
 
 /**
  * Crawls the ~260 African country/pan-African/institutional homepages in
@@ -48,6 +49,16 @@ const BATCH_SIZE = 60;
 // a small batch was throwing most of each cycle's haul away for no reason.
 const ITEMS_PER_SOURCE = 20;
 const MAX_ITEM_AGE_MS = 5 * 24 * 3_600_000; // country papers publish far less often than a wire service
+// scoreRisk() (lib/osintFeed.ts) matches English keywords only, so a
+// French/Portuguese/Arabic item currently scores near zero regardless of
+// actual severity — a real blind spot across the Francophone/Lusophone/
+// Arabic-press share of the 260 sources. Translating the top few items per
+// source (not all ITEMS_PER_SOURCE) bounds worst-case Workers AI calls to
+// BATCH_SIZE * this, keeping one tick's translation cost/latency bounded
+// even if every source in a batch turns out to be non-English — a quick,
+// representative sample rather than exhaustively translating every item,
+// which can be raised later once real Workers AI latency/cost is observed.
+const TRANSLATE_TOP_N_PER_SOURCE = 5;
 /** Re-run discovery for a source (rather than trusting its last discovered
  *  feedUrl) after this long, in case a site restructures. */
 const REDISCOVER_AFTER_MS = 7 * 24 * 3_600_000;
@@ -70,6 +81,12 @@ interface WireItem {
   link: string;
   published: string;
   description: string;
+  /** Set only when title+description were detected as likely non-English
+   *  and successfully translated (see lib/translate.ts) — the combined
+   *  English text buildSnapshot() risk-scores against instead of the raw
+   *  (untranslated) title+description when present. Original title/
+   *  description are kept as-is for display either way. */
+  riskTextEn?: string;
 }
 
 function domainOf(url: string): string {
@@ -145,18 +162,31 @@ export class AfricaWireActor implements DurableObject {
       const res = await fetch(feedUrl, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLens/1.0)" } });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const items = parseRSSItems(await res.text(), domainOf(source.url)).slice(0, ITEMS_PER_SOURCE);
-      const wireItems: WireItem[] = items
-        .filter((it) => now - Date.parse(it.pubDate) <= MAX_ITEM_AGE_MS)
-        .map((it) => ({
-          id: hashId(`${index}:${it.link || it.title}`),
-          index,
-          country: source.country,
-          domain: domainOf(source.url),
-          title: it.title,
-          link: it.link,
-          published: it.pubDate,
-          description: it.description,
-        }));
+      const fresh = items.filter((it) => now - Date.parse(it.pubDate) <= MAX_ITEM_AGE_MS);
+
+      let translateBudget = TRANSLATE_TOP_N_PER_SOURCE;
+      const wireItems: WireItem[] = await Promise.all(
+        fresh.map(async (it) => {
+          const combined = `${it.title} ${it.description}`;
+          let riskTextEn: string | undefined;
+          if (translateBudget > 0 && detectNonEnglish(combined)) {
+            translateBudget--;
+            const result = await translateToEnglish(this.env, combined);
+            if (result.translated) riskTextEn = result.text;
+          }
+          return {
+            id: hashId(`${index}:${it.link || it.title}`),
+            index,
+            country: source.country,
+            domain: domainOf(source.url),
+            title: it.title,
+            link: it.link,
+            published: it.pubDate,
+            description: it.description,
+            riskTextEn,
+          };
+        })
+      );
       await this.state.storage.put(`items:${index}`, wireItems);
     } catch (err) {
       // A working feed that fails on one particular fetch (transient 5xx,
@@ -183,7 +213,7 @@ export class AfricaWireActor implements DurableObject {
 
     const allItems = [...itemEntries.values()].flat();
     const alerts = allItems.map((it) => {
-      const risk = scoreRisk(`${it.title} ${it.description}`);
+      const risk = scoreRisk(it.riskTextEn ?? `${it.title} ${it.description}`);
       const centroid = AFRICA_CENTROIDS[it.country];
       return {
         ...it,

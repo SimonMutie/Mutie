@@ -66,6 +66,15 @@ export interface Env {
    *  route works without it, just without the Mastodon section of the
    *  results (mastodonAvailable: false). */
   MASTODON_ACCESS_TOKEN?: string;
+  /** Workers AI — account-level, no separate "create a resource" step like
+   *  D1/Queues need (just this binding, then it's usable), used by
+   *  lib/translate.ts to translate African local-language press (French,
+   *  Portuguese, Arabic) into English before risk-scoring, via the
+   *  `@cf/meta/m2m100-1.2b` model. Chosen over an external translation API
+   *  (DeepL/Google/Azure) specifically because it adds no new vendor
+   *  relationship or API key — see the OSINT collection-scaling research
+   *  report's "no new paid vendor" framing for why that mattered here. */
+  AI: Ai;
   /** Anthropic API key (console.anthropic.com -> API Keys), used by
    *  countryEscalation.ts to turn a country's escalation numbers (current
    *  vs. baseline report count, tone, sample locations) into a short

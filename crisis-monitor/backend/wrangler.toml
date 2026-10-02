@@ -10,6 +10,12 @@ binding = "DB"
 database_name = "sentinel"
 database_id = "c7214227-21e8-4223-9ea5-50e82f851556"
 
+# Workers AI — account-level, no separate resource to create first (unlike
+# D1/Queues above/below), billed per-request on Cloudflare's usual Workers
+# AI pricing. Used by lib/translate.ts for African local-language press.
+[ai]
+binding = "AI"
+
 [[durable_objects.bindings]]
 name = "LIVE_FEED"
 class_name = "LiveFeedHub"
