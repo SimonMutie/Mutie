@@ -429,22 +429,35 @@ async function queryWindowBucket(env: Env, countryName: string, likePattern: str
  *  Used only when raw CAMEO-code signal exists for a country/window but the
  *  slug-text confirmation filtered it all out (see rawPostureCount's doc
  *  comment above): rather than silently trusting or discarding that raw
- *  signal, this makes ONE real check against GDELT's own live full-text
- *  search API (already built for the evidence drill-down,
- *  lib/gdeltArticleSearch.ts) and only rescues the country's score when that
- *  search actually turns up a real, keyword-matching headline. This is what
- *  stops the strict slug check from permanently blind-siding a real,
- *  ongoing conflict (Tigray, Kordofan/SAF) just because the particular wire
- *  services reporting on it happen to use ID-based URLs with no descriptive
- *  slug text — while still never trusting raw CAMEO codes on their own,
- *  which is exactly the miscoding problem the slug gate was built to stop. */
-async function corroborateWithLiveSearch(countryName: string, windowHours: number): Promise<boolean> {
-  try {
-    const hits = await searchGdeltEscalationArticles(countryName, windowHours, 5);
-    return hits.length > 0;
-  } catch {
-    return false;
-  }
+ *  signal, this checks for a real, keyword-matching headline before
+ *  rescuing the country's score. This is what stops the strict slug check
+ *  from permanently blind-siding a real, ongoing conflict (Tigray,
+ *  Kordofan/SAF) just because the particular wire services reporting on it
+ *  happen to use ID-based URLs with no descriptive slug text — while still
+ *  never trusting raw CAMEO codes on their own, which is exactly the
+ *  miscoding problem the slug gate was built to stop.
+ *
+ *  Checks TWO independent sources, not one, and rescues on EITHER hit:
+ *   1. GDELT's own live DOC 2.0 full-text search (searchGdeltEscalationArticles)
+ *   2. Africa Wire's own already-crawled keyword matches (getAfricaWireEscalationEvidence)
+ *  Originally this checked only GDELT's DOC 2.0 API, which is a shared,
+ *  keyless, rate-limited public endpoint (see gdeltArticleSearch.ts's own
+ *  doc comment) that fails closed — a timeout, a 429 that survives its one
+ *  retry, any network hiccup — by returning an empty array, no different
+ *  from "genuinely found nothing". Relying on that alone meant a single
+ *  external rate-limit event could silently un-rescue a real, ongoing
+ *  conflict right back into "filtered as non-escalation", the exact bug
+ *  this whole mechanism exists to prevent. Africa Wire's evidence is local,
+ *  already-crawled data with no shared external quota, so checking it too
+ *  removes that single point of failure — a real event only fails to be
+ *  rescued now if BOTH sources turn up nothing, not just whichever one
+ *  happened to be reachable at that moment. */
+async function corroborateWithLiveSearch(env: Env, countryCode: string, countryName: string, windowHours: number): Promise<boolean> {
+  const [gdeltHits, wireHits] = await Promise.all([
+    searchGdeltEscalationArticles(countryName, windowHours, 5).catch(() => []),
+    getAfricaWireEscalationEvidence(env, countryCode, 5).catch(() => []),
+  ]);
+  return gdeltHits.length > 0 || wireHits.length > 0;
 }
 
 interface WindowScore {
@@ -538,7 +551,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       (winning.current.postureCount < MIN_ABSOLUTE_POSTURE_COUNT && winning.current.rawPostureCount >= MIN_ABSOLUTE_POSTURE_COUNT) ||
       (severeCount === 0 && rawSevereCount > 0)
     ) {
-      corroborated = await corroborateWithLiveSearch(name, windowHours);
+      corroborated = await corroborateWithLiveSearch(env, code, name, windowHours);
       if (corroborated) {
         effectivePostureCurrent = winning.current.rawPostureCount;
         effectivePostureBaseline = winning.baseline.rawPostureCount;
@@ -934,7 +947,7 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
   // otherwise a country the scoring loop rescued would still show no marker
   // and no evidence here, right back to the Ghana empty-evidence bug.
   if (confirmed.length === 0 && rows.length >= MIN_ABSOLUTE_POSTURE_COUNT) {
-    const corroborated = await corroborateWithLiveSearch(name, SLOW_WINDOW_HOURS);
+    const corroborated = await corroborateWithLiveSearch(env, countryCode.toUpperCase(), name, SLOW_WINDOW_HOURS);
     if (corroborated) confirmed = rows;
   }
   return confirmed
