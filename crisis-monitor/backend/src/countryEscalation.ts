@@ -189,17 +189,30 @@ export const AFRICA_CENTROIDS: Record<string, [number, number]> = {
 
 const ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"; // fast + cheap — this fires at most a few times/hour, per country, never a chat-scale workload
 const ANTHROPIC_TIMEOUT_MS = 8000;
+// Workers AI fallback — this Worker already has an AI binding (used by
+// lib/translate.ts), no separate account/API key needed, unlike
+// ANTHROPIC_API_KEY which is an optional secret that has to be deliberately
+// set (`wrangler secret put ANTHROPIC_API_KEY`). If that secret was never
+// set, generateAnalyticalSummary used to just return null every single
+// time with no visible error — silently leaving every country on the
+// mechanical templated sentence forever, which is exactly what produced
+// "this generic thing" instead of a real AI summary. Falling back to
+// Workers AI means a real AI-written brief still gets produced even when
+// that secret is unset, rather than this feature quietly never firing.
+const WORKERS_AI_SUMMARY_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8" as const;
+const WORKERS_AI_TIMEOUT_MS = 8000;
 
-/** Turns one country's escalation numbers into a short analyst-style brief
- *  via the Anthropic API, in place of the plain templated sentence. Returns
- *  null (never throws) whenever this can't produce a real answer — no key
- *  configured, a timeout, a non-200 response, or an unexpected response
- *  shape — so the caller always has the templated description to fall back
- *  on and an alert never fails to fire just because this enhancement did.
- *  Deliberately fed only the numbers already computed above (no invented
- *  context, no speculation beyond the data) — this is meant to read the
- *  same numbers a human analyst would see, phrased better, not to add
- *  claims nothing here actually knows. */
+/** Turns one country's escalation numbers AND real scraped headlines (see
+ *  realHeadlines below) into a short analyst-style brief — via the
+ *  Anthropic API first when ANTHROPIC_API_KEY is configured, falling back
+ *  to this Worker's own Workers AI binding otherwise or on any failure
+ *  (see WORKERS_AI_SUMMARY_MODEL's doc comment). Returns null (never
+ *  throws) only when BOTH paths fail — a timeout, a non-200/malformed
+ *  response, anything — so the caller always has the templated description
+ *  to fall back on and an alert never fails to fire just because this
+ *  enhancement did. Deliberately fed only the headlines/numbers already
+ *  gathered above (no invented context, no speculation beyond that data —
+ *  explicitly instructed in the prompt itself). */
 async function generateAnalyticalSummary(
   env: Env,
   params: {
@@ -216,19 +229,33 @@ async function generateAnalyticalSummary(
     sampleLocations: string[];
     eventTypeSummary: string;
     severeCount: number;
+    /** Actual scraped/confirmed article headlines behind this window (Africa
+     *  Wire crawl + GDELT's own live article search — see
+     *  getAfricaWireEscalationEvidence/getGdeltArticleEscalationEvidence),
+     *  newest first. This is the real "what has been scraped" — when
+     *  present, the prompt below asks the model to synthesize FROM these
+     *  (actors, places, specific developments) rather than just narrating
+     *  the counts, which is the direct fix for a summary that reads as a
+     *  generic statistics recap instead of an actual situation briefing. */
+    realHeadlines: string[];
   }
 ): Promise<string | null> {
-  if (!env.ANTHROPIC_API_KEY) return null;
-
+  const hasHeadlines = params.realHeadlines.length > 0;
   const prompt =
-    `You are drafting one short paragraph (2-3 sentences, no markdown, no headings, no bullet points) for a security-monitoring alert ` +
-    `on an African conflict-monitoring dashboard. Use only the facts given below — do not add locations, causes, actors, or context not stated here. ` +
-    `Lead with WHAT KIND of event is driving this (the event-type breakdown below), not just the raw counts — two different countries hitting this ` +
-    `alert for different reasons should read as genuinely different situation notes, not the same sentence with swapped-in numbers. ` +
+    `You are drafting one short, specific paragraph (2-4 sentences, no markdown, no headings, no bullet points) for a security-monitoring alert ` +
+    `on an African conflict-monitoring dashboard. Use only the facts given below — do not add locations, causes, actors, or context not stated here, ` +
+    `and do not invent any detail not present in the headlines or stats below.\n\n` +
+    (hasHeadlines
+      ? `PRIORITY: real, confirmed news headlines are available below — synthesize the summary FROM THESE FIRST (what specific actors, places, and ` +
+        `developments they actually describe), using the stats only as supporting scale/trend context. Two countries with different headlines must ` +
+        `read as genuinely different, specific situations — never a generic "military-posture reporting rose" sentence when real headlines are given.\n\n`
+      : `No confirmed article headlines were available this window — synthesize from the stats below only, leading with WHAT KIND of event is driving ` +
+        `this (the event-type breakdown), not just raw counts.\n\n`) +
     `Write it the way a conflict analyst would phrase a terse situation note, not a headline and not a hedge-filled disclaimer.\n\n` +
     `Country: ${params.countryName}\n` +
     `Alert level: ${params.level}\n` +
     `Signal: ${params.triggeredWindow === "fast" ? "breaking/rapid" : "sustained"} rise over a ${params.windowHours}h window\n` +
+    `${hasHeadlines ? `Real, confirmed recent headlines (newest first):\n${params.realHeadlines.map((h) => `- ${h}`).join("\n")}\n\n` : ""}` +
     `Event types driving this, most frequent first: ${params.eventTypeSummary || "not broken down"}\n` +
     `Military-posture reports (mobilization, clashes, airstrikes, drone strikes, heavy weapons, blockades, ceasefire violations) in that window: ${params.postureCurrentCount}\n` +
     `Military-posture baseline (prior ${params.windowHours}h): ${params.postureBaselineCount}\n` +
@@ -238,30 +265,49 @@ async function generateAnalyticalSummary(
     `Sample reported locations: ${params.sampleLocations.length > 0 ? params.sampleLocations.join("; ") : "none captured"}\n` +
     `${params.severeCount > 0 ? `Mass-violence-tier events (mass killings/ethnic cleansing/WMD-class) in that window: ${params.severeCount} — this alone makes the alert critical, say so plainly.\n` : ""}`;
 
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      signal: AbortSignal.timeout(ANTHROPIC_TIMEOUT_MS),
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 220,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    if (!res.ok) {
-      console.error(`[country-escalation] Anthropic summary request failed: ${res.status}`);
-      return null;
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: AbortSignal.timeout(ANTHROPIC_TIMEOUT_MS),
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: ANTHROPIC_MODEL,
+          max_tokens: 220,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!res.ok) {
+        console.error(`[country-escalation] Anthropic summary request failed: ${res.status}`);
+      } else {
+        const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
+        const text = data.content?.find((b) => b.type === "text")?.text?.trim();
+        if (text) return text;
+      }
+    } catch (err) {
+      console.error("[country-escalation] Anthropic summary request errored", err);
     }
-    const data = (await res.json()) as { content?: Array<{ type?: string; text?: string }> };
-    const text = data.content?.find((b) => b.type === "text")?.text?.trim();
+  }
+
+  // Falls through to Workers AI whenever ANTHROPIC_API_KEY is unset OR the
+  // Anthropic call itself failed/timed out/returned empty — see
+  // WORKERS_AI_SUMMARY_MODEL's own doc comment for why this exists at all:
+  // without it, an unset secret meant this function silently returned null
+  // on every single call, forever, with nothing in the UI distinguishing
+  // "AI summary disabled" from "AI summary temporarily failed".
+  try {
+    const result = await Promise.race([
+      env.AI.run(WORKERS_AI_SUMMARY_MODEL, { messages: [{ role: "user", content: prompt }], max_tokens: 220 }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("workers-ai summary timeout")), WORKERS_AI_TIMEOUT_MS)),
+    ]);
+    const text = (result as { response?: string })?.response?.trim();
     return text || null;
   } catch (err) {
-    console.error("[country-escalation] Anthropic summary request errored", err);
+    console.error("[country-escalation] Workers AI summary request errored", err);
     return null;
   }
 }
@@ -504,6 +550,26 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         .map(([code, count]) => `${EVENT_CODE_LABEL[code] ?? `event code ${code}`} (${count})`);
       const eventTypeSummary = eventTypeLabels.join("; ");
 
+      // The actual scraped/confirmed article text behind this window — not
+      // just counts. getAfricaWireEscalationEvidence/getGdeltArticleEscalationEvidence
+      // (both defined later in this file) are the exact same real, titled,
+      // keyword-confirmed articles the evidence drill-down shows; pulling a
+      // handful of their headlines here is what lets the summary actually
+      // describe what's being reported ("ENDF shells TPLF positions near
+      // Mekelle") instead of reciting event-code counts in prose, which is
+      // all the templated/AI summary could ever do before this round even
+      // when the AI path fired correctly. Newest-first, capped small since
+      // this is a short situation note, not a digest.
+      const [wireHeadlines, articleHeadlines] = await Promise.all([
+        getAfricaWireEscalationEvidence(env, code, 6),
+        getGdeltArticleEscalationEvidence(env, code, 6),
+      ]);
+      const realHeadlines = [...wireHeadlines, ...articleHeadlines]
+        .sort((a, b) => Date.parse(b.dateAdded) - Date.parse(a.dateAdded))
+        .map((h) => h.title)
+        .filter((t): t is string => !!t)
+        .slice(0, 6);
+
       const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
       const templatedDescription =
         `${name}${sampleLocationList[0] ? ` (near ${sampleLocationList[0]})` : ""} shows ${windowLabel} in military-posture reporting — ` +
@@ -512,13 +578,21 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         `versus a baseline of ${winning.baseline.postureCount} in the previous ${windowHours}h (overall conflict-toned volume ${winning.current.totalCount} vs ${winning.baseline.totalCount}, escalation score ${escalationScore.toFixed(2)})` +
         `${winning.current.avgTone !== null ? `, average tone ${winning.current.avgTone.toFixed(1)} (${winning.current.avgTone < -3 ? "sharply negative" : winning.current.avgTone < 0 ? "negative" : "mixed"})` : ""}.` +
         `${sampleLocations ? ` Reported near: ${sampleLocations}.` : ""}` +
-        `${severeCount > 0 ? ` Includes ${severeCount} mass-violence-tier report${severeCount === 1 ? "" : "s"} (mass killings/ethnic cleansing/WMD-class).` : ""}`;
+        `${severeCount > 0 ? ` Includes ${severeCount} mass-violence-tier report${severeCount === 1 ? "" : "s"} (mass killings/ethnic cleansing/WMD-class).` : ""}` +
+        // Real headlines appended even on the non-AI fallback path — so the
+        // output is still genuinely informative (not just statistics) when
+        // ANTHROPIC_API_KEY isn't configured on this Worker or a call fails.
+        `${realHeadlines.length > 0 ? ` Recent reporting: ${realHeadlines.slice(0, 2).map((t) => `"${t}"`).join("; ")}.` : ""}`;
 
       // AI-written brief when ANTHROPIC_API_KEY is configured, falling back
       // to the plain templated sentence above otherwise or on any failure
       // — see generateAnalyticalSummary's own doc comment. Fed the real
-      // event-type breakdown and top place so the brief reflects what
-      // actually happened in THIS country's window, not a generic shape.
+      // event-type breakdown, top place, AND (new this round) actual
+      // scraped headlines, so the brief synthesizes what's really being
+      // reported instead of narrating counts — if this still reads as a
+      // generic stats recap, ANTHROPIC_API_KEY is most likely unset as a
+      // secret on this Worker (`wrangler secret put ANTHROPIC_API_KEY`),
+      // since that's the only way this call returns null every time.
       const aiSummary = await generateAnalyticalSummary(env, {
         countryName: name,
         windowHours,
@@ -533,6 +607,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         sampleLocations: sampleLocationList,
         eventTypeSummary,
         severeCount,
+        realHeadlines,
       });
       description = aiSummary ?? templatedDescription;
       descriptionIsAi = aiSummary !== null;
