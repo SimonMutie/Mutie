@@ -53,6 +53,8 @@
  *      escalation".
  */
 
+import { AFRICA_COUNTRIES } from "../routes/globalStatus";
+
 export interface EscalationKeywordMatch {
   label: string;
 }
@@ -337,38 +339,101 @@ function slugWords(url: string): string {
 
 /**
  * Cross-check for GDELT geocoding misattribution — a real military event
- * can still land on the WRONG country's bucket. Confirmed case: a Yemen
- * (Taiz/Bab-al-Mandab) battle between Houthis and government forces
- * geocoded onto Sudan's Red Sea coast purely from maritime/strait-
- * reference ambiguity, with "Sudan" never once named in the actual story.
- * If the slug clearly names a DIFFERENT country/conflict and never
+ * can still land on the WRONG country's bucket. Confirmed cases so far:
+ *   1. A Yemen (Taiz/Bab-al-Mandab) battle between Houthis and government
+ *      forces geocoded onto Sudan's Red Sea coast purely from maritime/
+ *      strait-reference ambiguity, with "Sudan" never once named in the
+ *      actual story.
+ *   2. A non-conflict Ghana story geocoded onto South Africa's bucket —
+ *      caught here only once this list stopped being non-African-only (see
+ *      below): the original version of this check (NON_AFRICAN_CONFLICT_TERMS)
+ *      only ever listed non-African countries/conflicts, on the assumption
+ *      a misattribution would always cross an Africa/non-Africa boundary.
+ *      That assumption was wrong — GDELT's gazetteer resolution can just as
+ *      easily confuse two African countries with each other, and nothing
+ *      in the old list would ever catch a Ghana-geocoded-as-South-Africa
+ *      case, since "ghana" was never a term this function checked for at
+ *      all.
+ * If the slug clearly names a DIFFERENT country (African or not) and never
  * mentions the target country at all, the attribution is almost certainly
- * a geocoding artifact. This app only scores African countries, so a
- * non-African event is simply dropped — there's no "correct" bucket to
- * move it to.
+ * a geocoding artifact.
  */
 const NON_AFRICAN_CONFLICT_TERMS = [
   "yemen", "houthi", "houthis", "taiz", "sanaa", "sana'a", "aden", "hodeidah", "marib",
-  "saudi-arabia", "saudi", "riyadh",
-  "israel", "israeli", "gaza", "palestine", "palestinian", "west-bank", "hamas", "hezbollah",
+  "saudi arabia", "saudi", "riyadh",
+  "israel", "israeli", "gaza", "palestine", "palestinian", "west bank", "hamas", "hezbollah",
   "syria", "syrian", "damascus", "aleppo",
   "iraq", "iraqi", "baghdad", "iran", "iranian", "tehran",
   "lebanon", "lebanese", "beirut", "jordan", "amman",
-  "oman", "qatar", "kuwait", "bahrain", "emirates", "dubai", "abu-dhabi",
+  "oman", "qatar", "kuwait", "bahrain", "emirates", "dubai", "abu dhabi",
   "turkey", "turkish", "ankara",
   "ukraine", "ukrainian", "kyiv", "russia", "russian", "moscow",
   "afghanistan", "afghan", "kabul", "pakistan", "pakistani", "india", "indian",
   "china", "chinese", "myanmar",
 ];
 
-/** True when this event's own article URL slug clearly names a different,
- *  non-African conflict/country and never mentions `targetCountryName` at
- *  all — see the doc comment above. */
+/** Strips diacritics, drops a trailing parenthetical qualifier ("Congo
+ *  (Rep.)" -> "Congo"), turns apostrophes into spaces ("Côte d'Ivoire" ->
+ *  "Cote d Ivoire", matching how that name actually appears, space-
+ *  separated, in a URL slug) and collapses whitespace — so a country name
+ *  as stored in AFRICA_COUNTRIES can be matched word-for-word against
+ *  plain-ASCII slug text. */
+function cleanCountryName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/['’]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+const NON_AFRICAN_CONFLICT_PATTERNS = NON_AFRICAN_CONFLICT_TERMS.map((term) => termToRegex(term));
+
+/** Every African country's own name (deduped — "Congo (Rep.)" and "Congo
+ *  (DRC)" both clean to plain "Congo", which is fine here: either one
+ *  present is still "a different African country than the target", which
+ *  is all this check needs to know), as a word-boundary-safe matcher. This
+ *  is what lets isLikelyWrongCountryUrl catch an African-to-African
+ *  misattribution (Ghana geocoded onto South Africa) the same way it
+ *  already caught a non-African one (Yemen onto Sudan) — see the doc
+ *  comment above. */
+const AFRICAN_COUNTRY_NAME_PATTERNS: { name: string; rx: RegExp }[] = Array.from(
+  new Set(Object.values(AFRICA_COUNTRIES).map(cleanCountryName))
+).map((name) => ({ name, rx: termToRegex(name) }));
+
+/** True when this event's own article URL slug clearly names a different
+ *  country — African or not — and never mentions `targetCountryName` at
+ *  all — see the doc comment above. Word-boundary matching throughout
+ *  (not a plain substring check) so, for example, a slug naming "Nigeria"
+ *  doesn't get misread as mentioning "Niger", and "South Sudan" doesn't
+ *  get misread as mentioning plain "Sudan" — those are a second, distinct
+ *  class of cross-country confusion this same function would otherwise be
+ *  exposed to once it started checking against every African country name. */
 export function isLikelyWrongCountryUrl(url: string, targetCountryName: string): boolean {
   if (!url || !targetCountryName) return false;
   const text = slugWords(url);
-  if (text.includes(targetCountryName.toLowerCase())) return false; // slug itself names the target — trust the attribution
-  return NON_AFRICAN_CONFLICT_TERMS.some((term) => text.includes(term));
+  const targetClean = cleanCountryName(targetCountryName);
+  const targetRx = termToRegex(targetClean);
+
+  // A country whose own name CONTAINS the target's name as a sub-phrase
+  // ("South Sudan" contains "Sudan"; "Guinea-Bissau" and "Equatorial
+  // Guinea" both contain "Guinea") would otherwise let the plain
+  // target-name check below wrongly "trust" a slug that's actually naming
+  // that OTHER, more specific country — "sudan" is a perfectly real,
+  // word-boundary-matched word inside "south sudan", so a naive check
+  // can't tell those two apart by word-boundary matching alone. Checked
+  // first and wins outright: if the slug names one of these more-specific
+  // containing countries, it's that country's story, not the shorter
+  // target's.
+  for (const other of AFRICAN_COUNTRY_NAME_PATTERNS) {
+    if (other.name !== targetClean && targetRx.test(other.name) && other.rx.test(text)) return true;
+  }
+
+  if (targetRx.test(text)) return false; // slug itself names the target — trust the attribution
+  if (NON_AFRICAN_CONFLICT_PATTERNS.some((rx) => rx.test(text))) return true;
+  return AFRICAN_COUNTRY_NAME_PATTERNS.some(({ name, rx }) => name !== targetClean && rx.test(text));
 }
 
 /**
