@@ -75,6 +75,13 @@ export interface Env {
    *  relationship or API key — see the OSINT collection-scaling research
    *  report's "no new paid vendor" framing for why that mattered here. */
   AI: Ai;
+  /** Producer binding for the "africa-wire-crawl" queue (created via the
+   *  Cloudflare dashboard — see wrangler.toml), used by index.ts's
+   *  scheduled() to fan the ~260-source Africa Wire crawl out across many
+   *  consumer invocations instead of one Durable Object batch per tick. The
+   *  consumer side forwards each message to AfricaWireActor's
+   *  /process-source route — see durableObjects/africaWireActor.ts. */
+  AFRICA_WIRE_QUEUE: Queue<{ index: number }>;
   /** Anthropic API key (console.anthropic.com -> API Keys), used by
    *  countryEscalation.ts to turn a country's escalation numbers (current
    *  vs. baseline report count, tone, sample locations) into a short

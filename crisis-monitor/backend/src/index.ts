@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./bindings";
+import { AFRICA_SOURCES } from "./data/africaSources";
 import { authRouter } from "./routes/auth";
 import { queriesRouter } from "./routes/queries";
 import { eventsRouter } from "./routes/events";
@@ -89,8 +90,44 @@ app.get("/ws", async (c) => {
 
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
+/** Splits the ~260-source list into Queues' max-100-messages-per-call
+ *  sendBatch chunks. Every source is enqueued every tick (no cursor) —
+ *  the queue's own pacing (wrangler.toml's max_batch_size/
+ *  max_batch_timeout) and per-message retries govern actual throughput
+ *  and failure handling from here, not this function. */
+async function enqueueAfricaWireCrawl(env: Env): Promise<void> {
+  const SENDBATCH_LIMIT = 100;
+  const messages = AFRICA_SOURCES.map((_, index) => ({ body: { index } }));
+  for (let i = 0; i < messages.length; i += SENDBATCH_LIMIT) {
+    await env.AFRICA_WIRE_QUEUE.sendBatch(messages.slice(i, i + SENDBATCH_LIMIT));
+  }
+}
+
+/** Consumer side of the "africa-wire-crawl" queue — forwards each message
+ *  to AfricaWireActor's /process-source route (durableObjects/
+ *  africaWireActor.ts), which does the actual fetch/parse/translate/store
+ *  for that one source. A source that throws is retried by the queue
+ *  itself (up to wrangler.toml's max_retries) rather than silently
+ *  dropped; one source's failure never blocks the rest of the batch. */
+async function processAfricaWireQueueBatch(batch: MessageBatch<{ index: number }>, env: Env): Promise<void> {
+  const stub = env.AFRICA_WIRE_ACTOR.get(env.AFRICA_WIRE_ACTOR.idFromName("global"));
+  await Promise.all(
+    batch.messages.map(async (msg) => {
+      try {
+        await stub.fetch(`http://africa-wire-actor/process-source?index=${msg.body.index}`);
+        msg.ack();
+      } catch (err) {
+        console.error(`[africa-wire-queue] source ${msg.body.index} failed`, err);
+        msg.retry();
+      }
+    })
+  );
+}
+
 export default {
   fetch: app.fetch,
+
+  queue: processAfricaWireQueueBatch,
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
@@ -129,14 +166,14 @@ export default {
     // GDELT export (cheap D1 aggregate queries, no external calls).
     ctx.waitUntil(scoreCountryEscalations(env).catch((err) => console.error("[country-escalation] scoring failed", err)));
 
-    // Africa Wire crawl (see durableObjects/africaWireActor.ts) — processes
-    // one batch of the ~260-source list per tick, so a full cycle spreads
-    // across many 5-minute ticks rather than fetching all of them at once.
-    ctx.waitUntil(
-      env.AFRICA_WIRE_ACTOR.get(env.AFRICA_WIRE_ACTOR.idFromName("global"))
-        .fetch("http://africa-wire-actor/tick")
-        .catch((err) => console.error("[africa-wire] tick failed", err))
-    );
+    // Africa Wire crawl (see durableObjects/africaWireActor.ts) — enqueues
+    // one message per source onto the "africa-wire-crawl" Cloudflare Queue
+    // (provisioned via the dashboard) rather than processing a fixed batch
+    // in-line here. The queue() handler below (and wrangler.toml's
+    // max_batch_size/max_batch_timeout) is what actually paces the fan-out,
+    // so every source gets a fresh attempt each 5-minute tick instead of
+    // cycling through the list via a persisted cursor over many ticks.
+    ctx.waitUntil(enqueueAfricaWireCrawl(env).catch((err) => console.error("[africa-wire] enqueue failed", err)));
 
     if ((env.GDELT_ENABLED ?? "false") !== "true") return;
 

@@ -15,38 +15,29 @@ import { detectNonEnglish, translateToEnglish } from "../lib/translate";
  * Why a Durable Object rather than doing this on request: fetching and
  * parsing 260 sites can't happen inside one HTTP request/response cycle
  * without either timing it out or hammering all 260 at once on every page
- * load. Instead this processes a small batch (BATCH_SIZE) each time its
- * /tick endpoint is called — driven by the existing 5-minute cron in
- * index.ts, the same one that already re-kicks the other actors' alarms —
- * cycling through the whole list via a persisted cursor, and remembers
- * each source's discovered feed URL (or that it has none) in Durable
- * Object storage so a full recrawl doesn't repeat that lookup every time.
- * /snapshot then just reads back whatever's accumulated, instantly.
+ * load. Each source is instead processed individually via /process-source,
+ * fed by messages on the "africa-wire-crawl" Cloudflare Queue (producer in
+ * index.ts's scheduled(), consumer also in index.ts) — the queue is what
+ * fans the crawl out across many invocations and paces it (see
+ * max_batch_size/max_batch_timeout in wrangler.toml) rather than a single
+ * Durable Object invocation looping through a fixed batch. This actor
+ * remembers each source's discovered feed URL (or that it has none) in
+ * Durable Object storage so a full recrawl doesn't repeat that lookup
+ * every time. /snapshot then just reads back whatever's accumulated,
+ * instantly.
+ *
+ * Previously this ran as a self-contained cursor-batched loop (a fixed
+ * BATCH_SIZE processed per 5-minute cron tick, cycling through the list
+ * via a persisted cursor) entirely inside one DO invocation's Promise.all.
+ * Moving the fan-out to a real queue means every source gets a fresh
+ * attempt each tick (no more 20-25 minute cursor lag to cycle through all
+ * ~260), with the queue's own per-message retry handling a source that
+ * fails transiently, instead of that being this actor's job.
  *
  * A source that has no discoverable feed is recorded as "no_feed" and
  * contributes nothing — never a guessed or fabricated feed URL.
  */
 
-const BATCH_SIZE = 60;
-// Raised from 15 — the 15-per-tick figure was never calibrated against a
-// real ceiling, just a conservative starting guess from when this crawler
-// was first built. Sources within a batch already run in parallel
-// (Promise.all below), so batch size was never bottlenecked by sequential
-// fetch time, only by how many outbound requests one Durable Object
-// invocation issues at once — and Cloudflare's own subrequest cap has
-// since been raised from 1,000 to 10,000+ per invocation on paid plans
-// (developers.cloudflare.com/changelog, Feb 2026), so 15 was leaving most
-// of that headroom unused. 60 means a full cycle through all ~260 sources
-// takes roughly 20-25 minutes instead of 85-90, without adding any new
-// infrastructure (Cloudflare Queues would fan this out further still, but
-// that needs a Queue resource provisioned first — see the OSINT
-// collection-scaling research report for that as a follow-up). 60 stays
-// comfortably under the ~1,000 req/s a single Durable Object can sustain,
-// and each source's own fetch still has its own 8s timeout below, so a
-// handful of slow/dead sites in a batch can't stall the rest of it.
-// Raised from 5 to 15 at Simon's original request for deeper coverage —
-// most of these sites' RSS feeds carry 15-20+ items per fetch already, so
-// a small batch was throwing most of each cycle's haul away for no reason.
 const ITEMS_PER_SOURCE = 20;
 const MAX_ITEM_AGE_MS = 5 * 24 * 3_600_000; // country papers publish far less often than a wire service
 // scoreRisk() (lib/osintFeed.ts) matches English keywords only, so a
@@ -106,9 +97,13 @@ export class AfricaWireActor implements DurableObject {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/tick") {
-      const result = await this.runBatch();
-      return Response.json(result);
+    if (url.pathname === "/process-source") {
+      const index = Number(url.searchParams.get("index"));
+      if (!Number.isInteger(index) || index < 0 || index >= AFRICA_SOURCES.length) {
+        return Response.json({ error: "invalid index" }, { status: 400 });
+      }
+      await this.processSource(index);
+      return Response.json({ processed: index });
     }
 
     if (url.pathname === "/snapshot") {
@@ -116,18 +111,6 @@ export class AfricaWireActor implements DurableObject {
     }
 
     return new Response("not found", { status: 404 });
-  }
-
-  private async runBatch(): Promise<{ processed: number; cursor: number }> {
-    const cursor = (await this.state.storage.get<number>("cursor")) ?? 0;
-    const total = AFRICA_SOURCES.length;
-    const indices: number[] = [];
-    for (let i = 0; i < BATCH_SIZE && i < total; i++) indices.push((cursor + i) % total);
-
-    await Promise.all(indices.map((i) => this.processSource(i)));
-
-    await this.state.storage.put("cursor", (cursor + BATCH_SIZE) % total);
-    return { processed: indices.length, cursor: (cursor + BATCH_SIZE) % total };
   }
 
   private async processSource(index: number): Promise<void> {

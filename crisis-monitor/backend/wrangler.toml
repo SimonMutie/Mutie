@@ -16,6 +16,26 @@ database_id = "c7214227-21e8-4223-9ea5-50e82f851556"
 [ai]
 binding = "AI"
 
+# Fans the Africa Wire crawl (durableObjects/africaWireActor.ts) out across
+# many consumer invocations instead of one Durable Object working through a
+# fixed-size batch per cron tick. Queue itself was created out-of-band via
+# the Cloudflare dashboard (Queues -> Create queue, named exactly
+# "africa-wire-crawl") since this repo's deploys run through Cloudflare's
+# Git-connected Workers Build, not a local `wrangler` with account access.
+[[queues.producers]]
+queue = "africa-wire-crawl"
+binding = "AFRICA_WIRE_QUEUE"
+
+[[queues.consumers]]
+queue = "africa-wire-crawl"
+# Keeps each consumer invocation's concurrent outbound fetches (one per
+# message, each with its own 8s timeout in africaWireActor.ts) comparable to
+# the old BATCH_SIZE=60 Promise.all, rather than handing the DO a flood of
+# concurrent /process-source calls at once.
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+
 [[durable_objects.bindings]]
 name = "LIVE_FEED"
 class_name = "LiveFeedHub"
