@@ -1,4 +1,4 @@
-import { matchEscalationKeywords, isConfirmedEscalationText } from "./escalationKeywords";
+import { matchEscalationKeywords, isConfirmedEscalationText, isLikelyWrongCountryText } from "./escalationKeywords";
 
 /**
  * Real GDELT article search — the direct fix for "GDELT's structured feed
@@ -127,6 +127,14 @@ export async function searchGdeltEscalationArticles(countryName: string, windowH
     // an ambiguous phrase (clash, siege, advance on...) only counts once a
     // real armed actor is also named in the same title. matchEscalationKeywords
     // is still used below for the display labels once confirmed.
+    // isLikelyWrongCountryText first — this is what GDELT's bulk/URL-slug
+    // path already had (isConfirmedEscalationUrl) but this live-article-
+    // search path, matching on the TITLE instead of a URL slug, never ran
+    // at all: a Yemen/Taiz story datelined "RIYADH" (a wire bureau line,
+    // not where the event happened) could otherwise confirm for an African
+    // country purely because its title also happened to satisfy one of
+    // isConfirmedEscalationText's tiers.
+    if (isLikelyWrongCountryText(a.title, countryName)) continue;
     if (!isConfirmedEscalationText(a.title, countryName)) continue;
     const matchedKeywords = matchEscalationKeywords(a.title);
     hits.push({ title: a.title, url: a.url, seenAt: parseGdeltSeenDate(a.seendate), sourceCountry: a.sourcecountry ?? null, matchedKeywords });

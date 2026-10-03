@@ -3,7 +3,7 @@ import { newId } from "./ids";
 import { toGdeltTimestamp, BROAD_CONFLICT_SQL } from "./connectors/gdeltBulk";
 import { AFRICA_COUNTRIES } from "./routes/globalStatus";
 import { searchGdeltEscalationArticles } from "./lib/gdeltArticleSearch";
-import { isConfirmedEscalationUrl, slugWords } from "./lib/escalationKeywords";
+import { isConfirmedEscalationUrl, slugWords, matchEscalationKeywords } from "./lib/escalationKeywords";
 import { findGazetteerMatches, type GazetteerPlace } from "./lib/conflictGazetteer";
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
@@ -1049,6 +1049,16 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
       // this event in Djibouti's bucket, but the article itself names
       // Mekelle, and Mekelle is unambiguously in Ethiopia.
       const hotspot = resolveRowLocation(r.source_url, code);
+      // What actually warranted this row counting as confirmed — Simon's
+      // direct ask ("every escalation gives a list of information that have
+      // warranted the coding"): matchEscalationKeywords on this same slug
+      // text is exactly what isConfirmedEscalationUrl's own tiers checked,
+      // so surfacing it here isn't a separate guess, it's the real reasoning
+      // trail (which armed actor/military and which action term matched) —
+      // previously only populated for the africa-wire/gdelt-article sources,
+      // never for GDELT-bulk rows, which left this source's evidence with no
+      // visible justification at all.
+      const matchedKeywords = matchEscalationKeywords(slugWords(r.source_url));
       return {
         placeName: hotspot?.name ?? r.place_name,
         eventCode: r.event_code,
@@ -1059,6 +1069,7 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
         lat: hotspot?.lat ?? r.lat,
         lon: hotspot?.lon ?? r.lon,
         source: "gdelt" as const,
+        matchedKeywords,
       };
     });
 }

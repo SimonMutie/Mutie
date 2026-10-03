@@ -460,8 +460,18 @@ export function matchEscalationKeywords(text: string): string[] {
  * built to catch a genuinely foreign one — the difference is whether a
  * real place tied to the target country is actually named, not just
  * whether some other country's name also appears.
+ *
+ * When `targetCountryName` is given, a multi-country roundup/listicle text
+ * (isLikelyMultiCountryRoundup — 2+ OTHER countries/quasi-states named
+ * alongside the target, with no specific place grounding the target itself)
+ * is rejected OUTRIGHT, before any tier below runs — this is the direct fix
+ * for "Mali, Somaliland, Ethiopia... why the confusion": a digest piece
+ * naming several countries side by side is never a specific report about
+ * any single one of them, however many of the tiers below it happens to
+ * satisfy.
  */
 export function isConfirmedEscalationText(text: string, targetCountryName?: string): boolean {
+  if (targetCountryName && isLikelyMultiCountryRoundup(text, targetCountryName)) return false;
   if (matchNonStateArmedGroups(text).length > 0) return true;
   if (matchStandaloneActionTerms(text).length > 0) return true;
   if (proximityPairExists(text, STATE_MILITARY_PATTERNS, AMBIGUOUS_ACTION_PATTERNS, PROXIMITY_WINDOW_CHARS)) {
@@ -593,17 +603,26 @@ function textNamesOwnGazetteerHotspot(text: string, targetCountryName: string): 
   return findGazetteerMatches(text).some((p) => p.country === targetCode);
 }
 
-/** True when this event's own article URL slug clearly names a different
- *  country — African or not — and never mentions `targetCountryName` at
- *  all — see the doc comment above. Word-boundary matching throughout
- *  (not a plain substring check) so, for example, a slug naming "Nigeria"
- *  doesn't get misread as mentioning "Niger", and "South Sudan" doesn't
- *  get misread as mentioning plain "Sudan" — those are a second, distinct
- *  class of cross-country confusion this same function would otherwise be
- *  exposed to once it started checking against every African country name. */
-export function isLikelyWrongCountryUrl(url: string, targetCountryName: string): boolean {
-  if (!url || !targetCountryName) return false;
-  const text = slugWords(url);
+/** True when this real article TEXT — a title, a title+description, or an
+ *  already-flattened URL slug — clearly names a different country than
+ *  `targetCountryName` and gives no specific reason to trust the target's
+ *  own attribution. The actual logic behind isLikelyWrongCountryUrl (kept
+ *  as a thin url->text wrapper below) — pulled out and exported directly so
+ *  the title/description-based confirmation paths (lib/gdeltArticleSearch.ts's
+ *  live DOC 2.0 search, durableObjects/africaWireActor.ts's crawled-article
+ *  matching) can run the SAME wrong-country check GDELT's bulk/URL-slug path
+ *  already had. Before this split, a Yemen/Taiz story datelined "RIYADH"
+ *  (a wire service's regional bureau line, not the event location) could
+ *  confirm for an African country via its TITLE alone — isConfirmedEscalationText
+ *  on a bare title has no wrong-country check at all unless this function is
+ *  also run against that same title text, which neither of those two paths
+ *  previously did (only the GDELT-bulk isConfirmedEscalationUrl path ever
+ *  called this, and only against a URL slug). Word-boundary matching
+ *  throughout (not a plain substring check) so, for example, a slug naming
+ *  "Nigeria" doesn't get misread as mentioning "Niger", and "South Sudan"
+ *  doesn't get misread as mentioning plain "Sudan". */
+export function isLikelyWrongCountryText(text: string, targetCountryName: string): boolean {
+  if (!text || !targetCountryName) return false;
   const targetClean = cleanCountryName(targetCountryName);
   const targetRx = termToRegex(targetClean);
 
@@ -656,9 +675,58 @@ export function isLikelyWrongCountryUrl(url: string, targetCountryName: string):
     if (other.name !== targetClean && targetRx.test(other.name) && other.rx.test(text)) return true;
   }
 
-  if (targetRx.test(text)) return false; // slug itself names the target — trust the attribution
+  if (targetRx.test(text)) return false; // text itself names the target — trust the attribution
   if (NON_AFRICAN_CONFLICT_PATTERNS.some((rx) => rx.test(text))) return true;
   return AFRICAN_COUNTRY_NAME_PATTERNS.some(({ name, rx }) => name !== targetClean && rx.test(text));
+}
+
+/** The original URL-based entry point, kept for the GDELT-bulk pipeline
+ *  (connectors/gdeltBulk.ts has no article text, only a source_url) —
+ *  flattens the URL to the same slug text isConfirmedEscalationUrl already
+ *  matches keywords against, then defers entirely to isLikelyWrongCountryText. */
+export function isLikelyWrongCountryUrl(url: string, targetCountryName: string): boolean {
+  if (!url) return false;
+  return isLikelyWrongCountryText(slugWords(url), targetCountryName);
+}
+
+/** Distinct African countries (other than `targetCountryName`) named in
+ *  `text` — a count of 2+ is the "Mali, Somaliland, Ethiopia..." pattern
+ *  Simon flagged: a multi-country roundup/listicle piece (a year-in-review,
+ *  a "hotspots to watch" digest, a wire aggregator's shared blurb) that
+ *  mentions several countries side by side isn't a specific report about
+ *  any ONE of them, and letting it confirm an escalation for every country
+ *  it happens to name is exactly the "confusion" being reported — three
+ *  genuinely unrelated places should never collapse into one alert. Also
+ *  checks SOMALILAND_WESTERN_SAHARA_TERMS, two commonly-reported
+ *  territories that aren't in AFRICA_COUNTRIES (not UN-recognized states)
+ *  but routinely appear by name in exactly this kind of Horn-of-Africa/
+ *  Maghreb roundup piece. */
+const QUASI_STATE_TERMS = ["somaliland", "western sahara", "puntland"];
+const QUASI_STATE_PATTERNS = QUASI_STATE_TERMS.map((t) => termToRegex(t));
+
+function countOtherPlacesNamed(text: string, targetClean: string): number {
+  const africanOthers = AFRICAN_COUNTRY_NAME_PATTERNS.filter(({ name, rx }) => name !== targetClean && rx.test(text)).length;
+  const quasiOthers = QUASI_STATE_PATTERNS.filter((rx) => rx.test(text)).length;
+  return africanOthers + quasiOthers;
+}
+
+/** True when `text` reads as a multi-country roundup rather than a specific
+ *  report about `targetCountryName` — see countOtherPlacesNamed's doc
+ *  comment. A specific place named for the target (Mekelle for Ethiopia),
+ *  with no specific place named for any other country in the same text,
+ *  still overrides this — the same specific-place-beats-country-soup
+ *  precedent as the Mekelle/Djibouti wrong-country fix: a real, grounded
+ *  single-location report doesn't stop being one just because its article
+ *  also links out to other countries' unrelated stories in the same blurb. */
+function isLikelyMultiCountryRoundup(text: string, targetCountryName: string): boolean {
+  const targetClean = cleanCountryName(targetCountryName);
+  if (countOtherPlacesNamed(text, targetClean) < 2) return false;
+  const targetCode = AFRICA_COUNTRY_NAME_TO_CODE[targetClean];
+  const gaz = findGazetteerMatches(text);
+  const hitsTarget = targetCode ? gaz.some((p) => p.country === targetCode) : false;
+  const hitsOther = gaz.some((p) => (targetCode ? p.country !== targetCode : true));
+  if (hitsTarget && !hitsOther) return false;
+  return true;
 }
 
 /**

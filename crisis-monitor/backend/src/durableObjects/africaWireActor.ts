@@ -5,7 +5,7 @@ import { AFRICA_COUNTRIES } from "../routes/globalStatus";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
-import { matchEscalationKeywords, isConfirmedEscalationText } from "../lib/escalationKeywords";
+import { matchEscalationKeywords, isConfirmedEscalationText, isLikelyWrongCountryText } from "../lib/escalationKeywords";
 
 /**
  * Crawls the ~260 African country/pan-African/institutional homepages in
@@ -171,8 +171,18 @@ export class AfricaWireActor implements DurableObject {
         // through: it's what lets the state-military tier reject a story
         // about that country's OWN military fighting in a DIFFERENT named
         // country (Kenya's KDF in Somalia, say) instead of wrongly confirming
-        // an escalation for the military's home country.
-        if (!isConfirmedEscalationText(text, AFRICA_COUNTRIES[it.country])) continue;
+        // an escalation for the military's home country, and lets
+        // isConfirmedEscalationText reject a multi-country roundup piece
+        // outright. isLikelyWrongCountryText is also run directly here (the
+        // same check the GDELT-bulk/URL-slug path already had via
+        // isConfirmedEscalationUrl) — this crawled-article path matches on
+        // real title/description text and never ran that check before,
+        // which is how a Yemen/Taiz story datelined "Riyadh" could slip into
+        // an African country's evidence purely from its own text otherwise
+        // satisfying one of the confirmation tiers.
+        const countryName = AFRICA_COUNTRIES[it.country];
+        if (isLikelyWrongCountryText(text, countryName)) continue;
+        if (!isConfirmedEscalationText(text, countryName)) continue;
         const matchedKeywords = matchEscalationKeywords(text);
         const list = byCountry[it.country] ?? (byCountry[it.country] = []);
         list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords });
