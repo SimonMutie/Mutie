@@ -23,7 +23,7 @@ import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
 import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
-import { scoreCountryEscalations } from "./countryEscalation";
+import { runEscalationPipeline } from "./escalationIncidents";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
 export { IngestionActor } from "./durableObjects/ingestionActor";
@@ -160,11 +160,12 @@ export default {
         .catch((err) => console.error("[gdelt-gkg] ingestion failed", err))
     );
 
-    // Country-level escalation scoring (see countryEscalation.ts) — reads
-    // back whatever the ingestion above has accumulated in D1, so it runs
-    // every tick regardless of whether this particular tick found a new
-    // GDELT export (cheap D1 aggregate queries, no external calls).
-    ctx.waitUntil(scoreCountryEscalations(env).catch((err) => console.error("[country-escalation] scoring failed", err)));
+    // Escalation pipeline (see escalationIncidents.ts) — reads new candidate
+    // articles in full, codes them against the written codebook, groups
+    // them into located incidents and raises/updates/closes alerts. Bounded
+    // per tick (ESCALATION_ARTICLES_PER_TICK) and self-locking, so a slow
+    // tick never overlaps the next one.
+    ctx.waitUntil(runEscalationPipeline(env).catch((err) => console.error("[escalation] pipeline tick failed", err)));
 
     // Africa Wire crawl (see durableObjects/africaWireActor.ts) — enqueues
     // one message per source onto the "africa-wire-crawl" Cloudflare Queue

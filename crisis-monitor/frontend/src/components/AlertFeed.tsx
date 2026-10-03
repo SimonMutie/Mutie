@@ -58,7 +58,24 @@ export default function AlertFeed({ alerts, onAcknowledge, onResolve }: Props) {
                 </span>
               </div>
               <div style={{ fontSize: 13.5, fontWeight: 600, margin: "4px 0 2px" }}>{a.title}</div>
+              {a.geo_label && a.metric_snapshot?.incidentId && (
+                <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)", marginBottom: 3 }}>
+                  {a.geo_label}
+                </div>
+              )}
               <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.4 }}>{a.description}</div>
+              {Array.isArray(a.metric_snapshot?.criteriaMet) && a.metric_snapshot.criteriaMet.length > 0 && (
+                <div style={{ marginTop: 6 }}>
+                  <div className="mono" style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.06em" }}>
+                    CRITERIA MET
+                  </div>
+                  <ul style={{ margin: "2px 0 0", paddingLeft: 16, fontSize: 11.5, color: "var(--text-muted)", lineHeight: 1.45 }}>
+                    {a.metric_snapshot.criteriaMet.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 {!a.acknowledged_at && (
                   <button

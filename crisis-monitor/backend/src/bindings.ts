@@ -82,13 +82,29 @@ export interface Env {
    *  consumer side forwards each message to AfricaWireActor's
    *  /process-source route — see durableObjects/africaWireActor.ts. */
   AFRICA_WIRE_QUEUE: Queue<{ index: number }>;
-  /** Anthropic API key (console.anthropic.com -> API Keys), used by
-   *  countryEscalation.ts to turn a country's escalation numbers (current
-   *  vs. baseline report count, tone, sample locations) into a short
-   *  analyst-style narrative brief for the alert, instead of the plain
-   *  templated sentence. Optional: alerts still fire and still carry a
-   *  real, accurate (just more mechanical) description without this set —
-   *  same "degrades, never breaks" pattern as every other optional key in
-   *  this file. */
+  /** Anthropic API key (console.anthropic.com -> API Keys), used by the
+   *  escalation pipeline (escalationIncidents.ts) to read each candidate
+   *  article in full and code it against the escalation codebook, and to
+   *  write each incident's analytical assessment. Optional: without it the
+   *  same pipeline runs on this Worker's own Workers AI binding (a smaller
+   *  model — coding is noticeably less reliable), so setting this is
+   *  strongly recommended. */
   ANTHROPIC_API_KEY?: string;
+  /** Optional overrides for the escalation pipeline's two model roles (see
+   *  lib/llm.ts): the coder reads each article, the analyst writes each
+   *  incident's assessment. Both default to the same Anthropic model; set
+   *  ESCALATION_ANALYST_MODEL to a stronger model for richer assessments
+   *  (there are far fewer analyst calls than coder calls). Ignored when
+   *  ANTHROPIC_API_KEY is unset — the pipeline then runs on Workers AI. */
+  ESCALATION_CODER_MODEL?: string;
+  ESCALATION_ANALYST_MODEL?: string;
+  /** "false" switches off the online place geocoder (lib/geocoder.ts);
+   *  locations then resolve from the bundled gazetteers only. Default on. */
+  GEOCODER_ENABLED?: string;
+  /** "false" pauses article coding (no model calls) without a redeploy of
+   *  code — existing incidents stay visible until they age out. Default on. */
+  ESCALATION_PIPELINE_ENABLED?: string;
+  /** How many new articles the escalation pipeline reads and codes per
+   *  5-minute tick. Default 12 (about 3,400 a day at most). */
+  ESCALATION_ARTICLES_PER_TICK?: string;
 }

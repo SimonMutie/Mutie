@@ -82,7 +82,7 @@ const COL_SOURCE_URL = 60;
 
 /** Formats a Date as GDELT's own DATEADDED shape (YYYYMMDDHHMMSS, UTC) so it
  *  string-compares correctly against that column. Exported for reuse by
- *  countryEscalation.ts, which runs its own aggregate queries against this
+ *  escalationIncidents.ts, which runs its own candidate query against this
  *  table rather than going through queryBulkEvents(). */
 export function toGdeltTimestamp(d: Date): string {
   const iso = d.toISOString(); // "2026-09-29T05:20:00.000Z"

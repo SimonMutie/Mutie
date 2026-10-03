@@ -1,60 +1,20 @@
 /**
- * Military-escalation confirmation logic — matched against real article
- * title/description text from Africa Wire's crawl
- * (durableObjects/africaWireActor.ts), GDELT's own live article search
- * (lib/gdeltArticleSearch.ts), and the URL slug of every GDELT bulk-
- * ingested event (connectors/gdeltBulk.ts has no raw article text, only a
- * CAMEO code and a source_url; see isConfirmedEscalationUrl below).
+ * Conflict vocabulary: named armed groups, state militaries and military
+ * action terms as they appear in African conflict reporting.
  *
- * This is used ONLY by the danger-escalation icon/summary pipeline
- * (countryEscalation.ts's scoring + evidence, and the two evidence sources
- * that feed its AI summary). Every other news surface — Africa Wire's own
- * general feed (AfricaWireActor's /snapshot route), the generic GDELT
- * points/conflict-events map layers, Social Listening — reads the raw
- * aggregated data directly and is NOT filtered through this file at all.
- * "Escalation" is a deliberately narrow, strict overlay on top of the
- * broader aggregation, not a replacement for it.
+ * This file no longer DECIDES anything. Earlier versions used these lists as
+ * the escalation gate itself (a keyword in a URL slug or a headline counted
+ * as a confirmed escalation), which is what produced both the false
+ * positives and the misses: a word match cannot tell where an event
+ * happened, whether it happened at all, or whether the word was figurative.
  *
- * Round-by-round history that shaped this design (see git log for the full
- * detail on each):
- *   1. Original: plain CAMEO-code membership + a couple of negative
- *      exclusion lists. Kept producing false positives under new disguises
- *      each round (a mining story, a helicopter crash, a mobile-data
- *      story, a migrant's court case) because an exclusion list can only
- *      ever catch a category of false positive it has already seen.
- *   2. Positive-confirmation gate: required a literal escalation-phrase
- *      match before anything could count — fixed the noise, but phrases
- *      like "clash", "siege", "advance on", "took control of" are
- *      themselves ambiguous in ordinary prose (a sports "clash", a company
- *      "taking control of" a rival, a team "retaking" first place), so
- *      this was still trusting a bare phrase match too readily.
- *   3. Broadened the named-armed-actor list (SAF, ENDF, TDF, Fano, etc.)
- *      and added a live-search corroboration rescue — fixed Tigray/
- *      Kordofan under-reporting.
- *   4. THIS round: Simon's direct ask — collect the real armed groups and
- *      militaries across Africa and require escalation phrases to be
- *      matched AGAINST them, rather than trusting either alone. A
- *      proper-noun NON-STATE armed group (Boko Haram, M23, RSF, JNIM...)
- *      is specific enough to confirm on its own — it essentially never
- *      appears in an unrelated story. A STATE MILITARY's name (SAF, ENDF,
- *      KDF, SANDF...) is NOT specific enough on its own — national armies
- *      get mentioned constantly in humanitarian, ceremonial, diplomatic,
- *      and sports-sponsorship contexts with zero conflict content — so a
- *      state-military mention only counts once paired with an actual
- *      escalation-action term in the same text. And a handful of
- *      genuinely unambiguous action terms (mass killing, massacre, drone
- *      strike, car bomb...) still confirm on their own, exactly as before,
- *      since they carry their own military meaning however phrased. The
- *      net effect: ambiguous generic phrases (bare "clash", "siege",
- *      "advance on", "shelling", "took control of", "recaptured"...) can
- *      no longer confirm an escalation purely on their own wording — they
- *      now need a real actor, named or official, actually present in the
- *      same text. That's the direct fix for "unnecessary things coded as
- *      escalation".
+ * The decision is now made by reading the article (lib/escalationCoder.ts)
+ * against the written codebook (lib/escalationCodebook.ts). These lists are
+ * used for one thing only: a deliberately LOOSE, high-recall pre-filter that
+ * picks which crawled items are worth reading at all (isCandidateText /
+ * candidatePriority below). A match here means "read this", never "flag
+ * this" — and a miss is cheap to fix by adding a term.
  */
-
-import { AFRICA_COUNTRIES } from "../routes/globalStatus";
-import { findGazetteerMatches } from "./conflictGazetteer";
 
 export interface EscalationKeywordMatch {
   label: string;
@@ -148,7 +108,7 @@ const NON_STATE_ARMED_GROUPS: string[] = [
 /**
  * Official national armed forces across Africa — names and the acronyms
  * actually used in conflict reporting. Deliberately NOT treated as
- * sufficient on their own (see matchStateMilitaries / isConfirmedEscalationText
+ * sufficient on their own (see matchStateMilitaries
  * below): a national army is mentioned constantly in non-conflict contexts
  * (training exercises, ceremonial parades, disaster relief, peacekeeping
  * deployments, sports sponsorships), so a bare mention here only confirms
@@ -234,7 +194,7 @@ const STANDALONE_ACTION_PATTERNS: { label: string; rx: RegExp }[] = [
  * candidate's poll numbers "advancing" on a rival's). These now confirm an
  * escalation ONLY when a real armed actor — named non-state group or
  * official state military (see the lists above) — is also present in the
- * same text; see isConfirmedEscalationText. This is the direct fix for
+ * same text. This was the fix for
  * "unnecessary things coded as escalation": a bare ambiguous phrase with
  * no actor in sight no longer counts.
  */
@@ -309,67 +269,13 @@ function runPatterns(text: string, patterns: { label: string; rx: RegExp }[]): s
   return matched;
 }
 
-/** All character offsets in `text` where any pattern in the list matches —
- *  used only by proximityPairExists below. Each pattern's own regex is
- *  re-run with a forced global flag so exec() can walk every occurrence
- *  rather than stopping at the first. */
-function matchOffsets(text: string, patterns: { label: string; rx: RegExp }[]): number[] {
-  const offsets: number[] = [];
-  for (const { rx } of patterns) {
-    const g = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
-    let m: RegExpExecArray | null;
-    while ((m = g.exec(text))) {
-      offsets.push(m.index);
-      if (m[0].length === 0) g.lastIndex++; // guard against zero-width infinite loop
-    }
-  }
-  return offsets;
-}
-
-/** How close (in characters) a state-military mention and an ambiguous
- *  action term need to be, in the SAME text, to count as actually
- *  describing the same event — roughly a sentence or two of a short
- *  wire-style article/title. Tuned loosely rather than exactly: too small a
- *  window starts missing real single-sentence reports that happen to be
- *  long (a named military plus a qualifying clause plus the action verb);
- *  too large a window is exactly the bug this exists to fix — a long
- *  article that mentions a state military in one paragraph and an unrelated
- *  ambiguous word (a sports "clash", a "security deterioration" in consumer
- *  confidence, routine troop "movements" for a training exercise) in a
- *  completely different paragraph. */
-const PROXIMITY_WINDOW_CHARS = 220;
-
-/** True when some match of `patternsA` and some match of `patternsB` occur
- *  within PROXIMITY_WINDOW_CHARS characters of each other anywhere in
- *  `text` — not just "both patterns appear somewhere in this text", which
- *  is what a plain `matchX(text).length>0 && matchY(text).length>0` check
- *  allows and is a real source of false positives on longer article bodies
- *  (Africa Wire's crawl includes each item's description, not just its
- *  headline): a state military named in one sentence and an unrelated
- *  ambiguous word used elsewhere in the same piece no longer confirms an
- *  escalation just because both strings happen to occur somewhere in the
- *  same block of text. */
-function proximityPairExists(text: string, patternsA: { label: string; rx: RegExp }[], patternsB: { label: string; rx: RegExp }[], windowChars: number): boolean {
-  const offsetsA = matchOffsets(text, patternsA);
-  if (offsetsA.length === 0) return false;
-  const offsetsB = matchOffsets(text, patternsB);
-  if (offsetsB.length === 0) return false;
-  for (const a of offsetsA) {
-    for (const b of offsetsB) {
-      if (Math.abs(a - b) <= windowChars) return true;
-    }
-  }
-  return false;
-}
-
 /** Named non-state armed groups/militias/insurgencies found in the text —
  *  specific enough as proper nouns to confirm an escalation on their own. */
 export function matchNonStateArmedGroups(text: string): string[] {
   return runPatterns(text, NON_STATE_ARMED_GROUP_PATTERNS);
 }
 
-/** Official national militaries found in the text — NOT sufficient alone,
- *  only counts once paired with an action term (see isConfirmedEscalationText). */
+/** Official national militaries found in the text. */
 export function matchStateMilitaries(text: string): string[] {
   return runPatterns(text, STATE_MILITARY_PATTERNS);
 }
@@ -380,19 +286,12 @@ export function matchStandaloneActionTerms(text: string): string[] {
   return runPatterns(text, STANDALONE_ACTION_PATTERNS);
 }
 
-/** Action terms that ARE ambiguous in ordinary prose — only meaningful once
- *  paired with a real actor (see isConfirmedEscalationText). */
+/** Action terms that are ambiguous in ordinary prose. */
 export function matchAmbiguousActionTerms(text: string): string[] {
   return runPatterns(text, AMBIGUOUS_ACTION_PATTERNS);
 }
 
-/** Union of every matched label — kept for display purposes (the
- *  "matchedKeywords" badges shown on an evidence item) ONLY. This is NOT
- *  the confirmation decision — a bare ambiguous-tier match with no actor
- *  present still shows up here for transparency on an item that DID
- *  confirm via some other combination, but never by itself makes
- *  isConfirmedEscalationText/isConfirmedEscalationUrl return true. See
- *  those functions for the actual gate. */
+/** Union of every matched label. Used only to rank candidates for reading. */
 export function matchEscalationKeywords(text: string): string[] {
   return [
     ...matchNonStateArmedGroups(text),
@@ -403,350 +302,38 @@ export function matchEscalationKeywords(text: string): string[] {
 }
 
 /**
- * THE confirmation decision, independent of any URL/geocoding concerns —
- * usable directly against real article title/description text (Africa
- * Wire's crawl, GDELT's own live article search). True when:
- *   1. a named NON-STATE armed group is present (sufficient alone — a
- *      proper-noun insurgent/militant/rebel/separatist group essentially
- *      never appears in an unrelated story), OR
- *   2. an unambiguous action term is present (sufficient alone — "drone
- *      strike", "massacre", "car bomb" etc. carry their own military
- *      meaning with no everyday alternate usage), OR
- *   3. an official STATE MILITARY is named AND an action term (ambiguous
- *      or unambiguous) is also present — a bare military mention alone is
- *      not enough (national armies show up constantly in non-conflict
- *      news), but paired with real escalation language it is.
- * An ambiguous action term with NO actor present at all — the old
- * behavior this round specifically fixes — no longer confirms anything on
- * its own: "the court battle", "the firm took control of its rival", "the
- * president's poll numbers advanced on his rival's" would all have
- * nothing to anchor them to a real conflict and are correctly rejected.
- *
- * `targetCountryName`, when passed, adds one more rejection specifically to
- * tier 3 (state military + ambiguous action term): a state military's own
- * name is NOT rejected just for appearing, but if the SAME text also names
- * a DIFFERENT African country, that combination no longer confirms an
- * escalation for the target country. This is the fix for Kenya showing a
- * military-posture flag with nothing actually happening in Kenya — Kenya's
- * KDF serves in Somalia under ATMIS/AMISOM peacekeeping, so "KDF" + "clash"/
- * "ambush"/"attack on troops" in the same article is routinely a real
- * escalation story about fighting in SOMALIA, not Kenya; without this check
- * that story would still confirm for Kenya purely because "KDF" is on the
- * state-military list. A named NON-STATE armed group or an unambiguous
- * standalone action term still confirm regardless of what other country is
- * named — those tiers are already specific enough on their own that this
- * extra check isn't needed (and, unlike a state military, a group like
- * Boko Haram or al-Shabaab is inherently tied to the country it actually
- * operates in, not a visiting peacekeeping contingent's home country).
- *
- * Tier 3 also requires the military name and the action term to be near
- * each other in the text (proximityPairExists, PROXIMITY_WINDOW_CHARS) —
- * not just both present somewhere in it. A short headline/slug is one
- * sentence anyway so this changes nothing there, but Africa Wire's crawl
- * text includes each item's description too, and a longer piece can
- * legitimately name a state military in one sentence and use an unrelated
- * ambiguous word (a sports "clash", routine training "movements", a
- * "security deterioration" in business confidence) somewhere else in the
- * same piece — that combination used to confirm just from co-occurring
- * anywhere in the text; now it doesn't.
- *
- * The other-country rejection itself backs off when the text names a
- * specific conflict-gazetteer place (conflictGazetteer.ts) belonging to the
- * TARGET country — e.g. "ENDF clash near Mekelle" mentioning Djibouti
- * elsewhere (a real, common pairing: Djibouti is Ethiopia's port/trade
- * corridor) should still confirm for Ethiopia, since Mekelle itself is
- * unambiguously Ethiopian soil. Without this, the Kenya/Somalia fix above
- * would wrongly reject a genuine Ethiopia story for the same reason it was
- * built to catch a genuinely foreign one — the difference is whether a
- * real place tied to the target country is actually named, not just
- * whether some other country's name also appears.
- *
- * When `targetCountryName` is given, a multi-country roundup/listicle text
- * (isLikelyMultiCountryRoundup — 2+ OTHER countries/quasi-states named
- * alongside the target, with no specific place grounding the target itself)
- * is rejected OUTRIGHT, before any tier below runs — this is the direct fix
- * for "Mali, Somaliland, Ethiopia... why the confusion": a digest piece
- * naming several countries side by side is never a specific report about
- * any single one of them, however many of the tiers below it happens to
- * satisfy.
+ * Broad multilingual conflict lexicon (English, French, Portuguese, Arabic)
+ * — word stems, not phrases. Deliberately over-inclusive: it only decides
+ * whether an item is worth the cost of fetching and reading. Roughly, any
+ * item mentioning violence, armed actors or military activity passes.
  */
-export function isConfirmedEscalationText(text: string, targetCountryName?: string): boolean {
-  if (targetCountryName && isLikelyMultiCountryRoundup(text, targetCountryName)) return false;
-  if (matchNonStateArmedGroups(text).length > 0) return true;
-  if (matchStandaloneActionTerms(text).length > 0) return true;
-  if (proximityPairExists(text, STATE_MILITARY_PATTERNS, AMBIGUOUS_ACTION_PATTERNS, PROXIMITY_WINDOW_CHARS)) {
-    if (targetCountryName && textNamesOtherAfricanCountry(text, targetCountryName) && !textNamesOwnGazetteerHotspot(text, targetCountryName)) {
-      return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-/** Exported for reuse by countryEscalation.ts, which needs this same
- *  flattened slug text to look up gazetteer places for its own evidence
- *  (see conflictGazetteer.ts's findGazetteerMatches). */
-export function slugWords(url: string): string {
-  try {
-    const u = new URL(url);
-    return `${u.pathname} ${u.search}`.replace(/[-_/?=&.]+/g, " ").toLowerCase();
-  } catch {
-    return url.toLowerCase();
-  }
-}
-
-/**
- * Cross-check for GDELT geocoding misattribution — a real military event
- * can still land on the WRONG country's bucket. Confirmed cases so far:
- *   1. A Yemen (Taiz/Bab-al-Mandab) battle between Houthis and government
- *      forces geocoded onto Sudan's Red Sea coast purely from maritime/
- *      strait-reference ambiguity, with "Sudan" never once named in the
- *      actual story.
- *   2. A non-conflict Ghana story geocoded onto South Africa's bucket —
- *      caught here only once this list stopped being non-African-only (see
- *      below): the original version of this check (NON_AFRICAN_CONFLICT_TERMS)
- *      only ever listed non-African countries/conflicts, on the assumption
- *      a misattribution would always cross an Africa/non-Africa boundary.
- *      That assumption was wrong — GDELT's gazetteer resolution can just as
- *      easily confuse two African countries with each other, and nothing
- *      in the old list would ever catch a Ghana-geocoded-as-South-Africa
- *      case, since "ghana" was never a term this function checked for at
- *      all.
- * If the slug clearly names a DIFFERENT country (African or not) and never
- * mentions the target country at all, the attribution is almost certainly
- * a geocoding artifact.
- */
-const NON_AFRICAN_CONFLICT_TERMS = [
-  "yemen", "houthi", "houthis", "taiz", "sanaa", "sana'a", "aden", "hodeidah", "marib",
-  "saudi arabia", "saudi", "riyadh",
-  "israel", "israeli", "gaza", "palestine", "palestinian", "west bank", "hamas", "hezbollah",
-  "syria", "syrian", "damascus", "aleppo",
-  "iraq", "iraqi", "baghdad", "iran", "iranian", "tehran",
-  "lebanon", "lebanese", "beirut", "jordan", "amman",
-  "oman", "qatar", "kuwait", "bahrain", "emirates", "dubai", "abu dhabi",
-  "turkey", "turkish", "ankara",
-  "ukraine", "ukrainian", "kyiv", "russia", "russian", "moscow",
-  "afghanistan", "afghan", "kabul", "pakistan", "pakistani", "india", "indian",
-  "china", "chinese", "myanmar",
-];
-
-/** Strips diacritics, drops a trailing parenthetical qualifier ("Congo
- *  (Rep.)" -> "Congo"), turns apostrophes into spaces ("Côte d'Ivoire" ->
- *  "Cote d Ivoire", matching how that name actually appears, space-
- *  separated, in a URL slug) and collapses whitespace — so a country name
- *  as stored in AFRICA_COUNTRIES can be matched word-for-word against
- *  plain-ASCII slug text. */
-function cleanCountryName(name: string): string {
-  return name
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/\([^)]*\)/g, " ")
-    .replace(/['’]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-const NON_AFRICAN_CONFLICT_PATTERNS = NON_AFRICAN_CONFLICT_TERMS.map((term) => termToRegex(term));
-
-/** Every African country's own name (deduped — "Congo (Rep.)" and "Congo
- *  (DRC)" both clean to plain "Congo", which is fine here: either one
- *  present is still "a different African country than the target", which
- *  is all this check needs to know), as a word-boundary-safe matcher. This
- *  is what lets isLikelyWrongCountryUrl catch an African-to-African
- *  misattribution (Ghana geocoded onto South Africa) the same way it
- *  already caught a non-African one (Yemen onto Sudan) — see the doc
- *  comment above. */
-const AFRICAN_COUNTRY_NAME_PATTERNS: { name: string; rx: RegExp }[] = Array.from(
-  new Set(Object.values(AFRICA_COUNTRIES).map(cleanCountryName))
-).map((name) => ({ name, rx: termToRegex(name) }));
-
-/** Cleaned country name -> ISO2 code, the reverse of AFRICA_COUNTRIES — what
- *  isLikelyWrongCountryUrl needs to compare a gazetteer place's own country
- *  code (conflictGazetteer.ts uses ISO2 directly) against the target country
- *  it was given as a plain name. Last-write-wins on a collision is fine:
- *  AFRICA_COUNTRIES has no two codes sharing a cleaned name in practice. */
-const AFRICA_COUNTRY_NAME_TO_CODE: Record<string, string> = Object.fromEntries(
-  Object.entries(AFRICA_COUNTRIES).map(([code, name]) => [cleanCountryName(name), code])
+const CANDIDATE_LEXICON_RX = new RegExp(
+  [
+    // English
+    "\\b(?:kill(?:ed|s|ing)?|dead\\b|deaths?|attack(?:ed|s|ers?)?|clash(?:es|ed)?|fighting|battle|troops?|soldiers?|army|military|militia|rebels?|insurgen|jihadis|gunmen|bandits?|bomb|blast|explosion|air\\s?strikes?|strikes?|drones?|shell(?:ed|ing)|artillery|offensive|seiz(?:ed|es|ure)|captur|siege|besieg|blockade|ceasefire|truce|coup|mutin|massacre|ambush|raid(?:ed|s)?|abduct|kidnap|displac|fighters|armed|gunfire|shooting|shot dead|terror|hostilit|paramilitar|warplanes?|incursion|overr[au]n|retak|recaptur)",
+    // French
+    "\\b(?:tu[ée]e?s?\\b|morts?\\b|attaqu|affrontement|combats?|arm[ée]e|soldats?|militaires?|milice|rebelles?|djihadis|terroris|bombe|frappes?|obus|si[èe]ge|blocus|cessez-le-feu|coup d['’ ][ée]tat|mutinerie|embuscade|enl[èe]vement|d[ée]plac[ée]s|assaillants?|hommes arm[ée]s|bombard|tirs)",
+    // Portuguese
+    "\\b(?:mortos?|ataques?|confrontos?|combates?|ex[ée]rcito|soldados?|militares|mil[íi]cia|rebeldes|insurgentes|bomba|explos[ãa]o|golpe de estado|emboscada|rapto|deslocados|tiroteio)",
+    // Arabic (no word boundaries — \\b does not work on Arabic script)
+    "(?:قتل|مقتل|قتلى|هجوم|اشتباك|معارك|معركة|الجيش|قوات|ميليشيا|مليشيا|مسلح|قصف|غارة|غارات|مسيرة|مسيّرة|انفجار|حصار|هدنة|انقلاب|مجزرة|نزوح|الدعم السريع|عسكري)",
+  ].join("|"),
+  "i"
 );
 
-/** True when `text` names an African country OTHER than `targetCountryName`
- *  — reuses the same AFRICAN_COUNTRY_NAME_PATTERNS built for
- *  isLikelyWrongCountryUrl, but for a different purpose: not "is this whole
- *  article about somewhere else" (isLikelyWrongCountryUrl bails out early
- *  once the target's own name is present at all), but "does this text ALSO
- *  name a different country alongside the target" — the case a state
- *  military's home-country name and the foreign country it's actually
- *  deployed to can both legitimately appear in the same story (see
- *  isConfirmedEscalationText's doc comment for the Kenya/KDF/Somalia case
- *  this exists for). Deliberately simple (any other African country name
- *  present at all) rather than trying to determine which one the event
- *  actually happened in from text alone — the point is just to stop a bare
- *  state-military mention from confirming the military's OWN country when
- *  the text is ambiguous about where the action actually took place. */
-function textNamesOtherAfricanCountry(text: string, targetCountryName: string): boolean {
-  const targetClean = cleanCountryName(targetCountryName);
-  return AFRICAN_COUNTRY_NAME_PATTERNS.some(({ name, rx }) => name !== targetClean && rx.test(text));
+/** True when a crawled item is worth reading in full. */
+export function isCandidateText(text: string): boolean {
+  if (!text) return false;
+  return CANDIDATE_LEXICON_RX.test(text) || matchNonStateArmedGroups(text).length > 0 || matchStateMilitaries(text).length > 0;
 }
 
-/** True when `text` names a known conflict-gazetteer place (conflictGazetteer.ts)
- *  that actually belongs to `targetCountryName` — see isConfirmedEscalationText's
- *  doc comment for why this overrides textNamesOtherAfricanCountry's
- *  rejection: a real, specifically-named place tied to the target (Mekelle
- *  for Ethiopia) is stronger, more direct evidence of where the event
- *  happened than the mere presence of some OTHER country's name elsewhere
- *  in the same text (Djibouti, mentioned as Ethiopia's port/trade corridor
- *  in perfectly ordinary, legitimate context). */
-function textNamesOwnGazetteerHotspot(text: string, targetCountryName: string): boolean {
-  const targetCode = AFRICA_COUNTRY_NAME_TO_CODE[cleanCountryName(targetCountryName)];
-  if (!targetCode) return false;
-  return findGazetteerMatches(text).some((p) => p.country === targetCode);
-}
-
-/** True when this real article TEXT — a title, a title+description, or an
- *  already-flattened URL slug — clearly names a different country than
- *  `targetCountryName` and gives no specific reason to trust the target's
- *  own attribution. The actual logic behind isLikelyWrongCountryUrl (kept
- *  as a thin url->text wrapper below) — pulled out and exported directly so
- *  the title/description-based confirmation paths (lib/gdeltArticleSearch.ts's
- *  live DOC 2.0 search, durableObjects/africaWireActor.ts's crawled-article
- *  matching) can run the SAME wrong-country check GDELT's bulk/URL-slug path
- *  already had. Before this split, a Yemen/Taiz story datelined "RIYADH"
- *  (a wire service's regional bureau line, not the event location) could
- *  confirm for an African country via its TITLE alone — isConfirmedEscalationText
- *  on a bare title has no wrong-country check at all unless this function is
- *  also run against that same title text, which neither of those two paths
- *  previously did (only the GDELT-bulk isConfirmedEscalationUrl path ever
- *  called this, and only against a URL slug). Word-boundary matching
- *  throughout (not a plain substring check) so, for example, a slug naming
- *  "Nigeria" doesn't get misread as mentioning "Niger", and "South Sudan"
- *  doesn't get misread as mentioning plain "Sudan". */
-export function isLikelyWrongCountryText(text: string, targetCountryName: string): boolean {
-  if (!text || !targetCountryName) return false;
-  const targetClean = cleanCountryName(targetCountryName);
-  const targetRx = termToRegex(targetClean);
-
-  // Gazetteer check FIRST, before anything else below trusts a bare
-  // country-name mention — this is the direct fix for "Ethiopia forces near
-  // Mekelle popping up in Djibouti": Djibouti is Ethiopia's real-world port/
-  // trade corridor, so a genuine Mekelle/Tigray story can legitimately also
-  // name "Djibouti" (logistics, the Red Sea corridor, refugee routes). The
-  // plain-country-name check a few lines down would see "Djibouti" named in
-  // the slug and immediately trust it as Djibouti's own story, never
-  // noticing "Mekelle" sitting right next to it. A specific NAMED PLACE
-  // overrides that: if the slug names a real place belonging to a different
-  // country than the target, and names no specific place belonging to the
-  // target itself, the event almost certainly happened where the named
-  // place actually is — regardless of which country names also appear in
-  // the surrounding text. (A slug naming specific places in BOTH the target
-  // and another country is left to the checks below rather than guessed at
-  // here — two genuinely named locations is real ambiguity this function
-  // isn't trying to resolve.)
-  //
-  // The reverse also matters and is handled here, not left to the generic
-  // country-name checks below: when the slug DOES name one of the target's
-  // own specific hotspots (Mekelle for Ethiopia), that's trusted outright,
-  // even if some other country's name also appears in the same text — this
-  // is exactly the Mekelle/Djibouti case (the slug never spells out
-  // "Ethiopia" at all, just "Tigray"/"Mekelle" plus "Djibouti" for the port/
-  // trade-corridor context), which the generic checks further down would
-  // otherwise misread as "names a different country, never names the
-  // target" and wrongly flag as wrong-country.
-  const gazetteerHits = findGazetteerMatches(text);
-  if (gazetteerHits.length > 0) {
-    const targetCode = AFRICA_COUNTRY_NAME_TO_CODE[targetClean];
-    const hitsTarget = targetCode ? gazetteerHits.some((p) => p.country === targetCode) : false;
-    const hitsOther = gazetteerHits.some((p) => p.country !== targetCode);
-    if (hitsTarget) return false;
-    if (hitsOther) return true;
-  }
-
-  // A country whose own name CONTAINS the target's name as a sub-phrase
-  // ("South Sudan" contains "Sudan"; "Guinea-Bissau" and "Equatorial
-  // Guinea" both contain "Guinea") would otherwise let the plain
-  // target-name check below wrongly "trust" a slug that's actually naming
-  // that OTHER, more specific country — "sudan" is a perfectly real,
-  // word-boundary-matched word inside "south sudan", so a naive check
-  // can't tell those two apart by word-boundary matching alone. Checked
-  // first and wins outright: if the slug names one of these more-specific
-  // containing countries, it's that country's story, not the shorter
-  // target's.
-  for (const other of AFRICAN_COUNTRY_NAME_PATTERNS) {
-    if (other.name !== targetClean && targetRx.test(other.name) && other.rx.test(text)) return true;
-  }
-
-  if (targetRx.test(text)) return false; // text itself names the target — trust the attribution
-  if (NON_AFRICAN_CONFLICT_PATTERNS.some((rx) => rx.test(text))) return true;
-  return AFRICAN_COUNTRY_NAME_PATTERNS.some(({ name, rx }) => name !== targetClean && rx.test(text));
-}
-
-/** The original URL-based entry point, kept for the GDELT-bulk pipeline
- *  (connectors/gdeltBulk.ts has no article text, only a source_url) —
- *  flattens the URL to the same slug text isConfirmedEscalationUrl already
- *  matches keywords against, then defers entirely to isLikelyWrongCountryText. */
-export function isLikelyWrongCountryUrl(url: string, targetCountryName: string): boolean {
-  if (!url) return false;
-  return isLikelyWrongCountryText(slugWords(url), targetCountryName);
-}
-
-/** Distinct African countries (other than `targetCountryName`) named in
- *  `text` — a count of 2+ is the "Mali, Somaliland, Ethiopia..." pattern
- *  Simon flagged: a multi-country roundup/listicle piece (a year-in-review,
- *  a "hotspots to watch" digest, a wire aggregator's shared blurb) that
- *  mentions several countries side by side isn't a specific report about
- *  any ONE of them, and letting it confirm an escalation for every country
- *  it happens to name is exactly the "confusion" being reported — three
- *  genuinely unrelated places should never collapse into one alert. Also
- *  checks SOMALILAND_WESTERN_SAHARA_TERMS, two commonly-reported
- *  territories that aren't in AFRICA_COUNTRIES (not UN-recognized states)
- *  but routinely appear by name in exactly this kind of Horn-of-Africa/
- *  Maghreb roundup piece. */
-const QUASI_STATE_TERMS = ["somaliland", "western sahara", "puntland"];
-const QUASI_STATE_PATTERNS = QUASI_STATE_TERMS.map((t) => termToRegex(t));
-
-function countOtherPlacesNamed(text: string, targetClean: string): number {
-  const africanOthers = AFRICAN_COUNTRY_NAME_PATTERNS.filter(({ name, rx }) => name !== targetClean && rx.test(text)).length;
-  const quasiOthers = QUASI_STATE_PATTERNS.filter((rx) => rx.test(text)).length;
-  return africanOthers + quasiOthers;
-}
-
-/** True when `text` reads as a multi-country roundup rather than a specific
- *  report about `targetCountryName` — see countOtherPlacesNamed's doc
- *  comment. A specific place named for the target (Mekelle for Ethiopia),
- *  with no specific place named for any other country in the same text,
- *  still overrides this — the same specific-place-beats-country-soup
- *  precedent as the Mekelle/Djibouti wrong-country fix: a real, grounded
- *  single-location report doesn't stop being one just because its article
- *  also links out to other countries' unrelated stories in the same blurb. */
-function isLikelyMultiCountryRoundup(text: string, targetCountryName: string): boolean {
-  const targetClean = cleanCountryName(targetCountryName);
-  if (countOtherPlacesNamed(text, targetClean) < 2) return false;
-  const targetCode = AFRICA_COUNTRY_NAME_TO_CODE[targetClean];
-  const gaz = findGazetteerMatches(text);
-  const hitsTarget = targetCode ? gaz.some((p) => p.country === targetCode) : false;
-  const hitsOther = gaz.some((p) => (targetCode ? p.country !== targetCode : true));
-  if (hitsTarget && !hitsOther) return false;
-  return true;
-}
-
-/**
- * THE gate for GDELT bulk events: a GDELT bulk event counts toward a
- * country's posture score or evidence only when BOTH of these hold —
- *   1. its own article URL slug passes isConfirmedEscalationText (a named
- *      non-state armed group, an unambiguous action term, or a state
- *      military name combined with an action term), and
- *   2. the slug doesn't clearly point at a different, non-African country
- *      (isLikelyWrongCountryUrl) — the Yemen-off-Sudan's-coast case.
- *
- * A direct, deliberate consequence: this app will under-report rather than
- * over-report — a real but under-reported story whose URL slug happens not
- * to carry any of these signals won't count either. That tradeoff is
- * explicit and intended, and is specifically offset by the live-
- * corroboration rescue in countryEscalation.ts for cases where real CAMEO
- * signal exists but the slug itself carries no usable text at all.
- */
-export function isConfirmedEscalationUrl(url: string, targetCountryName: string): boolean {
-  if (!url) return false;
-  if (isLikelyWrongCountryUrl(url, targetCountryName)) return false;
-  return isConfirmedEscalationText(slugWords(url), targetCountryName);
+/** Reading order within one tick's budget: items naming an armed actor or an
+ *  unambiguous military action are read first. Higher is sooner. */
+export function candidatePriority(text: string): number {
+  return (
+    matchStandaloneActionTerms(text).length * 3 +
+    matchNonStateArmedGroups(text).length * 2 +
+    matchStateMilitaries(text).length * 2 +
+    Math.min(matchAmbiguousActionTerms(text).length, 3)
+  );
 }
