@@ -459,7 +459,13 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
         // skipped because there is, right now, nothing to show). No
         // centroid fallback either: a danger marker with no real located
         // evidence point has nowhere honest to go.
-        const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1);
+        // "cache-only" — this route is polled for every flagged country's
+        // marker position (not a one-time drill-down a person just opened),
+        // so it must never trigger a fresh deep-read LLM call itself; see
+        // countryEscalation.ts's EvidenceMode doc comment. It still benefits
+        // from a deep-read location/verdict once the matching per-country
+        // drill-down (getCombinedEscalationEvidence, below) has cached one.
+        const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1, "cache-only");
         if (!topEvidence) continue;
         const lat = topEvidence.lat ?? AFRICA_CENTROIDS[s.countryCode]?.[0];
         const lng = topEvidence.lon ?? AFRICA_CENTROIDS[s.countryCode]?.[1];

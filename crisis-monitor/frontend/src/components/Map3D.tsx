@@ -696,10 +696,18 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
                     const label = isArticle ? item.title || "Untitled report" : item.placeName || "Unknown location";
                     const tagText = item.source === "africa-wire" ? "Africa Wire" : item.source === "gdelt-article" ? "GDELT" : "";
                     return (
-                      <a key={i} className="osiris-popup-evidence-link" href={item.sourceUrl} target="_blank" rel="noopener noreferrer">
-                        {i + 1}. {label}
-                        {tagText && <span className="osiris-popup-evidence-tag">{tagText}</span>}
-                      </a>
+                      <div key={i}>
+                        <a className="osiris-popup-evidence-link" href={item.sourceUrl} target="_blank" rel="noopener noreferrer">
+                          {i + 1}. {label}
+                          {tagText && <span className="osiris-popup-evidence-tag">{tagText}</span>}
+                        </a>
+                        {item.deepRead && (
+                          <div className="osiris-popup-evidence-rationale">
+                            {item.deepRead.actors.length > 0 && <strong>{item.deepRead.actors.join(", ")}: </strong>}
+                            {item.deepRead.rationale}
+                          </div>
+                        )}
+                      </div>
                     );
                   })
                 )}
@@ -731,4 +739,11 @@ interface EscalationEvidenceItemLike {
   sourceUrl: string;
   source?: "gdelt" | "africa-wire" | "gdelt-article";
   title?: string;
+  /** An LLM's own reading of this specific item (backend's lib/deepRead.ts)
+   *  — "every escalation gives a list of information that have warranted
+   *  the coding": shown as a short rationale line under the link itself,
+   *  rather than leaving that reasoning only in the API response. Absent
+   *  when this item wasn't deep-read yet (see deepRead.ts's own doc
+   *  comment on when that happens). */
+  deepRead?: { confidence: "high" | "medium" | "low"; actors: string[]; locationName: string | null; rationale: string };
 }

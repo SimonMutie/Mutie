@@ -5,6 +5,36 @@ import { AFRICA_COUNTRIES } from "./routes/globalStatus";
 import { searchGdeltEscalationArticles } from "./lib/gdeltArticleSearch";
 import { isConfirmedEscalationUrl, slugWords, matchEscalationKeywords } from "./lib/escalationKeywords";
 import { findGazetteerMatches, type GazetteerPlace } from "./lib/conflictGazetteer";
+import { deepReadBatch, getCachedDeepRead, type DeepReadResult } from "./lib/deepRead";
+
+/** Shared by every evidence function below: "full" actually invokes the
+ *  deep-read LLM pass (bounded to `maxToRead` items — see deepReadBatch's
+ *  doc comment) for a genuine on-demand drill-down a person just opened;
+ *  "cache-only" (getCachedDeepRead, no fetch/LLM call) is for call sites
+ *  inside the 5-minute scoring cron or a frequently-polled "current
+ *  markers" route, where paying LLM latency/cost on every tick/poll isn't
+ *  affordable — those call sites still benefit from verdicts the on-demand
+ *  path already cached, they just never trigger a NEW one themselves. */
+type EvidenceMode = "full" | "cache-only";
+
+/** cache-only counterpart to lib/deepRead.ts's deepReadBatch — same shape
+ *  and same "no verdict never means rejected" rule, just without ever
+ *  triggering a new fetch/LLM call (see EvidenceMode's doc comment above). */
+async function cachedDeepReadBatch<T extends { sourceUrl: string }>(
+  env: Env,
+  items: T[],
+  countryCode: string
+): Promise<Array<{ item: T; deepRead: DeepReadResult | null }>> {
+  const withVerdicts = await Promise.all(
+    items.map(async (item) => ({ item, deepRead: await getCachedDeepRead(env, item.sourceUrl, countryCode).catch(() => null) }))
+  );
+  return withVerdicts.filter(({ deepRead }) => deepRead === null || deepRead.confirmed !== false);
+}
+
+/** The per-call bound on how many candidates ever get a real (non-cached)
+ *  LLM read in "full" mode — see EvidenceMode's doc comment on why this is
+ *  bounded at all. Applies per evidence function per call, not globally. */
+const DEEP_READ_MAX_PER_CALL = 8;
 import type { Env } from "./bindings";
 import type { AlertLevel } from "./types";
 
@@ -239,23 +269,47 @@ async function generateAnalyticalSummary(
      *  the counts, which is the direct fix for a summary that reads as a
      *  generic statistics recap instead of an actual situation briefing. */
     realHeadlines: string[];
+    /** A real LLM read of some of those same headlines (lib/deepRead.ts),
+     *  when cached — the actors/location/rationale it extracted, not just
+     *  the headline text. Strictly richer than realHeadlines when present:
+     *  it's what lets this summary cite an actual grounded development
+     *  ("per the article, ENDF shelling was reported near Mekelle") instead
+     *  of synthesizing its own interpretation of a bare headline string.
+     *  Often empty even when realHeadlines isn't — deep-reading only runs
+     *  once a person or the map has opened this country's own drill-down at
+     *  least once and warmed the cache (see EvidenceMode's doc comment on
+     *  why this summary call itself never triggers a fresh deep read). */
+    deepReadNotes: { title: string; actors: string[]; location: string | null; rationale: string }[];
   }
 ): Promise<string | null> {
   const hasHeadlines = params.realHeadlines.length > 0;
+  const hasDeepReads = params.deepReadNotes.length > 0;
   const prompt =
     `You are drafting one short, specific paragraph (2-4 sentences, no markdown, no headings, no bullet points) for a security-monitoring alert ` +
     `on an African conflict-monitoring dashboard. Use only the facts given below — do not add locations, causes, actors, or context not stated here, ` +
-    `and do not invent any detail not present in the headlines or stats below.\n\n` +
-    (hasHeadlines
-      ? `PRIORITY: real, confirmed news headlines are available below — synthesize the summary FROM THESE FIRST (what specific actors, places, and ` +
-        `developments they actually describe), using the stats only as supporting scale/trend context. Two countries with different headlines must ` +
-        `read as genuinely different, specific situations — never a generic "military-posture reporting rose" sentence when real headlines are given.\n\n`
-      : `No confirmed article headlines were available this window — synthesize from the stats below only, leading with WHAT KIND of event is driving ` +
-        `this (the event-type breakdown), not just raw counts.\n\n`) +
-    `Write it the way a conflict analyst would phrase a terse situation note, not a headline and not a hedge-filled disclaimer.\n\n` +
+    `and do not invent any detail not present in the notes, headlines, or stats below.\n\n` +
+    (hasDeepReads
+      ? `PRIORITY: an analyst has already read some of the underlying articles in full and extracted the notes below (actual actors, specific ` +
+        `location, and why each one counts) — synthesize the summary FROM THESE FIRST, citing the specific actors/locations/developments they ` +
+        `name. This is a grounded reading of the real text, stronger evidence than a bare headline or a raw count, so lead with it.\n\n`
+      : hasHeadlines
+        ? `PRIORITY: real, confirmed news headlines are available below — synthesize the summary FROM THESE FIRST (what specific actors, places, and ` +
+          `developments they actually describe), using the stats only as supporting scale/trend context. Two countries with different headlines must ` +
+          `read as genuinely different, specific situations — never a generic "military-posture reporting rose" sentence when real headlines are given.\n\n`
+        : `No confirmed article headlines were available this window — synthesize from the stats below only, leading with WHAT KIND of event is driving ` +
+          `this (the event-type breakdown), not just raw counts.\n\n`) +
+    `Write it the way a conflict analyst would phrase a terse situation note, not a headline and not a hedge-filled disclaimer. Make this country's ` +
+    `summary describe its OWN specific, unique development — never a generic template sentence that could apply to any flagged country.\n\n` +
     `Country: ${params.countryName}\n` +
     `Alert level: ${params.level}\n` +
     `Signal: ${params.triggeredWindow === "fast" ? "breaking/rapid" : "sustained"} rise over a ${params.windowHours}h window\n` +
+    `${
+      hasDeepReads
+        ? `Analyst notes from full article reads:\n${params.deepReadNotes
+            .map((n) => `- "${n.title}" — actors: ${n.actors.length > 0 ? n.actors.join(", ") : "none named"}; location: ${n.location ?? "not specified"}; why: ${n.rationale}`)
+            .join("\n")}\n\n`
+        : ""
+    }` +
     `${hasHeadlines ? `Real, confirmed recent headlines (newest first):\n${params.realHeadlines.map((h) => `- ${h}`).join("\n")}\n\n` : ""}` +
     `Event types driving this, most frequent first: ${params.eventTypeSummary || "not broken down"}\n` +
     `Military-posture reports (mobilization, clashes, airstrikes, drone strikes, heavy weapons, blockades, ceasefire violations) in that window: ${params.postureCurrentCount}\n` +
@@ -514,9 +568,16 @@ async function queryWindowBucket(env: Env, countryName: string, likePattern: str
  *  rescued now if BOTH sources turn up nothing, not just whichever one
  *  happened to be reachable at that moment. */
 async function corroborateWithLiveSearch(env: Env, countryCode: string, countryName: string, windowHours: number): Promise<boolean> {
+  // "cache-only" on the Africa Wire call — this runs inside the 5-minute
+  // scoring cron for every country with raw-but-unconfirmed posture signal
+  // (potentially many, not just already-flagged ones), so it must never
+  // trigger a new deep-read LLM call itself; it only benefits from verdicts
+  // an on-demand drill-down already cached. GDELT's own article search has
+  // no deep-read step at all (it's a live external API call either way, not
+  // an LLM cost), so it's unaffected.
   const [gdeltHits, wireHits] = await Promise.all([
     searchGdeltEscalationArticles(countryName, windowHours, 5).catch(() => []),
-    getAfricaWireEscalationEvidence(env, countryCode, 5).catch(() => []),
+    getAfricaWireEscalationEvidence(env, countryCode, 5, "cache-only").catch(() => []),
   ]);
   return gdeltHits.length > 0 || wireHits.length > 0;
 }
@@ -720,14 +781,31 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
       // all the templated/AI summary could ever do before this round even
       // when the AI path fired correctly. Newest-first, capped small since
       // this is a short situation note, not a digest.
+      // "cache-only" on both — this whole block runs inside the 5-minute
+      // Africa-wide scoring cron for every ALREADY-flagged country, so it
+      // must never trigger a new deep-read LLM call itself (see
+      // EvidenceMode's doc comment); it only picks up verdicts an on-demand
+      // drill-down (getCountryEscalationEvidence et al., called when a
+      // person or the map actually opens this country) has already cached.
       const [wireHeadlines, articleHeadlines] = await Promise.all([
-        getAfricaWireEscalationEvidence(env, code, 6),
-        getGdeltArticleEscalationEvidence(env, code, 6),
+        getAfricaWireEscalationEvidence(env, code, 6, "cache-only"),
+        getGdeltArticleEscalationEvidence(env, code, 6, "cache-only"),
       ]);
-      const realHeadlines = [...wireHeadlines, ...articleHeadlines]
-        .sort((a, b) => Date.parse(b.dateAdded) - Date.parse(a.dateAdded))
+      const combinedHeadlineItems = [...wireHeadlines, ...articleHeadlines].sort((a, b) => Date.parse(b.dateAdded) - Date.parse(a.dateAdded));
+      const realHeadlines = combinedHeadlineItems
         .map((h) => h.title)
         .filter((t): t is string => !!t)
+        .slice(0, 6);
+      // Deep-read rationale/actors/location, when cached — richer than a
+      // bare headline, and what lets the AI summary below cite an actual
+      // analytical reading ("ENDF shelling reported near Mekelle, per the
+      // article's own account") instead of just quoting a title. Empty
+      // whenever nothing's been cached yet for this window (a brand-new
+      // alert, before anyone has opened its drill-down) — generateAnalyticalSummary
+      // falls back to the plain headlines in that case, same as before.
+      const deepReadNotes = combinedHeadlineItems
+        .filter((h) => h.deepRead)
+        .map((h) => ({ title: h.title ?? "", actors: h.deepRead!.actors, location: h.deepRead!.locationName, rationale: h.deepRead!.rationale }))
         .slice(0, 6);
 
       const windowLabel = triggeredWindow === "fast" ? "a rapid rise" : "a sustained rise";
@@ -768,6 +846,7 @@ export async function scoreCountryEscalations(env: Env): Promise<void> {
         eventTypeSummary,
         severeCount,
         realHeadlines,
+        deepReadNotes,
       });
       description = aiSummary ?? templatedDescription;
       descriptionIsAi = aiSummary !== null;
@@ -935,6 +1014,17 @@ export interface EscalationEvidenceItem {
   title?: string;
   /** Which escalation keyword(s) matched — set for source: "africa-wire" and "gdelt-article" items. */
   matchedKeywords?: string[];
+  /** An LLM's own reading of this specific item's text (lib/deepRead.ts) —
+   *  "every escalation gives a list of information that have warranted the
+   *  coding": the actors/location/rationale here come from an actual read
+   *  of the article, not just which keyword patterns matched. Absent when
+   *  this item wasn't deep-read (beyond the per-call bound, or a cache miss
+   *  in cache-only mode, or the read itself failed — see deepReadBatch's own
+   *  doc comment: "no verdict" never means "rejected", it means this field
+   *  is simply missing). An item present in this list with confirmed:false
+   *  was already filtered out upstream, so every deepRead here that IS set
+   *  has confirmed: true. */
+  deepRead?: { confidence: "high" | "medium" | "low"; actors: string[]; locationName: string | null; rationale: string };
 }
 
 /** The "see what's behind this" drill-down: the actual contributing bulk
@@ -999,7 +1089,7 @@ export async function getTerritoryChangeEvents(env: Env, hours: number): Promise
  *  this used the broad conflict-toned filter, which could surface a link
  *  about something negative-toned but conflict-unrelated under a "military
  *  escalation" marker. */
-export async function getCountryEscalationEvidence(env: Env, countryCode: string, limit = 10): Promise<EscalationEvidenceItem[]> {
+export async function getCountryEscalationEvidence(env: Env, countryCode: string, limit = 10, mode: EvidenceMode = "full"): Promise<EscalationEvidenceItem[]> {
   const name = AFRICA_COUNTRIES[countryCode.toUpperCase()];
   if (!name) return [];
   // The broader of the two scoring windows (SLOW_WINDOW_HOURS) — a drill-
@@ -1039,39 +1129,67 @@ export async function getCountryEscalationEvidence(env: Env, countryCode: string
   // mentions.
   const code = countryCode.toUpperCase();
   confirmed = sortByLocationQuality(confirmed, code);
-  return confirmed
-    .slice(0, limit)
-    .map((r) => {
-      // Article-text-derived location wins over GDELT's own place_name/
-      // lat/lon when the article names one of the known current conflict
-      // hotspots for this country — the direct fix for "Ethiopia forces
-      // near Mekelle popping up in Djibouti": GDELT's own geocoding put
-      // this event in Djibouti's bucket, but the article itself names
-      // Mekelle, and Mekelle is unambiguously in Ethiopia.
-      const hotspot = resolveRowLocation(r.source_url, code);
-      // What actually warranted this row counting as confirmed — Simon's
-      // direct ask ("every escalation gives a list of information that have
-      // warranted the coding"): matchEscalationKeywords on this same slug
-      // text is exactly what isConfirmedEscalationUrl's own tiers checked,
-      // so surfacing it here isn't a separate guess, it's the real reasoning
-      // trail (which armed actor/military and which action term matched) —
-      // previously only populated for the africa-wire/gdelt-article sources,
-      // never for GDELT-bulk rows, which left this source's evidence with no
-      // visible justification at all.
-      const matchedKeywords = matchEscalationKeywords(slugWords(r.source_url));
-      return {
-        placeName: hotspot?.name ?? r.place_name,
-        eventCode: r.event_code,
-        avgTone: r.avg_tone,
-        numMentions: r.num_mentions,
-        sourceUrl: r.source_url,
-        dateAdded: r.date_added,
-        lat: hotspot?.lat ?? r.lat,
-        lon: hotspot?.lon ?? r.lon,
-        source: "gdelt" as const,
-        matchedKeywords,
-      };
-    });
+  // Over-slice before deep-reading so a deep-read rejection still leaves
+  // room for `limit` real survivors, same reasoning as the 3x SQL over-fetch
+  // above — just one more filtering stage, not a replacement for it.
+  const baseItems = confirmed.slice(0, Math.max(limit * 2, limit + DEEP_READ_MAX_PER_CALL)).map((r) => {
+    // Article-text-derived location wins over GDELT's own place_name/
+    // lat/lon when the article names one of the known current conflict
+    // hotspots for this country — the direct fix for "Ethiopia forces
+    // near Mekelle popping up in Djibouti": GDELT's own geocoding put
+    // this event in Djibouti's bucket, but the article itself names
+    // Mekelle, and Mekelle is unambiguously in Ethiopia.
+    const hotspot = resolveRowLocation(r.source_url, code);
+    // What actually warranted this row counting as confirmed — Simon's
+    // direct ask ("every escalation gives a list of information that have
+    // warranted the coding"): matchEscalationKeywords on this same slug
+    // text is exactly what isConfirmedEscalationUrl's own tiers checked, so
+    // surfacing it here isn't a separate guess, it's the real reasoning
+    // trail (which armed actor/military and which action term matched).
+    const matchedKeywords = matchEscalationKeywords(slugWords(r.source_url));
+    return {
+      placeName: hotspot?.name ?? r.place_name,
+      eventCode: r.event_code,
+      avgTone: r.avg_tone,
+      numMentions: r.num_mentions,
+      sourceUrl: r.source_url,
+      dateAdded: r.date_added,
+      lat: hotspot?.lat ?? r.lat,
+      lon: hotspot?.lon ?? r.lon,
+      source: "gdelt" as const,
+      matchedKeywords,
+    };
+  });
+
+  // Second, more expensive pass: an LLM actually reads each candidate's own
+  // text (the URL slug is all GDELT's bulk feed carries — see
+  // lib/deepRead.ts's own doc comment) and can reject one the keyword gate
+  // above passed but a real read doesn't support, or confirm it with a
+  // specific rationale/actors/location. "full" mode (the on-demand drill-
+  // down this function mainly serves) spends real LLM calls, bounded to
+  // DEEP_READ_MAX_PER_CALL; "cache-only" (the frequently-polled markers
+  // route) only ever uses a verdict already produced by someone else's
+  // "full" call.
+  const survivors = mode === "full" ? await deepReadBatch(env, baseItems, code, name, DEEP_READ_MAX_PER_CALL) : await cachedDeepReadBatch(env, baseItems, code);
+
+  return survivors.slice(0, limit).map(({ item, deepRead }) => {
+    if (!deepRead) return item;
+    // The model's own named place, when it maps to a known hotspot, beats
+    // even the gazetteer-matched slug location above — a real read of the
+    // full text is strictly more information than a slug-only regex match.
+    // When it doesn't map to a known hotspot, its plain name is still used
+    // for DISPLAY (a real place name beats GDELT's raw place_name/"near
+    // <country>" fallback) even without exact coordinates to re-pin the
+    // marker to.
+    const drHotspot = deepRead.locationName ? findGazetteerMatches(deepRead.locationName).find((p) => p.country === code) : undefined;
+    return {
+      ...item,
+      placeName: drHotspot?.name ?? deepRead.locationName ?? item.placeName,
+      lat: drHotspot?.lat ?? item.lat,
+      lon: drHotspot?.lon ?? item.lon,
+      deepRead: { confidence: deepRead.confidence, actors: deepRead.actors, locationName: deepRead.locationName, rationale: deepRead.rationale },
+    };
+  });
 }
 
 /** Shape returned by AfricaWireActor's /keyword-matches — see
@@ -1085,6 +1203,7 @@ interface AfricaWireKeywordMatch {
   published: string;
   domain: string;
   matchedKeywords: string[];
+  text: string;
 }
 
 /** The real-article counterpart to getCountryEscalationEvidence() above:
@@ -1099,15 +1218,16 @@ interface AfricaWireKeywordMatch {
  *  scoring path (a keyword match here never changes a country's alert
  *  level on its own). Never throws: a DO fetch failure just means no Africa
  *  Wire evidence this call, not a broken evidence endpoint. */
-export async function getAfricaWireEscalationEvidence(env: Env, countryCode: string, limit = 30): Promise<EscalationEvidenceItem[]> {
+export async function getAfricaWireEscalationEvidence(env: Env, countryCode: string, limit = 30, mode: EvidenceMode = "full"): Promise<EscalationEvidenceItem[]> {
   try {
     const code = countryCode.toUpperCase();
+    const name = AFRICA_COUNTRIES[code];
     const stub = env.AFRICA_WIRE_ACTOR.get(env.AFRICA_WIRE_ACTOR.idFromName("global"));
     const res = await stub.fetch(`http://africa-wire-actor/keyword-matches?country=${encodeURIComponent(code)}`);
     if (!res.ok) return [];
     const data = await res.json<{ matches: Record<string, AfricaWireKeywordMatch[]> }>();
     const items = data.matches[code] ?? [];
-    return items.slice(0, limit).map((it) => ({
+    const baseItems: EscalationEvidenceItem[] = items.slice(0, Math.max(limit, DEEP_READ_MAX_PER_CALL)).map((it) => ({
       placeName: it.domain,
       eventCode: "",
       avgTone: null,
@@ -1120,6 +1240,31 @@ export async function getAfricaWireEscalationEvidence(env: Env, countryCode: str
       title: it.title,
       matchedKeywords: it.matchedKeywords,
     }));
+    if (!name) return baseItems.slice(0, limit);
+    // The real crawled body text (title+description — see
+    // EscalationArticleMatch's own doc comment) is what gets deep-read, kept
+    // in a side map by URL rather than overwriting each item's own `title`
+    // field, so a kept item still shows its real headline afterward, not
+    // the full text blob that was read.
+    const textByUrl = new Map(items.map((it) => [it.link, it.text] as const));
+    const survivors =
+      mode === "full"
+        ? await deepReadBatch(
+            env,
+            baseItems.map((b) => ({ sourceUrl: b.sourceUrl, title: textByUrl.get(b.sourceUrl) ?? b.title })),
+            code,
+            name,
+            DEEP_READ_MAX_PER_CALL
+          )
+        : await cachedDeepReadBatch(env, baseItems, code);
+    const verdictByUrl = new Map(survivors.map(({ item, deepRead }) => [item.sourceUrl, deepRead] as const));
+    return baseItems
+      .filter((b) => verdictByUrl.has(b.sourceUrl))
+      .slice(0, limit)
+      .map((b) => {
+        const deepRead = verdictByUrl.get(b.sourceUrl);
+        return deepRead ? { ...b, deepRead: { confidence: deepRead.confidence, actors: deepRead.actors, locationName: deepRead.locationName, rationale: deepRead.rationale } } : b;
+      });
   } catch {
     return [];
   }
@@ -1134,11 +1279,12 @@ export async function getAfricaWireEscalationEvidence(env: Env, countryCode: str
  *  cron does. A title here only counts as evidence once it's re-checked
  *  against the actual keyword list (done inside searchGdeltEscalationArticles),
  *  never from GDELT's relevance ranking alone. */
-export async function getGdeltArticleEscalationEvidence(env: Env, countryCode: string, limit = 20): Promise<EscalationEvidenceItem[]> {
-  const name = AFRICA_COUNTRIES[countryCode.toUpperCase()];
+export async function getGdeltArticleEscalationEvidence(env: Env, countryCode: string, limit = 20, mode: EvidenceMode = "full"): Promise<EscalationEvidenceItem[]> {
+  const code = countryCode.toUpperCase();
+  const name = AFRICA_COUNTRIES[code];
   if (!name) return [];
-  const hits = await searchGdeltEscalationArticles(name, SLOW_WINDOW_HOURS, limit);
-  return hits.map((h) => ({
+  const hits = await searchGdeltEscalationArticles(name, SLOW_WINDOW_HOURS, Math.max(limit, DEEP_READ_MAX_PER_CALL));
+  const baseItems: EscalationEvidenceItem[] = hits.map((h) => ({
     placeName: h.sourceCountry ?? name,
     eventCode: "",
     avgTone: null,
@@ -1151,6 +1297,8 @@ export async function getGdeltArticleEscalationEvidence(env: Env, countryCode: s
     title: h.title,
     matchedKeywords: h.matchedKeywords,
   }));
+  const survivors = mode === "full" ? await deepReadBatch(env, baseItems, code, name, DEEP_READ_MAX_PER_CALL) : await cachedDeepReadBatch(env, baseItems, code);
+  return survivors.slice(0, limit).map(({ item, deepRead }) => (deepRead ? { ...item, deepRead: { confidence: deepRead.confidence, actors: deepRead.actors, locationName: deepRead.locationName, rationale: deepRead.rationale } } : item));
 }
 
 /** Combines all three evidence sources into one newest-first list —

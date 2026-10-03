@@ -95,6 +95,10 @@ export interface EscalationArticleMatch {
   published: string;
   domain: string;
   matchedKeywords: string[];
+  /** The same (English, when translated) text the keyword match itself ran
+   *  against — carried through so a downstream deep-read pass (lib/deepRead.ts)
+   *  has real article body text to classify, not just the title. */
+  text: string;
 }
 
 function domainOf(url: string): string {
@@ -185,7 +189,7 @@ export class AfricaWireActor implements DurableObject {
         if (!isConfirmedEscalationText(text, countryName)) continue;
         const matchedKeywords = matchEscalationKeywords(text);
         const list = byCountry[it.country] ?? (byCountry[it.country] = []);
-        list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords });
+        list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords, text });
       }
     }
 

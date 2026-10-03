@@ -195,6 +195,22 @@
   vertical-align: middle;
 }
 
+/* An LLM's own reading of one evidence item (backend's lib/deepRead.ts) —
+ * shown under that item's link so the reasoning behind a confirmed
+ * escalation is visible right where the evidence itself is, not only in
+ * the API response. Absent for items that haven't been deep-read yet. */
+.osiris-popup-evidence-rationale {
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: #9aa3b5;
+  margin: 2px 0 6px 14px;
+  font-style: italic;
+}
+.osiris-popup-evidence-rationale strong {
+  color: #c3cad9;
+  font-style: normal;
+}
+
 .osiris-popup-evidence-empty {
   font-size: 10px;
   color: #6b7385;
