@@ -14,7 +14,8 @@
   top: 12px;
   left: 66px;
   z-index: 550;
-  width: 320px;
+  width: 360px;
+  max-width: calc(100% - 78px);
   max-height: calc(100% - 24px);
   overflow-y: auto;
   background: rgba(8, 10, 20, 0.92);
@@ -216,4 +217,122 @@
   color: #6b7385;
   font-style: italic;
   margin-top: 6px;
+}
+
+/* ── Escalation incident card (EscalationIncidentCard in Map3D.tsx) ── */
+
+.osiris-incident {
+  max-width: none;
+}
+
+.osiris-incident-precision {
+  font-size: 10px;
+  line-height: 1.4;
+  color: #8892a6;
+  margin-bottom: 4px;
+}
+/* A marker that is NOT on a named place says so in a warmer colour, so a
+ * regional or country-centre pin is never mistaken for an exact location. */
+.osiris-incident-precision--region,
+.osiris-incident-precision--country,
+.osiris-incident-precision--approximate {
+  color: #ffb55c;
+}
+
+.osiris-incident-grid {
+  row-gap: 8px;
+}
+
+.osiris-incident-heading {
+  font-size: 9px;
+  color: #6b7385;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(212, 175, 55, 0.2);
+}
+
+.osiris-incident .osiris-popup-desc {
+  font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-size: 12px;
+  line-height: 1.55;
+  margin-bottom: 0;
+}
+
+.osiris-incident-caveat {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #ffb55c;
+  font-style: italic;
+  margin-top: 8px;
+}
+
+.osiris-incident-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #c3cad9;
+}
+
+.osiris-incident-indicator {
+  margin-bottom: 8px;
+}
+
+.osiris-incident-indicator-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ff9d4f;
+}
+.osiris-incident-indicator-label--critical {
+  color: #ff5d5d;
+}
+.osiris-incident-indicator-label--contextual {
+  color: #ffd23f;
+}
+
+.osiris-incident-quote {
+  font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-size: 11px;
+  line-height: 1.5;
+  color: #aab3c5;
+  margin-top: 2px;
+  padding-left: 8px;
+  border-left: 2px solid rgba(212, 175, 55, 0.25);
+}
+
+.osiris-incident-cite {
+  color: #9db4ff;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.osiris-incident-cite:hover {
+  text-decoration: underline;
+  color: #c3cfff;
+}
+
+.osiris-incident-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.osiris-incident-source {
+  display: block;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #9db4ff;
+  text-decoration: none;
+}
+.osiris-incident-source:hover {
+  color: #c3cfff;
+  text-decoration: underline;
+}
+
+.osiris-incident-source-meta {
+  display: block;
+  font-size: 9.5px;
+  color: #6b7385;
 }
