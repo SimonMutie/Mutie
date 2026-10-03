@@ -44,3 +44,21 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Geography data used by the escalation pipeline
+
+- **Country borders** (`backend/src/data/africaShapes.json`) — derived from
+  [Natural Earth](https://www.naturalearthdata.com/) 1:50m admin-0 data via the
+  [`world-atlas`](https://github.com/topojson/world-atlas) package. Natural
+  Earth is in the public domain.
+- **Populated places** (`backend/src/data/africaPlaces.json`) — derived from
+  the [GeoNames](https://www.geonames.org/) `cities1000` gazetteer via the
+  [`all-the-cities`](https://github.com/zeke/all-the-cities) package. GeoNames
+  data is licensed under [Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
+- **Place lookups at run time** (`backend/src/lib/geocoder.ts`) — place names
+  not found in the two files above are looked up through
+  [Nominatim](https://nominatim.org/), whose data is © OpenStreetMap
+  contributors, available under the [Open Database License](https://www.openstreetmap.org/copyright).
+  Lookups are cached permanently and kept within Nominatim's usage policy.
+
+Both data files are regenerated with `backend/scripts/buildGeoData.mjs`.

@@ -13,7 +13,7 @@ alertsRouter.get("/", async (c) => {
   const status = c.req.query("status") ?? "open";
   const limit = Math.min(Number(c.req.query("limit")) || 100, 500);
   const queryId = c.req.query("query_id") ?? null;
-  // Country-level escalation alerts (countryEscalation.ts) are unscoped —
+  // Escalation-incident alerts (escalationIncidents.ts) are unscoped —
   // query_id IS NULL — since they're a standing Africa-wide watch, not tied
   // to any one client's saved query. They're a shared "house" signal (like
   // house monitoring queries with owner_id NULL), so any authenticated user

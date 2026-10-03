@@ -115,6 +115,57 @@ the coarse country→map-coordinate lookup used to plot articles (GDELT's DOC
 API only gives a source country, not a precise location — a production build
 would run real geocoding/NLP on the article text instead).
 
+### Conflict Escalation — how a flag is decided
+
+The Conflict Escalation layer and its alerts come from
+`backend/src/escalationIncidents.ts`. Nothing is flagged from keywords,
+event codes or report volume. Each 5-minute tick:
+
+1. **Collects candidate articles** from the Africa Wire crawl, the wire-service
+   feeds, and the URLs behind GDELT's conflict-coded events located in Africa.
+   A loose multilingual keyword filter only decides what is worth reading.
+2. **Reads each article in full** (`lib/articleReader.ts`).
+3. **Codes it against the written codebook** (`lib/escalationCodebook.ts`,
+   `lib/escalationCoder.ts`): is this a real, dated event; where exactly; who;
+   which indicators — each with a verbatim quote. The coding is then checked
+   against the article: an indicator whose quote is not in the text is
+   dropped, a place the article never names is dropped, a non-African event
+   is rejected, and the country is corrected if the named place belongs to a
+   different one.
+4. **Locates the event from the place the article names**, inside the country
+   the article says it is in (`lib/africaGeo.ts`, `lib/geocoder.ts`): curated
+   gazetteer → GeoNames → Nominatim → a border-checked estimate → the named
+   region → the country centre. Every marker says which of these it is.
+   GDELT's own coordinates are never used.
+5. **Groups reports into incidents** by place and sets the level with fixed
+   rules (`decideLevel()` in the codebook). The model never assigns a level.
+6. **Writes the assessment**: one analyst call per flagged incident, from that
+   incident's own coded reports and quotes, with inline citations.
+7. **Raises one alert per incident**, keeps it in step with the incident, and
+   closes it when the incident's reports age out (72 hours).
+
+Useful endpoints (all under `/api/live-layers/conflict-escalation`):
+
+| Path | What it shows |
+| --- | --- |
+| `/` | Flagged incidents, each with criteria met, indicators + quotes, sources |
+| `/status` | Model in use, last tick's counts, what was rejected and why (24h) |
+| `/audit?country=Ethiopia&q=Tigray` | Every article read and the decision on it |
+| `/codebook` | The indicators, exclusions and thresholds in force |
+
+Settings (`wrangler secret put …` for the key; `[vars]` in `wrangler.toml` for the rest):
+
+| Name | Default | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | unset | Strongly recommended. Without it the pipeline runs on Workers AI, a smaller model that codes less reliably. |
+| `ESCALATION_CODER_MODEL` | `claude-haiku-4-5-20251001` | Model that reads and codes each article. |
+| `ESCALATION_ANALYST_MODEL` | same as coder | Model that writes each incident's assessment (far fewer calls). |
+| `ESCALATION_ARTICLES_PER_TICK` | `12` | Articles read per 5-minute tick. |
+| `ESCALATION_PIPELINE_ENABLED` | `true` | `false` pauses reading/coding; existing incidents age out normally. |
+| `GEOCODER_ENABLED` | `true` | `false` disables Nominatim lookups (bundled gazetteers only). |
+
+Tests: `cd backend && npm test`.
+
 ### Local development
 
 ```bash
