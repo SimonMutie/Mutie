@@ -1,0 +1,205 @@
+/* The opening sequence: the eye opens, the welcome appears, and the view
+   passes through the pupil into the site. One orchestrated moment, played
+   once per visit; everything here is torn down when it ends. */
+
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #050a12;
+  color: #eef3f8;
+  cursor: pointer;
+  --intro-teal: #14b8a6;
+  --intro-blue: #6d97ff;
+}
+.intro__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(22px, 4vh, 40px);
+  padding: 24px;
+  text-align: center;
+}
+
+/* ── the eye ── */
+.intro__eye {
+  position: relative;
+  width: clamp(132px, 22vmin, 220px);
+  aspect-ratio: 1;
+}
+.intro__eye svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+/* The lids part from a closed line. */
+.intro__lids {
+  transform-origin: 20px 20px;
+  transform: scaleY(0.02);
+  animation: intro-open 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
+}
+.intro__iris {
+  opacity: 0;
+  transform-origin: 20px 20px;
+  transform: scale(0.7);
+  animation: intro-iris 0.6s ease-out 0.45s forwards;
+}
+/* The globe in the iris turns once: its meridian sweeps across. */
+.intro__meridian {
+  transform-origin: 20px 20px;
+  animation: intro-turn 2.2s ease-in-out 0.6s forwards;
+}
+/* The flood: a disc the size of the pupil that grows to cover the screen. */
+.intro__flood {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 17%; /* the pupil's diameter, as drawn in the mark */
+  aspect-ratio: 1;
+  margin: -8.5% 0 0 -8.5%;
+  border-radius: 50%;
+  background: var(--intro-teal);
+  transform: scale(0);
+  will-change: transform;
+}
+
+/* ── the words ── */
+.intro__words h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(30px, 5.2vmin, 54px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: intro-rise 0.6s ease-out 0.75s forwards;
+}
+.intro__words h1 span {
+  color: var(--intro-teal);
+}
+.intro__words p {
+  margin: 14px auto 0;
+  max-width: 34em;
+  font-size: clamp(15px, 2.1vmin, 19px);
+  line-height: 1.55;
+  color: #a9b8ca;
+  opacity: 0;
+  transform: translateY(10px);
+  animation: intro-rise 0.6s ease-out 1.05s forwards;
+}
+
+/* ── leaving: through the pupil ── */
+.intro--leaving .intro__flood {
+  animation: intro-flood 0.75s cubic-bezier(0.6, 0, 0.9, 0.4) forwards;
+}
+.intro--leaving .intro__words {
+  animation: intro-fade 0.3s ease-in forwards;
+}
+.intro--leaving {
+  animation: intro-fade 0.5s ease-out 0.65s forwards;
+}
+.intro--leaving .intro__controls {
+  animation: none; /* back to hidden, so the buttons do not float over the zoom */
+}
+/* Skipped: no zoom, just go. */
+.intro--skipped {
+  animation: intro-fade 0.22s ease-out forwards;
+}
+
+/* ── controls ── */
+.intro__controls {
+  position: absolute;
+  right: 20px;
+  bottom: 18px;
+  display: flex;
+  gap: 8px;
+  opacity: 0;
+  animation: intro-rise 0.4s ease-out 0.9s forwards;
+}
+.intro__controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: #c9d5e3;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.intro__controls button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.intro__controls button:focus-visible {
+  outline: 2px solid var(--intro-teal);
+  outline-offset: 2px;
+}
+
+@keyframes intro-open {
+  to {
+    transform: scaleY(1);
+  }
+}
+@keyframes intro-iris {
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes intro-turn {
+  0% {
+    transform: scaleX(1);
+  }
+  50% {
+    transform: scaleX(2.3);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+@keyframes intro-rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes intro-flood {
+  to {
+    transform: scale(var(--intro-flood-scale, 30));
+  }
+}
+@keyframes intro-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+/* For visitors who ask their device for less motion: the same welcome,
+   shown and removed with a fade — nothing opens, turns or zooms. */
+@media (prefers-reduced-motion: reduce) {
+  .intro__lids,
+  .intro__iris,
+  .intro__meridian,
+  .intro__words h1,
+  .intro__words p,
+  .intro__controls {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .intro--leaving .intro__flood {
+    animation: none;
+  }
+  .intro--leaving,
+  .intro--leaving .intro__words {
+    animation: intro-fade 0.4s ease-out forwards;
+  }
+}

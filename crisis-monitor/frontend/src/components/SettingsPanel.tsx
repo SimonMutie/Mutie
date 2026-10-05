@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AuthUser, type EscalationPipelineStatus } from "../api";
+import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled } from "../intro";
 
 interface Props {
   onBack: () => void;
@@ -24,7 +25,34 @@ export default function SettingsPanel({ onBack, user }: Props) {
 
       <ChangePasswordForm />
 
+      <OpeningSequenceCard />
+
       {user.role === "admin" && <AiUsageCard />}
+    </div>
+  );
+}
+
+/** The opening sequence's sound, per browser, and a way to see it again. */
+function OpeningSequenceCard() {
+  const [sound, setSound] = useState(introSoundEnabled);
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 380 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Opening sequence</div>
+      <p style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-muted)", margin: "8px 0 12px" }}>Plays once each time the site is opened. Click anywhere or press a key to skip it.</p>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+        <input
+          type="checkbox"
+          checked={sound}
+          onChange={(e) => {
+            setSound(e.target.checked);
+            setIntroSoundEnabled(e.target.checked);
+          }}
+        />
+        Play the spoken welcome and tone on this browser
+      </label>
+      <button type="button" onClick={() => window.dispatchEvent(new Event(REPLAY_EVENT))} style={{ ...backBtnStyle, marginTop: 12 }}>
+        Play it now
+      </button>
     </div>
   );
 }
