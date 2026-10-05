@@ -52,6 +52,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
+import { liveuamapLink, openLiveuamap } from "../liveuamap";
 import {
   api,
   type LiveLayerCollection,
@@ -2267,7 +2268,14 @@ function FlatMap({
           </Polyline>
         ))}
       {points.map((p) => (
-        <CircleMarker key={`${p.layerKey}:${p.id}`} center={[p.lat, p.lng]} radius={3 + p.size * 18} pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}>
+        <CircleMarker
+          key={`${p.layerKey}:${p.id}`}
+          center={[p.lat, p.lng]}
+          radius={3 + p.size * 18}
+          pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}
+          // Escalation markers open Liveuamap's map of that country, as they do on the 3D map.
+          eventHandlers={p.escalationLevel ? { click: () => openLiveuamap(liveuamapLink(p.incident?.countryCode ?? p.countryCode, p.lat, p.lng, p.incident?.geoPrecision)) } : undefined}
+        >
           <LeafletTooltip direction="top">
             <div style={{ fontFamily: "monospace", fontSize: 12 }}>
               <b>{p.title}</b>

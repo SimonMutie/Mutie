@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Map as MapLibreMap, NavigationControl, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
+import { liveuamapLink, openLiveuamap } from "../liveuamap";
 import { api, type EscalationIncident } from "../api";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
@@ -508,6 +509,12 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
             evidenceCount?: number;
           };
           const [lng, lat] = (f.geometry as GeoJSON.Point).coordinates as [number, number];
+          const incident = props.escalationLevel ? pointsRef.current.find((p) => p.id === props.id)?.incident : undefined;
+          // An escalation marker also opens Liveuamap's own map of that
+          // country, at the marker's position, in a new tab (asked for by
+          // Mutua). The incident card below still opens here as before, so
+          // the evidence behind the flag is not lost by following the link.
+          if (props.escalationLevel) openLiveuamap(liveuamapLink(incident?.countryCode ?? props.countryCode, lat, lng, incident?.geoPrecision));
           // Evidence fetching (Conflict Escalation's "SOURCES" list) now
           // happens inside Map3DDetailPanel itself, keyed off countryCode —
           // this just hands over the feature's own fields.
@@ -524,7 +531,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
             escalationLevel: props.escalationLevel ?? undefined,
             countryCode: props.countryCode,
             evidenceCount: props.evidenceCount,
-            incident: props.escalationLevel ? pointsRef.current.find((p) => p.id === props.id)?.incident : undefined,
+            incident,
           });
         });
       }
@@ -784,11 +791,15 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
   const dates = incident.firstEventDate && incident.lastEventDate && incident.firstEventDate !== incident.lastEventDate
     ? `${shortDate(incident.firstEventDate)} – ${shortDate(incident.lastEventDate)}`
     : shortDate(incident.lastEventDate);
+  const liveuamap = liveuamapLink(incident.countryCode, incident.lat, incident.lon, incident.geoPrecision);
   return (
     <div className="osiris-popup-card osiris-popup-card--escalation osiris-incident">
       <div className={`osiris-popup-title osiris-popup-title--${incident.level}`}>⚠ {incident.headline}</div>
       <div className="osiris-popup-layer">{where}</div>
       <div className={`osiris-incident-precision osiris-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
+      <a className="osiris-popup-link" href={liveuamap.url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8 }}>
+        [ OPEN {liveuamap.mapName.toUpperCase()} ON LIVEUAMAP ↗ ]
+      </a>
 
       <div className="osiris-popup-grid osiris-incident-grid">
         <div>
