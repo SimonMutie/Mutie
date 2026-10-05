@@ -3,6 +3,7 @@ import { api, connectLiveFeed, getToken, setToken, type AuthUser, type Monitorin
 import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
 import { enableMonitorLayer } from "./monitorLayers";
+import type { SpotlightScope } from "./spotlightRegions";
 
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
@@ -11,6 +12,8 @@ const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const IncidentsDashboard = lazy(() => import("./components/IncidentsDashboard"));
 const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"));
 const LiveIntelView = lazy(() => import("./components/LiveIntelView"));
+const RegionalSpotlight = lazy(() => import("./components/RegionalSpotlight"));
+const PublicSpotlightView = lazy(() => import("./components/PublicSpotlightView"));
 
 /** Each view above used to be a plain, eager import — meaning every
  *  page's code (including the mapping page, IncidentsDashboard) shared
@@ -30,7 +33,7 @@ type BootState = "checking" | "bootstrap" | "login" | "authed";
  *  its queries are listed and toggled in the Monitor tool on the map, and a
  *  query's dashboard / editor are the three object-or-"new-query" views
  *  here, reached from that tool and returning to it. */
-type View = { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-intel";
+type View = { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-intel" | { spotlight: SpotlightScope };
 
 /** Minimal, single-purpose routing: this app is otherwise entirely
  *  state-driven (no URLs for any authenticated view), but a "share for live
@@ -43,8 +46,18 @@ function usePublicShareToken(): string | null {
   return match ? match[1] : null;
 }
 
+/** The other path that works without signing in: a Regional Spotlight
+ *  publication opened from its public link (/spotlight/<id>). */
+function usePublicSpotlightId(): string | null {
+  const match = /^\/spotlight\/([A-Za-z0-9-]+)\/?$/.exec(window.location.pathname);
+  return match ? match[1] : null;
+}
+
 export default function App() {
-  const shareToken = usePublicShareToken();
+  const publicSpotlightId = usePublicSpotlightId();
+  const sharedDashboardToken = usePublicShareToken();
+  // Either public path skips the whole sign-in flow below.
+  const shareToken = sharedDashboardToken ?? publicSpotlightId;
   const [bootState, setBootState] = useState<BootState>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [view, setView] = useState<View>("live-intel");
@@ -114,10 +127,18 @@ export default function App() {
     setBootState("login");
   }
 
-  if (shareToken) {
+  if (publicSpotlightId) {
     return (
       <Suspense fallback={viewLoadingFallback}>
-        <PublicDashboardView token={shareToken} />
+        <PublicSpotlightView id={publicSpotlightId} />
+      </Suspense>
+    );
+  }
+
+  if (sharedDashboardToken) {
+    return (
+      <Suspense fallback={viewLoadingFallback}>
+        <PublicDashboardView token={sharedDashboardToken} />
       </Suspense>
     );
   }
@@ -135,6 +156,8 @@ export default function App() {
   const openQuery = typeof view === "object" && "queryId" in view ? queries.find((q) => q.id === view.queryId) : undefined;
   const editingQuery = typeof view === "object" && "editQueryId" in view ? queries.find((q) => q.id === view.editQueryId) : undefined;
 
+  const spotlightScope = typeof view === "object" && "spotlight" in view ? view.spotlight : null;
+
   async function handleSaved(saved: MonitoringQueryItem, created: boolean) {
     // A newly created query is shown on the Live Intel map straight away;
     // it can be switched off again from the Monitor tool.
@@ -148,7 +171,12 @@ export default function App() {
       <TopBar
         connected={connected}
         user={user}
-        view={view === "admin" || view === "settings" || view === "incidents" || view === "live-intel" ? view : "monitoring"}
+        view={view === "admin" || view === "settings" || view === "incidents" || view === "live-intel" ? view : spotlightScope ? "spotlight" : "monitoring"}
+        spotlightScope={spotlightScope}
+        onOpenSpotlight={(scope) => {
+          setOpenMonitorTool(false);
+          setView({ spotlight: scope });
+        }}
         onNavigate={(v) => {
           setOpenMonitorTool(false);
           setView(v);
@@ -173,6 +201,8 @@ export default function App() {
             initialTool={openMonitorTool ? "monitor" : null}
           />
         )}
+
+        {spotlightScope && <RegionalSpotlight user={user} scope={spotlightScope} onScopeChange={(scope) => setView({ spotlight: scope })} />}
 
         {view === "new-query" && <QueryEditor mode="create" onCancel={backToMonitoring} onSaved={(q) => handleSaved(q, true)} />}
 

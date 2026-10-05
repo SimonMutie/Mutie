@@ -1034,6 +1034,41 @@ export interface RouteResult {
   durationSeconds: number;
 }
 
+/** One Regional Spotlight publication. `body` is only present when a single
+ *  entry is fetched, not in lists. */
+export interface SpotlightEntry {
+  id: string;
+  region: string;
+  title: string;
+  product_type: string;
+  countries: string | null;
+  summary: string | null;
+  body?: string | null;
+  cover_image_url: string | null;
+  link_url: string | null;
+  link_label: string | null;
+  author: string | null;
+  /** YYYY-MM-DD — the date shown to readers. */
+  publication_date: string;
+  /** draft: admins only. published: live for every signed-in user. */
+  status: "draft" | "published";
+  /** Published AND public: also readable without signing in, at /spotlight/<id>. */
+  is_public: boolean;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SpotlightEntryInput = Partial<Omit<SpotlightEntry, "id" | "published_at" | "created_at" | "updated_at">>;
+
+export interface SpotlightRegionCount {
+  slug: string;
+  name: string;
+  published: number;
+  /** Always 0 for non-admins. */
+  drafts: number;
+}
+
 class ApiError extends Error {
   constructor(
     message: string,
@@ -1159,6 +1194,14 @@ export const api = {
   },
   acknowledgeAlert: (id: string) => req<AlertItem>(`/api/alerts/${id}/acknowledge`, { method: "PATCH" }),
   resolveAlert: (id: string) => req<AlertItem>(`/api/alerts/${id}/resolve`, { method: "PATCH" }),
+  getSpotlightRegions: () => req<SpotlightRegionCount[]>("/api/spotlight/regions"),
+  getSpotlightEntries: (region?: string) => req<SpotlightEntry[]>(`/api/spotlight${region ? `?region=${encodeURIComponent(region)}` : ""}`),
+  getSpotlightEntry: (id: string) => req<SpotlightEntry>(`/api/spotlight/${id}`),
+  createSpotlightEntry: (data: SpotlightEntryInput) => req<SpotlightEntry>("/api/spotlight", { method: "POST", body: JSON.stringify(data) }),
+  updateSpotlightEntry: (id: string, data: SpotlightEntryInput) => req<SpotlightEntry>(`/api/spotlight/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteSpotlightEntry: (id: string) => req<{ ok: boolean }>(`/api/spotlight/${id}`, { method: "DELETE" }),
+  /** No sign-in needed: only answers for an entry that is published and public. */
+  getPublicSpotlightEntry: (id: string) => req<SpotlightEntry>(`/api/public/spotlight/${id}`),
   getQueries: () => req<MonitoringQueryItem[]>("/api/queries"),
   createQuery: (data: Partial<MonitoringQueryItem>) =>
     req<MonitoringQueryItem>("/api/queries", { method: "POST", body: JSON.stringify(data) }),

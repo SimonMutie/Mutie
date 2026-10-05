@@ -2,16 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import type { AuthUser } from "../api";
 import Logo from "./Logo";
 import Tagline from "./Tagline";
+import SpotlightMenu from "./SpotlightMenu";
+import type { SpotlightScope } from "../spotlightRegions";
 
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "monitoring" | "admin" | "settings" | "incidents" | "live-intel";
+  view: "monitoring" | "admin" | "settings" | "incidents" | "live-intel" | "spotlight";
   onNavigate: (view: "admin" | "settings" | "incidents" | "live-intel") => void;
+  /** The Regional Spotlight region on screen, or null when another section is open. */
+  spotlightScope: SpotlightScope | null;
+  onOpenSpotlight: (scope: SpotlightScope) => void;
   onLogout: () => void;
 }
 
-export default function TopBar({ connected, user, view, onNavigate, onLogout }: Props) {
+export default function TopBar({ connected, user, view, onNavigate, spotlightScope, onOpenSpotlight, onLogout }: Props) {
   return (
     <header
       style={{
@@ -79,6 +84,8 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           <button onClick={() => onNavigate("live-intel")} style={navBtnStyle(view === "live-intel" || view === "monitoring")}>
             Live Intel
           </button>
+          {/* Publications by region. Hovering shows the regions; see SpotlightMenu. */}
+          <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />
         </nav>
 
         <AccountMenu user={user} view={view} onNavigate={onNavigate} onLogout={onLogout} />
@@ -106,7 +113,7 @@ function AccountMenu({
   onLogout,
 }: {
   user: AuthUser;
-  view: "monitoring" | "admin" | "settings" | "incidents" | "live-intel";
+  view: "monitoring" | "admin" | "settings" | "incidents" | "live-intel" | "spotlight";
   onNavigate: (view: "admin" | "settings" | "incidents" | "live-intel") => void;
   onLogout: () => void;
 }) {

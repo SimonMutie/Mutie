@@ -285,6 +285,18 @@ Implementation (`backend/src/auth.ts`, `middleware.ts`, `ownership.ts`):
 
 Known simplifications, worth knowing about before this handles anything sensitive: the bearer token lives in `localStorage` (accessible to any JS on the page — no `httpOnly` cookie), there's no password-reset flow (an admin just creates a new login), and there's no rate-limiting on login attempts.
 
+## Regional Spotlight — publications by region
+
+A database of publications ("products": analyses, situation updates, reports) filed under a region: Africa, Asia-Pacific, Europe & Central Asia, Latin America & the Caribbean, Middle East, United States & Canada. A region holds as many entries as you add.
+
+- **Where:** "Regional Spotlight" in the top bar. Hovering it lists the regions with their counts; it also opens by tap or keyboard.
+- **Who can write:** platform admins only (New entry, Edit, Publish, Unpublish, Delete).
+- **Draft / published:** an entry is a draft, visible only to admins, until it is published. Publishing makes it live for every signed-in user.
+- **Public link:** a separate switch on each entry. A published entry with it on can be read without signing in at `/spotlight/<id>`. The link stops working as soon as the entry is unpublished or the switch is turned off.
+- **Text formatting:** plain text with a few marks (`## Heading`, `- bullet`, `**bold**`, `[text](https://…)`, `![caption](https://…)`). It is rendered as elements, never as raw HTML.
+- **Not included:** file uploads. A PDF or image is attached by its web address (the "Link to the full report" and "Cover image address" fields).
+- **Storage:** table `spotlight_entries`, created by the Worker itself on first use — there is no migration to run (`db/migration_026_regional_spotlight.sql` is the readable record). Code: `backend/src/routes/spotlight.ts`, `frontend/src/components/RegionalSpotlight.tsx`.
+
 ## Going from mock data to real sources
 
 This prototype intentionally ships with `MOCK_MODE = "true"`
