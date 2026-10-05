@@ -18,6 +18,7 @@ import { liveLayersRouter } from "./routes/liveLayers";
 import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
+import { ensureSchema } from "./lib/schemaHeal";
 import { fetchNewsForQuery, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
@@ -33,6 +34,13 @@ export { AfricaWireActor } from "./durableObjects/africaWireActor";
 const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", cors());
+
+// Adds any column a hand-run migration was meant to add but did not (see
+// lib/schemaHeal.ts). Checked once per isolate, before any route runs.
+app.use("*", async (c, next) => {
+  await ensureSchema(c.env);
+  await next();
+});
 
 // Any unhandled error in a route is returned as JSON with its message, so
 // the page shows what actually went wrong instead of a bare "Request
@@ -137,6 +145,7 @@ export default {
   queue: processAfricaWireQueueBatch,
 
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    await ensureSchema(env);
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
 
