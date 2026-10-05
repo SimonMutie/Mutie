@@ -80,7 +80,7 @@ export const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
   Afghanistan: [33.9391, 67.71],
 };
 
-interface GdeltArticle {
+export interface GdeltArticle {
   url: string;
   title: string;
   seendate: string; // e.g. "20260807T121500Z"
@@ -89,7 +89,7 @@ interface GdeltArticle {
   sourcecountry: string;
 }
 
-function parseGdeltDate(seendate: string): Date {
+export function parseGdeltDate(seendate: string): Date {
   const m = seendate.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
   if (!m) return new Date();
   const [, y, mo, d, h, mi, s] = m;
@@ -270,6 +270,10 @@ export interface PollGdeltOptions {
 
 export interface PollGdeltResult {
   inserted: EventRecord[];
+  /** Every article URL the searches returned, whether it was newly inserted
+   *  or already in the events table — lets the caller credit a query with
+   *  articles its own search found that an earlier query ingested first. */
+  seenUrls: string[];
   /** True if GDELT returned a 429/403 for any chunk this call made — the
    *  caller's cron loop feeds this into lib/gdeltAdaptiveBudget.ts so the
    *  per-tick request budget backs off on the server's real signal instead
@@ -339,7 +343,7 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
     const id = newId();
     const now = nowIso();
     const publishedAt = parseGdeltDate(article.seendate).toISOString();
-    const rawMetadata = JSON.stringify({ connector: "gdelt", sourcecountry: article.sourcecountry, domain: article.domain, geo: TEXT_LOCATED, geoPrecision: location?.precision ?? null });
+    const rawMetadata = JSON.stringify({ connector: "gdelt", sourcecountry: article.sourcecountry, domain: article.domain, geo: TEXT_LOCATED, geoPrecision: location?.precision ?? null, fulltext: !!bodyText });
 
     const rows = await all<Record<string, unknown>>(
       env.DB,
@@ -377,5 +381,5 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
     console.warn(`[gdelt] returning ${inserted.length} article(s) found before hitting the rate limit`);
   }
 
-  return { inserted, rateLimited };
+  return { inserted, rateLimited, seenUrls: [...byUrl.keys()] };
 }

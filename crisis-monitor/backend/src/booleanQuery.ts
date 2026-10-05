@@ -51,6 +51,10 @@ type Node =
   | { kind: "NEAR"; left: Node; right: Node; distance: number }
   | { kind: "RANGE"; field: "titlecharcount"; min: number; minInclusive: boolean; max: number; maxInclusive: boolean };
 
+/** The parsed query tree, exported for lib/querySearchPlan.ts (which turns
+ *  it into a news-search query and a database pre-filter). */
+export type QueryNode = Node;
+
 type Token =
   | { type: "AND" | "OR" | "NOT" | "LPAREN" | "RPAREN" }
   | { type: "NEAR"; distance: number }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, type MonitoringQueryItem, type PreviewMatch } from "../api";
+import { api, ApiError, type LivePreview, type MonitoringQueryItem, type PreviewMatch } from "../api";
 import CategoryBadge, { categoryMeta } from "./CategoryBadge";
 
 interface Props {
@@ -12,6 +12,9 @@ interface Props {
 
 const CATEGORIES = ["general", "public_health", "civil_unrest", "infrastructure", "natural_disaster", "cyber"];
 const PREVIEW_DEBOUNCE_MS = 600;
+// The live news search goes to a shared, rate-limited public service, so it
+// waits for a longer pause in typing than the check of held articles does.
+const LIVE_DEBOUNCE_MS = 1500;
 
 function timeAgo(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -29,6 +32,8 @@ type PreviewState =
   | { status: "error"; message: string }
   | { status: "ready"; scanned: number; lookbackHours: number; truncated: boolean; matches: PreviewMatch[] };
 
+type LiveState = { status: "idle" } | { status: "loading" } | { status: "error"; message: string } | { status: "ready"; live: LivePreview };
+
 export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: Props) {
   const [name, setName] = useState(existingQuery?.name ?? "");
   const [category, setCategory] = useState(existingQuery?.category ?? "general");
@@ -38,6 +43,32 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
   const [saving, setSaving] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestSeq = useRef(0);
+  const [live, setLive] = useState<LiveState>({ status: "idle" });
+  const liveSeq = useRef(0);
+
+  // Live news search for the query as typed — what it will fetch once saved.
+  useEffect(() => {
+    const query = booleanQuery.trim();
+    if (!query) {
+      setLive({ status: "idle" });
+      return;
+    }
+    setLive({ status: "loading" });
+    const seq = ++liveSeq.current;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api.previewQuery(query, true);
+        if (seq !== liveSeq.current) return;
+        if (result.live) setLive({ status: "ready", live: result.live });
+        else setLive({ status: "error", message: "The live news search is not available on this server yet." });
+      } catch (err) {
+        if (seq !== liveSeq.current) return;
+        // An unfinished query (e.g. an open bracket) is reported by the other panel; stay quiet here.
+        setLive(err instanceof ApiError && err.status === 400 ? { status: "idle" } : { status: "error", message: err instanceof ApiError ? err.message : "Couldn't run the live news search" });
+      }
+    }, LIVE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [booleanQuery]);
 
   // Debounced live preview: re-run against recent events shortly after typing stops.
   useEffect(() => {
@@ -176,22 +207,73 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-soft)" }}>
           <div style={{ fontSize: 14, fontWeight: 700 }}>Live preview</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Sample matches from recently ingested articles, updated as you type.</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>What this query finds: a live news search for it, and matches among articles already collected. Updates as you type.</div>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-          <PreviewPanel state={preview} />
+        <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 22 }}>
+          <section>
+            <div style={sectionHeadingStyle}>Live news search · last 3 days</div>
+            <LivePanel state={live} />
+          </section>
+          <section>
+            <div style={sectionHeadingStyle}>Already collected · last 72 hours</div>
+            <PreviewPanel state={preview} />
+          </section>
         </div>
       </div>
     </div>
   );
 }
 
+/** The live news search: what the query will start fetching once saved. */
+function LivePanel({ state }: { state: LiveState }) {
+  if (state.status === "idle") return <EmptyState text="Start typing a query to search the news for it." />;
+  if (state.status === "loading") return <EmptyState text="Searching the news…" />;
+  if (state.status === "error") return <Notice tone="critical" text={state.message} />;
+
+  const { live } = state;
+  if (live.status !== "ok") return <Notice tone={live.status === "unsearchable" ? "muted" : "elevated"} text={live.message ?? "The live news search is unavailable right now."} />;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+        {live.articles.length === 0 ? "No articles found" : `${live.articles.length} article${live.articles.length === 1 ? "" : "s"} found`}, searched as{" "}
+        <span className="mono" style={{ color: "var(--text-primary)" }}>
+          {live.search}
+        </span>
+        .
+        {!live.exact && " Parts of this query that a news search cannot express (NOT, NEAR, field filters, wildcards) are applied by the platform after fetching, so some of these may be filtered out."}
+        {live.articles.length === 0 && " Nothing published in the last 3 days matches; the query may be too narrow, or there has been no coverage."}
+      </div>
+      {live.articles.map((a) => (
+        <a key={a.url} href={a.url} target="_blank" rel="noopener noreferrer" className="panel" style={{ display: "block", padding: "12px 14px", textDecoration: "none", color: "inherit" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--text-faint)", letterSpacing: "0.04em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {a.domain ?? "news"}
+            </span>
+            <span className="mono" style={{ fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0 }}>
+              {timeAgo(a.published_at)}
+            </span>
+          </div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.4, fontWeight: 600, marginBottom: 2 }}>{a.title}</div>
+          {a.place && <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{a.place}</div>}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function Notice({ text, tone }: { text: string; tone: "critical" | "elevated" | "muted" }) {
+  if (tone === "muted") return <EmptyState text={text} />;
+  const color = tone === "critical" ? "var(--critical)" : "var(--elevated)";
+  return <div style={{ fontSize: 13, lineHeight: 1.5, color, background: `color-mix(in srgb, ${color} 8%, transparent)`, padding: "10px 12px", borderRadius: 8 }}>{text}</div>;
+}
+
 function PreviewPanel({ state }: { state: PreviewState }) {
   if (state.status === "idle") {
-    return <EmptyState text="Start typing a query to see sample matches from recent articles here." />;
+    return <EmptyState text="Matches among articles the platform has already collected will appear here." />;
   }
   if (state.status === "loading") {
-    return <EmptyState text="Checking recent articles…" />;
+    return <EmptyState text="Checking collected articles…" />;
   }
   if (state.status === "error") {
     return (
@@ -204,7 +286,7 @@ function PreviewPanel({ state }: { state: PreviewState }) {
   if (state.matches.length === 0) {
     return (
       <EmptyState
-        text={`No matches in the last ${state.lookbackHours}h, out of ${state.scanned.toLocaleString()} recent articles scanned. This could mean the query is too narrow, or there just hasn't been relevant coverage recently.`}
+        text={`None of the articles collected in the last ${state.lookbackHours}h match yet. That is normal for a new topic: once the query is saved, the platform fetches the articles shown in the live search above and keeps checking for new ones.`}
       />
     );
   }
@@ -212,8 +294,7 @@ function PreviewPanel({ state }: { state: PreviewState }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-        {state.matches.length}{state.truncated ? "+" : ""} match{state.matches.length === 1 ? "" : "es"} out of {state.scanned.toLocaleString()} articles
-        scanned (last {state.lookbackHours}h)
+        {state.matches.length}{state.truncated ? "+" : ""} match{state.matches.length === 1 ? "" : "es"} among articles already collected
       </div>
       {state.matches.map((m) => (
         <a
@@ -243,6 +324,17 @@ function PreviewPanel({ state }: { state: PreviewState }) {
 function EmptyState({ text }: { text: string }) {
   return <div style={{ fontSize: 13, color: "var(--text-faint)", padding: "12px 4px", lineHeight: 1.5 }}>{text}</div>;
 }
+
+const sectionHeadingStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  color: "var(--text-muted)",
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  marginBottom: 10,
+  paddingBottom: 6,
+  borderBottom: "1px solid var(--border-soft)",
+};
 
 const labelStyle: React.CSSProperties = {
   display: "block",

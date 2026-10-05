@@ -5,7 +5,10 @@ import { newId } from "../ids";
 import { validateBooleanQuery, parseBooleanQuery, evaluate } from "../booleanQuery";
 import { rowToMonitoringQuery } from "../mappers";
 import { canAccessQuery } from "../ownership";
-import { backfillQueryMatches } from "../ingest";
+import { primeQuery } from "../ingest";
+import { buildSearchPlan, toGdeltQueries, toSqlPrefilter } from "../lib/querySearchPlan";
+import { fetchGdeltArticles, parseGdeltDate, GdeltRateLimitError } from "../connectors/gdelt";
+import { withTextLocation, locateEventText } from "../lib/eventLocation";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
@@ -75,12 +78,11 @@ queriesRouter.post("/", async (c) => {
     ]
   );
 
-  // Backfill in the background so query creation itself stays fast — the
-  // client's next poll of the query list / dashboard picks up the matches.
+  // In the background, so creation itself stays fast: a first news search
+  // for exactly what this query asks for (last three days), then a scan of
+  // what is already held. The dashboard picks the matches up on its next poll.
   c.executionCtx.waitUntil(
-    backfillQueryMatches(c.env, id, parsed.data.boolean_query).catch((err) =>
-      console.error(`[backfill] failed for query ${id}:`, err)
-    )
+    primeQuery(c.env, id, parsed.data.boolean_query, c.get("userId")).catch((err) => console.error(`[query-prime] failed for query ${id}:`, err))
   );
 
   return c.json(rowToMonitoringQuery(rows[0]), 201);
@@ -97,16 +99,90 @@ queriesRouter.post("/validate", async (c) => {
 });
 
 const PREVIEW_LOOKBACK_HOURS = 72;
-const PREVIEW_SCAN_LIMIT = 3000; // how many recent events to scan
+const PREVIEW_SCAN_LIMIT = 3000; // how many candidate rows to examine at most
+const PREVIEW_PAGE_SIZE = 250; // read a page at a time — see the route's doc comment
 const PREVIEW_RESULT_LIMIT = 20; // how many matches to actually return
+const LIVE_PREVIEW_LIMIT = 30;
+const LIVE_PREVIEW_CACHE_SECONDS = 600;
 
-/** Read-only: runs a boolean query against recent events without creating a
- *  monitoring query or writing anything, so the editor's live-preview panel
- *  can show sample matches as the person types — same evaluate() logic used
- *  for real ingestion/backfill, just not persisted. */
+interface LivePreviewArticle {
+  title: string;
+  url: string;
+  domain: string | null;
+  published_at: string;
+  /** Where the headline says the story is, when it names a place. */
+  place: string | null;
+}
+
+interface LivePreview {
+  /** "ok" — searched; "unsearchable" — the query has nothing a news search
+   *  can use (e.g. only NOT clauses or two-letter terms); "busy" — the news
+   *  search service refused the request for now; "error" — it failed. */
+  status: "ok" | "unsearchable" | "busy" | "error";
+  /** The search actually sent, so the user can see how the query was read. */
+  search: string | null;
+  /** True when the search is logically the same as the query. False when
+   *  the query has parts a news search cannot express (NOT, NEAR, field
+   *  scopes), which the platform applies itself after fetching. */
+  exact: boolean;
+  articles: LivePreviewArticle[];
+  message: string | null;
+}
+
+/** A live news search for the query being typed — what the query WILL fetch
+ *  once saved, over the last three days. Cached for ten minutes per search
+ *  string: the search service is a shared, rate-limited public API, and an
+ *  editor preview must not hammer it. */
+async function liveNewsPreview(booleanAst: Parameters<typeof buildSearchPlan>[0]): Promise<LivePreview> {
+  const plan = buildSearchPlan(booleanAst);
+  const searches = toGdeltQueries(plan);
+  if (searches.length === 0) {
+    return { status: "unsearchable", search: null, exact: false, articles: [], message: "This query has no word or phrase of three or more letters that a news search can look for." };
+  }
+  const search = searches[0];
+  const cacheKey = new Request(`https://query-preview.internal/gdelt?q=${encodeURIComponent(search)}`);
+  const cache = (caches as unknown as { default: Cache }).default;
+  const cached = await cache.match(cacheKey).catch(() => undefined);
+  if (cached) return (await cached.json()) as LivePreview;
+
+  try {
+    const found = await fetchGdeltArticles(search, 75, "3d");
+    const seen = new Set<string>();
+    const articles: LivePreviewArticle[] = [];
+    for (const a of found) {
+      const key = (a.title ?? "").toLowerCase().trim();
+      if (!a.url || !a.title || seen.has(key)) continue; // the same wire story republished under one headline
+      seen.add(key);
+      articles.push({ title: a.title, url: a.url, domain: a.domain ?? null, published_at: parseGdeltDate(a.seendate).toISOString(), place: locateEventText(a.title, null)?.place ?? null });
+      if (articles.length >= LIVE_PREVIEW_LIMIT) break;
+    }
+    const result: LivePreview = { status: "ok", search, exact: plan.exact, articles, message: null };
+    await cache
+      .put(cacheKey, new Response(JSON.stringify(result), { headers: { "content-type": "application/json", "cache-control": `max-age=${LIVE_PREVIEW_CACHE_SECONDS}` } }))
+      .catch(() => {});
+    return result;
+  } catch (err) {
+    if (err instanceof GdeltRateLimitError) {
+      return { status: "busy", search, exact: plan.exact, articles: [], message: "The news search service is limiting requests right now. Wait a minute and edit the query to try again." };
+    }
+    return { status: "error", search, exact: plan.exact, articles: [], message: "The news search did not respond. The query can still be saved; it will keep trying in the background." };
+  }
+}
+
+/** Read-only preview for the query editor. Two parts:
+ *
+ *  - `matches`: articles the platform already holds that match the query,
+ *    judged by the same evaluate() used for real ingestion.
+ *  - `live` (only when the request sets `live: true`): a live news search
+ *    for the query — what it will start fetching once saved.
+ *
+ *  The scan of held articles is pre-filtered in SQL to rows that could
+ *  match and read a page at a time. It used to select the 3,000 newest
+ *  articles with their full text in one statement, which is what failed
+ *  with a 500 once the table had grown. */
 queriesRouter.post("/preview", async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  const booleanQuery = (body as Record<string, unknown>)?.boolean_query;
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const booleanQuery = body?.boolean_query;
   if (typeof booleanQuery !== "string" || booleanQuery.trim().length === 0) {
     return c.json({ error: "boolean_query must be a non-empty string" }, 400);
   }
@@ -118,43 +194,61 @@ queriesRouter.post("/preview", async (c) => {
     return c.json({ error: err instanceof Error ? err.message : "Invalid boolean query" }, 400);
   }
 
-  const cutoff = new Date(Date.now() - PREVIEW_LOOKBACK_HOURS * 60 * 60_000).toISOString();
-  const rows = await all<Record<string, unknown>>(
-    c.env.DB,
-    `SELECT id, source_type, title, content, url, author, published_at, geo_label
-     FROM events WHERE published_at > ? ORDER BY published_at DESC LIMIT ?`,
-    [cutoff, PREVIEW_SCAN_LIMIT]
-  );
+  const livePromise: Promise<LivePreview | null> = body.live === true ? liveNewsPreview(parsed.ast) : Promise.resolve(null);
 
+  const cutoff = new Date(Date.now() - PREVIEW_LOOKBACK_HOURS * 60 * 60_000).toISOString();
+  const prefilter = toSqlPrefilter(buildSearchPlan(parsed.ast));
   const matches: Record<string, unknown>[] = [];
   let scanned = 0;
-  for (const row of rows) {
-    scanned++;
-    const fields = {
-      content: String(row.content ?? ""),
-      title: (row.title as string | null) ?? null,
-      url: (row.url as string | null) ?? null,
-      domain: (row.author as string | null) ?? null,
-    };
-    if (evaluate(parsed, fields)) {
-      matches.push({
-        id: row.id,
-        source_type: row.source_type,
-        title: row.title,
-        content: row.content,
-        url: row.url,
-        published_at: row.published_at,
-        geo_label: row.geo_label,
-      });
-      if (matches.length >= PREVIEW_RESULT_LIMIT) break;
+  let storedError: string | null = null;
+  try {
+    scan: for (let offset = 0; offset < PREVIEW_SCAN_LIMIT; offset += PREVIEW_PAGE_SIZE) {
+      const rows = await all<Record<string, unknown>>(
+        c.env.DB,
+        `SELECT id, source_type, title, content, url, author, published_at, geo_lat, geo_lng, geo_label, raw_metadata
+         FROM events WHERE published_at > ?${prefilter ? ` AND ${prefilter.sql}` : ""}
+         ORDER BY published_at DESC LIMIT ? OFFSET ?`,
+        [cutoff, ...(prefilter?.params ?? []), PREVIEW_PAGE_SIZE, offset]
+      );
+      for (const raw of rows) {
+        scanned++;
+        const fields = {
+          content: String(raw.content ?? ""),
+          title: (raw.title as string | null) ?? null,
+          url: (raw.url as string | null) ?? null,
+          domain: (raw.author as string | null) ?? null,
+        };
+        if (!evaluate(parsed, fields)) continue;
+        const row = withTextLocation(raw);
+        matches.push({
+          id: row.id,
+          source_type: row.source_type,
+          title: row.title,
+          content: String(row.content ?? "").slice(0, 400),
+          url: row.url,
+          published_at: row.published_at,
+          geo_label: row.geo_label,
+        });
+        if (matches.length >= PREVIEW_RESULT_LIMIT) break scan;
+      }
+      if (rows.length < PREVIEW_PAGE_SIZE) break;
     }
+  } catch (err) {
+    // The live search below is still worth returning if the stored scan fails.
+    console.error("[query-preview] stored-article scan failed:", err);
+    storedError = err instanceof Error ? err.message : "Could not read stored articles";
   }
+
+  const live = await livePromise;
+  if (storedError && !live) return c.json({ error: `Could not check stored articles: ${storedError}` }, 500);
 
   return c.json({
     matches,
     scanned,
     lookback_hours: PREVIEW_LOOKBACK_HOURS,
     truncated: matches.length >= PREVIEW_RESULT_LIMIT,
+    stored_error: storedError,
+    live,
   });
 });
 
@@ -201,7 +295,14 @@ queriesRouter.patch("/:id", async (c) => {
     values
   );
   if (rows.length === 0) return c.json({ error: "Query not found" }, 404);
-  return c.json(rowToMonitoringQuery(rows[0]));
+  const updated = rowToMonitoringQuery(rows[0]);
+  // A changed query text needs fresh results for its new meaning.
+  if ("boolean_query" in body && updated.is_active) {
+    c.executionCtx.waitUntil(
+      primeQuery(c.env, id, updated.boolean_query, updated.owner_id).catch((err) => console.error(`[query-prime] failed for query ${id}:`, err))
+    );
+  }
+  return c.json(updated);
 });
 
 queriesRouter.delete("/:id", async (c) => {
