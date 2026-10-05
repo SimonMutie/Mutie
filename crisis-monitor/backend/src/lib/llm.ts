@@ -71,7 +71,7 @@ async function callAnthropic<T>(env: Env, model: string, call: StructuredCall): 
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    console.error(`[llm] Anthropic ${model} returned ${res.status}: ${body.slice(0, 300)}`);
+    noteModelError(`anthropic ${model}`, `HTTP ${res.status}: ${body.slice(0, 240)}`);
     return null;
   }
   const data = (await res.json()) as { content?: Array<{ type?: string; name?: string; input?: unknown }>; stop_reason?: string };
@@ -115,23 +115,60 @@ export function extractJsonObject(text: string): unknown | null {
   return null;
 }
 
-async function callWorkersAi<T>(env: Env, call: StructuredCall): Promise<T | null> {
+/** The most recent provider failure, kept so the pipeline can record WHY no
+ *  coding was produced (see escalationIncidents.ts's last_run state) —
+ *  otherwise a failing model is only visible in the Worker's logs. */
+let lastModelError: { at: string; provider: string; message: string } | null = null;
+function noteModelError(provider: string, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  lastModelError = { at: new Date().toISOString(), provider, message: message.slice(0, 300) };
+  console.error(`[llm] ${provider} failed: ${message.slice(0, 300)}`);
+}
+export function getLastModelError(): { at: string; provider: string; message: string } | null {
+  return lastModelError;
+}
+
+async function runWorkersAi(env: Env, input: Record<string, unknown>): Promise<unknown> {
   const run = env.AI.run as unknown as (model: string, input: unknown) => Promise<unknown>;
   const result = await Promise.race([
-    run(WORKERS_AI_MODEL, {
-      messages: [
-        { role: "system", content: `${call.system}\n\nRespond with a single JSON object that matches this JSON Schema exactly, and nothing else:\n${JSON.stringify(call.schema)}` },
-        { role: "user", content: call.user },
-      ],
-      response_format: { type: "json_schema", json_schema: call.schema },
-      max_tokens: call.maxTokens,
-      temperature: 0.1,
-    }),
+    run(WORKERS_AI_MODEL, input),
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("workers-ai timeout")), WORKERS_AI_TIMEOUT_MS)),
   ]);
-  const response = (result as { response?: unknown })?.response;
+  return (result as { response?: unknown })?.response;
+}
+
+function parseWorkersAiResponse<T>(response: unknown): T | null {
   if (response && typeof response === "object") return response as T;
   if (typeof response === "string") return extractJsonObject(response) as T | null;
+  return null;
+}
+
+/** Two attempts. The first asks for schema-constrained JSON; if the model or
+ *  the platform rejects that (not every schema feature is supported in JSON
+ *  mode) or returns something unparsable, the second asks in plain text with
+ *  the schema spelled out in the prompt, and the JSON is extracted from the
+ *  reply. Either way the result still goes through the caller's own
+ *  verification, so a loosely-shaped reply cannot introduce anything
+ *  unchecked. */
+async function callWorkersAi<T>(env: Env, call: StructuredCall): Promise<T | null> {
+  const messages = [
+    { role: "system", content: `${call.system}\n\nRespond with a single JSON object that matches this JSON Schema exactly, and nothing else — no prose, no code fences:\n${JSON.stringify(call.schema)}` },
+    { role: "user", content: call.user },
+  ];
+  try {
+    const data = parseWorkersAiResponse<T>(await runWorkersAi(env, { messages, response_format: { type: "json_schema", json_schema: call.schema }, max_tokens: call.maxTokens, temperature: 0.1 }));
+    if (data) return data;
+    noteModelError("workers-ai (json mode)", "response was empty or not valid JSON");
+  } catch (err) {
+    noteModelError("workers-ai (json mode)", err);
+  }
+  try {
+    const data = parseWorkersAiResponse<T>(await runWorkersAi(env, { messages, max_tokens: call.maxTokens, temperature: 0.1 }));
+    if (data) return data;
+    noteModelError("workers-ai (plain)", "response was empty or not valid JSON");
+  } catch (err) {
+    noteModelError("workers-ai (plain)", err);
+  }
   return null;
 }
 
@@ -142,16 +179,12 @@ export async function callStructured<T>(env: Env, call: StructuredCall): Promise
         const data = await callAnthropic<T>(env, model, call);
         if (data) return { data, provider: "anthropic", model };
       } catch (err) {
-        console.error(`[llm] Anthropic ${model} call errored`, err);
+        noteModelError(`anthropic ${model}`, err);
       }
     }
   }
-  try {
-    const data = await callWorkersAi<T>(env, call);
-    if (data) return { data, provider: "workers-ai", model: WORKERS_AI_MODEL };
-  } catch (err) {
-    console.error("[llm] Workers AI call errored", err);
-  }
+  const data = await callWorkersAi<T>(env, call);
+  if (data) return { data, provider: "workers-ai", model: WORKERS_AI_MODEL };
   return null;
 }
 

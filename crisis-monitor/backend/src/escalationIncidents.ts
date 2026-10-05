@@ -9,7 +9,7 @@ import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, type 
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
 import { countryAt, countryName, distanceKm, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
-import { describeProvider } from "./lib/llm";
+import { describeProvider, getLastModelError } from "./lib/llm";
 import type { EscalationCandidate } from "./durableObjects/africaWireActor";
 
 /**
@@ -314,6 +314,8 @@ interface ProcessStats {
   unreadable: number;
   errors: number;
   reports: number;
+  /** Articles for which no model returned a coding this tick. */
+  modelFailures: number;
 }
 
 async function claimArticle(env: Env, c: Candidate): Promise<boolean> {
@@ -329,7 +331,7 @@ async function claimArticle(env: Env, c: Candidate): Promise<boolean> {
   const stale = new Date(Date.now() - 15 * 60_000).toISOString();
   const retried = await env.DB.prepare(
     `UPDATE escalation_articles SET status = 'processing', attempts = attempts + 1, processed_at = ?
-     WHERE id = ? AND attempts < ? AND (status = 'error' OR (status = 'processing' AND processed_at < ?))`
+     WHERE id = ? AND ((status = 'error' AND (attempts < ? OR rejection_reason = 'model_unavailable')) OR (status = 'processing' AND processed_at < ?))`
   )
     .bind(now, c.id, MAX_ATTEMPTS, stale)
     .run();
@@ -368,6 +370,7 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     const coded = await codeArticle(env, article);
     if (!coded) {
       stats.errors++;
+      stats.modelFailures++;
       await finish("error", { reason: "model_unavailable", note: "No model produced a coding for this article; it will be retried.", title: article.title, textBasis: article.textBasis });
       return;
     }
@@ -891,7 +894,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
   if (lock && Date.now() - Number(lock) < LOCK_TTL_MS) return;
   await setState(env, "lock", String(Date.now()));
 
-  const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, candidates: 0, fresh: 0 };
+  const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, modelFailures: 0, candidates: 0, fresh: 0 };
   try {
     await retireLegacyAlerts(env);
 
@@ -906,7 +909,11 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
       // (Candidates are at most CANDIDATE_MAX_AGE_HOURS old, so only recent rows can match.)
       const knownSince = new Date(Date.now() - (CANDIDATE_MAX_AGE_HOURS + 72) * 3600_000).toISOString();
       const known = new Set(
-        (await all<{ id: string }>(env.DB, `SELECT id FROM escalation_articles WHERE processed_at >= ? AND NOT (status = 'error' AND attempts < ?)`, [knownSince, MAX_ATTEMPTS])).map((r) => r.id)
+        // An article that failed only because no model answered stays
+        // retryable however many times that has happened: a model outage or
+        // an empty credit balance must not permanently discard the news of
+        // that period.
+        (await all<{ id: string }>(env.DB, `SELECT id FROM escalation_articles WHERE processed_at >= ? AND NOT (status = 'error' AND (attempts < ? OR rejection_reason = 'model_unavailable'))`, [knownSince, MAX_ATTEMPTS])).map((r) => r.id)
       );
       const freshOf = (list: Candidate[]) => list.filter((c) => !known.has(c.id));
       const lists = [freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
@@ -917,11 +924,17 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
       const geocodeBudget: GeocodeBudget = { remaining: GEOCODER_CALLS_PER_TICK };
 
       for (let i = 0; i < batch.length; i += CODING_CONCURRENCY) {
+        const failuresBefore = stats.modelFailures;
+        const chunk = batch.slice(i, i + CODING_CONCURRENCY);
         await Promise.all(
-          batch.slice(i, i + CODING_CONCURRENCY).map(async (c) => {
+          chunk.map(async (c) => {
             if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats);
           })
         );
+        // If no model answered for a whole group, the model is down or out of
+        // credit: stop reading for this tick instead of fetching more articles
+        // that cannot be coded. They stay queued and are retried next tick.
+        if (stats.modelFailures - failuresBefore >= chunk.length) break;
       }
     }
 
@@ -929,9 +942,9 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     const incidents = await refreshIncidents(env);
     if (new Date().getUTCMinutes() < 5) await pruneOldRows(env);
 
-    await setState(env, "last_run", JSON.stringify({ at: nowIso(), ...stats, incidents, ...describeProvider(env) }));
+    await setState(env, "last_run", JSON.stringify({ at: nowIso(), ...stats, incidents, ...describeProvider(env), lastModelError: stats.modelFailures > 0 ? getLastModelError() : null }));
     if (stats.coded + stats.rejected + stats.unreadable + stats.errors > 0) {
-      console.log(`[escalation] tick: ${stats.coded} coded (${stats.reports} reports), ${stats.rejected} rejected, ${stats.unreadable} unreadable, ${stats.errors} errors; backlog ${stats.fresh}; incidents ${incidents.elevated} elevated / ${incidents.critical} critical`);
+      console.log(`[escalation] tick: ${stats.coded} coded (${stats.reports} reports), ${stats.rejected} rejected, ${stats.unreadable} unreadable, ${stats.errors} errors (${stats.modelFailures} with no model answer); backlog ${stats.fresh}; incidents ${incidents.elevated} elevated / ${incidents.critical} critical`);
     }
   } finally {
     await setState(env, "lock", "0");
