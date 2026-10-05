@@ -4,6 +4,7 @@ import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
 import { enableMonitorLayer } from "./monitorLayers";
 import type { SpotlightScope } from "./spotlightRegions";
+import { speakWelcomeIfPending } from "./intro";
 
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
@@ -114,6 +115,9 @@ export default function App() {
   }, [shareToken, bootState]);
 
   function handleAuthenticated(authedUser: AuthUser) {
+    // Signing in is something the visitor did, so the browser now allows
+    // sound: if the spoken welcome was refused when the site opened, say it.
+    speakWelcomeIfPending();
     setUser(authedUser);
     setBootState("authed");
   }
