@@ -48,7 +48,7 @@ function OpeningSequenceCard() {
             setIntroSoundEnabled(e.target.checked);
           }}
         />
-        Play the spoken welcome and tone on this browser
+        Play the opening tone on this browser
       </label>
       <button type="button" onClick={() => window.dispatchEvent(new Event(REPLAY_EVENT))} style={{ ...backBtnStyle, marginTop: 12 }}>
         Play it now

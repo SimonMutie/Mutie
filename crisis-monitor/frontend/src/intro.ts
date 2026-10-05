@@ -72,6 +72,10 @@ export function introAppliesHere(): boolean {
 /* ── voice ─────────────────────────────────────────────────────────── */
 
 const WELCOME_AUDIO_URL = "/audio/welcome.mp3";
+/** The spoken welcome is switched off for now, at Mutua's request (the
+ *  opening plays with its tone only). The recording and everything below
+ *  are kept, so setting this to true brings the voice back as it was. */
+const VOICE_ENABLED = false;
 
 let welcomePending = false;
 let welcomeSpoken = false;
@@ -88,7 +92,7 @@ function getWelcomeAudio(): HTMLAudioElement {
 
 /** Starts fetching the recording, so it is ready by the time it is due. */
 export function preloadWelcome(): void {
-  if (introSoundEnabled()) getWelcomeAudio().load();
+  if (VOICE_ENABLED && introSoundEnabled()) getWelcomeAudio().load();
 }
 
 export type SpeakResult = "spoken" | "blocked" | "off";
@@ -96,7 +100,7 @@ export type SpeakResult = "spoken" | "blocked" | "off";
 /** Plays the welcome. "blocked" means the browser refused because the
  *  visitor has not interacted with the page yet (it is then pending). */
 export async function speakWelcome(): Promise<SpeakResult> {
-  if (!introSoundEnabled()) return "off";
+  if (!VOICE_ENABLED || !introSoundEnabled()) return "off";
   const settle = (result: SpeakResult): SpeakResult => {
     welcomePending = result === "blocked";
     if (result === "spoken") welcomeSpoken = true;
