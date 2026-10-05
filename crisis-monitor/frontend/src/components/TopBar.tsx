@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AuthUser } from "../api";
 import Logo from "./Logo";
+import Tagline from "./Tagline";
 
 interface Props {
   connected: boolean;
@@ -54,8 +55,9 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
           >
             The <span style={{ color: "var(--signal)" }}>Lens</span>
           </h1>
-          <span className="eyebrow" style={{ fontSize: 9.5, lineHeight: 1.3, display: "block" }}>MONITOR. INVESTIGATE. CONNECT. ANALYSE. UNDERSTAND.</span>
-          <span className="eyebrow" style={{ fontSize: 9.5, lineHeight: 1.3, display: "block", opacity: 0.75 }}>TURNING SIGNALS INTO INSIGHT AND FORESIGHT</span>
+          <span style={{ marginTop: 3 }}>
+            <Tagline />
+          </span>
         </div>
         {user.client_logo && (
           <>
