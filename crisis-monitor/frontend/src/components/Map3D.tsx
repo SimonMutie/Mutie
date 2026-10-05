@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Map as MapLibreMap, NavigationControl, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
+import { createRoot } from "react-dom/client";
+import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
 import { api, type EscalationIncident } from "../api";
+import EscalationHoverCard from "./EscalationHoverCard";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
 // runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
@@ -301,6 +303,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
   // matched back to its full incident record.
   const pointsRef = useRef(points);
   pointsRef.current = points;
+  const hoverCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -479,7 +482,47 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
         onFeatureSelectRef.current?.({ kind: "territory", id: props.id, title: props.title, detail: props.detail ?? "", time: props.time, url: props.url });
       });
 
+      // Hover card for escalation markers: resting the pointer on a danger
+      // marker shows what is being reported there, with links that can be
+      // clicked. It is anchored to the marker (not the cursor) and stays
+      // open while the pointer is on the marker or on the card itself, so
+      // the pointer can travel from one to the other to reach a link.
+      const hoverNode = document.createElement("div");
+      const hoverRoot = createRoot(hoverNode);
+      const hoverPopup = new Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: 30, maxWidth: "none", className: "osiris-hover-popup" }).setDOMContent(hoverNode);
+      let hoverId: string | null = null;
+      let hoverTimer: number | undefined;
+      const hideHover = () => {
+        window.clearTimeout(hoverTimer);
+        hoverId = null;
+        hoverPopup.remove();
+      };
+      const hideHoverSoon = () => {
+        window.clearTimeout(hoverTimer);
+        hoverTimer = window.setTimeout(hideHover, 350);
+      };
+      hoverNode.addEventListener("mouseenter", () => window.clearTimeout(hoverTimer));
+      hoverNode.addEventListener("mouseleave", hideHoverSoon);
+      hoverCleanupRef.current = () => {
+        hideHover();
+        // Not during React's own commit: unmounting a root from inside one is refused.
+        window.setTimeout(() => hoverRoot.unmount(), 0);
+      };
+
       for (const layerId of POINT_LAYERS) {
+        map.on("mousemove", layerId, (e) => {
+          const f = e.features?.[0];
+          if (!f || f.geometry.type !== "Point") return;
+          const props = f.properties as { id: string; escalationLevel?: string };
+          if (!props.escalationLevel) return;
+          window.clearTimeout(hoverTimer);
+          if (hoverId === props.id) return;
+          const incident = pointsRef.current.find((p) => p.id === props.id)?.incident;
+          if (!incident) return;
+          hoverId = props.id;
+          hoverRoot.render(<EscalationHoverCard incident={incident} clickHint="CLICK THE MARKER FOR THE CRITERIA AND EVIDENCE" />);
+          hoverPopup.setLngLat((f.geometry as GeoJSON.Point).coordinates as [number, number]).addTo(map);
+        });
         map.on("mouseenter", layerId, () => {
           map.getCanvas().style.cursor = "pointer";
         });
@@ -493,10 +536,12 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
         // belongs here.
         map.on("mouseleave", layerId, () => {
           map.getCanvas().style.cursor = "";
+          hideHoverSoon();
         });
         map.on("click", layerId, (e) => {
           const f = e.features?.[0];
           if (!f || f.geometry.type !== "Point") return;
+          hideHover(); // the full card opens in the side panel
           const props = f.properties as {
             id: string;
             title: string;
@@ -541,6 +586,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
 
     return () => {
       readyRef.current = false;
+      hoverCleanupRef.current?.();
       map.remove();
       mapRef.current = null;
     };
