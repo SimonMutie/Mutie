@@ -18,6 +18,7 @@ import { liveLayersRouter } from "./routes/liveLayers";
 import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
+import { spotlightRouter, publicSpotlightRouter } from "./routes/spotlight";
 import { ensureSchema } from "./lib/schemaHeal";
 import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
@@ -95,6 +96,8 @@ app.route("/api/live-layers", liveLayersRouter);
 app.route("/api/global-status", globalStatusRouter);
 app.route("/api/social-listening", socialListeningRouter);
 app.route("/api/listening-queries", listeningQueriesRouter);
+app.route("/api/spotlight", spotlightRouter);
+app.route("/api/public/spotlight", publicSpotlightRouter);
 
 // Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off
 // this same URL) — forwarding the raw request preserves that query string.
