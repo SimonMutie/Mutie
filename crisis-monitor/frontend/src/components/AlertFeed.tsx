@@ -19,14 +19,18 @@ interface Props {
   alerts: AlertItem[];
   onAcknowledge: (id: string) => void;
   onResolve: (id: string) => void;
+  /** Inside another panel that already has a frame and a title: draw just the list. */
+  embedded?: boolean;
 }
 
-export default function AlertFeed({ alerts, onAcknowledge, onResolve }: Props) {
+export default function AlertFeed({ alerts, onAcknowledge, onResolve, embedded }: Props) {
   return (
-    <div className="panel" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border-soft)" }}>
-        <div className="eyebrow">ALERT FEED</div>
-      </div>
+    <div className={embedded ? undefined : "panel"} style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {!embedded && (
+        <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--border-soft)" }}>
+          <div className="eyebrow">ALERT FEED</div>
+        </div>
+      )}
       <div style={{ overflowY: "auto", flex: 1, padding: "8px 12px" }}>
         {alerts.length === 0 && (
           <div style={{ color: "var(--text-faint)", fontSize: 13, padding: "20px 8px" }}>

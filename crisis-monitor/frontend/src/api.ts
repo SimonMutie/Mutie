@@ -646,6 +646,104 @@ export interface StatsSummary {
   top_queries: { id: string; name: string; category: string; matches: number }[];
 }
 
+// ── Query dashboard (backend: routes/queryInsights.ts) ──
+
+/** One collected item as the query dashboard shows it. */
+export interface QueryStreamItem {
+  id: string;
+  /** "event" for news reports; "conversation" for social and forum posts. */
+  kind: "event" | "conversation";
+  source_type: string;
+  title: string;
+  snippet: string;
+  url: string | null;
+  /** The outlet's address for news, the author for a post. */
+  source: string | null;
+  published_at: string;
+  /** -1 … 1, a word-based estimate unless the source supplied its own. */
+  sentiment: number;
+  tone?: "negative" | "neutral" | "positive";
+  place: string | null;
+}
+
+export interface QueryTopic {
+  label: string;
+  /** What a search for this topic matches. */
+  term: string;
+  count: number;
+  tone: number;
+}
+
+export interface QueryMapPoint {
+  id: string;
+  lat: number;
+  lon: number;
+  place: string | null;
+  precision: string | null;
+  title: string;
+  snippet: string;
+  url: string | null;
+  source: string | null;
+  kind: "event" | "conversation";
+  published_at: string;
+  sentiment: number;
+}
+
+export interface QueryOverview {
+  queryId: string;
+  from: string;
+  to: string;
+  tz: number;
+  /** "day" normally; "hour" when the period is two days or less. Buckets are in the viewer's own time. */
+  bucket: "day" | "hour";
+  total: number;
+  volume: { bucket: string; count: number; events: number; conversations: number }[];
+  sentiment: {
+    overall: { negative: number; neutral: number; positive: number; average: number };
+    series: { bucket: string; negative: number; neutral: number; positive: number; average: number }[];
+  };
+  topics: QueryTopic[];
+  /** The outlets with the most items, and the places most often named. */
+  outlets: { label: string; count: number }[];
+  places: { label: string; count: number }[];
+  points: QueryMapPoint[];
+  located: number;
+  /** Tone, topics and the map use the most recent `used` of `total` items. */
+  sampled: { used: number; total: number };
+  fetchedAt: string;
+}
+
+export interface QueryDayDigest {
+  total: number;
+  events: number;
+  conversations: number;
+  tone: { negative: number; neutral: number; positive: number };
+  topics: QueryTopic[];
+  places: { label: string; count: number }[];
+  outlets: { label: string; count: number }[];
+  headlines: { id: string; title: string; url: string | null; source: string | null; topic: string | null }[];
+}
+
+export interface QueryAiDaySummary {
+  summary: string;
+  developments: { text: string; sources: number[] }[];
+  cited: { n: number; id: string; title: string; url: string | null; source: string | null }[];
+  model: string;
+  created_at: string;
+  item_count: number;
+}
+
+export type QueryAiSummaryState = { status: "ready"; ai: QueryAiDaySummary } | { status: "unavailable"; reason: string } | { status: "none" };
+
+export interface QueryDay {
+  day: string;
+  tz: number;
+  from: string;
+  to: string;
+  digest: QueryDayDigest;
+  ai: QueryAiSummaryState;
+}
+
 export interface LiveLayerFeature {
   type: "Feature";
   geometry: { type: "Point"; coordinates: [number, number] };
@@ -1201,6 +1299,17 @@ export const api = {
     const qs = new URLSearchParams(params as unknown as Record<string, string>).toString();
     return req<EventItem[]>(`/api/events/geo${qs ? `?${qs}` : ""}`);
   },
+  // Query dashboard. `tz` is the viewer's offset from UTC in minutes, so that "a day" is the viewer's day.
+  getQueryOverview: (queryId: string, range: { from: string; to: string }, tz: number) =>
+    req<QueryOverview>(`/api/query-insights/${encodeURIComponent(queryId)}/overview?${new URLSearchParams({ from: range.from, to: range.to, tz: String(tz) })}`),
+  getQueryStream: (queryId: string, params: { from?: string; to?: string; day?: string; tz: number; kind?: "event" | "conversation"; q?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));
+    return req<{ total: number; offset: number; limit: number; items: QueryStreamItem[] }>(`/api/query-insights/${encodeURIComponent(queryId)}/stream?${qs}`);
+  },
+  getQueryDay: (queryId: string, day: string, tz: number) => req<QueryDay>(`/api/query-insights/${encodeURIComponent(queryId)}/day?${new URLSearchParams({ day, tz: String(tz) })}`),
+  writeQueryDaySummary: (queryId: string, day: string, tz: number) =>
+    req<QueryAiSummaryState>(`/api/query-insights/${encodeURIComponent(queryId)}/day-summary`, { method: "POST", body: JSON.stringify({ day, tz }) }),
   getLocatedEvents: (queryId: string, hours = 24) =>
     req<LocatedMonitoringResult>(`/api/events/located?query_id=${encodeURIComponent(queryId)}&hours=${hours}`),
   getAlerts: (params: { status?: "open" | "resolved" | "all"; query_id?: string; unscoped?: "1" } = {}) => {

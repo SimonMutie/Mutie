@@ -124,4 +124,9 @@ export interface Env {
    *  which codes reports from their headlines by fixed rules at no cost.
    *  Markers then come only from articles a model has read. Default on. */
   ESCALATION_HEADLINE_TIER?: string;
+  /** How many AI day summaries (query dashboards, lib/daySummary.ts) may be
+   *  written per UTC day, across all queries. Default 15. They run inside
+   *  the daily AI budget; this keeps them from crowding out the escalation
+   *  reader. "0" switches them off (the non-AI digest still shows). */
+  DAY_SUMMARIES_PER_DAY?: string;
 }

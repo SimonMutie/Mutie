@@ -115,6 +115,37 @@ the coarse country→map-coordinate lookup used to plot articles (GDELT's DOC
 API only gives a source country, not a precise location — a production build
 would run real geocoding/NLP on the article text instead).
 
+### Query dashboard
+
+Each monitoring query has a dashboard (`frontend/src/components/QueryDashboard.tsx`
+and `components/query/`), fed by `backend/src/routes/queryInsights.ts`:
+
+- **Map** — the items placed where their own text says, on the same map
+  engines as Live Intel, switchable between a 3D globe, a dark 2D map, a
+  street map and satellite imagery.
+- **Events per day** — a line; clicking a day opens it: an AI summary of that
+  day's headlines, the day at a glance (no AI), and its events and
+  conversations.
+- **Sentiment** — negative / neutral / positive per day. The tone is a
+  word-list estimate (`lib/sentiment.ts`), not a model's reading.
+- **Topics** — a bubble per recurring word or phrase (`lib/topics.ts`), sized
+  by the number of items using it; clicking one filters the stream.
+- **Information stream** — the items, searchable, split into events (news)
+  and conversations (social and forum posts), downloadable as Excel, CSV,
+  Word or JSON.
+- **Top sources / places**, and the query's open **alerts**.
+
+Panels can be dragged by their title and resized from their corner; the
+arrangement is remembered in the browser. Days are the viewer's own days
+(every route takes the viewer's UTC offset).
+
+Everything is computed from the stored items with ordinary code, at no cost,
+except the AI day summary (`lib/daySummary.ts`): it is written on request,
+stored (a day is summarised once), runs inside the daily AI budget, and is
+further capped at `DAY_SUMMARIES_PER_DAY` (default 15) so that browsing many
+days cannot crowd out the escalation reader. When it cannot be written the
+day view says why and still shows the non-AI overview.
+
 ### Conflict Escalation — how a flag is decided
 
 The Conflict Escalation layer and its alerts come from
