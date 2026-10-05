@@ -1,14 +1,18 @@
 /**
  * The opening sequence's sound: a spoken welcome and a soft tone.
  *
- * Both are made by the visitor's own browser — the voice with its built-in
- * speech (no recording, no service, nothing to pay for) and the tone with
- * its audio engine. So the voice is whichever English voice the device
- * has, and sounds a little different from one computer to the next.
+ * The welcome is a recording — a British male voice, generated once with
+ * the open-source Kokoro speech model and shipped with the site
+ * (public/audio/welcome.mp3; see THIRD_PARTY_NOTICES.md). Because it is a
+ * file, it sounds the same on every device and uses no service at run
+ * time. If the file cannot be played, the visitor's browser reads the line
+ * aloud itself, with the nearest British male voice the device has.
+ *
+ * The tone is made on the spot by the browser's audio engine.
  *
  * Browsers do not let a page make sound until the visitor has clicked or
  * pressed something on it. When the site is opened cold the welcome may
- * therefore be refused; it is then kept "pending" and spoken at the first
+ * therefore be refused; it is then kept "pending" and played at the first
  * natural moment that follows a click — signing in, or the speaker button
  * on the opening screen.
  */
@@ -67,17 +71,61 @@ export function introAppliesHere(): boolean {
 
 /* ── voice ─────────────────────────────────────────────────────────── */
 
+const WELCOME_AUDIO_URL = "/audio/welcome.mp3";
+
 let welcomePending = false;
 let welcomeSpoken = false;
+let welcomeAudio: HTMLAudioElement | null = null;
 
+function getWelcomeAudio(): HTMLAudioElement {
+  if (!welcomeAudio) {
+    welcomeAudio = new Audio(WELCOME_AUDIO_URL);
+    welcomeAudio.preload = "auto";
+    welcomeAudio.volume = 0.95;
+  }
+  return welcomeAudio;
+}
+
+/** Starts fetching the recording, so it is ready by the time it is due. */
+export function preloadWelcome(): void {
+  if (introSoundEnabled()) getWelcomeAudio().load();
+}
+
+export type SpeakResult = "spoken" | "blocked" | "off";
+
+/** Plays the welcome. "blocked" means the browser refused because the
+ *  visitor has not interacted with the page yet (it is then pending). */
+export async function speakWelcome(): Promise<SpeakResult> {
+  if (!introSoundEnabled()) return "off";
+  const settle = (result: SpeakResult): SpeakResult => {
+    welcomePending = result === "blocked";
+    if (result === "spoken") welcomeSpoken = true;
+    return result;
+  };
+  try {
+    const audio = getWelcomeAudio();
+    audio.currentTime = 0;
+    await audio.play();
+    return settle("spoken");
+  } catch (err) {
+    // NotAllowedError is the browser's "no sound before the visitor has
+    // interacted". Anything else means the recording itself could not be
+    // played, and the browser's own voice is the fallback.
+    if (err instanceof DOMException && err.name === "NotAllowedError") return settle("blocked");
+    return settle(await speakWithBrowserVoice());
+  }
+}
+
+/** Fallback only: the device's own text-to-speech. A British male voice is
+ *  preferred, then any British voice, then any English one. */
 function pickVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   const english = voices.filter((v) => /^en([-_]|$)/i.test(v.lang));
   if (english.length === 0) return null;
   const score = (v: SpeechSynthesisVoice) =>
-    (/natural|neural/i.test(v.name) ? 8 : 0) + // the newer, more human voices some browsers offer
-    (/^en[-_](GB|KE|ZA|NG|AU|IE)/i.test(v.lang) ? 4 : 0) +
-    (/google uk english|sonia|libby|serena|kate|daniel/i.test(v.name) ? 2 : 0) +
-    (v.localService ? 0 : 1);
+    (/^en[-_]GB/i.test(v.lang) ? 8 : 0) +
+    (/\bmale\b|ryan|thomas|george|daniel|arthur|oliver|alfie|elliot|noah/i.test(v.name) && !/female/i.test(v.name) ? 6 : 0) +
+    (/natural|neural/i.test(v.name) ? 3 : 0) +
+    (/female|sonia|libby|maisie|kate|serena|hazel|susan/i.test(v.name) ? -4 : 0);
   return [...english].sort((a, b) => score(b) - score(a))[0];
 }
 
@@ -93,12 +141,8 @@ function loadVoices(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-export type SpeakResult = "spoken" | "blocked" | "off";
-
-/** Speaks the welcome. "blocked" means the browser refused because the
- *  visitor has not interacted with the page yet (it is then pending). */
-export async function speakWelcome(): Promise<SpeakResult> {
-  if (!introSoundEnabled() || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return "off";
+async function speakWithBrowserVoice(): Promise<SpeakResult> {
+  if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return "off";
   const synth = window.speechSynthesis;
   const voice = pickVoice(await loadVoices());
   return new Promise<SpeakResult>((resolve) => {
@@ -106,15 +150,13 @@ export async function speakWelcome(): Promise<SpeakResult> {
     const finish = (result: SpeakResult) => {
       if (settled) return;
       settled = true;
-      welcomePending = result === "blocked";
-      if (result === "spoken") welcomeSpoken = true;
       resolve(result);
     };
     const u = new SpeechSynthesisUtterance(WELCOME_SPOKEN);
     if (voice) u.voice = voice;
     u.lang = voice?.lang ?? "en-GB";
-    u.rate = 0.96;
-    u.pitch = 1;
+    u.rate = 0.94;
+    u.pitch = 0.95;
     u.volume = 0.9;
     u.onstart = () => finish("spoken");
     u.onerror = () => finish("blocked");
@@ -126,13 +168,14 @@ export async function speakWelcome(): Promise<SpeakResult> {
 }
 
 /** Called right after something the visitor did (signing in): if the
- *  welcome was refused earlier, it can be spoken now. */
+ *  welcome was refused earlier, it can be played now. */
 export function speakWelcomeIfPending(): void {
   if (welcomePending && !welcomeSpoken) void speakWelcome();
 }
 
 export function stopWelcome(): void {
   welcomePending = false;
+  welcomeAudio?.pause();
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 }
 

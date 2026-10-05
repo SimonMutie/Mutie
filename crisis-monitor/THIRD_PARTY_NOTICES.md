@@ -62,3 +62,15 @@ SOFTWARE.
   Lookups are cached permanently and kept within Nominatim's usage policy.
 
 Both data files are regenerated with `backend/scripts/buildGeoData.mjs`.
+
+## Welcome recording
+
+`frontend/public/audio/welcome.mp3` — the spoken welcome in the opening
+sequence — is synthetic speech generated with the
+[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) text-to-speech model
+(voice `bm_george`, British English), run locally through
+[kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx). The model is
+released under the Apache License 2.0. It is not a recording of a person.
+To regenerate with different wording or another voice, run the model with
+the new text and replace the file.
+
