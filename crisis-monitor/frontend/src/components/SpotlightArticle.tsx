@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { SpotlightEntry } from "../api";
 import { spotlightRegionName } from "../spotlightRegions";
+import { RichTextView, isRichBody } from "./SpotlightRichText";
 
 /**
  * A Regional Spotlight publication laid out for reading. Used by the
@@ -12,8 +13,6 @@ import { spotlightRegionName } from "../spotlightRegions";
  * HTML — so nothing typed into an entry can run as script, and links are
  * only made clickable when they are ordinary web addresses.
  */
-
-export const FORMATTING_HELP = "Blank line = new paragraph.  ## Heading   ### Smaller heading   - bullet   1. numbered   > quote   **bold**   *italic*   [link text](https://…)   ![image description](https://…)";
 
 const isWebUrl = (url: string) => /^https?:\/\/\S+$/i.test(url);
 
@@ -129,13 +128,17 @@ export function renderSpotlightBody(body: string): ReactNode[] {
   return blocks;
 }
 
-type ArticleEntry = Pick<SpotlightEntry, "region" | "title" | "product_type" | "countries" | "summary" | "body" | "cover_image_url" | "link_url" | "link_label" | "author" | "publication_date">;
+type ArticleEntry = Pick<SpotlightEntry, "region" | "title" | "product_type" | "countries" | "summary" | "body" | "cover_image_url" | "link_url" | "link_label" | "author" | "publication_date"> & { layout_width?: string };
 
-export default function SpotlightArticle({ entry }: { entry: ArticleEntry }) {
+/** `bodySlot` replaces the article text with something else in the same
+ *  place — the editor passes the formatting editor here, so the author
+ *  writes inside the real page layout rather than beside a preview. */
+export default function SpotlightArticle({ entry, bodySlot }: { entry: ArticleEntry; bodySlot?: ReactNode }) {
   const cover = entry.cover_image_url && isWebUrl(entry.cover_image_url) ? entry.cover_image_url : null;
   const link = entry.link_url && isWebUrl(entry.link_url) ? entry.link_url : null;
+  const width = entry.layout_width === "standard" || entry.layout_width === "full" ? entry.layout_width : "wide";
   return (
-    <article className="spotlight-article">
+    <article className={`spotlight-article spotlight-article--${width}`}>
       <p className="spotlight-article__kicker">
         <span className="spotlight-type">{entry.product_type || "Analysis"}</span>
         <span>{spotlightRegionName(entry.region)}</span>
@@ -148,9 +151,18 @@ export default function SpotlightArticle({ entry }: { entry: ArticleEntry }) {
       </p>
       {entry.summary && <p className="spotlight-article__lead">{entry.summary}</p>}
       {cover && <img className="spotlight-article__cover" src={cover} alt="" />}
-      {entry.body && <div className="spotlight-article__body">{renderSpotlightBody(entry.body)}</div>}
+      {bodySlot ??
+        (entry.body &&
+          (isRichBody(entry.body) ? (
+            <RichTextView body={entry.body} />
+          ) : (
+            // Written before the formatting editor existed: plain text with a few marks.
+            <div className="spotlight-rich">
+              <div className="tiptap">{renderSpotlightBody(entry.body)}</div>
+            </div>
+          )))}
       {link && (
-        <p>
+        <p className="spotlight-article__link">
           <a className="spotlight-btn spotlight-btn--primary" href={link} target="_blank" rel="noopener noreferrer">
             {entry.link_label || "Open the full report"}
           </a>

@@ -4,7 +4,8 @@
  */
 import { describe, it, expect, beforeAll } from "vitest";
 import { createRequire } from "node:module";
-import { spotlightRouter, publicSpotlightRouter, resetSpotlightTableCheck } from "../src/routes/spotlight";
+import { spotlightRouter, publicSpotlightRouter, resetSpotlightTableCheck, MEDIA_MAX_BYTES } from "../src/routes/spotlight";
+import { validateSpotlightDoc } from "../src/lib/spotlightDoc";
 import { createSessionToken } from "../src/auth";
 import type { Env } from "../src/bindings";
 
@@ -145,3 +146,112 @@ describe("Regional Spotlight", () => {
     expect((await call(admin, "DELETE", `/${draftId}`)).status).toBe(404);
   });
 });
+
+/* ── formatted articles: document checks, page width, images ─────────── */
+
+const doc = (...content: unknown[]) => JSON.stringify({ type: "doc", content });
+const para = (text: string, marks?: unknown[]) => ({ type: "paragraph", content: [{ type: "text", text, ...(marks ? { marks } : {}) }] });
+
+describe("formatted article documents", () => {
+  it("accepts everything the editor can produce", () => {
+    const body = doc(
+      { type: "heading", attrs: { level: 2, textAlign: "center" }, content: [{ type: "text", text: "Overview" }] },
+      para("Styled", [{ type: "bold" }, { type: "underline" }, { type: "textStyle", attrs: { color: "#d1352b" } }, { type: "highlight", attrs: { color: "rgb(255, 243, 163)" } }]),
+      para("A link", [{ type: "link", attrs: { href: "https://example.org/a", target: "_blank" } }]),
+      para("Email", [{ type: "link", attrs: { href: "mailto:info@example.org" } }]),
+      { type: "bulletList", content: [{ type: "listItem", content: [para("point")] }] },
+      { type: "table", content: [{ type: "tableRow", content: [{ type: "tableHeader", attrs: { colspan: 1, rowspan: 1 }, content: [para("Actor")] }, { type: "tableCell", content: [para("Events")] }] }] },
+      { type: "callout", content: [para("Key takeaway")] },
+      { type: "figure", attrs: { src: "https://api.example.org/api/public/spotlight/media/abc", caption: "Map 1", width: 80, align: "center" } },
+      { type: "embed", attrs: { kind: "dashboard", token: "Xy_12-abcDEF", height: 600 } },
+      { type: "embed", attrs: { kind: "external", src: "https://datawrapper.dwcdn.net/abc/1/", height: 480 } },
+      { type: "horizontalRule" }
+    );
+    expect(validateSpotlightDoc(body)).toBeNull();
+  });
+
+  it("refuses unsafe addresses, unknown blocks and non-colours, with a reason", () => {
+    expect(validateSpotlightDoc(doc(para("x", [{ type: "link", attrs: { href: "javascript:alert(1)" } }])))).toMatch(/link/);
+    expect(validateSpotlightDoc(doc({ type: "figure", attrs: { src: "data:image/svg+xml;base64,AAAA" } }))).toMatch(/image/);
+    expect(validateSpotlightDoc(doc({ type: "embed", attrs: { kind: "external", src: "http://insecure.example/x" } }))).toMatch(/https/);
+    expect(validateSpotlightDoc(doc({ type: "embed", attrs: { kind: "dashboard", token: "../../admin" } }))).toMatch(/dashboard/);
+    expect(validateSpotlightDoc(doc({ type: "iframe", attrs: { srcdoc: "<script>" } }))).toMatch(/does not support/);
+    expect(validateSpotlightDoc(doc(para("x", [{ type: "textStyle", attrs: { color: "red; background: url(https://evil.example)" } }])))).toMatch(/colour/);
+    expect(validateSpotlightDoc('{"type":"doc","content":"nope"}')).toMatch(/invalid contents/);
+    expect(validateSpotlightDoc('{"type":"doc"')).toMatch(/not a valid document/);
+  });
+
+  it("is enforced when saving, and plain text is still accepted as text", async () => {
+    const bad = await call(admin, "POST", "/", { region: "africa", title: "Bad", body: doc(para("x", [{ type: "link", attrs: { href: "javascript:alert(1)" } }])) });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toBe("Text contains a link that is not a web or email address");
+
+    const good = await json<Entry & { layout_width: string }>(call(admin, "POST", "/", { region: "africa", title: "Formatted", body: doc(para("Hello")) }));
+    expect(good.layout_width).toBe("wide"); // default
+    const wide = await json<Entry & { layout_width: string }>(call(admin, "PATCH", `/${good.id}`, { layout_width: "full" }));
+    expect(wide.layout_width).toBe("full");
+    expect((await call(admin, "PATCH", `/${good.id}`, { layout_width: "enormous" })).status).toBe(400);
+    expect((await call(admin, "PATCH", `/${good.id}`, { body: doc({ type: "script" }) })).status).toBe(400);
+
+    const plain = await json<Entry>(call(admin, "POST", "/", { region: "africa", title: "Plain", body: "{ not a doc, just text with a brace" }));
+    expect(plain.body).toBe("{ not a doc, just text with a brace");
+  });
+});
+
+describe("article images", () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 250, 251, 252]);
+  const upload = (who: Record<string, string>, bytes: Uint8Array, type = "image/png") => spotlightRouter.request("/media", { method: "POST", headers: { ...who, "content-type": type }, body: bytes }, env);
+
+  it("stores an uploaded image and serves back exactly the same bytes", async () => {
+    expect((await upload(client, PNG)).status).toBe(403);
+    const res = await upload(admin, PNG);
+    expect(res.status).toBe(201);
+    const saved = (await res.json()) as { id: string; path: string; mime: string; size: number };
+    expect(saved).toMatchObject({ mime: "image/png", size: PNG.length });
+    expect(saved.path).toBe(`/api/public/spotlight/media/${saved.id}`);
+
+    const served = await publicSpotlightRouter.request(`/media/${saved.id}`, {}, env); // no sign-in
+    expect(served.status).toBe(200);
+    expect(served.headers.get("content-type")).toBe("image/png");
+    expect(served.headers.get("cache-control")).toMatch(/immutable/);
+    expect([...new Uint8Array(await served.arrayBuffer())]).toEqual([...PNG]);
+    expect((await publicSpotlightRouter.request("/media/does-not-exist", {}, env)).status).toBe(404);
+  });
+
+  it("goes by what the file is, not what it claims to be, and enforces the size limit", async () => {
+    const svg = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    expect((await upload(admin, svg, "image/png")).status).toBe(415);
+    const jpegClaimingPng = await upload(admin, new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]), "image/png");
+    expect(((await jpegClaimingPng.json()) as { mime: string }).mime).toBe("image/jpeg");
+    const big = new Uint8Array(MEDIA_MAX_BYTES + 1);
+    big.set([0x89, 0x50, 0x4e, 0x47]);
+    expect((await upload(admin, big)).status).toBe(413);
+    expect((await upload(admin, new Uint8Array(0))).status).toBe(400);
+  });
+
+  it("holds an image at the size limit within one database row", async () => {
+    const full = new Uint8Array(MEDIA_MAX_BYTES).fill(7);
+    full.set([0x89, 0x50, 0x4e, 0x47]);
+    const saved = (await (await upload(admin, full)).json()) as { id: string };
+    const served = await publicSpotlightRouter.request(`/media/${saved.id}`, {}, env);
+    const back = new Uint8Array(await served.arrayBuffer());
+    expect(back.length).toBe(MEDIA_MAX_BYTES);
+    expect(Math.ceil(MEDIA_MAX_BYTES / 3) * 4).toBeLessThan(1_900_000); // base64 size, under the 2 MB row limit
+  });
+});
+
+describe("upgrading the first version of the table", () => {
+  it("adds the page-width column to a table created before it existed, keeping entries", async () => {
+    resetSpotlightTableCheck();
+    const old = new DatabaseSync(":memory:");
+    old.exec(`CREATE TABLE spotlight_entries (id TEXT PRIMARY KEY, region TEXT NOT NULL, title TEXT NOT NULL, product_type TEXT NOT NULL DEFAULT 'Analysis', countries TEXT, summary TEXT, body TEXT,
+      cover_image_url TEXT, link_url TEXT, link_label TEXT, author TEXT, publication_date TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft', is_public INTEGER NOT NULL DEFAULT 0,
+      published_at TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      INSERT INTO spotlight_entries (id, region, title, publication_date, status, created_at, updated_at) VALUES ('old1', 'africa', 'Written yesterday', '2026-10-05', 'published', 'x', 'x');`);
+    const oldEnv = { DB: { prepare: (sql: string) => new FakeStmt(old, sql) }, SESSION_SECRET: "test-secret" } as unknown as Env;
+    const list = (await (await spotlightRouter.request("/?region=africa", { headers: admin }, oldEnv)).json()) as { title: string; layout_width: string }[];
+    expect(list).toEqual([expect.objectContaining({ title: "Written yesterday", layout_width: "wide" })]);
+    resetSpotlightTableCheck();
+  });
+});
+

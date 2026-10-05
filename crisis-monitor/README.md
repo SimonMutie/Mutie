@@ -293,9 +293,13 @@ A database of publications ("products": analyses, situation updates, reports) fi
 - **Who can write:** platform admins only (New entry, Edit, Publish, Unpublish, Delete).
 - **Draft / published:** an entry is a draft, visible only to admins, until it is published. Publishing makes it live for every signed-in user.
 - **Public link:** a separate switch on each entry. A published entry with it on can be read without signing in at `/spotlight/<id>`. The link stops working as soon as the entry is unpublished or the switch is turned off.
-- **Text formatting:** plain text with a few marks (`## Heading`, `- bullet`, `**bold**`, `[text](https://…)`, `![caption](https://…)`). It is rendered as elements, never as raw HTML.
-- **Not included:** file uploads. A PDF or image is attached by its web address (the "Link to the full report" and "Cover image address" fields).
-- **Storage:** table `spotlight_entries`, created by the Worker itself on first use — there is no migration to run (`db/migration_026_regional_spotlight.sql` is the readable record). Code: `backend/src/routes/spotlight.ts`, `frontend/src/components/RegionalSpotlight.tsx`.
+- **Writing an article:** a formatting editor (headings, bold/italic/underline, colour and highlight, alignment, lists, quotes, key-points boxes, tables, links). Text and tables can be pasted in from Word or Excel. The author writes inside the real page layout, so what is on screen is what readers get.
+- **Images, maps, infographics:** uploaded from the computer, pasted, or dragged in. Stored in the database (table `spotlight_media`), at most about 1.35 MB each; larger files are shrunk in the browser before upload. Each image can be resized, aligned and captioned. They are served from an address containing a random id and need no sign-in, so public articles can show them.
+- **Live content inside an article:** "Live dashboard" places one of the platform's own dashboards (it must be shared live; the editor offers to switch that on). "Embed" places an interactive map or chart from another site, from its embed code or address (https only). Both can be resized.
+- **Page width:** set per article — reading column, wide (the default) or the full width of the page.
+- **How the text is stored:** as a document tree (JSON), not HTML. The reader can only display the block types the editor offers, and the server re-checks every link, image and embed address before saving (`backend/src/lib/spotlightDoc.ts`). Entries written in the first, plain-text version still display and are converted when next edited.
+- **Not included:** uploading PDFs or other documents. Link to them with "Link to the full report".
+- **Storage:** tables `spotlight_entries` and `spotlight_media`, created (and upgraded) by the Worker itself on first use — there is no migration to run (`db/migration_026_regional_spotlight.sql` is the readable record). Code: `backend/src/routes/spotlight.ts`, `frontend/src/components/RegionalSpotlight.tsx`.
 
 ## Going from mock data to real sources
 

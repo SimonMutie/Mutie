@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type AuthUser, type SpotlightEntry, type SpotlightEntryInput } from "../api";
 import { SPOTLIGHT_PRODUCT_TYPES, SPOTLIGHT_REGIONS, spotlightRegionName, type SpotlightRegionSlug, type SpotlightScope } from "../spotlightRegions";
-import SpotlightArticle, { FORMATTING_HELP } from "./SpotlightArticle";
+import SpotlightArticle from "./SpotlightArticle";
+import { RichTextEditor } from "./SpotlightRichText";
+import { uploadImageFile } from "../imageUpload";
 import "./Spotlight.css";
 
 /**
@@ -359,7 +361,7 @@ function SpotlightReader(props: {
 
   return (
     <div className="spotlight-page">
-      <div className="spotlight-wrap">
+      <div className="spotlight-wrap spotlight-wrap--reader">
         <div className="spotlight-bar">
           <button type="button" className="spotlight-btn" onClick={props.onBack}>
             ← {props.backLabel}
@@ -437,6 +439,7 @@ interface Draft {
   link_url: string;
   link_label: string;
   is_public: boolean;
+  layout_width: "standard" | "wide" | "full";
 }
 
 const today = () => {
@@ -458,6 +461,7 @@ function toDraft(e: SpotlightEntry): Draft {
     link_url: e.link_url ?? "",
     link_label: e.link_label ?? "",
     is_public: e.is_public,
+    layout_width: e.layout_width ?? "wide",
   };
 }
 
@@ -470,11 +474,12 @@ function SpotlightEditor(props: {
 }) {
   const { entryId } = props;
   const [draft, setDraft] = useState<Draft | null>(
-    entryId ? null : { region: props.defaultRegion, title: "", product_type: "Analysis", countries: "", publication_date: today(), author: "", summary: "", body: "", cover_image_url: "", link_url: "", link_label: "", is_public: false }
+    entryId ? null : { region: props.defaultRegion, title: "", product_type: "Analysis", countries: "", publication_date: today(), author: "", summary: "", body: "", cover_image_url: "", link_url: "", link_label: "", is_public: false, layout_width: "wide" }
   );
   const [original, setOriginal] = useState<SpotlightEntry | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingCover, setUploadingCover] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -517,6 +522,18 @@ function SpotlightEditor(props: {
     } catch (err) {
       setError(errorText(err, "Could not save this entry."));
       setSaving(false);
+    }
+  }
+
+  async function uploadCover(file: File) {
+    setUploadingCover(true);
+    setError(null);
+    try {
+      set("cover_image_url", await uploadImageFile(file));
+    } catch (err) {
+      setError(errorText(err, "The cover image could not be uploaded."));
+    } finally {
+      setUploadingCover(false);
     }
   }
 
@@ -601,15 +618,26 @@ function SpotlightEditor(props: {
           </label>
 
           <label className="spotlight-field">
-            <span>Text</span>
-            <textarea className="spotlight-input" rows={14} value={draft.body} onChange={(e) => set("body", e.target.value)} placeholder="Write or paste the publication here." />
-            <small>{FORMATTING_HELP}</small>
+            <span>Page width</span>
+            <select className="spotlight-input" value={draft.layout_width} onChange={(e) => set("layout_width", e.target.value as Draft["layout_width"])}>
+              <option value="standard">Reading column (narrow)</option>
+              <option value="wide">Wide</option>
+              <option value="full">Full width of the page</option>
+            </select>
+            <small>How much of the page the article takes. The page on the right shows it as readers will see it.</small>
           </label>
 
-          <label className="spotlight-field">
-            <span>Cover image address</span>
-            <input className="spotlight-input" type="url" value={draft.cover_image_url} onChange={(e) => set("cover_image_url", e.target.value)} placeholder="https://…" />
-          </label>
+          <div className="spotlight-field">
+            <span>Cover image</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="spotlight-input" type="url" value={draft.cover_image_url} onChange={(e) => set("cover_image_url", e.target.value)} placeholder="https://… or upload" aria-label="Cover image address" />
+              <label className="spotlight-btn" style={{ flexShrink: 0 }}>
+                {uploadingCover ? "Uploading…" : "Upload"}
+                <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden disabled={uploadingCover} onChange={(e) => e.target.files?.[0] && uploadCover(e.target.files[0])} />
+              </label>
+            </div>
+            <small>Shown at the top, under the summary. Optional.</small>
+          </div>
 
           <div className="spotlight-editor__pair">
             <label className="spotlight-field">
@@ -656,9 +684,9 @@ function SpotlightEditor(props: {
         </div>
       </form>
 
-      <div className="spotlight-editor__preview">
-        <p>Preview of what readers will see</p>
-        <SpotlightArticle entry={draft} />
+      {/* The page as readers will see it, with the text editable in place. */}
+      <div className="spotlight-editor__canvas">
+        <SpotlightArticle entry={draft} bodySlot={<RichTextEditor initialBody={original?.body ?? ""} onChange={(body) => set("body", body)} />} />
       </div>
     </div>
   );
