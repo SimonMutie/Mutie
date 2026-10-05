@@ -28,6 +28,7 @@ import {
   Network,
   Newspaper,
   Plane,
+  Radar,
   Radiation,
   Radio,
   RefreshCw,
@@ -75,7 +76,10 @@ import {
   type OsintAlertItem,
   type LiveBroadcast,
   type EscalationIncident,
+  type MonitoringQueryItem,
+  type LocatedMonitoringResult,
 } from "../api";
+import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
 // loading for every visit to this view when the intake modal may never
@@ -756,7 +760,30 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | "crypto" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | "crypto" | null;
+
+/** What Live Intel needs from the app shell to host Live Monitoring: the
+ *  user's monitoring queries, and ways to open a query's dashboard or the
+ *  query editor (full pages of their own, which return here). */
+export interface LiveIntelViewProps {
+  queries: MonitoringQueryItem[];
+  onQueriesChanged: () => void;
+  onOpenQuery: (queryId: string) => void;
+  onNewQuery: () => void;
+  onEditQuery: (queryId: string) => void;
+  /** Tool to show open on arrival — "monitor" when returning from a
+   *  monitoring query's dashboard or editor. */
+  initialTool?: "monitor" | null;
+}
+
+/** One state per monitoring query switched on as a map layer. */
+type MonitorLayerState = { result: LocatedMonitoringResult | null; loading: boolean; error: string | null };
+
+/** Fixed colours for monitoring-query layers, assigned by the query's
+ *  position in the list so a query keeps its colour between visits. */
+const MONITOR_LAYER_COLORS = ["#4dd0ff", "#ffb55c", "#b388ff", "#69f0ae", "#ff8a80", "#ffd740", "#80cbc4", "#f48fb1"];
+/** How far back a monitoring layer looks. */
+const MONITOR_LAYER_HOURS = 24;
 type DrawMode = "distance" | "area" | null;
 
 /** [lat, lng] tuples throughout the drawing/route tools — matches how a
@@ -831,7 +858,7 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
   URL.revokeObjectURL(url);
 }
 
-export default function LiveIntelView() {
+export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, onNewQuery, onEditQuery, initialTool = null }: LiveIntelViewProps) {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     earthquakes: true,
     "active-fires": true,
@@ -921,7 +948,100 @@ export default function LiveIntelView() {
   const [showTerrain, setShowTerrain] = useState(false);
 
   // --- Right-side tools: at most one open at a time (see RightTool). ---
-  const [activeTool, setActiveTool] = useState<RightTool>(null);
+  const [activeTool, setActiveTool] = useState<RightTool>(initialTool);
+
+  // --- Live Monitoring: the user's monitoring queries as map layers.
+  // Each query switched on here has its recent matches fetched (located
+  // from the places their own text names — see the backend's
+  // /api/events/located) and drawn on the map, refreshed on the same
+  // cadence as every other layer. Which queries are on is remembered per
+  // browser (monitorLayers.ts).
+  const [activeMonitorIds, setActiveMonitorIds] = useState<Set<string>>(() => loadMonitorLayerIds());
+  const [monitorLayers, setMonitorLayers] = useState<Record<string, MonitorLayerState>>({});
+
+  const loadMonitorLayer = useCallback((queryId: string) => {
+    setMonitorLayers((prev) => ({ ...prev, [queryId]: { result: prev[queryId]?.result ?? null, loading: true, error: null } }));
+    api
+      .getLocatedEvents(queryId, MONITOR_LAYER_HOURS)
+      .then((result) => setMonitorLayers((prev) => ({ ...prev, [queryId]: { result, loading: false, error: null } })))
+      .catch((err) =>
+        setMonitorLayers((prev) => ({ ...prev, [queryId]: { result: prev[queryId]?.result ?? null, loading: false, error: err instanceof Error ? err.message : "Unavailable" } }))
+      );
+  }, []);
+
+  // Only ids that still belong to a query the user has — a deleted query's
+  // id can linger in storage. Joined into a string so the polling effect
+  // below restarts only when the set of live layers actually changes.
+  const liveMonitorIdsKey = useMemo(
+    () =>
+      queries
+        .filter((q) => activeMonitorIds.has(q.id))
+        .map((q) => q.id)
+        .join(","),
+    [queries, activeMonitorIds]
+  );
+  useEffect(() => {
+    const ids = liveMonitorIdsKey ? liveMonitorIdsKey.split(",") : [];
+    if (ids.length === 0) return;
+    ids.forEach(loadMonitorLayer);
+    const interval = setInterval(() => ids.forEach(loadMonitorLayer), POLL_MS);
+    return () => clearInterval(interval);
+  }, [liveMonitorIdsKey, loadMonitorLayer]);
+
+  function toggleMonitorLayer(queryId: string) {
+    setActiveMonitorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(queryId)) next.delete(queryId);
+      else next.add(queryId);
+      saveMonitorLayerIds(next);
+      return next;
+    });
+  }
+
+  // One marker per place per query (not one per article): several reports
+  // about the same town would otherwise sit exactly on top of each other
+  // with only the last one clickable. The marker says how many matches it
+  // stands for and how precisely they are located.
+  const monitorLayerPoints = useMemo(() => {
+    const out: GlobePoint[] = [];
+    queries.forEach((q, qi) => {
+      if (!activeMonitorIds.has(q.id)) return;
+      const events = monitorLayers[q.id]?.result?.events ?? [];
+      const color = MONITOR_LAYER_COLORS[qi % MONITOR_LAYER_COLORS.length];
+      const byPlace = new Map<string, typeof events>();
+      for (const ev of events) {
+        const list = byPlace.get(ev.place) ?? [];
+        list.push(ev);
+        byPlace.set(ev.place, list);
+      }
+      for (const [place, group] of byPlace) {
+        const newest = group[0]; // the endpoint returns newest first
+        const precisionNote =
+          newest.precision === "country"
+            ? " Country-level: these reports name no specific place."
+            : newest.precision === "region"
+              ? " Region-level: these reports name no specific town."
+              : "";
+        const headlines = group
+          .slice(0, 3)
+          .map((ev) => (ev.title || ev.snippet).slice(0, 110))
+          .join(" • ");
+        out.push({
+          id: `monitor-${q.id}-${place}`,
+          layerKey: `Monitoring: ${q.name}`,
+          lat: newest.lat,
+          lng: newest.lon,
+          color,
+          size: Math.max(0.16, Math.min(0.34, 0.14 + group.length / 40)),
+          title: `${place} — ${group.length} match${group.length === 1 ? "" : "es"}`,
+          subtitle: `${headlines}${group.length > 3 ? ` • +${group.length - 3} more` : ""}.${precisionNote}`,
+          time: newest.published_at,
+          url: newest.url,
+        });
+      }
+    });
+    return out;
+  }, [queries, activeMonitorIds, monitorLayers]);
 
   const [drawMode, setDrawMode] = useState<DrawMode>(null);
   const [drawPoints, setDrawPoints] = useState<LatLng[]>([]);
@@ -1664,7 +1784,7 @@ export default function LiveIntelView() {
     return extra;
   }, [savedListeningQueries, activeListeningIds, listeningLiveData]);
 
-  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints], [points, toolPoints, listeningLayerPoints]);
+  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints], [points, toolPoints, listeningLayerPoints, monitorLayerPoints]);
   // Flat map renders "My Incidents" through the rich IncidentMarker/heatmap
   // layer below instead of a generic colored dot — drop the generic version
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
@@ -1835,7 +1955,7 @@ export default function LiveIntelView() {
           onToggleTerrain={() => setShowTerrain((v) => !v)}
         />
         <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
-        <StatusBar totalFeatures={points.length} clock={clock} />
+        <StatusBar totalFeatures={points.length + monitorLayerPoints.length} clock={clock} />
         <GlobalStatusTicker />
 
         <RightToolRail
@@ -1867,6 +1987,28 @@ export default function LiveIntelView() {
           }
         />
 
+        {activeTool === "monitor" && (
+          <MonitoringToolPanel
+            queries={queries}
+            activeIds={activeMonitorIds}
+            layers={monitorLayers}
+            onToggleLayer={toggleMonitorLayer}
+            onOpen={onOpenQuery}
+            onEdit={onEditQuery}
+            onNew={onNewQuery}
+            onSetActive={(q, isActive) => api.updateQuery(q.id, { is_active: isActive }).then(onQueriesChanged).catch(() => {})}
+            onDelete={(q) => {
+              if (!window.confirm(`Delete the monitoring query "${q.name}"? Its dashboard and alerts go with it.`)) return;
+              api
+                .deleteQuery(q.id)
+                .then(() => {
+                  if (activeMonitorIds.has(q.id)) toggleMonitorLayer(q.id);
+                  onQueriesChanged();
+                })
+                .catch(() => {});
+            }}
+          />
+        )}
         {activeTool === "draw" && (
           <DrawingToolPanel
             mode={drawMode}
@@ -3037,6 +3179,7 @@ function GlobalStatusTicker() {
  *  tools rather than a scrollable list of toggles. */
 function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void }) {
   const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
+    { key: "monitor", icon: Radar, label: "Monitor" },
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
     { key: "shapes", icon: Hexagon, label: "AOI" },
     { key: "economy", icon: Landmark, label: "Economy" },
@@ -3087,6 +3230,108 @@ function ToolPanelShell({ title, children }: { title: string; children: ReactNod
     <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: 260, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>{title}</div>
       {children}
+    </div>
+  );
+}
+
+/** Live Monitoring inside Live Intel: the user's monitoring queries, each
+ *  with a switch that draws its recent matches on the map, plus the ways
+ *  into the rest of the feature — create a query, open a query's dashboard,
+ *  edit, pause, delete. The dashboard and editor are full pages of their
+ *  own that return here. */
+function MonitoringToolPanel({
+  queries,
+  activeIds,
+  layers,
+  onToggleLayer,
+  onOpen,
+  onEdit,
+  onNew,
+  onSetActive,
+  onDelete,
+}: {
+  queries: MonitoringQueryItem[];
+  activeIds: Set<string>;
+  layers: Record<string, MonitorLayerState>;
+  onToggleLayer: (queryId: string) => void;
+  onOpen: (queryId: string) => void;
+  onEdit: (queryId: string) => void;
+  onNew: () => void;
+  onSetActive: (q: MonitoringQueryItem, isActive: boolean) => void;
+  onDelete: (q: MonitoringQueryItem) => void;
+}) {
+  const linkBtn: React.CSSProperties = { background: "transparent", border: "none", padding: 0, color: HUD.textSecondary, fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", textUnderlineOffset: 2 };
+  return (
+    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: 320, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Live Monitoring</div>
+        <button
+          onClick={onNew}
+          style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, border: `1px solid ${HUD.gold}`, background: "rgba(212,175,55,0.15)", color: HUD.gold, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}
+        >
+          + New query
+        </button>
+      </div>
+      <div style={{ fontSize: 10.5, lineHeight: 1.5, color: HUD.textSecondary }}>
+        Switch a query on to draw its matches from the last {MONITOR_LAYER_HOURS} hours on the map. Matches are placed where their own text says, so ones that name no place are counted but not drawn.
+      </div>
+
+      {queries.length === 0 && (
+        <div style={{ fontSize: 11.5, lineHeight: 1.5, color: HUD.textSecondary, padding: "14px 4px", textAlign: "center" }}>
+          No monitoring queries yet. Create one to track a topic and see its results here.
+        </div>
+      )}
+
+      {queries.map((q, qi) => {
+        const on = activeIds.has(q.id);
+        const layer = layers[q.id];
+        const color = MONITOR_LAYER_COLORS[qi % MONITOR_LAYER_COLORS.length];
+        return (
+          <div key={q.id} style={{ border: `1px solid ${on ? "rgba(212,175,55,0.35)" : "rgba(212,175,55,0.12)"}`, borderRadius: 8, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6, opacity: q.is_active ? 1 : 0.7 }}>
+            <button
+              onClick={() => onToggleLayer(q.id)}
+              aria-pressed={on}
+              title={on ? "Hide from the map" : "Show on the map"}
+              style={{ display: "flex", alignItems: "center", gap: 8, background: "transparent", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left", width: "100%" }}
+            >
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: color, flexShrink: 0, opacity: on ? 1 : 0.35 }} />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: HUD.textPrimary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.name}</span>
+              <LayerToggleSwitch on={on} />
+            </button>
+            <div style={{ fontSize: 10.5, color: HUD.textSecondary, lineHeight: 1.45 }}>
+              {q.is_active ? "Live" : "Paused"} · {q.match_count ?? 0} matches in the last 2h
+              {on && (
+                <>
+                  <br />
+                  {layer?.error ? (
+                    <span style={{ color: HUD.alertOrange }}>Map layer unavailable: {layer.error}</span>
+                  ) : layer?.result ? (
+                    <span style={{ color: HUD.textPrimary }}>
+                      On map: {layer.result.located} of {layer.result.total} matches ({MONITOR_LAYER_HOURS}h)
+                    </span>
+                  ) : (
+                    <span>Loading map layer…</span>
+                  )}
+                </>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <button onClick={() => onOpen(q.id)} style={{ ...linkBtn, color: HUD.gold }}>
+                Dashboard
+              </button>
+              <button onClick={() => onEdit(q.id)} style={linkBtn}>
+                Edit
+              </button>
+              <button onClick={() => onSetActive(q, !q.is_active)} style={linkBtn}>
+                {q.is_active ? "Pause" : "Resume"}
+              </button>
+              <button onClick={() => onDelete(q)} style={{ ...linkBtn, color: HUD.alertRed }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

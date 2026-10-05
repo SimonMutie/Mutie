@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { api, type AuthUser, type IncidentStats } from "../api";
 import IncidentsMap from "./IncidentsMap";
 import IncidentSearch from "./IncidentSearch";
@@ -8,7 +8,11 @@ import IncidentManageTable from "./IncidentManageTable";
 import CustomDashboardBuilder from "./CustomDashboardBuilder";
 import DashboardEditor from "./DashboardEditor";
 
-type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage";
+// Loaded only when the Datasets tab is opened — it is a sizeable page that
+// most visits to Trends & Patterns never use.
+const DatasetsPanel = lazy(() => import("./DatasetsPanel"));
+
+type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage" | "datasets";
 type DashboardMode = "auto" | "bespoke";
 
 export default function IncidentsDashboard({ user }: { user: AuthUser }) {
@@ -46,11 +50,22 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
         <button onClick={() => setTab("manage")} style={tabBtnStyle(tab === "manage")}>
           Manage / Uploads
         </button>
+        {/* Moved here from the top navigation: datasets feed the dashboards
+         *  and maps on this page, so they sit alongside them. */}
+        <button onClick={() => setTab("datasets")} style={tabBtnStyle(tab === "datasets")}>
+          Datasets
+        </button>
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
 
       {tab === "search" && <IncidentSearch />}
+
+      {tab === "datasets" && (
+        <Suspense fallback={<div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>}>
+          <DatasetsPanel />
+        </Suspense>
+      )}
 
       {tab === "map" && (
         <div style={{ flex: 1, minHeight: 0 }}>

@@ -26,6 +26,7 @@ import { all, run, nowIso } from "../db";
 import { newId } from "../ids";
 import type { Env } from "../bindings";
 import type { EventRecord } from "../types";
+import { locateEventText, TEXT_LOCATED } from "../lib/eventLocation";
 
 const GDELT_ENDPOINT = "https://api.gdeltproject.org/api/v2/doc/doc";
 
@@ -330,11 +331,15 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
     const bodyText = fulltextCache.get(article.url);
     if (bodyText) content = `${content} ${bodyText}`;
 
-    const centroid = COUNTRY_CENTROIDS[article.sourcecountry] ?? null;
+    // Placed where the article's own headline/text says it happened —
+    // NOT at the centroid of the publisher's country (`sourcecountry`),
+    // which drew a Kenyan paper's report on Sudan in Kenya. An article
+    // that names nowhere gets no coordinates. See lib/eventLocation.ts.
+    const location = locateEventText(article.title, bodyText);
     const id = newId();
     const now = nowIso();
     const publishedAt = parseGdeltDate(article.seendate).toISOString();
-    const rawMetadata = JSON.stringify({ connector: "gdelt", sourcecountry: article.sourcecountry, domain: article.domain });
+    const rawMetadata = JSON.stringify({ connector: "gdelt", sourcecountry: article.sourcecountry, domain: article.domain, geo: TEXT_LOCATED, geoPrecision: location?.precision ?? null });
 
     const rows = await all<Record<string, unknown>>(
       env.DB,
@@ -353,9 +358,9 @@ export async function pollGdelt(env: Env, searchTermChunks: string[], opts: Poll
         (article.language ?? "en").toLowerCase(),
         publishedAt,
         now,
-        centroid ? centroid[0] : null,
-        centroid ? centroid[1] : null,
-        article.sourcecountry ?? null,
+        location?.lat ?? null,
+        location?.lon ?? null,
+        location?.place ?? null,
         rawMetadata,
       ]
     );

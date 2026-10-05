@@ -2,14 +2,13 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
 import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
+import { enableMonitorLayer } from "./monitorLayers";
 
-const QueryList = lazy(() => import("./components/QueryList"));
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
 const AdminPanel = lazy(() => import("./components/AdminPanel"));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const IncidentsDashboard = lazy(() => import("./components/IncidentsDashboard"));
-const DatasetsPanel = lazy(() => import("./components/DatasetsPanel"));
 const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"));
 const LiveIntelView = lazy(() => import("./components/LiveIntelView"));
 
@@ -26,7 +25,12 @@ const LiveIntelView = lazy(() => import("./components/LiveIntelView"));
 const viewLoadingFallback = <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>;
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
-type View = "list" | { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "datasets" | "live-intel";
+/** Two top-level sections — Trends & Patterns ("incidents", which now also
+ *  holds Datasets) and Live Intel. Live Monitoring lives inside Live Intel:
+ *  its queries are listed and toggled in the Monitor tool on the map, and a
+ *  query's dashboard / editor are the three object-or-"new-query" views
+ *  here, reached from that tool and returning to it. */
+type View = { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-intel";
 
 /** Minimal, single-purpose routing: this app is otherwise entirely
  *  state-driven (no URLs for any authenticated view), but a "share for live
@@ -44,6 +48,14 @@ export default function App() {
   const [bootState, setBootState] = useState<BootState>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [view, setView] = useState<View>("live-intel");
+  // Set when coming back from a monitoring page, so the map reopens with
+  // the Monitor tool showing instead of dropping the user on a bare map.
+  const [openMonitorTool, setOpenMonitorTool] = useState(false);
+
+  function backToMonitoring() {
+    setOpenMonitorTool(true);
+    setView("live-intel");
+  }
   const [queries, setQueries] = useState<MonitoringQueryItem[]>([]);
   const [connected, setConnected] = useState(false);
   const [liveMessage, setLiveMessage] = useState<{ type: string; payload: unknown } | null>(null);
@@ -123,7 +135,10 @@ export default function App() {
   const openQuery = typeof view === "object" && "queryId" in view ? queries.find((q) => q.id === view.queryId) : undefined;
   const editingQuery = typeof view === "object" && "editQueryId" in view ? queries.find((q) => q.id === view.editQueryId) : undefined;
 
-  async function handleSaved(saved: MonitoringQueryItem) {
+  async function handleSaved(saved: MonitoringQueryItem, created: boolean) {
+    // A newly created query is shown on the Live Intel map straight away;
+    // it can be switched off again from the Monitor tool.
+    if (created) enableMonitorLayer(saved.id);
     await loadQueries();
     setView({ queryId: saved.id });
   }
@@ -133,47 +148,33 @@ export default function App() {
       <TopBar
         connected={connected}
         user={user}
-        view={
-          view === "admin"
-            ? "admin"
-            : view === "settings"
-              ? "settings"
-              : view === "list"
-                ? "list"
-                : view === "incidents"
-                  ? "incidents"
-                  : view === "datasets"
-                    ? "datasets"
-                    : view === "live-intel"
-                      ? "live-intel"
-                      : "dashboard"
-        }
-        onNavigate={(v) => setView(v)}
+        view={view === "admin" || view === "settings" || view === "incidents" || view === "live-intel" ? view : "monitoring"}
+        onNavigate={(v) => {
+          setOpenMonitorTool(false);
+          setView(v);
+        }}
         onLogout={handleLogout}
       />
 
       <Suspense fallback={viewLoadingFallback}>
-        {view === "admin" && <AdminPanel user={user} onBack={() => setView("list")} />}
+        {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-intel")} />}
 
-        {view === "settings" && <SettingsPanel onBack={() => setView("list")} />}
+        {view === "settings" && <SettingsPanel onBack={() => setView("live-intel")} />}
 
         {view === "incidents" && <IncidentsDashboard user={user} />}
 
-        {view === "datasets" && <DatasetsPanel />}
-
-        {view === "live-intel" && <LiveIntelView />}
-
-        {view === "list" && (
-          <QueryList
+        {view === "live-intel" && (
+          <LiveIntelView
             queries={queries}
-            onChanged={loadQueries}
-            onOpen={(queryId) => setView({ queryId })}
-            onNew={() => setView("new-query")}
-            onEdit={(queryId) => setView({ editQueryId: queryId })}
+            onQueriesChanged={loadQueries}
+            onOpenQuery={(queryId) => setView({ queryId })}
+            onNewQuery={() => setView("new-query")}
+            onEditQuery={(queryId) => setView({ editQueryId: queryId })}
+            initialTool={openMonitorTool ? "monitor" : null}
           />
         )}
 
-        {view === "new-query" && <QueryEditor mode="create" onCancel={() => setView("list")} onSaved={handleSaved} />}
+        {view === "new-query" && <QueryEditor mode="create" onCancel={backToMonitoring} onSaved={(q) => handleSaved(q, true)} />}
 
         {typeof view === "object" &&
           "editQueryId" in view &&
@@ -182,7 +183,7 @@ export default function App() {
               mode="edit"
               existingQuery={editingQuery}
               onCancel={() => setView({ queryId: editingQuery.id })}
-              onSaved={handleSaved}
+              onSaved={(q) => handleSaved(q, false)}
             />
           ) : (
             <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
@@ -194,8 +195,12 @@ export default function App() {
             <QueryDashboard
               query={openQuery}
               liveMessage={liveMessage}
-              onBack={() => setView("list")}
+              onBack={backToMonitoring}
               onEdit={() => setView({ editQueryId: openQuery.id })}
+              onShowOnMap={() => {
+                enableMonitorLayer(openQuery.id);
+                backToMonitoring();
+              }}
             />
           ) : (
             // query list hasn't loaded yet, or the query was deleted/no longer accessible

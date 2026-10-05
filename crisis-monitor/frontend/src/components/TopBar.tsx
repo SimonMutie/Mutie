@@ -6,8 +6,8 @@ import Tagline from "./Tagline";
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets" | "live-intel";
-  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets" | "live-intel") => void;
+  view: "monitoring" | "admin" | "settings" | "incidents" | "live-intel";
+  onNavigate: (view: "admin" | "settings" | "incidents" | "live-intel") => void;
   onLogout: () => void;
 }
 
@@ -69,16 +69,14 @@ export default function TopBar({ connected, user, view, onNavigate, onLogout }: 
 
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
         <nav style={{ display: "flex", gap: 6 }}>
+          {/* Datasets now lives inside Trends & Patterns (its own tab there),
+           *  and Live Monitoring inside Live Intel (the Monitor tool, plus
+           *  each query's dashboard and editor) — so a monitoring query's
+           *  pages keep "Live Intel" highlighted. */}
           <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
             Trends & Patterns
           </button>
-          <button onClick={() => onNavigate("list")} style={navBtnStyle(view === "list" || view === "dashboard")}>
-            Live Monitoring
-          </button>
-          <button onClick={() => onNavigate("datasets")} style={navBtnStyle(view === "datasets")}>
-            Datasets
-          </button>
-          <button onClick={() => onNavigate("live-intel")} style={navBtnStyle(view === "live-intel")}>
+          <button onClick={() => onNavigate("live-intel")} style={navBtnStyle(view === "live-intel" || view === "monitoring")}>
             Live Intel
           </button>
         </nav>
@@ -108,8 +106,8 @@ function AccountMenu({
   onLogout,
 }: {
   user: AuthUser;
-  view: "list" | "dashboard" | "admin" | "settings" | "incidents" | "datasets" | "live-intel";
-  onNavigate: (view: "list" | "admin" | "settings" | "incidents" | "datasets" | "live-intel") => void;
+  view: "monitoring" | "admin" | "settings" | "incidents" | "live-intel";
+  onNavigate: (view: "admin" | "settings" | "incidents" | "live-intel") => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);

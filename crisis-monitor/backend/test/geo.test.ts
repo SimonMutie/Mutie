@@ -6,6 +6,7 @@ import {
   countryAt,
   distanceKm,
   isInOrNearCountry,
+  locateText,
   lookupKnownPlace,
   mentionsAfrica,
   normalizeName,
@@ -135,5 +136,68 @@ describe("Africa relevance check for world-news feeds", () => {
   it("passes items about Africa and skips the rest", () => {
     for (const t of ["Sudan's army retakes key Kordofan town", "Drone strike kills seven in Mekelle", "Malian junta delays vote", "DR Congo rebels advance on Uvira", "Somaliland forces clash near Las Anod"]) expect(mentionsAfrica(t), t).toBe(true);
     for (const t of ["Russian strike hits Kharkiv apartment block", "Houthi forces shell Taiz", "Israel strikes southern Lebanon", "Papua New Guinea landslide toll rises"]) expect(mentionsAfrica(t), t).toBe(false);
+  });
+});
+
+describe("locating free text from the places it names", () => {
+  const at = (t: string) => {
+    const r = locateText(t);
+    return r ? `${r.label}|${r.countryCode}|${r.precision}` : null;
+  };
+  it("prefers a town over a region over a country", () => {
+    expect(at("Ethiopia: drone strike near Mekelle in Tigray kills seven")).toBe("Mekelle|ET|place");
+    expect(at("Fighting spreads across North Darfur, Sudan")).toBe("North Darfur|SD|region");
+    expect(at("Kenya announces new security budget")).toBe("Kenya|KE|country");
+  });
+  it("does not confuse countries or regions whose names contain each other", () => {
+    expect(at("South Sudan president reshuffles army command")).toBe("South Sudan|SS|country");
+    expect(at("Somaliland forces clash with militia")).toBe("Somaliland|SO|region");
+    expect(at("Mali junta delays election")).toBe("Mali|ML|country");
+    expect(at("Nigeria: bandits attack village in Niger State")).toBe("Niger State|NG|region");
+    expect(at("Oil theft rises in the Niger Delta")).toBe("Niger Delta|NG|region");
+    expect(at("Equatorial Guinea opens new port")).toBe("Equatorial Guinea|GQ|country");
+    expect(at("Papua New Guinea landslide toll rises")).toBeNull();
+  });
+  it("locates a story by where it happened, not by other countries it mentions", () => {
+    // A Kenyan outlet's story about Sudan must not land in Kenya.
+    expect(at("RSF shells El Fasher as Kenya hosts talks")).toBe("El Fasher|SD|place");
+  });
+  it("needs the country named before accepting an ambiguous or very short name", () => {
+    expect(at("Clashes in Tripoli as Lebanese army deploys")).toBeNull();
+    expect(at("Libya: clashes in Tripoli between rival militias")).toBe("Tripoli|LY|place");
+    expect(at("Unity government talks stall")).toBeNull();
+    expect(at("Seen from afar, the market looked calm")).toBeNull();
+    expect(at("Queen Victoria exhibition opens")).toBeNull();
+  });
+  it("returns null when the text names nowhere in Africa", () => {
+    expect(at("Central bank holds rates steady")).toBeNull();
+    expect(at("Russian strike hits Kharkiv")).toBeNull();
+    expect(at("")).toBeNull();
+  });
+});
+
+import { locateEventText, withTextLocation } from "../src/lib/eventLocation";
+
+describe("monitoring-query events are placed by their text, not their publisher", () => {
+  it("locates from the headline first, then the opening of the body", () => {
+    expect(locateEventText("RSF shells El Fasher as Kenya hosts talks", "Nairobi — ...")?.place).toBe("El Fasher, Sudan");
+    expect(locateEventText("Peace talks resume", "Delegates met in Juba on Monday to discuss the ceasefire.")?.place).toBe("Juba, South Sudan");
+    expect(locateEventText("Russian strike hits Kharkiv, Ukraine says", "")?.place).toBe("Ukraine");
+    expect(locateEventText("Markets close higher", "Shares rose on Friday.")).toBeNull();
+  });
+  it("re-locates rows stored with publisher-country coordinates", () => {
+    const old = { id: "1", title: "RSF shells El Fasher, residents say", content: "RSF shells El Fasher, residents say https://kenyan-daily.example/news/sudan-el-fasher text", geo_lat: 1.0, geo_lng: 38.0, geo_label: "Kenya", raw_metadata: JSON.stringify({ connector: "gdelt", sourcecountry: "Kenya" }) };
+    const fixed = withTextLocation(old);
+    expect(fixed.geo_label).toBe("El Fasher, Sudan");
+    expect(fixed.geo_lat).toBeCloseTo(13.63, 1);
+    // An article that names nowhere loses its (publisher) coordinates rather than keeping a wrong pin.
+    const vague = withTextLocation({ ...old, title: "Editorial: what next for the region", content: "Editorial: what next for the region https://kenyan-daily.example/opinion/1" });
+    expect(vague.geo_lat).toBeNull();
+  });
+  it("leaves already text-located rows and non-news rows untouched", () => {
+    const located = { title: "x", content: "y", geo_lat: 5, geo_lng: 6, geo_label: "Somewhere", raw_metadata: JSON.stringify({ connector: "gdelt", geo: "text" }) };
+    expect(withTextLocation(located)).toBe(located);
+    const uploaded = { title: "x", content: "y", geo_lat: 5, geo_lng: 6, geo_label: "Somewhere", raw_metadata: "{}" };
+    expect(withTextLocation(uploaded)).toBe(uploaded);
   });
 });
