@@ -1,5 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { CircleMarker as LeafletCircleMarker } from "leaflet";
+import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
@@ -53,6 +54,7 @@ import {
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
+import EscalationHoverCard from "./EscalationHoverCard";
 import {
   api,
   type LiveLayerCollection,
@@ -2268,7 +2270,10 @@ function FlatMap({
             <LeafletTooltip direction="center">{r.name}</LeafletTooltip>
           </Polyline>
         ))}
-      {points.map((p) => (
+      {points.map((p) =>
+        p.escalationLevel && p.incident ? (
+          <EscalationFlatMarker key={`${p.layerKey}:${p.id}`} lat={p.lat} lng={p.lng} size={p.size} color={p.color} incident={p.incident} />
+        ) : (
         <CircleMarker
           key={`${p.layerKey}:${p.id}`}
           center={[p.lat, p.lng]}
@@ -2287,7 +2292,8 @@ function FlatMap({
             </div>
           </LeafletTooltip>
         </CircleMarker>
-      ))}
+        )
+      )}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (
         <MarkerClusterGroup chunkedLoading>
           {visibleIncidentRows.map((i) => (
@@ -4560,5 +4566,49 @@ function IncidentIntakeModal({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * An escalation marker on the flat map. Resting the pointer on it opens a
+ * card with what is being reported there and links that can be clicked;
+ * the card stays open while the pointer is on the marker or on the card,
+ * so a link can be reached. Clicking the marker itself opens Liveuamap's
+ * map of that country, as it does on the 3D map.
+ */
+function EscalationFlatMarker({ lat, lng, size, color, incident }: { lat: number; lng: number; size: number; color: string; incident: EscalationIncident }) {
+  const marker = useRef<LeafletCircleMarker>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const stay = () => window.clearTimeout(timer.current);
+  const closeSoon = () => {
+    stay();
+    timer.current = window.setTimeout(() => marker.current?.closePopup(), 350);
+  };
+  useEffect(() => stay, []);
+  return (
+    <CircleMarker
+      ref={marker}
+      center={[lat, lng]}
+      radius={3 + size * 18}
+      pathOptions={{ color, fillColor: color, fillOpacity: 0.6, weight: 1 }}
+      eventHandlers={{
+        mouseover: () => {
+          stay();
+          marker.current?.openPopup();
+        },
+        mouseout: closeSoon,
+        click: () => {
+          openLiveuamap(liveuamapLink(incident.countryCode, lat, lng, incident.geoPrecision));
+          // Leaflet closes an open popup on click; keep the card up.
+          window.setTimeout(() => marker.current?.openPopup(), 0);
+        },
+      }}
+    >
+      <LeafletPopup className="osiris-hover-leaflet" closeButton={false} autoPan={false} offset={[0, -2]}>
+        <div onMouseEnter={stay} onMouseLeave={closeSoon}>
+          <EscalationHoverCard incident={incident} clickHint="CLICK THE MARKER TO OPEN LIVEUAMAP THERE" />
+        </div>
+      </LeafletPopup>
+    </CircleMarker>
   );
 }

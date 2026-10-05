@@ -1,0 +1,137 @@
+/* The hover card on escalation markers (EscalationHoverCard.tsx), and the
+ * two map libraries' popup shells restyled to carry it: the same dark
+ * glass as the rest of the Live Intel HUD instead of their white bubbles. */
+
+.esc-hover {
+  width: 290px;
+  max-width: 78vw;
+  font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
+  color: #e8ecf4;
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: left;
+}
+
+.esc-hover__top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.esc-hover__level {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.esc-hover__level--elevated {
+  color: #ff9d4f;
+}
+.esc-hover__level--critical {
+  color: #ff5d5d;
+}
+
+.esc-hover__tag {
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  color: #ffb55c;
+  border: 1px solid rgba(255, 181, 92, 0.55);
+  border-radius: 3px;
+  padding: 0 5px;
+}
+
+.esc-hover__headline {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #ffffff;
+  line-height: 1.35;
+}
+
+.esc-hover__where {
+  margin-top: 3px;
+  color: #9aa5ba;
+  font-size: 10.5px;
+}
+
+.esc-hover__summary {
+  margin-top: 7px;
+  color: #cfd6e4;
+}
+
+.esc-hover__facts {
+  margin-top: 7px;
+  color: #9aa5ba;
+  font-size: 10.5px;
+}
+
+.esc-hover__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+.esc-hover__links a {
+  color: #d4af37;
+  text-decoration: none;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.esc-hover__links a:hover,
+.esc-hover__links a:focus-visible {
+  text-decoration: underline;
+  color: #f1cf5b;
+}
+
+.esc-hover__hint {
+  margin-top: 7px;
+  color: #6f7a90;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+}
+
+/* MapLibre (3D map) */
+.osiris-hover-popup {
+  z-index: 560;
+}
+.osiris-hover-popup .maplibregl-popup-content {
+  background: rgba(8, 10, 20, 0.95);
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 8px;
+  padding: 11px 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+.osiris-hover-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.osiris-hover-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.osiris-hover-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: rgba(8, 10, 20, 0.95);
+}
+.osiris-hover-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.osiris-hover-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.osiris-hover-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: rgba(8, 10, 20, 0.95);
+}
+.osiris-hover-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: rgba(8, 10, 20, 0.95);
+}
+.osiris-hover-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: rgba(8, 10, 20, 0.95);
+}
+
+/* Leaflet (flat map) */
+.osiris-hover-leaflet .leaflet-popup-content-wrapper {
+  background: rgba(8, 10, 20, 0.95);
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+.osiris-hover-leaflet .leaflet-popup-content {
+  margin: 11px 13px;
+  width: auto !important;
+}
+.osiris-hover-leaflet .leaflet-popup-tip {
+  background: rgba(8, 10, 20, 0.95);
+  border: 1px solid rgba(212, 175, 55, 0.4);
+}
