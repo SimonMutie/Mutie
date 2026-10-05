@@ -465,6 +465,7 @@ export const CONFLICT_GAZETTEER: GazetteerPlace[] = [
   R("NG", "Delta State", 5.5, 6.0),
   R("NG", "Bayelsa", 4.8, 6.1, ["Bayelsa State"]),
   R("NG", "Sambisa Forest", 11.25, 13.4, ["Sambisa"]),
+  R("NG", "Niger Delta", 5.3, 6.4),
   P("NG", "Abuja", 9.0579, 7.4951),
   P("NG", "Lagos", 6.5244, 3.3792),
   P("NG", "Maiduguri", 11.8333, 13.15),

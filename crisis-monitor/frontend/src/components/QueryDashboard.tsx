@@ -12,9 +12,11 @@ interface Props {
   liveMessage: { type: string; payload: unknown } | null;
   onBack: () => void;
   onEdit: () => void;
+  /** Switches this query's layer on and returns to the Live Intel map. */
+  onShowOnMap: () => void;
 }
 
-export default function QueryDashboard({ query, liveMessage, onBack, onEdit }: Props) {
+export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onShowOnMap }: Props) {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [summary, setSummary] = useState<StatsSummary | null>(null);
@@ -85,7 +87,7 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit }: P
         }}
       >
         <button onClick={onBack} style={backBtnStyle}>
-          ← All queries
+          ← Live Intel
         </button>
         <CategoryBadge category={query.category} size={26} />
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -94,6 +96,9 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit }: P
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{categoryMeta(query.category).label}</div>
         </div>
+        <button onClick={onShowOnMap} style={{ ...backBtnStyle, borderColor: "var(--signal)", color: "var(--text-primary)", background: "var(--signal-dim)", fontWeight: 600 }}>
+          Show on Live Intel map
+        </button>
         <button onClick={onEdit} style={backBtnStyle}>
           Edit
         </button>

@@ -439,3 +439,103 @@ export function mentionsAfrica(text: string): boolean {
   }
   return false;
 }
+
+// ── Locating free text ───────────────────────────────────────────────────
+
+export interface TextLocation {
+  lat: number;
+  lon: number;
+  /** "Mekelle", "Tigray", "Ethiopia". */
+  label: string;
+  countryCode: string;
+  precision: "place" | "region" | "country";
+}
+
+/** Place names that are also ordinary words, personal names, or places on
+ *  other continents. They are only accepted when the text also names their
+ *  country ("Tripoli" needs "Libya"; "Victoria" needs "Seychelles"). Every
+ *  name of four letters or fewer is treated the same way, apart from the
+ *  short names in WELL_KNOWN_SHORT. */
+const NEEDS_COUNTRY_MENTION = new Set([
+  "unity", "lakes", "rivers", "plateau", "sahel", "victoria", "palma", "rafah", "nasir", "pemba", "mongo", "praia", "tripoli",
+  "alexandria", "marte", "northern state", "river nile", "blue nile", "white nile", "central mali", "zanzibar city", "stone town",
+]);
+const WELL_KNOWN_SHORT = new Set(["juba", "goma", "gao", "kano", "gulu", "lamu"]);
+
+interface MentionEntry {
+  label: string;
+  lat: number;
+  lon: number;
+  kind: "place" | "region" | "country";
+  countryCode: string;
+}
+
+/** normalised name -> every place/region/country it could refer to. */
+const MENTION_INDEX: Map<string, MentionEntry[]> = (() => {
+  const m = new Map<string, MentionEntry[]>();
+  const add = (name: string, e: MentionEntry) => {
+    const k = normalizeName(name).replace(/[()]/g, "").replace(/\s+/g, " ").trim();
+    if (k.length < 3) return;
+    const list = m.get(k) ?? [];
+    if (!list.some((x) => x.countryCode === e.countryCode && x.kind === e.kind)) list.push(e);
+    m.set(k, list);
+  };
+  for (const p of CONFLICT_GAZETTEER as GazetteerPlace[]) {
+    const e: MentionEntry = { label: p.name, lat: p.lat, lon: p.lon, kind: p.kind === "region" ? "region" : "place", countryCode: p.country };
+    for (const n of [p.name, ...(p.aliases ?? [])]) add(n, e);
+  }
+  for (const [code, info] of Object.entries(AFRICA_GEO_COUNTRIES)) {
+    const c = AFRICA_CENTROIDS[code];
+    if (!c) continue;
+    const e: MentionEntry = { label: info.name, lat: c[0], lon: c[1], kind: "country", countryCode: code };
+    for (const n of [info.name, ...info.aliases]) if (normalizeName(n) !== "car") add(n, e);
+  }
+  // Wire copy says plain "Congo" for the DRC and "Congo Republic" /
+  // "Congo-Brazzaville" (both listed aliases, matched first) for its neighbour.
+  const cd = AFRICA_CENTROIDS.CD;
+  add("congo", { label: AFRICA_GEO_COUNTRIES.CD.name, lat: cd[0], lon: cd[1], kind: "country", countryCode: "CD" });
+  return m;
+})();
+const MENTION_MAX_WORDS = 6;
+
+/** Finds where a piece of text says it is about, from the places it names.
+ *  Longest names are matched first and consume their words, so "South
+ *  Sudan" is never also read as "Sudan", nor "Niger State" or "Niger Delta"
+ *  as Niger. A town beats a region beats a country; among equals the
+ *  earliest mention wins. Returns null when the text names nowhere in
+ *  Africa — the caller must not substitute a guess. */
+export function locateText(text: string | null | undefined): TextLocation | null {
+  if (!text) return null;
+  const words = normalizeName(text).replace(/[()]/g, " ").replace(/\bpapua new guinea\b/g, " ").split(" ").filter(Boolean);
+  if (words.length === 0) return null;
+  const used = new Array<boolean>(words.length).fill(false);
+  const found: { at: number; entries: MentionEntry[]; name: string }[] = [];
+
+  for (let n = Math.min(MENTION_MAX_WORDS, words.length); n >= 1; n--) {
+    for (let i = 0; i + n <= words.length; i++) {
+      if (used.slice(i, i + n).some(Boolean)) continue;
+      const name = words.slice(i, i + n).join(" ");
+      const entries = MENTION_INDEX.get(name);
+      if (!entries) continue;
+      for (let j = i; j < i + n; j++) used[j] = true;
+      found.push({ at: i, entries, name });
+    }
+  }
+  if (found.length === 0) return null;
+
+  const countries = new Set(found.flatMap((f) => f.entries.filter((e) => e.kind === "country").map((e) => e.countryCode)));
+  const rank = { place: 2, region: 1, country: 0 } as const;
+  let best: { at: number; entry: MentionEntry } | null = null;
+  for (const f of found) {
+    const ambiguousName = NEEDS_COUNTRY_MENTION.has(f.name) || (f.name.replace(/ /g, "").length <= 4 && !WELL_KNOWN_SHORT.has(f.name));
+    for (const e of f.entries) {
+      if (e.kind !== "country") {
+        const otherCountries = f.entries.filter((x) => x.kind !== "country" && x.countryCode !== e.countryCode).length > 0;
+        if ((ambiguousName || otherCountries) && !countries.has(e.countryCode)) continue;
+      }
+      if (!best || rank[e.kind] > rank[best.entry.kind] || (rank[e.kind] === rank[best.entry.kind] && f.at < best.at)) best = { at: f.at, entry: e };
+    }
+  }
+  if (!best) return null;
+  return { lat: best.entry.lat, lon: best.entry.lon, label: best.entry.label, countryCode: best.entry.countryCode, precision: best.entry.kind };
+}

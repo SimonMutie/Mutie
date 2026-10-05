@@ -125,6 +125,35 @@ export interface AlertItem {
   metric_snapshot?: { incidentId?: string; criteriaMet?: string[]; indicators?: string[]; sourceCount?: number; geoPrecision?: string } & Record<string, unknown>;
 }
 
+/** One monitoring-query match located for the Live Intel map — placed from
+ *  the places its own headline/text names, never from where its publisher
+ *  is based (see the backend's /api/events/located). */
+export interface LocatedMonitoringEvent {
+  id: string;
+  source_type: string;
+  title: string | null;
+  snippet: string;
+  url: string | null;
+  sentiment: number | null;
+  published_at: string;
+  lat: number;
+  lon: number;
+  /** "Mekelle, Ethiopia" / "Tigray, Ethiopia" / "Ethiopia". */
+  place: string;
+  precision: "place" | "region" | "country";
+}
+
+export interface LocatedMonitoringResult {
+  queryId: string;
+  hours: number;
+  /** Every match in the window. */
+  total: number;
+  /** Matches whose text names a place, and so appear on the map. */
+  located: number;
+  events: LocatedMonitoringEvent[];
+  fetchedAt: string;
+}
+
 export interface MonitoringQueryItem {
   id: string;
   name: string;
@@ -1090,6 +1119,8 @@ export const api = {
     const qs = new URLSearchParams(params as unknown as Record<string, string>).toString();
     return req<EventItem[]>(`/api/events/geo${qs ? `?${qs}` : ""}`);
   },
+  getLocatedEvents: (queryId: string, hours = 24) =>
+    req<LocatedMonitoringResult>(`/api/events/located?query_id=${encodeURIComponent(queryId)}&hours=${hours}`),
   getAlerts: (params: { status?: "open" | "resolved" | "all"; query_id?: string; unscoped?: "1" } = {}) => {
     const qs = new URLSearchParams({ status: "open", ...params } as Record<string, string>).toString();
     return req<AlertItem[]>(`/api/alerts?${qs}`);
