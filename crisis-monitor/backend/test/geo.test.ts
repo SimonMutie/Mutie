@@ -169,6 +169,11 @@ describe("locating free text from the places it names", () => {
     expect(at("Seen from afar, the market looked calm")).toBeNull();
     expect(at("Queen Victoria exhibition opens")).toBeNull();
   });
+  it("reads possessives, and lets a region vouch for a short town name in the same country", () => {
+    expect(at("Fighting reported around Axum in Ethiopia's Tigray region")).toBe("Axum|ET|place");
+    expect(at("Sudan's army retakes Bara")).toBe("Bara|SD|place");
+    expect(at("Clashes reported around Axum")).toBeNull();
+  });
   it("returns null when the text names nowhere in Africa", () => {
     expect(at("Central bank holds rates steady")).toBeNull();
     expect(at("Russian strike hits Kharkiv")).toBeNull();

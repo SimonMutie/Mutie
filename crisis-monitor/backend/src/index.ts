@@ -18,8 +18,7 @@ import { liveLayersRouter } from "./routes/liveLayers";
 import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
-import { matchAndBroadcast, loadActiveCompiledQueries } from "./ingest";
-import { buildQueryChunks, pollGdelt } from "./connectors/gdelt";
+import { fetchNewsForQuery, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
 import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
@@ -34,6 +33,14 @@ export { AfricaWireActor } from "./durableObjects/africaWireActor";
 const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", cors());
+
+// Any unhandled error in a route is returned as JSON with its message, so
+// the page shows what actually went wrong instead of a bare "Request
+// failed: 500" — and logged, so it is findable in the Worker's logs.
+app.onError((err, c) => {
+  console.error(`[api] ${c.req.method} ${new URL(c.req.url).pathname} failed:`, err);
+  return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500);
+});
 
 /**
  * The mock-ingestion and alerting loops live in Durable Object alarms, which
@@ -248,14 +255,12 @@ async function runGdeltLiveQueries(env: Env): Promise<void> {
     if (i > 0) await new Promise((resolve) => setTimeout(resolve, GDELT_REQUEST_STAGGER_MS));
 
     try {
-      const chunks = buildQueryChunks(q.parsed.positiveTerms).slice(0, MAX_CHUNKS_PER_QUERY);
-      const { inserted, rateLimited } = await pollGdelt(env, chunks, { fulltextCache, requestBudget });
-      if (rateLimited) rateLimitedThisTick = true;
-      for (const event of inserted) {
-        await matchAndBroadcast(env, event);
-      }
-      if (inserted.length > 0) {
-        console.log(`[gdelt] query=${q.id} chunks=${chunks.length} -> ${inserted.length} new articles`);
+      // Searches with the query's AND/OR structure intact, so what comes
+      // back is about the query's subject — see ingest.ts's fetchNewsForQuery.
+      const r = await fetchNewsForQuery(env, q, { fulltextCache, requestBudget, maxSearches: MAX_CHUNKS_PER_QUERY });
+      if (r.rateLimited) rateLimitedThisTick = true;
+      if (r.inserted > 0 || r.matched > 0) {
+        console.log(`[gdelt] query=${q.id} searches=${r.searches.length} -> ${r.inserted} new articles, ${r.matched} matches`);
       }
     } catch (err) {
       console.error(`[gdelt] poll failed for query ${q.id}:`, err);

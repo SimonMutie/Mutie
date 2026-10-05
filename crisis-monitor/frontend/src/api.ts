@@ -179,11 +179,37 @@ export interface PreviewMatch {
   geo_label: string | null;
 }
 
+/** One article from the live news search in the query editor's preview. */
+export interface LivePreviewArticle {
+  title: string;
+  url: string;
+  domain: string | null;
+  published_at: string;
+  /** Where the headline says the story is, when it names a place. */
+  place: string | null;
+}
+
+/** A live news search for the query being typed — what it will fetch once saved. */
+export interface LivePreview {
+  status: "ok" | "unsearchable" | "busy" | "error";
+  /** The search actually sent, so it is visible how the query was read. */
+  search: string | null;
+  /** False when the query has parts a news search cannot express (NOT,
+   *  NEAR, field filters, wildcards); the platform applies those itself. */
+  exact: boolean;
+  articles: LivePreviewArticle[];
+  message: string | null;
+}
+
 export interface PreviewResult {
   matches: PreviewMatch[];
   scanned: number;
   lookback_hours: number;
   truncated: boolean;
+  /** Set when the scan of already-held articles failed. */
+  stored_error?: string | null;
+  /** Present only when the request asked for the live search. */
+  live?: LivePreview | null;
 }
 export interface IncidentRow {
   date?: string | null;
@@ -1138,10 +1164,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ boolean_query }),
     }),
-  previewQuery: (boolean_query: string) =>
+  previewQuery: (boolean_query: string, live = false) =>
     req<PreviewResult>("/api/queries/preview", {
       method: "POST",
-      body: JSON.stringify({ boolean_query }),
+      body: JSON.stringify({ boolean_query, live }),
     }),
   getSummary: (queryId?: string, range?: { from: string; to: string }) => {
     const params = new URLSearchParams();

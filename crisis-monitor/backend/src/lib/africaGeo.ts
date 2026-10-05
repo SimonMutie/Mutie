@@ -427,7 +427,7 @@ const AFRICA_MENTION_TERMS: Set<string> = (() => {
 const AFRICA_MENTION_MAX_WORDS = 6;
 
 export function mentionsAfrica(text: string): boolean {
-  const words = normalizeName(text).replace(/[()]/g, " ").replace(/\bpapua new guinea\b/g, " ").split(" ").filter(Boolean);
+  const words = normalizeName(text.replace(/['’‘ʼ]s\b/g, "")).replace(/[()]/g, " ").replace(/\bpapua new guinea\b/g, " ").split(" ").filter(Boolean);
   for (let i = 0; i < words.length; i++) {
     let phrase = "";
     for (let j = i; j < Math.min(words.length, i + AFRICA_MENTION_MAX_WORDS); j++) {
@@ -506,7 +506,8 @@ const MENTION_MAX_WORDS = 6;
  *  Africa — the caller must not substitute a guess. */
 export function locateText(text: string | null | undefined): TextLocation | null {
   if (!text) return null;
-  const words = normalizeName(text).replace(/[()]/g, " ").replace(/\bpapua new guinea\b/g, " ").split(" ").filter(Boolean);
+  // "Ethiopia's" must read as "Ethiopia", not as the unknown word "ethiopias".
+  const words = normalizeName(text.replace(/['’‘ʼ]s\b/g, "")).replace(/[()]/g, " ").replace(/\bpapua new guinea\b/g, " ").split(" ").filter(Boolean);
   if (words.length === 0) return null;
   const used = new Array<boolean>(words.length).fill(false);
   const found: { at: number; entries: MentionEntry[]; name: string }[] = [];
@@ -523,11 +524,19 @@ export function locateText(text: string | null | undefined): TextLocation | null
   }
   if (found.length === 0) return null;
 
-  const countries = new Set(found.flatMap((f) => f.entries.filter((e) => e.kind === "country").map((e) => e.countryCode)));
+  const isAmbiguous = (name: string) => NEEDS_COUNTRY_MENTION.has(name) || (name.replace(/ /g, "").length <= 4 && !WELL_KNOWN_SHORT.has(name));
+  // Countries the text vouches for: named outright, or implied by an
+  // unambiguous place or region in them ("Tigray" vouches for Ethiopia, so
+  // a short name like "Axum" beside it is accepted).
+  const countries = new Set<string>();
+  for (const f of found) {
+    const codes = new Set(f.entries.map((e) => e.countryCode));
+    if (f.entries.some((e) => e.kind === "country") || (codes.size === 1 && !isAmbiguous(f.name))) for (const c of codes) countries.add(c);
+  }
   const rank = { place: 2, region: 1, country: 0 } as const;
   let best: { at: number; entry: MentionEntry } | null = null;
   for (const f of found) {
-    const ambiguousName = NEEDS_COUNTRY_MENTION.has(f.name) || (f.name.replace(/ /g, "").length <= 4 && !WELL_KNOWN_SHORT.has(f.name));
+    const ambiguousName = isAmbiguous(f.name);
     for (const e of f.entries) {
       if (e.kind !== "country") {
         const otherCountries = f.entries.filter((x) => x.kind !== "country" && x.countryCode !== e.countryCode).length > 0;
