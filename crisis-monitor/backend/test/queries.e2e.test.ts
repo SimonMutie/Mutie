@@ -8,6 +8,8 @@ import { createRequire } from "node:module";
 import { queriesRouter } from "../src/routes/queries";
 import { eventsRouter } from "../src/routes/events";
 import { createSessionToken } from "../src/auth";
+import { AfricaWireActor } from "../src/durableObjects/africaWireActor";
+import { ingestFeedMatches, loadActiveCompiledQueries } from "../src/ingest";
 import type { Env } from "../src/bindings";
 
 const require = createRequire(import.meta.url);
@@ -38,6 +40,20 @@ let db: InstanceType<typeof DatabaseSync>;
 let env: Env;
 let auth: Record<string, string>;
 const gdeltCalls: { query: string; timespan: string }[] = [];
+let gdeltLimited = false;
+
+// What the platform's own crawl of African outlets currently holds.
+const wireItem = (id: string, title: string, description: string, hoursAgo: number) => ({ id, index: 0, country: "ET", domain: "addisnews.example", title, link: `https://addisnews.example/${id}`, published: iso(hoursAgo), description });
+const crawl = new Map([
+  [
+    "items:0",
+    [
+      wireItem("w1", "Drone strike in Tigray: Ethiopia denies role", "Regional officials said the strike hit a market.", 4),
+      wireItem("w2", "Ethiopia opens new hydropower dam", "The prime minister attended the ceremony.", 3), // unrelated
+      wireItem("w3", "Fighting in Tigray as Ethiopia truce frays", "An older report.", 120), // matches, but older than the 3-day window
+    ],
+  ],
+]);
 const pending: Promise<unknown>[] = [];
 const ctx = { waitUntil: (p: Promise<unknown>) => void pending.push(p), passThroughOnException: () => {} } as unknown as ExecutionContext;
 
@@ -71,6 +87,11 @@ beforeAll(async () => {
   env = {
     DB: { prepare: (sql: string) => new FakeStmt(db, sql), batch: async (stmts: FakeStmt[]) => Promise.all(stmts.map((s) => s.run())) },
     LIVE_FEED: { idFromName: () => "id", get: () => ({ fetch: async () => new Response("ok") }) },
+    AFRICA_WIRE_ACTOR: {
+      idFromName: () => "global",
+      // The real actor, over a fake storage — so its query search is what runs.
+      get: () => ({ fetch: (url: string, init?: RequestInit) => new AfricaWireActor({ storage: { list: async () => crawl } } as never, {} as Env).fetch(new Request(url, init)) }),
+    },
     SESSION_SECRET: "test-secret",
   } as unknown as Env;
   auth = { Authorization: `Bearer ${await createSessionToken("u1", "admin", "test-secret")}` };
@@ -80,6 +101,7 @@ beforeAll(async () => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
     if (url.hostname === "api.gdeltproject.org") {
       gdeltCalls.push({ query: url.searchParams.get("query")!, timespan: url.searchParams.get("timespan")! });
+      if (gdeltLimited) return new Response("Please limit requests to one every 5 seconds", { status: 429 });
       return Response.json({
         articles: [
           { url: "https://wire.example/adigrat", title: "Tigray: fighting resumes near Adigrat", seendate: seen(8), domain: "wire.example", language: "English", sourcecountry: "Kenya" },
@@ -111,24 +133,60 @@ describe("query editor preview", () => {
     expect(body.live).toBeNull();
   });
 
-  it("with live search on, shows what the query will fetch — searched with its AND/OR structure", async () => {
+  it("with live search on, shows what the query will fetch: the platform's own feeds plus the wider search", async () => {
     const res = await post("/preview", { boolean_query: QUERY, live: true });
-    const body = (await res.json()) as { live: { status: string; search: string; exact: boolean; articles: { title: string; place: string | null }[] } };
+    const body = (await res.json()) as { live: { status: string; search: string; exact: boolean; notice: string | null; articles: { title: string; place: string | null; source: string }[] } };
     expect(body.live.status).toBe("ok");
+    // The wider search keeps the query's AND/OR structure.
     expect(body.live.search).toBe('ethiopia tigray (conflict OR attack OR fighting OR "drone strike")');
     expect(body.live.exact).toBe(true);
-    // The republished copy of the same headline is listed once.
-    expect(body.live.articles.map((a) => a.title)).toEqual(["Tigray: fighting resumes near Adigrat", "Civilians killed as drone strike hits Shire", "Clashes reported around Axum"]);
-    expect(body.live.articles[0].place).toBe("Adigrat, Ethiopia");
+    expect(body.live.notice).toBeNull();
+    // Newest first; the republished copy of one headline is listed once; the
+    // unrelated and the too-old feed items are not listed at all.
+    expect(body.live.articles.map((a) => [a.title, a.source])).toEqual([
+      ["Clashes reported around Axum", "search"],
+      ["Civilians killed as drone strike hits Shire", "search"],
+      ["Drone strike in Tigray: Ethiopia denies role", "feeds"],
+      ["Tigray: fighting resumes near Adigrat", "search"],
+    ]);
+    expect(body.live.articles.find((a) => a.title.includes("Adigrat"))!.place).toBe("Adigrat, Ethiopia");
     expect(gdeltCalls.at(-1)).toEqual({ query: body.live.search, timespan: "3d" });
   });
 
-  it("rejects an invalid query with its reason, and says when a query cannot be searched", async () => {
-    const bad = await post("/preview", { boolean_query: "(Ethiopia AND" });
+  it("still shows the platform's own feed matches when the wider search is rate-limited", async () => {
+    gdeltLimited = true;
+    try {
+      const res = await post("/preview", { boolean_query: QUERY, live: true });
+      const body = (await res.json()) as { live: { status: string; notice: string; articles: { title: string }[] } };
+      expect(body.live.status).toBe("ok");
+      expect(body.live.articles.map((a) => a.title)).toEqual(["Drone strike in Tigray: Ethiopia denies role"]);
+      expect(body.live.notice).toMatch(/own news feeds only.*limiting requests/);
+
+      // Nothing in the feeds either: say so, rather than showing an empty list as if it were complete.
+      const none = await post("/preview", { boolean_query: "Kismayo AND cholera", live: true });
+      const noneBody = (await none.json()) as { live: { status: string; message: string; articles: unknown[] } };
+      expect(noneBody.live.status).toBe("busy");
+      expect(noneBody.live.articles).toEqual([]);
+      expect(noneBody.live.message).toMatch(/Search again/);
+    } finally {
+      gdeltLimited = false;
+    }
+  });
+
+  it("rejects an invalid query with its reason, and says when the wider search cannot look for a query", async () => {
+    const bad = await post("/preview", { boolean_query: "(Ethiopia AND", live: true });
     expect(bad.status).toBe(400);
     expect(((await bad.json()) as { error: string }).error).toBeTruthy();
+    const calls = gdeltCalls.length;
+    const short = await post("/preview", { boolean_query: "AU AND dam", live: true });
+    const body = (await short.json()) as { live: { status: string; search: string | null; notice: string } };
+    expect(body.live.status).toBe("ok");
+    expect(body.live.search).toBe("dam");
     const none = await post("/preview", { boolean_query: "NOT drill", live: true });
-    expect(((await none.json()) as { live: { status: string } }).live.status).toBe("unsearchable");
+    const noneBody = (await none.json()) as { live: { status: string; search: string | null; notice: string } };
+    expect(noneBody.live.search).toBeNull();
+    expect(noneBody.live.notice).toMatch(/three letters/);
+    expect(gdeltCalls.length).toBe(calls + 1); // only the searchable one was sent
   });
 });
 
@@ -150,6 +208,7 @@ describe("a new query fetches its own results", () => {
       "Civilians killed as drone strike hits Shire", // the republished copy is a separate URL
       "Clashes reported around Axum", // new, body read and checked by the engine
       "Drone strike hits Mekelle", // already held with full text
+      "Drone strike in Tigray: Ethiopia denies role", // from the platform's own crawl of African outlets
       "Tigray: fighting resumes near Adigrat", // already held as headline only: credited from the search
     ]);
     // (Filler ids are f0…f3199; newly fetched articles get random ids, which may also begin with "f".)
@@ -165,9 +224,24 @@ describe("a new query fetches its own results", () => {
   it("serves them located for the Live Intel map", async () => {
     const res = await eventsRouter.request(`/located?query_id=${queryId}&hours=24`, { headers: auth }, env, ctx);
     const body = (await res.json()) as { total: number; located: number; events: { place: string; precision: string }[] };
-    expect(body.total).toBe(5);
-    expect(body.located).toBe(5);
-    expect(new Set(body.events.map((e) => e.place))).toEqual(new Set(["Shire, Ethiopia", "Axum, Ethiopia", "Mekelle, Ethiopia", "Adigrat, Ethiopia"]));
+    expect(body.total).toBe(6);
+    expect(body.located).toBe(6);
+    expect(new Set(body.events.map((e) => e.place))).toEqual(new Set(["Shire, Ethiopia", "Axum, Ethiopia", "Mekelle, Ethiopia", "Adigrat, Ethiopia", "Tigray, Ethiopia"]));
     expect(body.events.some((e) => e.place.includes("Kenya"))).toBe(false);
+  });
+
+  it("keeps collecting from the platform's own feeds on later runs, even while the wider search is rate-limited, without duplicates", async () => {
+    gdeltLimited = true;
+    try {
+      crawl.get("items:0")!.push(wireItem("w4", "Tigray fighting displaces thousands, Ethiopia aid groups say", "Aid agencies reported new displacement.", 0.5));
+      const queries = await loadActiveCompiledQueries(env);
+      expect(await ingestFeedMatches(env, queries, 12)).toEqual({ inserted: 1, credited: 2 }); // w4 is new; w1 was already held
+      expect(await ingestFeedMatches(env, queries, 12)).toEqual({ inserted: 0, credited: 2 });
+      const count = (sql: string) => (db.prepare(sql).get(queryId) as { n: number }).n;
+      expect(count("SELECT COUNT(*) AS n FROM query_matches WHERE query_id = ?")).toBe(7);
+      expect((db.prepare("SELECT COUNT(*) AS n FROM events WHERE url LIKE 'https://addisnews.example/%'").get() as { n: number }).n).toBe(2);
+    } finally {
+      gdeltLimited = false;
+    }
   });
 });

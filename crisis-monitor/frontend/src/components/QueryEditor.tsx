@@ -14,7 +14,7 @@ const CATEGORIES = ["general", "public_health", "civil_unrest", "infrastructure"
 const PREVIEW_DEBOUNCE_MS = 600;
 // The live news search goes to a shared, rate-limited public service, so it
 // waits for a longer pause in typing than the check of held articles does.
-const LIVE_DEBOUNCE_MS = 1500;
+const LIVE_DEBOUNCE_MS = 2000;
 
 function timeAgo(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -45,6 +45,9 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
   const requestSeq = useRef(0);
   const [live, setLive] = useState<LiveState>({ status: "idle" });
   const liveSeq = useRef(0);
+  // Bumped by the "Search again" button to re-run the live search at once.
+  const [liveRun, setLiveRun] = useState(0);
+  const lastLiveRun = useRef(0);
 
   // Live news search for the query as typed — what it will fetch once saved.
   useEffect(() => {
@@ -55,6 +58,8 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
     }
     setLive({ status: "loading" });
     const seq = ++liveSeq.current;
+    const immediate = liveRun !== lastLiveRun.current; // the button, not typing
+    lastLiveRun.current = liveRun;
     const timer = setTimeout(async () => {
       try {
         const result = await api.previewQuery(query, true);
@@ -66,9 +71,9 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
         // An unfinished query (e.g. an open bracket) is reported by the other panel; stay quiet here.
         setLive(err instanceof ApiError && err.status === 400 ? { status: "idle" } : { status: "error", message: err instanceof ApiError ? err.message : "Couldn't run the live news search" });
       }
-    }, LIVE_DEBOUNCE_MS);
+    }, immediate ? 0 : LIVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [booleanQuery]);
+  }, [booleanQuery, liveRun]);
 
   // Debounced live preview: re-run against recent events shortly after typing stops.
   useEffect(() => {
@@ -211,7 +216,14 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 22 }}>
           <section>
-            <div style={sectionHeadingStyle}>Live news search · last 3 days</div>
+            <div style={{ ...sectionHeadingStyle, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span>Live news search · last 3 days</span>
+              {booleanQuery.trim() && live.status !== "loading" && (
+                <button type="button" onClick={() => setLiveRun((n) => n + 1)} style={searchAgainStyle}>
+                  Search again
+                </button>
+              )}
+            </div>
             <LivePanel state={live} />
           </section>
           <section>
@@ -233,22 +245,31 @@ function LivePanel({ state }: { state: LiveState }) {
   const { live } = state;
   if (live.status !== "ok") return <Notice tone={live.status === "unsearchable" ? "muted" : "elevated"} text={live.message ?? "The live news search is unavailable right now."} />;
 
+  const count = live.articles.length;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {live.notice && <Notice tone="elevated" text={live.notice} />}
       <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-        {live.articles.length === 0 ? "No articles found" : `${live.articles.length} article${live.articles.length === 1 ? "" : "s"} found`}, searched as{" "}
-        <span className="mono" style={{ color: "var(--text-primary)" }}>
-          {live.search}
-        </span>
-        .
-        {!live.exact && " Parts of this query that a news search cannot express (NOT, NEAR, field filters, wildcards) are applied by the platform after fetching, so some of these may be filtered out."}
-        {live.articles.length === 0 && " Nothing published in the last 3 days matches; the query may be too narrow, or there has been no coverage."}
+        {count === 0 ? "No articles found" : `${count} article${count === 1 ? "" : "s"} found`}.
+        {live.search && (
+          <>
+            {" "}
+            Wider news search sent as{" "}
+            <span className="mono" style={{ color: "var(--text-primary)" }}>
+              {live.search}
+            </span>
+            .
+          </>
+        )}
+        {!live.exact && live.search && " Parts of this query that the wider search cannot express (NOT, NEAR, field filters, wildcards) are applied by the platform after fetching, so some of its results may be filtered out."}
+        {count === 0 && !live.notice && " Nothing published in the last 3 days matches; the query may be too narrow, or there has been no coverage."}
       </div>
       {live.articles.map((a) => (
         <a key={a.url} href={a.url} target="_blank" rel="noopener noreferrer" className="panel" style={{ display: "block", padding: "12px 14px", textDecoration: "none", color: "inherit" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
             <span className="mono" style={{ fontSize: 10.5, color: "var(--text-faint)", letterSpacing: "0.04em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {a.domain ?? "news"}
+              {a.source === "feeds" && " · platform feed"}
             </span>
             <span className="mono" style={{ fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0 }}>
               {timeAgo(a.published_at)}
@@ -334,6 +355,19 @@ const sectionHeadingStyle: React.CSSProperties = {
   marginBottom: 10,
   paddingBottom: 6,
   borderBottom: "1px solid var(--border-soft)",
+};
+
+const searchAgainStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: "0.02em",
+  textTransform: "none",
+  padding: "3px 10px",
+  background: "var(--panel)",
+  border: "1px solid var(--border)",
+  borderRadius: 999,
+  color: "var(--text-primary)",
+  cursor: "pointer",
 };
 
 const labelStyle: React.CSSProperties = {

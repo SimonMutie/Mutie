@@ -9,6 +9,7 @@ import { primeQuery } from "../ingest";
 import { buildSearchPlan, toGdeltQueries, toSqlPrefilter } from "../lib/querySearchPlan";
 import { fetchGdeltArticles, parseGdeltDate, GdeltRateLimitError } from "../connectors/gdelt";
 import { withTextLocation, locateEventText } from "../lib/eventLocation";
+import { searchFeeds } from "../lib/feedSearch";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
@@ -102,7 +103,7 @@ const PREVIEW_LOOKBACK_HOURS = 72;
 const PREVIEW_SCAN_LIMIT = 3000; // how many candidate rows to examine at most
 const PREVIEW_PAGE_SIZE = 250; // read a page at a time — see the route's doc comment
 const PREVIEW_RESULT_LIMIT = 20; // how many matches to actually return
-const LIVE_PREVIEW_LIMIT = 30;
+const LIVE_PREVIEW_LIMIT = 40;
 const LIVE_PREVIEW_CACHE_SECONDS = 600;
 
 interface LivePreviewArticle {
@@ -112,61 +113,109 @@ interface LivePreviewArticle {
   published_at: string;
   /** Where the headline says the story is, when it names a place. */
   place: string | null;
+  /** "feeds" — from the news feeds the platform crawls itself;
+   *  "search" — from the wider news search (GDELT). */
+  source: "feeds" | "search";
 }
 
 interface LivePreview {
-  /** "ok" — searched; "unsearchable" — the query has nothing a news search
-   *  can use (e.g. only NOT clauses or two-letter terms); "busy" — the news
-   *  search service refused the request for now; "error" — it failed. */
-  status: "ok" | "unsearchable" | "busy" | "error";
-  /** The search actually sent, so the user can see how the query was read. */
+  /** "ok" — there is a result to show (possibly an empty one);
+   *  "busy" — nothing in the platform's feeds, and the wider news search
+   *  refused the request for now; "error" — likewise, but it failed. */
+  status: "ok" | "busy" | "error";
+  /** The wider search actually sent, so the user can see how the query was
+   *  read. Null when the query has nothing that search can look for. */
   search: string | null;
-  /** True when the search is logically the same as the query. False when
+  /** True when that search is logically the same as the query. False when
    *  the query has parts a news search cannot express (NOT, NEAR, field
    *  scopes), which the platform applies itself after fetching. */
   exact: boolean;
   articles: LivePreviewArticle[];
+  /** Why there is nothing to show (status busy / error). */
   message: string | null;
+  /** Shown above the list when it is incomplete, e.g. the wider search was
+   *  rate-limited and only the platform's own feeds are listed. */
+  notice: string | null;
 }
 
-/** A live news search for the query being typed — what the query WILL fetch
- *  once saved, over the last three days. Cached for ten minutes per search
- *  string: the search service is a shared, rate-limited public API, and an
- *  editor preview must not hammer it. */
-async function liveNewsPreview(booleanAst: Parameters<typeof buildSearchPlan>[0]): Promise<LivePreview> {
-  const plan = buildSearchPlan(booleanAst);
-  const searches = toGdeltQueries(plan);
-  if (searches.length === 0) {
-    return { status: "unsearchable", search: null, exact: false, articles: [], message: "This query has no word or phrase of three or more letters that a news search can look for." };
-  }
-  const search = searches[0];
-  const cacheKey = new Request(`https://query-preview.internal/gdelt?q=${encodeURIComponent(search)}`);
+type WiderSearch = { state: "ok"; articles: LivePreviewArticle[] } | { state: "unsearchable" | "busy" | "error" };
+
+/** The wider news search (GDELT) for a query, over the last three days.
+ *  Cached for ten minutes per search string: it is a shared, rate-limited
+ *  public API, and an editor preview must not hammer it. Only successful
+ *  searches are cached. */
+async function widerNewsSearch(search: string | undefined): Promise<WiderSearch> {
+  if (!search) return { state: "unsearchable" };
+  const cacheKey = new Request(`https://query-preview.internal/gdelt-v2?q=${encodeURIComponent(search)}`);
   const cache = (caches as unknown as { default: Cache }).default;
   const cached = await cache.match(cacheKey).catch(() => undefined);
-  if (cached) return (await cached.json()) as LivePreview;
-
+  if (cached) return { state: "ok", articles: (await cached.json()) as LivePreviewArticle[] };
   try {
     const found = await fetchGdeltArticles(search, 75, "3d");
-    const seen = new Set<string>();
     const articles: LivePreviewArticle[] = [];
     for (const a of found) {
-      const key = (a.title ?? "").toLowerCase().trim();
-      if (!a.url || !a.title || seen.has(key)) continue; // the same wire story republished under one headline
-      seen.add(key);
-      articles.push({ title: a.title, url: a.url, domain: a.domain ?? null, published_at: parseGdeltDate(a.seendate).toISOString(), place: locateEventText(a.title, null)?.place ?? null });
-      if (articles.length >= LIVE_PREVIEW_LIMIT) break;
+      if (!a.url || !a.title) continue;
+      articles.push({ title: a.title, url: a.url, domain: a.domain ?? null, published_at: parseGdeltDate(a.seendate).toISOString(), place: locateEventText(a.title, null)?.place ?? null, source: "search" });
     }
-    const result: LivePreview = { status: "ok", search, exact: plan.exact, articles, message: null };
     await cache
-      .put(cacheKey, new Response(JSON.stringify(result), { headers: { "content-type": "application/json", "cache-control": `max-age=${LIVE_PREVIEW_CACHE_SECONDS}` } }))
+      .put(cacheKey, new Response(JSON.stringify(articles), { headers: { "content-type": "application/json", "cache-control": `max-age=${LIVE_PREVIEW_CACHE_SECONDS}` } }))
       .catch(() => {});
-    return result;
+    return { state: "ok", articles };
   } catch (err) {
-    if (err instanceof GdeltRateLimitError) {
-      return { status: "busy", search, exact: plan.exact, articles: [], message: "The news search service is limiting requests right now. Wait a minute and edit the query to try again." };
-    }
-    return { status: "error", search, exact: plan.exact, articles: [], message: "The news search did not respond. The query can still be saved; it will keep trying in the background." };
+    if (!(err instanceof GdeltRateLimitError)) console.error(`[query-preview] wider news search failed for "${search}":`, err);
+    return { state: err instanceof GdeltRateLimitError ? "busy" : "error" };
   }
+}
+
+/** What the query being typed will fetch once saved, over the last three
+ *  days, from both of its sources:
+ *
+ *   - the news feeds the platform crawls itself (always available), and
+ *   - the wider news search, GDELT (broader, but often rate-limited).
+ *
+ *  When the wider search is unavailable the feed matches are still shown,
+ *  with a notice saying the list is partial — the preview used to show
+ *  nothing but "limiting requests" in that case. */
+async function liveNewsPreview(env: Env, booleanQuery: string, parsed: ReturnType<typeof parseBooleanQuery>): Promise<LivePreview> {
+  const plan = buildSearchPlan(parsed.ast);
+  const search = toGdeltQueries(plan)[0];
+  const [feedHits, wider] = await Promise.all([
+    searchFeeds(env, [{ id: "preview", text: booleanQuery, parsed }], 72, LIVE_PREVIEW_LIMIT),
+    widerNewsSearch(search),
+  ]);
+
+  const articles: LivePreviewArticle[] = [];
+  const seenUrls = new Set<string>();
+  const seenTitles = new Set<string>();
+  const add = (a: LivePreviewArticle) => {
+    const titleKey = a.title.toLowerCase().trim();
+    if (seenUrls.has(a.url) || seenTitles.has(titleKey)) return; // the same story republished under one headline
+    seenUrls.add(a.url);
+    seenTitles.add(titleKey);
+    articles.push(a);
+  };
+  for (const f of feedHits.get("preview") ?? []) {
+    add({ title: f.title, url: f.link, domain: f.domain, published_at: f.published, place: locateEventText(f.title, f.text)?.place ?? null, source: "feeds" });
+  }
+  const fromFeeds = articles.length;
+  if (wider.state === "ok") wider.articles.forEach(add);
+  articles.sort((a, b) => Date.parse(b.published_at) - Date.parse(a.published_at));
+  const base = { search: search ?? null, exact: plan.exact, articles: articles.slice(0, LIVE_PREVIEW_LIMIT) };
+
+  if (wider.state === "ok") return { status: "ok", ...base, message: null, notice: null };
+  if (wider.state === "unsearchable") {
+    return { status: "ok", ...base, message: null, notice: "Only the platform's own news feeds were checked: the wider news search needs a word or phrase of at least three letters to look for." };
+  }
+  const why = wider.state === "busy" ? "is limiting requests right now" : "did not respond";
+  if (fromFeeds > 0) {
+    return { status: "ok", ...base, message: null, notice: `This list is from the platform's own news feeds only. The wider news search ${why}; press Search again in a minute to add its results.` };
+  }
+  return {
+    status: wider.state,
+    ...base,
+    message: `Nothing in the platform's own news feeds matches this query, and the wider news search ${why}. Press Search again in a minute. The query can be saved in the meantime; it keeps fetching in the background.`,
+    notice: null,
+  };
 }
 
 /** Read-only preview for the query editor. Two parts:
@@ -194,7 +243,7 @@ queriesRouter.post("/preview", async (c) => {
     return c.json({ error: err instanceof Error ? err.message : "Invalid boolean query" }, 400);
   }
 
-  const livePromise: Promise<LivePreview | null> = body.live === true ? liveNewsPreview(parsed.ast) : Promise.resolve(null);
+  const livePromise: Promise<LivePreview | null> = body.live === true ? liveNewsPreview(c.env, booleanQuery, parsed) : Promise.resolve(null);
 
   const cutoff = new Date(Date.now() - PREVIEW_LOOKBACK_HOURS * 60 * 60_000).toISOString();
   const prefilter = toSqlPrefilter(buildSearchPlan(parsed.ast));

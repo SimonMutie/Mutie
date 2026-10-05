@@ -3,6 +3,7 @@ import { AFRICA_SOURCES, PAN_AFRICAN, INSTITUTION } from "../data/africaSources"
 import { AFRICA_CENTROIDS } from "../lib/africaGeo";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
+import { evaluate, parseBooleanQuery, type ParsedQuery } from "../booleanQuery";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
 import { isCandidateText, candidatePriority } from "../lib/escalationKeywords";
 
@@ -102,6 +103,16 @@ export interface EscalationCandidate {
   priority: number;
 }
 
+/** One crawled item that matched a monitoring query (see search()). */
+export interface FeedSearchHit {
+  title: string;
+  /** Feed summary plus, where one exists, its English translation. */
+  text: string;
+  link: string;
+  published: string;
+  domain: string;
+}
+
 function domainOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -137,7 +148,54 @@ export class AfricaWireActor implements DurableObject {
       return Response.json({ candidates: await this.getEscalationCandidates(maxAgeHours) });
     }
 
+    if (url.pathname === "/search" && request.method === "POST") {
+      const body = (await request.json().catch(() => ({}))) as { queries?: { id: string; q: string }[]; maxAgeHours?: number; limit?: number };
+      return Response.json(await this.search(body.queries ?? [], Number(body.maxAgeHours) || 72, Math.min(Number(body.limit) || 60, 200)));
+    }
+
     return new Response("not found", { status: 404 });
+  }
+
+  /** Runs monitoring queries over every already-crawled item from the last
+   *  `maxAgeHours` and returns each query's matches, newest first. The
+   *  queries are evaluated here, inside the actor, by the same engine that
+   *  judges every other article (booleanQuery.ts) — so the caller receives
+   *  a handful of matches rather than the whole crawl. Reads storage only;
+   *  nothing is re-fetched. Text matched: headline, link, feed summary and,
+   *  where one was made, the English translation. */
+  private async search(queries: { id: string; q: string }[], maxAgeHours: number, limit: number): Promise<{ results: Record<string, FeedSearchHit[]>; scanned: number }> {
+    const compiled: { id: string; parsed: ParsedQuery }[] = [];
+    for (const { id, q } of queries) {
+      try {
+        compiled.push({ id, parsed: parseBooleanQuery(q) });
+      } catch {
+        // an invalid query simply has no matches
+      }
+    }
+    const results: Record<string, FeedSearchHit[]> = Object.fromEntries(queries.map((q) => [q.id, []]));
+    if (compiled.length === 0) return { results, scanned: 0 };
+
+    const cutoff = Date.now() - maxAgeHours * 3_600_000;
+    const itemEntries = await this.state.storage.list<WireItem[]>({ prefix: "items:" });
+    let scanned = 0;
+    for (const items of itemEntries.values()) {
+      for (const it of items) {
+        if (!it.link || !/^https?:\/\//i.test(it.link)) continue;
+        const published = Date.parse(it.published);
+        if (!Number.isFinite(published) || published < cutoff) continue;
+        scanned++;
+        const text = [it.description, it.riskTextEn].filter(Boolean).join(" ");
+        const fields = { content: `${it.title} ${it.link} ${text}`, title: it.title, url: it.link, domain: it.domain };
+        for (const { id, parsed } of compiled) {
+          if (evaluate(parsed, fields)) results[id].push({ title: it.title, text, link: it.link, published: new Date(published).toISOString(), domain: it.domain });
+        }
+      }
+    }
+    for (const id of Object.keys(results)) {
+      results[id].sort((a, b) => Date.parse(b.published) - Date.parse(a.published));
+      results[id] = results[id].slice(0, limit);
+    }
+    return { results, scanned };
   }
 
   /** Every already-crawled item from the last `maxAgeHours` whose text

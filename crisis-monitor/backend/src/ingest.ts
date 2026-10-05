@@ -7,11 +7,16 @@ import type { Env } from "./bindings";
 import type { EventRecord } from "./types";
 import { buildQueryChunks, pollGdelt, type PollGdeltOptions } from "./connectors/gdelt";
 import { buildSearchPlan, toGdeltQueries, toSqlPrefilter } from "./lib/querySearchPlan";
+import { searchFeeds, type FeedArticle } from "./lib/feedSearch";
+import { locateEventText, TEXT_LOCATED } from "./lib/eventLocation";
+import { detectNonEnglish } from "./lib/translate";
 
 export interface CompiledQuery {
   id: string;
   ownerId: string | null;
   parsed: ParsedQuery;
+  /** The query as written. */
+  text: string;
 }
 
 /**
@@ -27,7 +32,7 @@ export async function loadActiveCompiledQueries(env: Env): Promise<CompiledQuery
   for (const row of rows) {
     const q = rowToMonitoringQuery(row);
     try {
-      compiled.push({ id: q.id, ownerId: q.owner_id, parsed: parseBooleanQuery(q.boolean_query) });
+      compiled.push({ id: q.id, ownerId: q.owner_id, parsed: parseBooleanQuery(q.boolean_query), text: q.boolean_query });
     } catch (err) {
       console.error(`[ingest] failed to compile query ${q.id} (${q.name}):`, err);
     }
@@ -207,6 +212,103 @@ export async function fetchNewsForQuery(
   return { inserted: inserted.length, matched, rateLimited, searches };
 }
 
+async function getOrCreateFeedSourceId(env: Env): Promise<string | null> {
+  const name = "Platform News Feeds";
+  const existing = await all<{ id: string }>(env.DB, "SELECT id FROM sources WHERE name = ?", [name]);
+  if (existing[0]) return existing[0].id;
+  const id = newId();
+  await run(env.DB, `INSERT INTO sources (id, name, type, config, created_at) VALUES (?, ?, 'news', ?, ?)`, [id, name, JSON.stringify({ connector: "feeds" }), nowIso()]);
+  return id;
+}
+
+/** New feed articles stored per call — a ceiling on database writes, not a
+ *  target; a later tick picks up whatever was left. */
+const FEED_INGEST_MAX_NEW = 120;
+
+/**
+ * Collects, for the given queries, the matching articles from the news
+ * feeds the platform crawls itself (lib/feedSearch.ts) and records them.
+ *
+ * This is the source that does not depend on GDELT's rate-limited search:
+ * it runs on every tick, including while GDELT is refusing requests.
+ * An article already held (from an earlier tick, or because GDELT found
+ * the same URL) is not stored twice — it is just credited to the query.
+ */
+export async function ingestFeedMatches(env: Env, queries: CompiledQuery[], maxAgeHours: number): Promise<{ inserted: number; credited: number }> {
+  const hits = await searchFeeds(env, queries, maxAgeHours);
+  const byLink = new Map<string, { article: FeedArticle; queryIds: string[] }>();
+  for (const [queryId, articles] of hits) {
+    for (const article of articles) {
+      const entry = byLink.get(article.link) ?? { article, queryIds: [] };
+      entry.queryIds.push(queryId);
+      byLink.set(article.link, entry);
+    }
+  }
+  if (byLink.size === 0) return { inserted: 0, credited: 0 };
+
+  const links = [...byLink.keys()];
+  const held = new Map<string, { id: string; published_at: string }>();
+  for (let i = 0; i < links.length; i += 50) {
+    const chunk = links.slice(i, i + 50);
+    const rows = await all<{ id: string; external_id: string; published_at: string }>(
+      env.DB,
+      `SELECT id, external_id, published_at FROM events WHERE source_type = 'news' AND external_id IN (${chunk.map(() => "?").join(",")})`,
+      chunk
+    );
+    for (const r of rows) held.set(r.external_id, { id: r.id, published_at: r.published_at });
+  }
+
+  const sourceId = await getOrCreateFeedSourceId(env);
+  // A new article is checked against every active query, not only the ones
+  // asked about here, exactly as a newly fetched GDELT article is.
+  const active = await loadActiveCompiledQueries(env);
+  let inserted = 0;
+  const credits: { sql: string; params: unknown[] }[] = [];
+  for (const [link, { article, queryIds }] of byLink) {
+    let stored = held.get(link);
+    if (!stored) {
+      if (inserted >= FEED_INGEST_MAX_NEW) continue;
+      const location = locateEventText(article.title, article.text);
+      const content = `${article.title} ${link} ${article.text}`.trim();
+      const rows = await all<Record<string, unknown>>(
+        env.DB,
+        `INSERT OR IGNORE INTO events
+          (id, source_id, source_type, external_id, author, title, content, url, lang, published_at, ingested_at, geo_lat, geo_lng, geo_label, raw_metadata)
+         VALUES (?, ?, 'news', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         RETURNING *`,
+        [
+          newId(),
+          sourceId,
+          link,
+          article.domain,
+          article.title,
+          content,
+          link,
+          detectNonEnglish(`${article.title} ${article.text}`) === "ar" ? "ar" : "en", // script-level guess only
+          article.published,
+          nowIso(),
+          location?.lat ?? null,
+          location?.lon ?? null,
+          location?.place ?? null,
+          // fulltext:false — only the feed's headline and summary are held.
+          JSON.stringify({ connector: "feeds", origin: article.origin, domain: article.domain, geo: TEXT_LOCATED, geoPrecision: location?.precision ?? null, fulltext: false }),
+        ]
+      );
+      if (!rows[0]) continue; // stored by something else in the meantime
+      inserted++;
+      const event = { ...(rows[0] as unknown as EventRecord), raw_metadata: JSON.parse(String(rows[0].raw_metadata ?? "{}")) };
+      const { matchedQueryIds, ownerIds } = await matchAgainstQueries(env, event, active);
+      await broadcast(env, "event", { ...event, matched_query_ids: matchedQueryIds }, ownerIds).catch((err) => console.error("[feeds] broadcast failed", err));
+      stored = { id: event.id, published_at: article.published };
+    }
+    for (const queryId of queryIds) {
+      credits.push({ sql: `INSERT OR IGNORE INTO query_matches (id, query_id, event_id, matched_at) VALUES (?,?,?,?)`, params: [newId(), queryId, stored.id, stored.published_at] });
+    }
+  }
+  for (let i = 0; i < credits.length; i += 50) await batchRun(env.DB, credits.slice(i, i + 50));
+  return { inserted, credited: credits.length };
+}
+
 const BACKFILL_LOOKBACK_HOURS = 72;
 const BACKFILL_MAX_EVENTS = 3000;
 const BACKFILL_PAGE_SIZE = 250;
@@ -255,8 +357,9 @@ export async function backfillQueryMatches(env: Env, queryId: string, booleanQue
 }
 
 /** Everything a new (or just-edited) query needs to have results straight
- *  away: a first news search over the last three days for exactly what it
- *  asks for, then a scan of what the platform already holds. Run in the
+ *  away: its matches in the platform's own news feeds, a first wider news
+ *  search over the last three days for exactly what it asks for, then a
+ *  scan of what the platform already holds. Run in the
  *  background from the create/update routes. */
 export async function primeQuery(env: Env, queryId: string, booleanQuery: string, ownerId: string | null): Promise<void> {
   let parsed: ParsedQuery;
@@ -265,8 +368,17 @@ export async function primeQuery(env: Env, queryId: string, booleanQuery: string
   } catch {
     return;
   }
+  const query: CompiledQuery = { id: queryId, ownerId, parsed, text: booleanQuery };
+  // The platform's own feeds first: always available, so the query has
+  // results even when the wider search below is being rate-limited.
   try {
-    const r = await fetchNewsForQuery(env, { id: queryId, ownerId, parsed }, { timespan: "3d", maxRecords: 250, fulltextBudget: 25, maxSearches: 3 });
+    const f = await ingestFeedMatches(env, [query], 72);
+    console.log(`[query-prime] ${queryId}: own feeds -> ${f.inserted} new articles, ${f.credited} matches`);
+  } catch (err) {
+    console.error(`[query-prime] feed search failed for query ${queryId}:`, err);
+  }
+  try {
+    const r = await fetchNewsForQuery(env, query, { timespan: "3d", maxRecords: 250, fulltextBudget: 25, maxSearches: 3 });
     console.log(`[query-prime] ${queryId}: searched ${JSON.stringify(r.searches)} -> ${r.inserted} new articles, ${r.matched} matches${r.rateLimited ? " (rate limited)" : ""}`);
   } catch (err) {
     console.error(`[query-prime] news search failed for query ${queryId}:`, err);
