@@ -710,6 +710,10 @@ export interface EscalationPipelineStatus {
   translationEnabled?: boolean;
   lastRun: Record<string, unknown> | null;
   last24h: { status: string; count: number }[];
+  /** Reports picked up from headlines in the last 24 hours (no AI involved)
+   *  and not yet read in full. */
+  headline24h?: number;
+  headlineTierEnabled?: boolean;
   rejectionReasons24h: { reason: string; count: number }[];
   incidents: { level: string; count: number }[];
 }
@@ -723,7 +727,8 @@ export interface EscalationSource {
   domain: string;
   publishedAt: string | null;
   /** "full_text" when the whole article was read; "feed_summary" when only
-   *  the feed's teaser could be. */
+   *  the feed's teaser could be; "headline" when only its headline has been
+   *  matched by the rule-based first pass so far. */
   textBasis: string | null;
 }
 
@@ -757,6 +762,9 @@ export interface EscalationIncident {
   outlook: string;
   caveats: string | null;
   analystWritten: boolean;
+  /** True while the incident is known only from headlines — no article
+   *  behind it has yet been read in full. */
+  preliminary?: boolean;
   criteriaMet: string[];
   indicators: EscalationIndicator[];
   sources: EscalationSource[];

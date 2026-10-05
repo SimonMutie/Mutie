@@ -118,13 +118,27 @@ would run real geocoding/NLP on the article text instead).
 ### Conflict Escalation — how a flag is decided
 
 The Conflict Escalation layer and its alerts come from
-`backend/src/escalationIncidents.ts`. Nothing is flagged from keywords,
-event codes or report volume. Each 5-minute tick:
+`backend/src/escalationIncidents.ts`. Nothing is flagged from event codes or
+report volume. Each 5-minute tick:
 
 1. **Collects candidate articles** from the Africa Wire crawl, the wire-service
    feeds, and the URLs behind GDELT's conflict-coded events located in Africa.
    A loose multilingual keyword filter only decides what is worth reading.
-2. **Reads each article in full** (`lib/articleReader.ts`).
+   - **First pass on headlines** (`lib/headlineCoder.ts`) — no model, no
+     download, no cost. Each candidate's headline and feed summary are read by
+     fixed rules that recognise a limited set of explicit, completed events
+     ("gunmen killed 12", "drone strike hit", "clashes erupted", "captured the
+     town of") beside a named town or region; warnings, commentary, court
+     news, anniversaries and events outside Africa are left alone. Positives
+     are stored as **low-confidence** reports marked `text_basis = 'headline'`
+     and go through the same verification as a model's coding. This is what
+     puts a marker on the map within minutes on the free AI allowance, which
+     affords only about 25-30 full readings a day. It reads English and
+     French headlines.
+2. **Reads each article in full** (`lib/articleReader.ts`) — those the first
+   pass coded come first (markers already on the map before the rest). The
+   full reading **replaces** the first pass: it confirms the report, corrects
+   it, or removes it if the article is not what its headline suggested.
 3. **Codes it against the written codebook** (`lib/escalationCodebook.ts`,
    `lib/escalationCoder.ts`): is this a real, dated event; where exactly; who;
    which indicators — each with a verbatim quote. The coding is then checked
@@ -139,8 +153,16 @@ event codes or report volume. Each 5-minute tick:
    GDELT's own coordinates are never used.
 5. **Groups reports into incidents** by place and sets the level with fixed
    rules (`decideLevel()` in the codebook). The model never assigns a level.
+   A single low-confidence report (one unread headline) flags nothing unless
+   it states five or more deaths; two independent outlets reporting armed
+   events at the same place do. Critical on a death toll (25+) needs a second
+   outlet or a full reading. Syndicated copies of one story — the same quote,
+   or the same headline on an aggregator — count as one source.
 6. **Writes the assessment**: one analyst call per flagged incident, from that
-   incident's own coded reports and quotes, with inline citations.
+   incident's own coded reports and quotes, with inline citations. An incident
+   known only from headlines gets no analyst call: its text is assembled from
+   those headlines, cited, with the rule that flagged it, and is labelled
+   *preliminary* in the interface until an article behind it has been read.
 7. **Raises one alert per incident**, keeps it in step with the incident, and
    closes it when the incident's reports age out (72 hours).
 
@@ -162,6 +184,7 @@ Settings (`wrangler secret put …` for the key; `[vars]` in `wrangler.toml` for
 | `ESCALATION_ANALYST_MODEL` | same as coder | Model that writes each incident's assessment (far fewer calls). |
 | `ESCALATION_ARTICLES_PER_TICK` | `12` | Articles read per 5-minute tick. |
 | `ESCALATION_PIPELINE_ENABLED` | `true` | `false` pauses reading/coding; existing incidents age out normally. |
+| `ESCALATION_HEADLINE_TIER` | `true` | `false` switches off the headline first pass; markers then come only from articles a model has read. |
 | `GEOCODER_ENABLED` | `true` | `false` disables Nominatim lookups (bundled gazetteers only). |
 | `TRANSLATION_ENABLED` | `false` | `true` turns on Workers AI translation of non-English Africa Wire items (each item once). Off by default because of its cost. |
 

@@ -421,8 +421,9 @@ const LAYER_DEFS: LayerDef[] = [
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
   // Flagged escalation incidents (backend: escalationIncidents.ts) — one
   // marker per incident, placed where the reporting says the event happened.
-  // Each one is the product of articles read in full and coded against the
-  // written codebook; the marker's detail panel shows the criteria met, the
+  // Each one is the product of reports coded against the written codebook
+  // — articles read in full, or, until that happens, headlines matched by
+  // fixed rules (the panel then says "preliminary"); it shows the criteria met, the
   // indicators with their supporting quotes, the sources, and how precisely
   // the incident is located.
   {

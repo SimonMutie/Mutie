@@ -797,6 +797,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
       <div className={`osiris-popup-title osiris-popup-title--${incident.level}`}>⚠ {incident.headline}</div>
       <div className="osiris-popup-layer">{where}</div>
       <div className={`osiris-incident-precision osiris-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
+      {incident.preliminary && <div className="osiris-incident-preliminary">PRELIMINARY · FROM HEADLINES · NOT YET READ IN FULL</div>}
       <a className="osiris-popup-link" href={liveuamap.url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8 }}>
         [ OPEN {liveuamap.mapName.toUpperCase()} ON LIVEUAMAP ↗ ]
       </a>
@@ -820,13 +821,13 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
         </div>
       </div>
 
-      <div className="osiris-incident-heading">WHAT HAPPENED</div>
+      <div className="osiris-incident-heading">{incident.preliminary ? "WHAT IS BEING REPORTED" : "WHAT HAPPENED"}</div>
       <div className="osiris-popup-desc">
         <CitedText text={incident.summary} incident={incident} />
       </div>
       {incident.assessment && (
         <>
-          <div className="osiris-incident-heading">ASSESSMENT</div>
+          <div className="osiris-incident-heading">{incident.preliminary ? "JUDGEMENT" : "ASSESSMENT"}</div>
           <div className="osiris-popup-desc">
             <CitedText text={incident.assessment} incident={incident} />
           </div>
@@ -883,7 +884,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
             [{s.n}] {s.title || s.domain}
             <span className="osiris-incident-source-meta">
               {s.domain} · {shortDate(s.publishedAt)}
-              {s.textBasis === "feed_summary" ? " · summary only" : ""}
+              {s.textBasis === "feed_summary" ? " · summary only" : s.textBasis === "headline" ? " · headline only" : ""}
             </span>
           </a>
         ))}

@@ -115,7 +115,8 @@ function AiUsageCard() {
           {row("Translation", status.translationEnabled ? "On (counted within the daily limit)" : "Off", "ok")}
           <div style={{ fontSize: 13.5, fontWeight: 600, margin: "18px 0 6px" }}>Article reading for escalation alerts</div>
           {row("Last run", lastRunAge === null ? "Never" : lastRunAge <= 1 ? "Just now" : `${lastRunAge} minutes ago`, lastRunAge !== null && lastRunAge <= 15 ? "ok" : "warn")}
-          {row("Read in the last 24 hours", `${count("coded") + count("rejected")} articles (${count("coded")} with reportable events)`)}
+          {status.headlineTierEnabled !== false && row("Picked up from headlines, last 24 hours", `${status.headline24h ?? 0} reports (no AI used)`)}
+          {row("Read in full, last 24 hours", `${count("coded") + count("rejected")} articles (${count("coded")} with reportable events)`)}
           {row("Could not be opened", String(count("unreadable")))}
           {row("Failed", String(count("error")), count("error") > 0 ? "warn" : undefined)}
           {lastRun?.aiBudgetReached && row("Today", "Daily AI limit reached. Reading resumes after the reset.", "warn")}

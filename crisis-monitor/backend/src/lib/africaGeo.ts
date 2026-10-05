@@ -449,6 +449,9 @@ export interface TextLocation {
   label: string;
   countryCode: string;
   precision: "place" | "region" | "country";
+  /** The name as it was found in the text (normalised) — which may be an
+   *  alias of `label` ("al fashir" for El Fasher). */
+  matchedName: string;
 }
 
 /** Place names that are also ordinary words, personal names, or places on
@@ -534,7 +537,7 @@ export function locateText(text: string | null | undefined): TextLocation | null
     if (f.entries.some((e) => e.kind === "country") || (codes.size === 1 && !isAmbiguous(f.name))) for (const c of codes) countries.add(c);
   }
   const rank = { place: 2, region: 1, country: 0 } as const;
-  let best: { at: number; entry: MentionEntry } | null = null;
+  let best: { at: number; entry: MentionEntry; name: string } | null = null;
   for (const f of found) {
     const ambiguousName = isAmbiguous(f.name);
     for (const e of f.entries) {
@@ -542,9 +545,32 @@ export function locateText(text: string | null | undefined): TextLocation | null
         const otherCountries = f.entries.filter((x) => x.kind !== "country" && x.countryCode !== e.countryCode).length > 0;
         if ((ambiguousName || otherCountries) && !countries.has(e.countryCode)) continue;
       }
-      if (!best || rank[e.kind] > rank[best.entry.kind] || (rank[e.kind] === rank[best.entry.kind] && f.at < best.at)) best = { at: f.at, entry: e };
+      if (!best || rank[e.kind] > rank[best.entry.kind] || (rank[e.kind] === rank[best.entry.kind] && f.at < best.at)) best = { at: f.at, entry: e, name: f.name };
     }
   }
   if (!best) return null;
-  return { lat: best.entry.lat, lon: best.entry.lon, label: best.entry.label, countryCode: best.entry.countryCode, precision: best.entry.kind };
+  return { lat: best.entry.lat, lon: best.entry.lon, label: best.entry.label, countryCode: best.entry.countryCode, precision: best.entry.kind, matchedName: best.name };
+}
+
+/** The region (state, province) of `countryCode` that a text names, if any
+ *  — "Plateau" in "Barkin Ladi, Plateau State". Used to label a place the
+ *  text has already located; the country is given, so a region name that
+ *  is also an ordinary word is acceptable here. Longest names first, as in
+ *  locateText; the earliest mention wins. */
+export function regionNamedIn(text: string | null | undefined, countryCode: string): string | null {
+  if (!text) return null;
+  const words = normalizeName(text.replace(/['’‘ʼ]s\b/g, "")).replace(/[()]/g, " ").split(" ").filter(Boolean);
+  const used = new Array<boolean>(words.length).fill(false);
+  let best: { at: number; label: string } | null = null;
+  for (let n = Math.min(MENTION_MAX_WORDS, words.length); n >= 1; n--) {
+    for (let i = 0; i + n <= words.length; i++) {
+      if (used.slice(i, i + n).some(Boolean)) continue;
+      const entries = MENTION_INDEX.get(words.slice(i, i + n).join(" "));
+      if (!entries) continue;
+      for (let j = i; j < i + n; j++) used[j] = true;
+      const region = entries.find((e) => e.kind === "region" && e.countryCode === countryCode);
+      if (region && (!best || i < best.at)) best = { at: i, label: region.label };
+    }
+  }
+  return best?.label ?? null;
 }

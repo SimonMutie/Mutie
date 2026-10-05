@@ -362,10 +362,19 @@ describe("escalation pipeline, end to end", () => {
     db.prepare("DELETE FROM alerts").run();
     modelDown = true;
     for (let i = 0; i < 4; i++) await runEscalationPipeline(env); // more ticks than the retry limit
-    const rows = db.prepare("SELECT status, rejection_reason, attempts FROM escalation_articles").all() as { status: string; rejection_reason: string; attempts: number }[];
-    // Only the first group of three was attempted each tick, not the whole batch.
-    expect(rows).toHaveLength(3);
-    expect(rows.every((r) => r.status === "error" && r.rejection_reason === "model_unavailable")).toBe(true);
+    const rows = db.prepare("SELECT status, rejection_reason, attempts, model FROM escalation_articles").all() as { status: string; rejection_reason: string; attempts: number; model: string | null }[];
+    // The headline first pass needs no model: the three reports whose
+    // headlines state an event are on record, at low confidence, and stay
+    // there however often the attempt to read them in full fails.
+    const firstPass = rows.filter((r) => r.model === "headline-rules");
+    expect(firstPass).toHaveLength(3);
+    expect(firstPass.every((r) => r.status === "coded" && r.attempts === 0)).toBe(true);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_reports").get() as { n: number }).n).toBe(3);
+    // Only the first group of three was attempted each tick, not the whole
+    // batch: one first-pass article and two others, which are queued.
+    const failed = rows.filter((r) => r.model !== "headline-rules");
+    expect(failed).toHaveLength(2);
+    expect(failed.every((r) => r.status === "error" && r.rejection_reason === "model_unavailable")).toBe(true);
     const last = JSON.parse((db.prepare("SELECT value FROM escalation_pipeline_state WHERE key = 'last_run'").get() as { value: string }).value);
     expect(last.modelFailures).toBe(3);
     expect(last.lastModelError.message).toMatch(/down for test|not valid JSON|503/);
@@ -375,7 +384,12 @@ describe("escalation pipeline, end to end", () => {
     await runEscalationPipeline(env);
     const after = db.prepare("SELECT status, COUNT(*) AS n FROM escalation_articles GROUP BY status").all() as { status: string; n: number }[];
     expect(Object.fromEntries(after.map((r) => [r.status, r.n]))).toEqual({ coded: 4, rejected: 3 });
-    expect((await getFlaggedIncidents(env)).map((i) => i.countryCode).sort()).toEqual(["ET", "SO"]);
+    // Every first-pass coding has been replaced by a full reading.
+    expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_articles WHERE model = 'headline-rules'").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id WHERE a.text_basis = 'headline'").get() as { n: number }).n).toBe(0);
+    const flagged = await getFlaggedIncidents(env);
+    expect(flagged.map((i) => i.countryCode).sort()).toEqual(["ET", "SO"]);
+    expect(flagged.every((i) => !i.preliminary && i.analystWritten)).toBe(true);
   });
 
   it("works on the Cloudflare model alone, including when its JSON mode is refused", async () => {

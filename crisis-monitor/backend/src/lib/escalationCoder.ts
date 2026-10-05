@@ -36,7 +36,9 @@ export interface ArticleForCoding {
   title: string;
   /** Full extracted body, or the feed summary when the page could not be read. */
   text: string;
-  textBasis: "full_text" | "feed_summary";
+  /** "headline": only the headline and the opening of the feed summary,
+   *  read by the rule-based first pass (lib/headlineCoder.ts). */
+  textBasis: "full_text" | "feed_summary" | "headline";
   publishedAt: string | null;
   domain: string;
 }
@@ -356,6 +358,12 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
       notes.push("Coded from the feed summary only; the full article could not be read.");
       confidence = "medium";
     }
+    if (article.textBasis === "headline") {
+      // Whatever produced the coding, a headline alone never earns more than
+      // low confidence: on its own it cannot flag anything (see decideLevel).
+      notes.push("Preliminary: read from the headline and feed summary only, by fixed rules. The article has not yet been read in full.");
+      confidence = "low";
+    }
 
     // 5. Indicators — each needs a real quote.
     const indicators: VerifiedIndicator[] = [];
@@ -546,6 +554,46 @@ export async function synthesizeIncident(env: Env, input: IncidentSynthesisInput
     synthesis: { headline, summary, assessment: fixCites(s.assessment), outlook: fixCites(s.outlook), caveats: cleanSentence(s.caveats, 300) },
     provider: result.provider,
     model: result.model,
+  };
+}
+
+/**
+ * The text shown for an incident known so far ONLY from headlines (every
+ * source read by lib/headlineCoder.ts, none yet read in full). No model is
+ * involved: it says how many outlets report what, where, quotes their
+ * headlines with citations, and states which rule flagged it. It is replaced
+ * by the analyst's assessment once an article behind it has been read.
+ */
+export function headlineSynthesis(input: IncidentSynthesisInput): IncidentSynthesis {
+  const ranked = [...input.sources].sort((a, b) => (b.fatalities ?? 0) - (a.fatalities ?? 0) || b.indicators.length - a.indicators.length || a.n - b.n);
+  const lead = ranked[0];
+  const where = input.locationLabel.startsWith("location not specified") ? input.countryName : `${input.locationLabel}, ${input.countryName}`;
+  const headline = cleanSentence(lead.title !== "(untitled)" ? lead.title : lead.whatHappened, 140) ?? where;
+
+  const outlets = new Set(input.sources.map((s) => s.domain));
+  const labels = [...new Set(input.sources.flatMap((s) => s.indicators.map((i) => i.label.toLowerCase())))];
+  const what = labels.length === 0 ? "an armed event" : labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+  const deaths = Math.max(0, ...input.sources.map((s) => s.fatalities ?? 0));
+  const opening = `${outlets.size === 1 ? "One outlet reports" : `${outlets.size} outlets report`} ${what} in ${where}${deaths > 0 ? `, with ${outlets.size === 1 ? "" : "up to "}${deaths} death${deaths === 1 ? "" : "s"} stated` : ""}.`;
+
+  // One line per distinct headline, most serious first.
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const s of ranked) {
+    const title = cleanSentence(s.whatHappened, 220);
+    const key = (title ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!title || seen.has(key)) continue;
+    seen.add(key);
+    lines.push(`“${title.replace(/[.\s]+$/, "")}” [${s.n}]`);
+    if (lines.length >= 4) break;
+  }
+
+  return {
+    headline,
+    summary: `${opening} ${lines.join("; ")}.`,
+    assessment: input.criteriaMet.length ? `Flagged ${input.level === "critical" ? "Critical" : "Elevated"} because: ${input.criteriaMet.map((c) => c.replace(/\.$/, "")).join("; ")}.` : "",
+    outlook: "",
+    caveats: `Preliminary. This is based on ${outlets.size === 1 ? "one outlet's headline" : `the headlines of ${outlets.size} outlets`}, matched by fixed rules; the articles themselves have not yet been read in full, and details such as the death toll may change.`,
   };
 }
 
