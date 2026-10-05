@@ -69,11 +69,18 @@ describe("helpers", () => {
   it("canonicalUrl ignores tracking parameters, www and trailing slashes", () => {
     expect(canonicalUrl("https://www.Example.com/news/story/?utm_source=x&id=5#top")).toBe(canonicalUrl("https://example.com/news/story?id=5"));
   });
-  it("isLive keeps events for the active window only", () => {
+  it("isLive keeps only what was reported in the last 24 hours as happening today or yesterday", () => {
     const now = new Date("2026-10-03T06:00:00Z");
-    expect(isLive("2026-10-02", now)).toBe(true);
-    expect(isLive("2026-09-30", now)).toBe(true);
-    expect(isLive("2026-09-27", now)).toBe(false);
+    const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
+    expect(isLive({ eventDate: "2026-10-03", publishedAt: hoursAgo(2) }, now)).toBe(true);
+    expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(20) }, now)).toBe(true);
+    // Reported an hour ago, but about something three days back.
+    expect(isLive({ eventDate: "2026-09-30", publishedAt: hoursAgo(1) }, now)).toBe(false);
+    // Dated yesterday, but the article itself is more than 24 hours old.
+    expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(25) }, now)).toBe(false);
+    // No publication time known: the event date alone decides.
+    expect(isLive({ eventDate: "2026-10-02", publishedAt: null }, now)).toBe(true);
+    expect(isLive({ eventDate: "2026-10-01", publishedAt: null }, now)).toBe(false);
   });
   it("pickBatch alternates between origins and de-duplicates", () => {
     const c = (id: string, origin: Candidate["origin"]): Candidate => ({ id, url: `https://x/${id}`, domain: "x", origin, title: null, feedText: null, publishedAt: null, priority: 0 });

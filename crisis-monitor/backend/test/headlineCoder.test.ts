@@ -90,13 +90,58 @@ describe("death tolls: the figure stated for the event, or none", () => {
 
   it("does not take several days' or a month's total as one event's toll", () => {
     const alamata = code("Alamata fighting leaves trail of civilian casualties", "More than 50 civilians have reportedly been killed in and around Alamata, southern Tigray, during several days of intense fighting in late September.");
-    expect(alamata.ids).toContain("armed_clash");
-    expect(alamata.report.fatalities).toBeNull();
+    // (Since the 24-hour rule this report is not coded at all: its fighting is dated to late September.)
+    expect(alamata.outcome.reports).toHaveLength(0);
+    expect(alamata.raw.rejection_reason).toBe("retrospective");
+    const kidal = code("Days of clashes in Kidal leave dozens dead", "Clashes erupted in Kidal today. More than 50 people have been killed over several days of fighting.");
+    expect(kidal.ids).toContain("armed_clash");
+    expect(kidal.report.fatalities).not.toBe(50);
   });
 
   it("prefers a stated figure to 'dozens', and reads 'dozens' as the least it can mean", () => {
     expect(code("Dozens dead after rebels attack village in Ituri", "At least 31 people were killed when rebels attacked a village in Ituri province overnight.").report.fatalities).toBe(31);
     expect(code("Dozens killed as gunmen attack village in Benue State").report.fatalities).toBe(24);
+  });
+});
+
+describe("when it happened: only the publication day or the day before", () => {
+  // NOW is Monday 5 October 2026.
+  const reason = (title: string, feedText = "") => {
+    const c = code(title, feedText);
+    return c.outcome.reports.length === 0 ? c.raw.rejection_reason : `coded ${c.report.eventDate}`;
+  };
+  it("takes the day the text gives", () => {
+    expect(reason("Gunmen kill 12 villagers in Bokkos, Plateau", "Gunmen killed 12 villagers in Bokkos, Plateau State, on Sunday, residents said.")).toBe("coded 2026-10-04");
+    expect(reason("Drone strike hits Mekelle market", "A drone strike hit a market in Mekelle this morning.")).toBe("coded 2026-10-05");
+    expect(reason("Clashes erupt in Kidal", "Clashes erupted in Kidal yesterday between the army and rebels.")).toBe("coded 2026-10-04");
+    expect(reason("Shelling hits Kadugli on 4 October, medics say")).toBe("coded 2026-10-04");
+    // No date given: the publication day.
+    expect(reason("Bandits kill 9 in Zamfara village raid")).toBe("coded 2026-10-05");
+  });
+  it("leaves alone an event dated more than a day back", () => {
+    expect(reason("Gunmen kill 12 villagers in Bokkos, Plateau", "Gunmen killed 12 villagers in Bokkos, Plateau State, on Friday, police confirmed.")).toBe("retrospective");
+    expect(reason("Gunmen kill 12 villagers in Bokkos, Plateau", "Gunmen killed 12 villagers in Bokkos, Plateau State, last week, police confirmed on Monday.")).toBe("retrospective");
+    expect(reason("Drone strike hit Mekelle market on September 28, report finds")).toBe("retrospective");
+    expect(reason("Clashes erupted in Kidal three days ago, residents say")).toBe("retrospective");
+    expect(reason("Onze villageois tués par des hommes armés à Djibo la semaine dernière")).toBe("retrospective");
+  });
+  it("reads the date from the story's opening when the headline gives none, and from when it was said", () => {
+    // The headline states the attack; the opening sentence dates it to Saturday — two days before a Monday.
+    expect(reason("Aid agency condemns attack on trucks in South Kordofan, killing one driver", "The agency condemned an aerial attack that hit two trucks carrying food in South Kordofan in the early hours of Saturday, 3 October 2026.")).toBe("retrospective");
+    // What residents said on Saturday had happened by Saturday.
+    expect(reason("Rebels abandon Kidal as government forces advance", "Rebels are abandoning the town of Kidal, residents said on Saturday, as government forces advanced on the town.")).toBe("retrospective");
+    expect(reason("Drone strike on El Obeid shelter kills boy", "A drone strike on a shelter for displaced people in El Obeid, North Kordofan, late on Thursday reportedly killed a boy.")).toBe("retrospective");
+    // On a Monday, "this past weekend" still reaches yesterday.
+    expect(reason("Driver killed in aerial attack on aid trucks in South Kordofan", "The agency condemned a deadly airstrike on two aid trucks in South Kordofan this past weekend.")).toBe("coded 2026-10-04");
+    expect(reason("Army retakes Mekelle", "Federal forces have regained control of Mekelle, local sources said on Sunday.")).toBe("coded 2026-10-04");
+  });
+  it("does not take a date attached to something else as the date of the event", () => {
+    // The curfew is old; the killings are not dated. The old curfew is dropped, the attack kept.
+    const c = code("Nigeria: 28 killed despite curfew in Plateau", "At least 28 people have been killed in a new wave of attacks across three districts of Plateau State despite a dusk-to-dawn curfew imposed by the state government on September 21 to restore peace.");
+    expect(c.ids).toEqual(["attack_on_civilians"]);
+    expect(c.report.eventDate).toBe("2026-10-05");
+    // "said on Monday" is when it was said, and is also inside the window; "March 23 Movement" is a name.
+    expect(reason("M23 rebels capture town of Walikale, North Kivu", "Fighters of the March 23 Movement captured the town of Walikale in North Kivu, residents said.")).toBe("coded 2026-10-05");
   });
 });
 

@@ -77,7 +77,9 @@ export function freeAllowancePacing(ai: Pick<AiUsage, "used" | "budget">, now = 
 const CODING_CONCURRENCY = 3;
 const SYNTHESES_PER_TICK = 4;
 const GEOCODER_CALLS_PER_TICK = 6;
-const CANDIDATE_MAX_AGE_HOURS = 72;
+/** Nothing published longer ago than the active window can be about an
+ *  event inside it, so older items are not collected, read or coded. */
+const CANDIDATE_MAX_AGE_HOURS = ACTIVE_WINDOW_HOURS;
 const GDELT_CANDIDATE_WINDOW_HOURS = 24;
 const MAX_ATTEMPTS = 3;
 /** The most first-pass (headline) reports stored in one tick. */
@@ -258,6 +260,8 @@ async function gatherWireFeeds(): Promise<Candidate[]> {
       // These feeds are mostly world news; only items that mention somewhere
       // in Africa are worth reading (Africa-focused outlets are exempt).
       .filter((it) => isCandidateText(`${it.title} ${it.description}`) && (AFRICA_FOCUSED_FEEDS.has(it.domain) || mentionsAfrica(`${it.title} ${it.description}`)))
+      // Older than the active window: cannot be about an event inside it.
+      .filter((it) => !(Date.now() - Date.parse(it.published ?? "") > CANDIDATE_MAX_AGE_HOURS * 3600_000))
       .map((it) => ({
         id: hashId(canonicalUrl(it.link)),
         url: it.link,
@@ -445,7 +449,7 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
       const item = { title: c.title, feedText: c.feedText, publishedAt: c.publishedAt };
       const text = headlineText(item);
       const outcome = verifyCoding(codeHeadline(item, now), { url: c.url, title: c.title, text, textBasis: HEADLINE_TEXT_BASIS, publishedAt: c.publishedAt, domain: c.domain }, now);
-      const reports = outcome.reports.filter((r) => isLive(r.eventDate, now));
+      const reports = outcome.reports.filter((r) => isLive({ eventDate: r.eventDate, publishedAt: c.publishedAt }, now));
       if (reports.length === 0) {
         headlineSeen.add(c.id);
         continue;
@@ -520,10 +524,13 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
       else await finish("unreadable", { reason: "unreadable", note: "The article page could not be fetched or had no readable body." });
       return;
     }
-    if (article.publishedAt && Date.now() - Date.parse(article.publishedAt) > 6 * 86_400_000) {
+    // Too old to count (see isLive), with a few hours' allowance for a
+    // page that gives its publication time without a time zone. Checked
+    // before the model is called, so nothing is spent on it.
+    if (article.publishedAt && Date.now() - Date.parse(article.publishedAt) > (ACTIVE_WINDOW_HOURS + 6) * 3600_000) {
       stats.rejected++;
       await dropFirstPass();
-      await finish("rejected", { reason: "retrospective", note: "Published more than six days ago.", title: article.title, textBasis: article.textBasis, publishedAt: article.publishedAt });
+      await finish("rejected", { reason: "retrospective", note: `Published more than ${ACTIVE_WINDOW_HOURS} hours ago.`, title: article.title, textBasis: article.textBasis, publishedAt: article.publishedAt });
       return;
     }
 
@@ -628,12 +635,25 @@ function toStoredReport(r: ReportDbRow): StoredReport {
 
 const REPORT_SELECT = `SELECT r.*, a.url, a.title, a.domain, a.published_at, a.text_basis FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id`;
 
-/** Is this report's event still inside the active window? Event dates are
- *  day-granular, so the whole event day counts. */
-export function isLive(eventDate: string, now: Date): boolean {
-  const start = Date.parse(`${eventDate}T00:00:00Z`);
+/**
+ * Is this report's event inside the active window (the last 24 hours)?
+ *
+ * Two checks, because an event date is only known to the day:
+ *   - the article was published within the window — an article older than
+ *     that cannot be reporting something that happened inside it;
+ *   - the event's own date (the day the article gives, or the publication
+ *     day when it gives none) is today or yesterday.
+ * So a marker stands for something reported in the last 24 hours as having
+ * happened today or yesterday; older events never count, however recently
+ * they were written about.
+ */
+export function isLive(report: { eventDate: string; publishedAt?: string | null }, now: Date): boolean {
+  const start = Date.parse(`${report.eventDate}T00:00:00Z`);
   if (!Number.isFinite(start)) return false;
-  return now.getTime() - start <= (ACTIVE_WINDOW_HOURS + 24) * 3600_000;
+  if (now.getTime() - start > (ACTIVE_WINDOW_HOURS + 24) * 3600_000) return false;
+  const published = report.publishedAt ? Date.parse(report.publishedAt) : NaN;
+  if (Number.isFinite(published) && now.getTime() - published > ACTIVE_WINDOW_HOURS * 3600_000) return false;
+  return true;
 }
 
 /** Region key for grouping — the resolved region's canonical name when the
@@ -878,7 +898,7 @@ async function assignNewReports(env: Env): Promise<void> {
   unassigned.sort((a, b) => PRECISION_RANK[b.geoPrecision] - PRECISION_RANK[a.geoPrecision]);
   const now = new Date();
   for (const r of unassigned) {
-    if (!isLive(r.eventDate, now)) {
+    if (!isLive(r, now)) {
       // Too old to open or extend an incident; park it so it is not re-examined every tick.
       await run(env.DB, "UPDATE escalation_reports SET incident_id = 'stale' WHERE id = ?", [r.id]);
       continue;
@@ -929,7 +949,7 @@ async function refreshIncidents(env: Env): Promise<{ active: number; elevated: n
   }
 
   for (const inc of incidents) {
-    const live = (reportsByIncident.get(inc.id) ?? []).filter((r) => isLive(r.eventDate, now));
+    const live = (reportsByIncident.get(inc.id) ?? []).filter((r) => isLive(r, now));
     if (live.length === 0) {
       await run(env.DB, "UPDATE escalation_incidents SET status = 'expired', updated_at = ? WHERE id = ?", [nowIso(), inc.id]);
       await resolveAlert(env, inc.alert_id);

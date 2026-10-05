@@ -27,6 +27,11 @@ import type { RawCodedEvent, RawCoding } from "./escalationCoder";
  *   - never asserts the critical-tier judgements that need understanding
  *     (interstate hostilities, a ceasefire's collapse, a major town's fall)
  *     — only what a headline states outright;
+ *   - checks the date: the day the text gives for the event ("on Sunday",
+ *     "yesterday", "3 October") becomes its event date, and a report whose
+ *     own wording puts the event more than a day before publication ("last
+ *     week", "on Friday" in a Monday report) is left alone — only the last
+ *     24 hours are flagged;
  *   - requires a place below country level, named in the text, and prefers
  *     the place in the same sentence as the event;
  *   - passes through the same verification as a model's coding
@@ -248,6 +253,88 @@ function tollIn(sentences: string[], vague: boolean): { count: number; quote: st
   return null;
 }
 
+// ── When it happened ─────────────────────────────────────────────────────
+
+const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const WEEKDAYS_FR = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const MONTH_ALT = [...MONTHS, ...MONTHS_FR, "fevrier", "aout", "decembre", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sept", "sep", "oct", "nov", "dec"].join("|");
+const monthIndex = (name: string): number => {
+  const n = name.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const plain = (list: string[]) => list.map((m) => m.normalize("NFD").replace(/[̀-ͯ]/g, ""));
+  const full = Math.max(plain(MONTHS).indexOf(n), plain(MONTHS_FR).indexOf(n));
+  return full >= 0 ? full : MONTHS.findIndex((m) => m.startsWith(n.slice(0, 3)));
+};
+
+/** Wording that puts an event more than a day in the past, whatever the day. */
+const LONG_AGO_RX =
+  /\b(last (?:week|month|year|weekend)|(?:two|three|four|five|six|seven|several|many|\d+) (?:days|weeks|months|years) (?:ago|earlier|before)|a (?:week|month|year) ago|(?:days|weeks|months) ago|earlier this (?:week|month|year)|in recent (?:days|weeks|months)|(?:over|in|during) the (?:past|last) (?:few |several |\w+ )?(?:days|weeks|week|months|month)|(?:several|many) days of|la semaine derni[èe]re|le mois dernier|il y a (?:deux|trois|quatre|plusieurs|quelques|\d+) (?:jours|semaines|mois))\b/gi;
+const TODAY_RX = /\b(today|this (?:morning|afternoon|evening)|tonight|overnight|aujourd['’]hui|ce matin|cette nuit)\b/gi;
+const WEEKEND_RX = /\b((?:this|the|this past|over the|at the|last) weekend|ce week-?end)\b/gi;
+/** Wording that attaches a date to something other than the event itself:
+ *  "...despite a curfew imposed on September 21", "...days after a truce
+ *  signed on Friday". A date on the far side of one of these is not read. */
+const OTHER_EVENT_RX = /\b(despite|after|following|since|amid|ahead of|before|until|imposed|declared|signed|began|started|launched in|broke out|malgr[ée]|apr[èe]s|depuis|avant)\b/i;
+const YESTERDAY_RX = /\b(yesterday|last night|hier)\b/gi;
+const WEEKDAY_RX = new RegExp(`\\b(last |next )?(${[...WEEKDAYS, ...WEEKDAYS_FR].join("|")})\\b(?! (?:times|mail|telegraph|independent|standard|nation|vision|monitor|punch|sun|world)\\b)`, "gi");
+const DAY_MONTH_RX = new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th|er)? (${MONTH_ALT})\\b\\.?`, "gi");
+const MONTH_DAY_RX = new RegExp(`\\b(${MONTH_ALT})\\.? (\\d{1,2})(?:st|nd|rd|th)?\\b(?! (?:movement|mouvement))`, "gi");
+const IN_MONTH_RX = new RegExp(`\\b(?:in|since|during|en|depuis|fin|d[ée]but)[ -](?:late[ -]|early[ -]|mid[ -]?)?(${[...MONTHS, ...MONTHS_FR].join("|")})\\b(?! \\d)`, "gi");
+
+const DAY_MS = 86_400_000;
+type DateCue = { daysBack: number } | "stale";
+
+/**
+ * What a sentence says about when its event happened, relative to the day
+ * the report was published: how many days before (0 or 1), or "stale" —
+ * more than a day before. Null when it gives no date. `at`..`end` is where
+ * the sentence states the event. A date reached only across wording that
+ * introduces something else ("...despite a curfew imposed on September
+ * 21") is not taken as the date of the event. The day something was *said*
+ * counts: what was said on Friday had happened by Friday.
+ */
+function dateCue(sentence: string, at: number, end: number, published: Date): DateCue | null {
+  const pubDay = Date.UTC(published.getUTCFullYear(), published.getUTCMonth(), published.getUTCDate());
+  const pubDow = new Date(pubDay).getUTCDay();
+  const cues: { at: number; cue: DateCue }[] = [];
+  const scan = (rx: RegExp, read: (m: RegExpExecArray) => DateCue | null) => {
+    rx.lastIndex = 0;
+    for (let m = rx.exec(sentence); m; m = rx.exec(sentence)) {
+      const between = m.index >= end ? sentence.slice(end, m.index) : m.index < at ? sentence.slice(m.index + m[0].length, at) : "";
+      if (OTHER_EVENT_RX.test(between)) continue;
+      const cue = read(m);
+      if (cue) cues.push({ at: m.index, cue });
+    }
+  };
+  const fromDate = (month: number, day: number): DateCue | null => {
+    if (month < 0 || day < 1 || day > 31) return null;
+    let when = Date.UTC(published.getUTCFullYear(), month, day);
+    if (when > pubDay + 2 * DAY_MS) when = Date.UTC(published.getUTCFullYear() - 1, month, day);
+    const back = Math.round((pubDay - when) / DAY_MS);
+    return back <= 1 ? { daysBack: Math.max(0, back) } : "stale";
+  };
+  scan(LONG_AGO_RX, () => "stale");
+  scan(TODAY_RX, () => ({ daysBack: 0 }));
+  scan(YESTERDAY_RX, () => ({ daysBack: 1 }));
+  // "At the weekend": today on a Saturday or Sunday, yesterday on a Monday, older after that.
+  scan(WEEKEND_RX, (m) => (/^last/i.test(m[0]) && pubDow !== 1 ? "stale" : pubDow === 0 || pubDow === 6 ? { daysBack: 0 } : pubDow === 1 ? { daysBack: 1 } : "stale"));
+  scan(WEEKDAY_RX, (m) => {
+    if ((m[1] ?? "").toLowerCase().startsWith("next")) return null;
+    const name = m[2].toLowerCase();
+    const dow = Math.max(WEEKDAYS.indexOf(name), WEEKDAYS_FR.indexOf(name));
+    let back = (pubDow - dow + 7) % 7;
+    if (m[1] && back === 0) back = 7; // "last Monday", published on a Monday
+    return back <= 1 ? { daysBack: back } : "stale";
+  });
+  scan(DAY_MONTH_RX, (m) => fromDate(monthIndex(m[2]), Number(m[1])));
+  scan(MONTH_DAY_RX, (m) => fromDate(monthIndex(m[1]), Number(m[2])));
+  scan(IN_MONTH_RX, (m) => (monthIndex(m[1]) !== published.getUTCMonth() ? "stale" : null));
+  if (cues.length === 0) return null;
+  // The date nearest the event wording is the event's.
+  return cues.sort((a, b) => Math.abs(a.at - at) - Math.abs(b.at - at))[0].cue;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function splitSentences(text: string): string[] {
@@ -295,25 +382,55 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
   if (RETROSPECTIVE_RX.test(title) || oldYear) return reject("retrospective", "Headline refers to past events.");
   if (ELSEWHERE_RX.test(title)) return reject("outside_africa", "Headline names a place outside Africa.");
 
-  const sentences = splitSentences(text);
-  const found: { id: IndicatorId; quote: string; sentence: string }[] = [];
+  // The headline's own sentences, then the summary's.
+  const summarySentences = splitSentences(title && text.startsWith(title) ? text.slice(title.length).replace(/^[\s.]+/, "") : text);
+  const sentences = [...(title && text.startsWith(title) ? splitSentences(title) : []), ...summarySentences];
+  const publishedMs = item.publishedAt ? Date.parse(item.publishedAt) : NaN;
+  const published = Number.isFinite(publishedMs) ? new Date(publishedMs) : now;
+  const found: { id: IndicatorId; quote: string; sentence: string; daysBack: number | null }[] = [];
+  let staleOnly = 0;
+  // The sentence after the headline is the story's opening; when the wording
+  // that states an event carries no date of its own, the opening's date is
+  // the story's ("...came under attack on Saturday").
+  const opening = title && text.startsWith(title) ? (summarySentences[0] ?? null) : null;
+  const openingCue = opening ? dateCue(opening, 0, 0, published) : null;
+  /** Every place the text states this event, with the date each gives. The
+   *  event is kept if any of them dates it to the publication day or the
+   *  day before, or nothing dates it at all; it is dropped if the only
+   *  dates given put it earlier ("...last week", "...on September 21"). */
+  const keep = (id: IndicatorId, matches: { sentence: string; at: number; end: number }[]) => {
+    if (matches.length === 0) return;
+    let cues = matches.map((m) => dateCue(m.sentence, m.at, m.end, published));
+    if (cues.every((c) => c === null) && !matches.some((m) => m.sentence === opening)) cues = [openingCue];
+    const fresh = cues.find((c): c is { daysBack: number } => !!c && c !== "stale");
+    if (!fresh && cues.includes("stale")) {
+      staleOnly++;
+      return;
+    }
+    found.push({ id, quote: clip(matches[0].sentence, matches[0].at), sentence: matches[0].sentence, daysBack: fresh ? fresh.daysBack : null });
+  };
   for (const rule of RULES) {
+    const matches: { sentence: string; at: number; end: number }[] = [];
     for (const s of sentences) {
       const m = rule.rx.map((rx) => rx.exec(s)).find(Boolean);
       if (!m) continue;
       if (HYPOTHETICAL_RX.test(s) || (rule.unless && rule.unless.test(s))) continue;
-      found.push({ id: rule.id, quote: clip(s, m.index), sentence: s });
-      break;
+      matches.push({ sentence: s, at: m.index, end: m.index + m[0].length });
     }
+    keep(rule.id, matches);
   }
   // A named armed group and a violent act in one sentence ("JNIM fighters
   // kill 12 in Mopti") is an attack even without a generic word like "gunmen".
   if (!found.some((f) => f.id === "attack_on_civilians" || f.id === "attack_on_security_forces")) {
     const actRx = new RegExp(`\\b(?:${VIOLENT_ACTS})\\b`, "i");
-    const s = sentences.find((x) => actRx.test(x) && matchNonStateArmedGroups(x).length > 0 && !HYPOTHETICAL_RX.test(x) && !NOT_ARMED_ATTACK_RX.test(x));
-    if (s) found.push({ id: "attack_on_civilians", quote: clip(s, 0), sentence: s });
+    const matches = sentences.filter((x) => actRx.test(x) && matchNonStateArmedGroups(x).length > 0 && !HYPOTHETICAL_RX.test(x) && !NOT_ARMED_ATTACK_RX.test(x)).map((x) => ({ sentence: x, at: 0, end: x.length }));
+    keep("attack_on_civilians", matches);
   }
-  if (found.length === 0) return reject("threat_or_warning_only", "No explicit, completed armed event is stated in the headline or summary.");
+  if (found.length === 0) {
+    return staleOnly > 0
+      ? reject("retrospective", "The headline or summary dates the event more than a day before publication.")
+      : reject("threat_or_warning_only", "No explicit, completed armed event is stated in the headline or summary.");
+  }
 
   // Where: the place named with the event itself, then the headline, then anywhere in the text.
   const eventSentences = [...new Set(found.map((f) => f.sentence))];
@@ -332,8 +449,11 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
   // Ten or more civilians killed in one attack is the codebook's mass-atrocity threshold.
   if (toll && toll.count >= 10 && ids.has("attack_on_civilians") && CIVILIANS_RX.test(toll.quote)) indicators.push({ id: "mass_atrocity", quote: toll.quote });
   // Displacement counts only as a consequence of an armed event reported alongside it.
-  const displaced = sentences.find((s) => DISPLACEMENT_RX.test(s) && !HYPOTHETICAL_RX.test(s));
+  const displaced = sentences.find((s) => DISPLACEMENT_RX.test(s) && !HYPOTHETICAL_RX.test(s) && dateCue(s, 0, s.length, published) !== "stale");
   if (displaced) indicators.push({ id: "mass_displacement", quote: clip(displaced, 0) });
+
+  const stated = found.map((f) => f.daysBack).filter((d): d is number => d !== null);
+  const eventDay = stated.length ? new Date(Date.UTC(published.getUTCFullYear(), published.getUTCMonth(), published.getUTCDate()) - Math.min(...stated) * DAY_MS).toISOString().slice(0, 10) : null;
 
   const event: RawCodedEvent = {
     country: countryName(location.countryCode),
@@ -344,7 +464,8 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
     admin1: location.precision === "region" ? location.label : regionNamedIn(text, location.countryCode),
     lat: location.lat,
     lon: location.lon,
-    event_date: null, // not stated reliably in a headline: the publication date is used
+    // The day the text gives ("on Sunday", "yesterday"), else null: the publication date is then used.
+    event_date: eventDay,
     novelty: "new",
     actors: [...new Set([...matchNonStateArmedGroups(text), ...matchStateMilitaries(text)])].slice(0, 6),
     indicators,
