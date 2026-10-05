@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
-import { REPLAY_EVENT, WELCOME_HEADING, WELCOME_LINE, introAlreadyShown, introAppliesHere, introSoundEnabled, markIntroShown, playOpeningTone, setIntroSoundEnabled, speakWelcome, stopWelcome } from "../intro";
+import { REPLAY_EVENT, WELCOME_HEADING, WELCOME_LINE, introAlreadyShown, introAppliesHere, introSoundEnabled, markIntroShown, playOpeningTone, preloadWelcome, setIntroSoundEnabled, speakWelcome, stopWelcome } from "../intro";
 import "./IntroOverlay.css";
 
 /**
@@ -65,6 +65,7 @@ export default function IntroOverlay() {
     markIntroShown();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 
+    preloadWelcome();
     playOpeningTone();
     let cancelled = false;
     timers.current.push(
