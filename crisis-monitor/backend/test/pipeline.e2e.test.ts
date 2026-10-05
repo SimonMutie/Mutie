@@ -56,7 +56,13 @@ interface Fixture {
 
 const pad = (s: string) => `${s} The report could not be independently verified. Communications in the area remain intermittent and aid agencies said access was restricted. Local officials said further details would be released, and residents described the situation as tense through the night.`;
 
-const FIXTURES: Fixture[] = [
+/** The fixtures name weekdays ("on Thursday"). Whatever day the tests run,
+ *  those are made to mean the day before publication, so the events are
+ *  always inside the 24-hour window. */
+const DAY_BEFORE_PUBLICATION = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(NOW.getTime() - 6 * 3_600_000 - 86_400_000).getUTCDay()];
+const recent = <T,>(fixtures: T): T => JSON.parse(JSON.stringify(fixtures).replace(/\b(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day\b/g, DAY_BEFORE_PUBLICATION)) as T;
+
+const FIXTURES: Fixture[] = recent<Fixture[]>([
   {
     // A Kenyan outlet reporting fighting in Somaliland. Must land in Somalia (Las Anod) — not Kenya, not Mali, not Ethiopia.
     url: "https://kenyan-daily.example/world/somaliland-las-anod-fighting",
@@ -173,7 +179,7 @@ const FIXTURES: Fixture[] = [
       }],
     },
   },
-];
+]);
 
 const html = (f: Fixture) => `<html><head><meta property="og:title" content="${f.title}"><meta property="article:published_time" content="${iso(6)}"></head><body><article><p>${f.body.replace(/\. /g, ".</p><p>")}</p></article></body></html>`;
 
@@ -309,7 +315,7 @@ describe("escalation pipeline, end to end", () => {
     expect(tigray.summary).not.toContain("[9]");
     // The analyst was given the quotes and what each article reports, not just counts.
     const prompt = analystCalls.find((p) => p.includes("Mekelle"))!;
-    expect(prompt).toContain("carried out a drone strike near Mekelle on Wednesday");
+    expect(prompt).toContain(`carried out a drone strike near Mekelle on ${DAY_BEFORE_PUBLICATION}`);
     expect(prompt).toContain("First strike on Mekelle since the Pretoria agreement.");
   });
 

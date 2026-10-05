@@ -164,7 +164,17 @@ report volume. Each 5-minute tick:
    those headlines, cited, with the rule that flagged it, and is labelled
    *preliminary* in the interface until an article behind it has been read.
 7. **Raises one alert per incident**, keeps it in step with the incident, and
-   closes it when the incident's reports age out (72 hours).
+   closes it when the incident's reports age out (24 hours).
+
+**Only the last 24 hours count** (`ACTIVE_WINDOW_HOURS`, `isLive()`). A report
+counts toward a flag only if its article was published in the last 24 hours
+*and* the event's own date is today or yesterday. Articles older than that
+are not collected or read. The headline first pass reads the date the text
+gives ("on Sunday", "yesterday", "3 October", "last week", "this past
+weekend", the day something was said) against the publication day, uses it
+as the event date, and leaves the report alone when it dates the event more
+than a day back; a date attached to something else ("despite a curfew
+imposed on September 21") is ignored.
 
 Useful endpoints (all under `/api/live-layers/conflict-escalation`):
 

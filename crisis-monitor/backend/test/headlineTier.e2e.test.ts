@@ -26,10 +26,10 @@ const ITEMS: Item[] = [
   // One outlet, twelve deaths stated: flagged on its own.
   { url: "https://jos-herald.example/plateau-attack", title: "Gunmen kill 12 villagers in Barkin Ladi, Plateau", description: "Gunmen killed 12 villagers in an overnight attack on a farming community in Barkin Ladi, Plateau State, residents said." },
   // Two independent outlets, the same strike, no deaths stated: flagged only because there are two.
-  { url: "https://addis-news.example/mekelle-market-strike", title: "Drone strike hits Mekelle market, officials say", description: "A drone strike hit a market in Mekelle on Tuesday, Tigray officials said." },
+  { url: "https://addis-news.example/mekelle-market-strike", title: "Drone strike hits Mekelle market, officials say", description: "A drone strike hit a market in Mekelle today, Tigray officials said." },
   { url: "https://horn-wire.example/tigray-mekelle", title: "Tigray: air strike on Mekelle reported by residents", description: "Residents reported an air strike on the outskirts of Mekelle." },
   // One outlet, no deaths stated: on record, not flagged.
-  { url: "https://sahel-daily.example/kidal-clashes", title: "Clashes erupt in Kidal between army and rebels", description: "Clashes erupted in Kidal on Monday." },
+  { url: "https://sahel-daily.example/kidal-clashes", title: "Clashes erupt in Kidal between army and rebels", description: "Clashes erupted in Kidal overnight." },
   // A warning is not an event.
   { url: "https://borno-post.example/army-warning", title: "Army warns of attack on Maiduguri", description: "The army warned of a possible attack on Maiduguri." },
   // One outlet, a strike with seven deaths: flagged.
@@ -39,14 +39,18 @@ const ITEMS: Item[] = [
   // ...thirty-one deaths from two independent outlets: Critical.
   { url: "https://goma-info.example/ituri-attack", title: "ADF rebels kill 31 civilians in Ituri village attack", description: "ADF rebels killed 31 civilians in an attack on a village in Ituri province, local officials said." },
   { url: "https://kinshasa-times.example/ituri", title: "Dozens dead after rebels attack village in Ituri", description: "At least 31 people were killed when rebels attacked a village in Ituri province overnight, a civil society leader said." },
+  // Major, but not new: dated to last week in its own summary. Not flagged.
+  { url: "https://kaduna-voice.example/last-week", title: "Gunmen kill 14 villagers in Kaduna village attack", description: "Gunmen killed 14 villagers in an attack on a village in Kaduna State last week, police confirmed." },
   // One outlet's strike report, and an aggregator's copy of it under a prefixed headline with a longer summary: one source, no deaths — not flagged.
-  { url: "https://nile-radio.example/dilling-strike", title: "Doctors' network: drone attack on Dilling homes, South Kordofan", description: "Homes in Dilling, South Kordofan, were hit in a drone attack on Sunday, a doctors' network said..." },
-  { url: "https://all-continent.example/sudan-dilling", title: "Sudan: Doctors' Network - Drone Attack On Dilling Homes, South Kordofan", description: "Homes in Dilling, South Kordofan, were hit in a drone attack on Sunday, a doctors' network said, citing residents." },
+  { url: "https://nile-radio.example/dilling-strike", title: "Doctors' network: drone attack on Dilling homes, South Kordofan", description: "Homes in Dilling, South Kordofan, were hit in a drone attack overnight, a doctors' network said..." },
+  { url: "https://all-continent.example/sudan-dilling", title: "Sudan: Doctors' Network - Drone Attack On Dilling Homes, South Kordofan", description: "Homes in Dilling, South Kordofan, were hit in a drone attack overnight, a doctors' network said, citing residents." },
   // The same Plateau story syndicated word for word on another site: not a second source.
   { url: "https://naija-aggregator.example/plateau-attack-copy", title: "Gunmen kill 12 villagers in Barkin Ladi, Plateau", description: "Gunmen killed 12 villagers in an overnight attack on a farming community in Barkin Ladi, Plateau State, residents said." },
 ];
 
-const candidates = ITEMS.map((it, i) => ({ id: `c${i}`, title: it.title, description: it.description, textEn: null, link: it.url, published: iso(3 + i), domain: new URL(it.url).hostname, sourceCountry: "XX", priority: 5 }));
+const candidates = ITEMS.map((it, i) => ({ id: `c${i}`, title: it.title, description: it.description, textEn: null, link: it.url, published: iso(1 + i), domain: new URL(it.url).hostname, sourceCountry: "XX", priority: 5 }));
+// Major and undated, but published thirty hours ago: outside the window. Not flagged.
+candidates.push({ id: "old", title: "Gunmen kill 19 villagers in Katsina village attack", description: "Gunmen killed 19 villagers in an attack on a village in Katsina State, residents said.", textEn: null, link: "https://katsina-post.example/thirty-hours-ago", published: iso(30), domain: "katsina-post.example", sourceCountry: "XX", priority: 5 });
 
 const body = (s: string) =>
   `${s} The report could not be independently verified. Communications in the area remain intermittent and aid agencies said access was restricted. Local officials said further details would be released, and residents described the situation as tense through the night.`;
@@ -178,6 +182,9 @@ describe("headline first pass, with no AI available", () => {
     const dilling = await getAuditLog(env, { q: "Dilling" });
     expect(dilling.map((a) => a.status)).toEqual(["coded", "coded"]);
     expect((await getFlaggedIncidents(env)).some((i) => i.locationLabel?.includes("South Kordofan"))).toBe(false);
+    // Old events are not put on record from their headlines, however serious.
+    expect(await getAuditLog(env, { q: "Kaduna" })).toHaveLength(0);
+    expect(await getAuditLog(env, { q: "Katsina" })).toHaveLength(0);
     // The warning was never stored: it is left for a full reading.
     expect(await getAuditLog(env, { q: "Maiduguri" })).toHaveLength(0);
   });
