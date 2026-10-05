@@ -408,10 +408,15 @@ async function storeReports(env: Env, articleId: string, reports: VerifiedReport
  *  see), so this only saves looking at them again on every tick. Per
  *  isolate; losing it costs a few milliseconds of pattern matching. */
 const headlineSeen = new Set<string>();
+/** First-pass articles already checked against the rules now in force. */
+const headlineRechecked = new Set<string>();
+/** The most first-pass codings withdrawn in one tick after a rule change. */
+const HEADLINE_WITHDRAWALS_PER_TICK = 60;
 
 /** Test hook. */
 export function resetHeadlinePass(): void {
   headlineSeen.clear();
+  headlineRechecked.clear();
 }
 
 interface ArticleOnRecord {
@@ -440,6 +445,35 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
   // Never calls the online geocoder: the place was found in the platform's own gazetteer.
   const noGeocoding: GeocodeBudget = { remaining: 0 };
   const newestFirst = [...candidates].sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+
+  // The rules are tightened from time to time. A first-pass coding made
+  // under older rules that today's rules would not make is withdrawn —
+  // its reports removed, and the article returned to the unread pile — so
+  // a marker never outlives the rule that put it there. Each article is
+  // checked once per isolate, which is whenever new code is deployed.
+  let withdrawn = 0;
+  for (const c of newestFirst) {
+    if (withdrawn >= HEADLINE_WITHDRAWALS_PER_TICK) break;
+    const row = onRecord.get(c.id);
+    if (!c.title || !row || row.model !== HEADLINE_CODER || row.status !== "coded" || headlineRechecked.has(c.id)) continue;
+    try {
+      const item = { title: c.title, feedText: c.feedText, publishedAt: c.publishedAt };
+      const outcome = verifyCoding(codeHeadline(item, now), { url: c.url, title: c.title, text: headlineText(item), textBasis: HEADLINE_TEXT_BASIS, publishedAt: c.publishedAt, domain: c.domain }, now);
+      if (outcome.reports.length > 0) {
+        headlineRechecked.add(c.id);
+        continue;
+      }
+      await run(env.DB, "DELETE FROM escalation_reports WHERE article_id = ?", [c.id]);
+      await run(env.DB, "DELETE FROM escalation_articles WHERE id = ? AND model = ? AND status = 'coded'", [c.id, HEADLINE_CODER]);
+      onRecord.delete(c.id);
+      headlineSeen.add(c.id);
+      withdrawn++;
+    } catch (err) {
+      headlineRechecked.add(c.id);
+      console.error(`[escalation] headline recheck failed for ${c.url}`, err);
+    }
+  }
+  if (withdrawn > 0) console.log(`[escalation] withdrew ${withdrawn} first-pass coding(s) that the current rules do not support`);
 
   for (const c of newestFirst) {
     if (stats.headlineCoded >= HEADLINE_REPORTS_PER_TICK) break;

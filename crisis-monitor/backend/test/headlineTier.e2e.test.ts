@@ -6,7 +6,8 @@
  * replace the first pass: confirming it, or taking the marker down.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { runEscalationPipeline, getFlaggedIncidents, getPipelineStatus, getAuditLog, resetHeadlinePass } from "../src/escalationIncidents";
+import { runEscalationPipeline, getFlaggedIncidents, getPipelineStatus, getAuditLog, resetHeadlinePass, canonicalUrl } from "../src/escalationIncidents";
+import { hashId } from "../src/lib/osintFeed";
 import { resetAiBudgetTableCheck } from "../src/lib/aiBudget";
 import type { Env } from "../src/bindings";
 import type { RawCoding } from "../src/lib/escalationCoder";
@@ -266,5 +267,36 @@ describe("headline first pass and articles already on record", () => {
     // A model read it and rejected it: left exactly as it was.
     expect(row(decided)).toEqual({ status: "rejected", model: "some-model", attempts: 3, report_count: 1, rejection_reason: "retrospective" });
     expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_reports WHERE article_id = ?").get(idOf(decided)) as { n: number }).n).toBe(0);
+  });
+});
+
+describe("headline first pass after its rules are tightened", () => {
+  it("withdraws codings the rules no longer support — pieces about an event rather than reports of one — and keeps the rest", async () => {
+    // Two outlets' reaction pieces about fighting in Baidoa, on record as first-pass "clashes" under the earlier rules.
+    const pieces = [
+      { url: "https://horn-wire.example/britain-baidoa", title: "Britain urges restraint as fighting flares in Baidoa", description: "Britain expressed concern over renewed fighting in Baidoa, urging rival sides to exercise restraint." },
+      { url: "https://juba-valley.example/families-baidoa", title: "Families face renewed violence amid worsening hunger crisis", description: "Children were killed and injured in fresh fighting in Baidoa, where families already face severe hunger." },
+    ];
+    for (const p of pieces) {
+      const id = hashId(canonicalUrl(p.url));
+      const domain = new URL(p.url).hostname;
+      candidates.push({ id, title: p.title, description: p.description, textEn: null, link: p.url, published: iso(2), domain, sourceCountry: "XX", priority: 5 });
+      db.prepare("INSERT INTO escalation_articles (id, url, domain, title, origin, published_at, text_basis, status, report_count, attempts, model, processed_at) VALUES (?,?,?,?, 'africa-wire', ?, 'headline', 'coded', 1, 0, 'headline-rules', ?)").run(id, p.url, domain, p.title, iso(2), iso(1));
+      db.prepare(
+        `INSERT INTO escalation_reports (id, article_id, incident_id, country_code, country_name, place, lat, lon, geo_precision, geo_method, geo_label, event_date, date_basis, indicators, trajectory, what_happened, confidence, created_at)
+         VALUES (?, ?, NULL, 'SO', 'Somalia', 'Baidoa', 3.1167, 43.65, 'place', 'gazetteer', 'Baidoa', ?, 'publication', ?, 'unclear', ?, 'low', ?)`
+      ).run(`r-${id}`, id, today, JSON.stringify([{ id: "armed_clash", label: "Armed clash", quote: p.description }]), p.title, iso(1));
+    }
+    const genuineBefore = (db.prepare("SELECT COUNT(*) AS n FROM escalation_articles WHERE model = 'headline-rules' AND url NOT LIKE '%baidoa%'").get() as { n: number }).n;
+    expect(genuineBefore).toBeGreaterThan(3);
+
+    resetHeadlinePass(); // as after a deployment
+    await runEscalationPipeline(env);
+
+    expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_articles WHERE url LIKE '%baidoa%'").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_reports WHERE country_code = 'SO'").get() as { n: number }).n).toBe(0);
+    expect((await getFlaggedIncidents(env)).some((i) => i.countryCode === "SO")).toBe(false);
+    // Reports of actual events are untouched.
+    expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_articles WHERE model = 'headline-rules' AND url NOT LIKE '%baidoa%'").get() as { n: number }).n).toBe(genuineBefore);
   });
 });

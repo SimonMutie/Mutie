@@ -27,6 +27,14 @@ import type { RawCodedEvent, RawCoding } from "./escalationCoder";
  *   - never asserts the critical-tier judgements that need understanding
  *     (interstate hostilities, a ceasefire's collapse, a major town's fall)
  *     — only what a headline states outright;
+ *   - codes a report OF an event, not a piece ABOUT one. A headline whose
+ *     subject is a reaction or statement ("condemns", "urges restraint",
+ *     "claims victory"), the consequences of fighting (hunger, displaced
+ *     families), an analysis, rights report or round-up, or a long-running
+ *     situation presented as such ("18-year insurgency") is left alone;
+ *     and wording that describes a standing state ("under siege since
+ *     May", "has repeatedly attacked") is not taken as something that
+ *     happened;
  *   - checks the date: the day the text gives for the event ("on Sunday",
  *     "yesterday", "3 October") becomes its event date, and a report whose
  *     own wording puts the event more than a day before publication ("last
@@ -68,6 +76,47 @@ const NOT_SECURITY_RX =
   /\b(football|soccer|league|cup final|striker|goalkeeper|afcon|olympics?|boxing|rugby|cricket|basketball|tennis|marathon|film|movie|album|concert|novel|box office|stock market|premier league|champions league|world cup|netflix|festival|fashion|recipe)\b/i;
 const LEGAL_RX = /\b(court|trial|verdict|sentenced|jailed|convicted|acquitted|charged with|pleads?|tribunal|icc|prosecutors?|lawsuit|indicted|extradit\w+|inquest|inquiry into)\b/i;
 const RETROSPECTIVE_RX = /\b(anniversary|years? (ago|on|after|since)|decades? (ago|on|after|since)|remember(s|ing|ed)|commemorat\w+|memorial|looking back|history of)\b/i;
+
+// A report OF an event, or a piece ABOUT one? Only the first is coded. A
+// reaction, a statement, a humanitarian or analytical piece, or a recap of
+// a long-running situation mentions fighting without reporting a new event
+// — and three such pieces about last week's fighting must not add up to
+// "three outlets report clashes today".
+
+/** The headline's subject is someone reacting to, or talking about, an event. */
+const REACTION_RX =
+  /\b(condemn\w*|denounc\w+|deplor\w+|decr(?:y|ies|ied)|urg(?:e|es|ed|ing)|call(?:s|ed|ing)? (?:for|on)|appeal(?:s|ed)? (?:for|to)|express(?:es|ed)? (?:\w+ )?(?:concern|outrage|condolences?|sympathy|alarm|shock|solidarity)|concern(?:ed|s)? (?:over|about|at)|alarm(?:ed)? (?:over|at|by)|mourns?|condolences?|reacts?|reactions?|respond(?:s|ed)? to|blam(?:es|ed)|accus(?:es|ed)|den(?:y|ies|ied)|rejects?|dismiss(?:es|ed)|statement (?:by|on|from|of)|press (?:release|statement|briefing|conference)|communiqu[ée]|remarks|speech|claims? victory|prais(?:es|ed)|hails?|welcomes?|commends?|salutes?|pays? tribute|honou?rs?|visits?|meets?|discuss(?:es|ed)?|briefs?|briefing|condamne|d[ée]nonce|d[ée]plore|exhorte|appelle [àa]|r[ée]agit|s['’]inqui[èe]te|d[ée]ment|accuse|rend hommage|d[ée]claration d[eu])\b/i;
+/** The headline is about the consequences of fighting, not a new event in it. */
+const IMPACT_RX =
+  /\b(impact (?:of|on)|aftermath|in the wake of|humanitarian (?:crisis|situation|needs|emergency|catastrophe|disaster|response)|hunger|famine|malnutrition|aid (?:needs|appeal|agencies warn)|(?:families|children|women|civilians|residents|refugees|displaced \w+) (?:face|struggle|need|bear|suffer|await|still)|survivors (?:recount|recall|await|still|struggle|tell)|recounts?|recalls?|testimon\w+|crisis (?:deepens|worsens|grows|mounts)|worsening|deepen(?:s|ing)|toll of|cost of|legacy|lessons?|trauma|recovery|rebuild\w*|reconstruction|crise humanitaire)\b/i;
+/** The headline is an analytical or summarising piece. */
+const ANALYSIS_RX =
+  /^(?:[\p{L}' -]{2,25}: )?(?:how|why|what|who|where|when|inside|behind|explain\w*|the (?:story|rise|fall|roots|making|return) of|comment|pourquoi)\b|\b(report (?:finds|says|reveals|documents|details|shows|warns|accuses)|new report|study|investigation|researchers?|analysts?|experts?|amnesty|human rights watch|hrw|rights groups?|data shows?|figures show|statistics|weekly|monthly|round-?up|recap|updates?|in numbers|key (?:facts|moments|events)|redraws?|reshap\w+|what next|outlook)\b/iu;
+/** The headline frames the piece as part of a long-running situation. */
+const LONG_RUNNING_RX =
+  /\b(\d+[- ]year (?:war|conflict|insurgency|siege|crisis|rebellion|civil war)|(?:decades?|years?|months?)[- ]long|long[- ]running|protracted|(?:years|decades|months) of (?:war|conflict|fighting|violence|insurgency|unrest|bloodshed)|since (?:19|20)\d\d)\b/i;
+/** A clause that describes a standing situation, not something that just
+ *  happened: "which has been under siege since May 2024", "has repeatedly
+ *  attacked army bases", "the two-year war". */
+const BACKGROUND_RX =
+  /\b(since (?:(?:19|20)\d\d|january|february|march|april|may|june|july|august|september|october|november|december)|for (?:more than |over |nearly |almost |about )?(?:\w+ )?(?:months|years|decades)|(?:has|have|had) (?:long )?been (?:fighting|battling|waging|under siege|at war|locked in|besieged|blockaded|clashing)|long[- ]running|protracted|(?:decades?|years?|months?)[- ]long|\d+[- ]year (?:war|conflict|insurgency|siege|rebellion)|(?:two|three|four|five|six|seven|eight|nine|ten)[- ]year (?:war|conflict|insurgency|siege|rebellion)|(?:years|months|decades) of (?:fighting|war|conflict|violence|clashes|insurgency|unrest)|(?:began|started|broke out|erupted) in (?:(?:19|20)\d\d|january|february|march|april|may|june|july|august|september|october|november|december)|war-torn|repeatedly|regularly|frequently|routinely|often|in recent (?:years|months)|depuis (?:(?:19|20)\d\d|des (?:mois|ann[ée]es)))\b/i;
+const CLAUSE_BREAK_RX = /[,;]|\s(?:which|where|while|amid|after|as|que|qui|où)\s/gi;
+
+/** The clause of a sentence that contains position `at`. */
+function clauseAt(sentence: string, at: number): string {
+  let start = 0;
+  let end = sentence.length;
+  CLAUSE_BREAK_RX.lastIndex = 0;
+  for (let m = CLAUSE_BREAK_RX.exec(sentence); m; m = CLAUSE_BREAK_RX.exec(sentence)) {
+    if (m.index + m[0].length <= at) start = m.index + m[0].length;
+    else if (m.index > at) {
+      end = m.index;
+      break;
+    }
+  }
+  return sentence.slice(start, end);
+}
+
 /** Countries and territories outside Africa where the reported event would
  *  actually be. A headline that names one is not coded here even if an
  *  African place is also mentioned ("Kenyan killed in Ukraine strike"). */
@@ -113,7 +162,7 @@ const RULES: IndicatorRule[] = [
   {
     id: "armed_clash",
     rx: [
-      /\b(clash(?:es|ed)|(?:heavy|fierce|intense|renewed|fresh) fighting|fighting (?:erupt\w*|broke out|breaks out|rag\w+|resum\w+|continu\w+|intensif\w+|between)|gun ?battles?|firefights?|exchange of (?:gun)?fire|battles? (?:rag\w+|erupt\w*|between)|affrontements?|accrochages?|combats? (?:violents?|intenses?|entre|ont|font|opposent))\b/i,
+      /\b(clash(?:es|ed)|(?:heavy|fierce|intense|renewed|fresh|new|deadly) (?:fighting|battles?|combat|gunfire)|(?:fighting|combat|gunfire|hostilities) (?:erupt\w*|broke out|breaks out|rag\w+|resum\w+|continu\w+|intensif\w+|flar\w+|renewed|between)|gun ?battles?|firefights?|exchange of (?:gun)?fire|battles? (?:rag\w+|erupt\w*|renewed|resum\w+|between)|affrontements?|accrochages?|combats? (?:violents?|intenses?|entre|ont|font|opposent))\b/i,
     ],
     unless: CIVIL_UNREST_RX,
   },
@@ -134,7 +183,9 @@ const RULES: IndicatorRule[] = [
   },
   {
     id: "siege_or_blockade",
-    rx: [/\b(besieg(?:ed|es|ing)|under siege|siege of|blockade[ds]? (?:of|on)|impos(?:ed|es) a blockade|assi[ée]g(?:[ée]e?s?|ent)|sous (?:le )?si[èe]ge|blocus)\b/i],
+    // The act of laying one — not the standing state ("the besieged city", "under siege since May").
+    rx: [/\b(la(?:y|ys|id) siege to|besieg(?:es|ing)|(?:have|has|had) besieged|(?:begin|begins|began|begun) (?:a |the |its )?(?:siege|blockade)|impos(?:ed|es|ing) (?:a |an |the )?(?:\w+ )?(?:siege|blockade)|encircl(?:es|ed)|surround(?:s|ed) the (?:town|city|base|garrison)|assi[èe]gent|impos(?:e|ent) un (?:si[èe]ge|blocus))\b/i],
+    unless: BACKGROUND_RX,
   },
   {
     id: "ceasefire_violation",
@@ -376,10 +427,13 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
   if (text.length < 25) return reject("unreadable", "No headline or summary long enough to code.");
 
   if (NOT_SECURITY_RX.test(title)) return reject("not_security_related", "Headline is about sport, culture or business.");
-  if (NOT_NEWS_RX.test(title)) return reject("commentary_or_analysis", "Headline marks this as commentary, analysis or a media item.");
-  if (LEGAL_RX.test(title)) return reject("legal_or_court", "Headline is about legal proceedings.");
   const oldYear = [...title.matchAll(/\b(19|20)\d\d\b/g)].some((m) => Number(m[0]) < now.getUTCFullYear());
   if (RETROSPECTIVE_RX.test(title) || oldYear) return reject("retrospective", "Headline refers to past events.");
+  if (LONG_RUNNING_RX.test(title)) return reject("retrospective", "Headline frames this as part of a long-running situation rather than a new event.");
+  if (NOT_NEWS_RX.test(title) || ANALYSIS_RX.test(title)) return reject("commentary_or_analysis", "Headline marks this as commentary, analysis, a report or a round-up, not a report of a new event.");
+  if (LEGAL_RX.test(title)) return reject("legal_or_court", "Headline is about legal proceedings.");
+  if (REACTION_RX.test(title)) return reject("diplomatic_or_political_only", "Headline is a reaction to, or a statement about, an event — not a report of the event.");
+  if (IMPACT_RX.test(title)) return reject("humanitarian_only", "Headline is about the consequences of fighting, not a new armed event.");
   if (ELSEWHERE_RX.test(title)) return reject("outside_africa", "Headline names a place outside Africa.");
 
   // The headline's own sentences, then the summary's.
@@ -415,6 +469,8 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
       const m = rule.rx.map((rx) => rx.exec(s)).find(Boolean);
       if (!m) continue;
       if (HYPOTHETICAL_RX.test(s) || (rule.unless && rule.unless.test(s))) continue;
+      // The wording must state something that happened, not describe a standing situation.
+      if (BACKGROUND_RX.test(clauseAt(s, m.index))) continue;
       matches.push({ sentence: s, at: m.index, end: m.index + m[0].length });
     }
     keep(rule.id, matches);
@@ -423,7 +479,7 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
   // kill 12 in Mopti") is an attack even without a generic word like "gunmen".
   if (!found.some((f) => f.id === "attack_on_civilians" || f.id === "attack_on_security_forces")) {
     const actRx = new RegExp(`\\b(?:${VIOLENT_ACTS})\\b`, "i");
-    const matches = sentences.filter((x) => actRx.test(x) && matchNonStateArmedGroups(x).length > 0 && !HYPOTHETICAL_RX.test(x) && !NOT_ARMED_ATTACK_RX.test(x)).map((x) => ({ sentence: x, at: 0, end: x.length }));
+    const matches = sentences.filter((x) => actRx.test(x) && matchNonStateArmedGroups(x).length > 0 && !HYPOTHETICAL_RX.test(x) && !NOT_ARMED_ATTACK_RX.test(x) && !BACKGROUND_RX.test(x)).map((x) => ({ sentence: x, at: 0, end: x.length }));
     keep("attack_on_civilians", matches);
   }
   if (found.length === 0) {
