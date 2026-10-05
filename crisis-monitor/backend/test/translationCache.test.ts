@@ -14,7 +14,7 @@ describe("Africa Wire translation", () => {
     list: async ({ prefix }: { prefix: string }) => new Map([...store].filter(([k]) => k.startsWith(prefix))),
   };
   const aiRun = vi.fn(async () => ({ translated_text: "Fighting broke out near the border, the army said." }));
-  const env = { AI: { run: aiRun } } as unknown as Env;
+  const env = { AI: { run: aiRun }, TRANSLATION_ENABLED: "true" } as unknown as Env;
   let current = feed([item(1, "Combats à la frontière"), item(2, "Attaque près de Djibo : dix soldats tués")]);
   vi.stubGlobal("fetch", async () => new Response(current, { headers: { "content-type": "application/rss+xml" } }));
   afterAll(() => vi.unstubAllGlobals());
@@ -36,6 +36,17 @@ describe("Africa Wire translation", () => {
     current = feed([item(3, "Frappe de drone près de Kidal"), item(1, "Combats à la frontière"), item(2, "Attaque près de Djibo : dix soldats tués")]);
     await crawl();
     expect(aiRun).toHaveBeenCalledTimes(3);
+  });
+
+  it("never calls the translation model when translation is switched off (the default)", async () => {
+    const offStore = new Map<string, unknown>([["source:0", store.get("source:0")]]);
+    const offStorage = { get: async (k: string) => offStore.get(k), put: async (k: string, v: unknown) => void offStore.set(k, v), list: async () => new Map() };
+    const offRun = vi.fn();
+    const off = new AfricaWireActor({ storage: offStorage } as unknown as DurableObjectState, { AI: { run: offRun } } as unknown as Env);
+    for (let i = 0; i < 3; i++) await off.fetch(new Request("http://africa-wire-actor/process-source?index=0"));
+    expect(offRun).not.toHaveBeenCalled();
+    // The items are still crawled and stored, just untranslated.
+    expect((offStore.get("items:0") as unknown[]).length).toBeGreaterThan(0);
   });
 
   it("does not retry an item whose translation failed", async () => {

@@ -216,7 +216,13 @@ export class AfricaWireActor implements DurableObject {
       // item was re-translated on every tick — the same headline translated
       // ~288 times a day — which was by far this app's largest Workers AI cost.)
       const previous = new Map((await this.state.storage.get<WireItem[]>(`items:${index}`))?.map((it) => [it.id, it]) ?? []);
-      let translateBudget = TRANSLATE_TOP_N_PER_SOURCE;
+      // Translation is OFF unless TRANSLATION_ENABLED = "true" (see
+      // bindings.ts) — switched off at Simon's request to stop its Workers AI
+      // cost. With it off no translation model is ever called; items that
+      // were translated earlier keep their text. The escalation pipeline
+      // does not depend on it (it reads each article in its own language).
+      const translationOn = (this.env.TRANSLATION_ENABLED ?? "false") === "true";
+      let translateBudget = translationOn ? TRANSLATE_TOP_N_PER_SOURCE : 0;
       const wireItems: WireItem[] = await Promise.all(
         fresh.map(async (it) => {
           const id = hashId(`${index}:${it.link || it.title}`);

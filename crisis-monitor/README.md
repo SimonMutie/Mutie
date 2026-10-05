@@ -163,6 +163,7 @@ Settings (`wrangler secret put …` for the key; `[vars]` in `wrangler.toml` for
 | `ESCALATION_ARTICLES_PER_TICK` | `12` | Articles read per 5-minute tick. |
 | `ESCALATION_PIPELINE_ENABLED` | `true` | `false` pauses reading/coding; existing incidents age out normally. |
 | `GEOCODER_ENABLED` | `true` | `false` disables Nominatim lookups (bundled gazetteers only). |
+| `TRANSLATION_ENABLED` | `false` | `true` turns on Workers AI translation of non-English Africa Wire items (each item once). Off by default because of its cost. |
 
 Tests: `cd backend && npm test`.
 

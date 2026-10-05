@@ -98,6 +98,12 @@ export interface Env {
    *  ANTHROPIC_API_KEY is unset — the pipeline then runs on Workers AI. */
   ESCALATION_CODER_MODEL?: string;
   ESCALATION_ANALYST_MODEL?: string;
+  /** "true" turns on Workers AI translation of non-English Africa Wire
+   *  items (lib/translate.ts), used only to give those items an English-
+   *  keyword risk score in the Africa Wire feed. OFF by default: it was the
+   *  account's largest Workers AI cost. When on, each item is translated
+   *  once, not on every crawl tick. */
+  TRANSLATION_ENABLED?: string;
   /** "false" switches off the online place geocoder (lib/geocoder.ts);
    *  locations then resolve from the bundled gazetteers only. Default on. */
   GEOCODER_ENABLED?: string;
