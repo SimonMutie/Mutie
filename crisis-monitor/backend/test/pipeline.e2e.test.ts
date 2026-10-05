@@ -180,6 +180,25 @@ const html = (f: Fixture) => `<html><head><meta property="og:title" content="${f
 let db: InstanceType<typeof DatabaseSync>;
 let env: Env;
 const analystCalls: string[] = [];
+let modelDown = false;
+let workersAiJsonModeCalls = 0;
+
+/** Stand-in for the Workers AI binding: refuses schema-constrained JSON mode
+ *  (as a platform that does not support the schema would), and in plain mode
+ *  answers with the coding wrapped in prose and a code fence. */
+async function workersAiRun(_model: string, input: { messages: { role: string; content: string }[]; response_format?: unknown }) {
+  if (input.response_format) {
+    workersAiJsonModeCalls++;
+    throw new Error("5025: This model doesn't support JSON Schema.");
+  }
+  const user = input.messages.find((m) => m.role === "user")!.content;
+  if (user.startsWith("INCIDENT LOCATION")) {
+    const where = /INCIDENT LOCATION: (.+)/.exec(user)![1];
+    return { response: `Here is the assessment:\n\`\`\`json\n${JSON.stringify({ headline: `Assessment for ${where}`, summary: `Reports describe events at ${where} [1], with details from the coded material.`, assessment: "A shift.", outlook: "Watch.", caveats: null })}\n\`\`\`` };
+  }
+  const fixture = FIXTURES.find((f) => user.includes(`Headline: ${f.title}`))!;
+  return { response: `Sure. ${JSON.stringify(fixture.coding)} Hope that helps.` };
+}
 
 beforeAll(() => {
   db = new DatabaseSync(":memory:");
@@ -210,6 +229,7 @@ beforeAll(() => {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     if (url.startsWith("https://api.anthropic.com/")) {
+      if (modelDown) return new Response("down for test", { status: 503 });
       const body = JSON.parse(String(init?.body)) as { tools: { name: string }[]; messages: { content: string }[] };
       const user = body.messages[0].content;
       if (body.tools[0].name === "record_incident_assessment") {
@@ -332,6 +352,44 @@ describe("escalation pipeline, end to end", () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM alerts").get() as { n: number }).n).toBe(before);
     expect((db.prepare("SELECT COUNT(*) AS n FROM escalation_reports").get() as { n: number }).n).toBe(reportsBefore);
     expect(analystCalls.length).toBe(analystBefore);
+  });
+
+  it("when no model answers, stops early, keeps the articles queued, and records why", async () => {
+    // New articles appear while both providers are down.
+    db.prepare("DELETE FROM escalation_articles").run();
+    db.prepare("DELETE FROM escalation_reports").run();
+    db.prepare("DELETE FROM escalation_incidents").run();
+    db.prepare("DELETE FROM alerts").run();
+    modelDown = true;
+    for (let i = 0; i < 4; i++) await runEscalationPipeline(env); // more ticks than the retry limit
+    const rows = db.prepare("SELECT status, rejection_reason, attempts FROM escalation_articles").all() as { status: string; rejection_reason: string; attempts: number }[];
+    // Only the first group of three was attempted each tick, not the whole batch.
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.status === "error" && r.rejection_reason === "model_unavailable")).toBe(true);
+    const last = JSON.parse((db.prepare("SELECT value FROM escalation_pipeline_state WHERE key = 'last_run'").get() as { value: string }).value);
+    expect(last.modelFailures).toBe(3);
+    expect(last.lastModelError.message).toMatch(/down for test|not valid JSON|503/);
+
+    // The model comes back: everything is read, including the articles that failed four times.
+    modelDown = false;
+    await runEscalationPipeline(env);
+    const after = db.prepare("SELECT status, COUNT(*) AS n FROM escalation_articles GROUP BY status").all() as { status: string; n: number }[];
+    expect(Object.fromEntries(after.map((r) => [r.status, r.n]))).toEqual({ coded: 4, rejected: 3 });
+    expect((await getFlaggedIncidents(env)).map((i) => i.countryCode).sort()).toEqual(["ET", "SO"]);
+  });
+
+  it("works on the Cloudflare model alone, including when its JSON mode is refused", async () => {
+    db.prepare("DELETE FROM escalation_articles").run();
+    db.prepare("DELETE FROM escalation_reports").run();
+    db.prepare("DELETE FROM escalation_incidents").run();
+    db.prepare("DELETE FROM alerts").run();
+    const noKeyEnv = { ...env, ANTHROPIC_API_KEY: undefined, AI: { run: workersAiRun } } as unknown as Env;
+    await runEscalationPipeline(noKeyEnv);
+    const status = await getPipelineStatus(noKeyEnv);
+    expect(status.provider.provider).toBe("workers-ai");
+    expect(Object.fromEntries(status.last24h.map((s) => [s.status, s.count]))).toEqual({ coded: 4, rejected: 3 });
+    expect((await getFlaggedIncidents(noKeyEnv)).map((i) => `${i.countryCode}:${i.locationLabel}`).sort()).toEqual(["ET:Mekelle, Tigray", "SO:Las Anod, Sool"]);
+    expect(workersAiJsonModeCalls).toBeGreaterThan(0);
   });
 
   it("closes the incident and its alert once its reports age out of the window", async () => {

@@ -79,6 +79,10 @@ interface WireItem {
    *  (untranslated) title+description when present. Original title/
    *  description are kept as-is for display either way. */
   riskTextEn?: string;
+  /** Set once a translation has been attempted for this item (whether or
+   *  not it produced text), so the same item is never sent to the
+   *  translation model again on a later crawl tick. */
+  translationTried?: boolean;
 }
 
 /** One crawled item that is worth reading in full for the escalation
@@ -205,18 +209,29 @@ export class AfricaWireActor implements DurableObject {
       const items = parseRSSItems(await res.text(), domainOf(source.url)).slice(0, ITEMS_PER_SOURCE);
       const fresh = items.filter((it) => now - Date.parse(it.pubDate) <= MAX_ITEM_AGE_MS);
 
+      // Each source is re-crawled every 5 minutes, and its feed mostly holds
+      // the same items as last time. Translations are therefore carried over
+      // from the previous crawl by item id, and only items never seen before
+      // are sent to the translation model. (Without this, every non-English
+      // item was re-translated on every tick — the same headline translated
+      // ~288 times a day — which was by far this app's largest Workers AI cost.)
+      const previous = new Map((await this.state.storage.get<WireItem[]>(`items:${index}`))?.map((it) => [it.id, it]) ?? []);
       let translateBudget = TRANSLATE_TOP_N_PER_SOURCE;
       const wireItems: WireItem[] = await Promise.all(
         fresh.map(async (it) => {
+          const id = hashId(`${index}:${it.link || it.title}`);
           const combined = `${it.title} ${it.description}`;
-          let riskTextEn: string | undefined;
-          if (translateBudget > 0 && detectNonEnglish(combined)) {
+          const seen = previous.get(id);
+          let riskTextEn = seen?.riskTextEn;
+          let translationTried = seen?.translationTried ?? riskTextEn !== undefined;
+          if (!translationTried && translateBudget > 0 && detectNonEnglish(combined)) {
             translateBudget--;
+            translationTried = true;
             const result = await translateToEnglish(this.env, combined);
             if (result.translated) riskTextEn = result.text;
           }
           return {
-            id: hashId(`${index}:${it.link || it.title}`),
+            id,
             index,
             country: source.country,
             domain: domainOf(source.url),
@@ -225,6 +240,7 @@ export class AfricaWireActor implements DurableObject {
             published: it.pubDate,
             description: it.description,
             riskTextEn,
+            translationTried,
           };
         })
       );
