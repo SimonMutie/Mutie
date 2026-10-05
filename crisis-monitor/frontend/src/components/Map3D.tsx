@@ -95,6 +95,11 @@ export interface Map3DTerritoryChange {
 
 interface Map3DProps {
   points: Map3DPoint[];
+  /** When given, the view frames the points once each time this changes
+   *  (and never again until it does, so it does not fight the viewer's own
+   *  zooming). Used where the map shows one set of items in a panel — the
+   *  query dashboard — rather than the whole Live Intel picture. */
+  fitKey?: string;
   paths: Map3DPath[];
   territoryChanges: Map3DTerritoryChange[];
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
@@ -290,7 +295,7 @@ function nightHemisphereRing(date: Date): [number, number][] {
   return ring;
 }
 
-export default function Map3D({ points, paths, territoryChanges, drawAreaRing, onMapClick, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, drawAreaRing, onMapClick, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -304,6 +309,31 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
   const pointsRef = useRef(points);
   pointsRef.current = points;
   const hoverCleanupRef = useRef<(() => void) | null>(null);
+
+  // Framing the points (see `fitKey`).
+  const fitKeyRef = useRef(fitKey);
+  fitKeyRef.current = fitKey;
+  const fittedRef = useRef<string | null>(null);
+  const fitRef = useRef(() => {});
+  fitRef.current = () => {
+    const map = mapRef.current;
+    const key = fitKeyRef.current;
+    const pts = pointsRef.current;
+    if (!map || !readyRef.current || !key || fittedRef.current === key || pts.length === 0) return;
+    fittedRef.current = key;
+    const lats = pts.map((p) => p.lat);
+    const lngs = pts.map((p) => p.lng);
+    const [south, north, west, east] = [Math.min(...lats), Math.max(...lats), Math.min(...lngs), Math.max(...lngs)];
+    if (north - south < 0.05 && east - west < 0.05) map.jumpTo({ center: [west, south], zoom: 5 });
+    else
+      map.fitBounds(
+        [
+          [west, south],
+          [east, north],
+        ],
+        { padding: 70, maxZoom: 5.5, duration: 0 }
+      );
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -335,7 +365,10 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
       map.addImage("warning-icon-critical", buildWarningIconImageData("#ff3d3d"), { pixelRatio: 2 });
       map.addImage("warning-icon-elevated", buildWarningIconImageData("#ff9d4f"), { pixelRatio: 2 });
 
-      map.addSource("osiris-points", { type: "geojson", data: toGeoJsonPoints([]) });
+      // The points already in hand, not an empty set: data that arrived
+      // before the style finished loading would otherwise stay undrawn
+      // until the next time it changed.
+      map.addSource("osiris-points", { type: "geojson", data: toGeoJsonPoints(pointsRef.current) });
       map.addLayer({
         id: "osiris-points-circle",
         type: "circle",
@@ -582,6 +615,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
       }
 
       readyRef.current = true;
+      fitRef.current();
     });
 
     return () => {
@@ -599,7 +633,12 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
     (map.getSource("osiris-points") as GeoJSONSource | undefined)?.setData(toGeoJsonPoints(points));
+    fitRef.current();
   }, [points]);
+
+  useEffect(() => {
+    fitRef.current();
+  }, [fitKey]);
 
   useEffect(() => {
     const map = mapRef.current;
