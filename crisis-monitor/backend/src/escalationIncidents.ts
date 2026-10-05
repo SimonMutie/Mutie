@@ -9,7 +9,8 @@ import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, type 
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
 import { countryAt, countryName, distanceKm, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
-import { describeProvider, getLastModelError } from "./lib/llm";
+import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
+import { getAiUsage, type AiUsage } from "./lib/aiBudget";
 import type { EscalationCandidate } from "./durableObjects/africaWireActor";
 
 /**
@@ -44,6 +45,28 @@ import type { EscalationCandidate } from "./durableObjects/africaWireActor";
  */
 
 const DEFAULT_ARTICLES_PER_TICK = 12;
+/** On the free Workers AI allowance. What reserving one article's reading
+ *  takes (worst case: a full-length article and a full-length answer), and
+ *  what one typically ends up costing — used to pace reading over the day. */
+const NEURONS_TO_READ_ONE_ARTICLE = 650;
+const TYPICAL_NEURONS_PER_ARTICLE = 300;
+/** Reading is spread across the day rather than spent in the first minutes
+ *  after the allowance resets: at any moment the coder may have used at
+ *  most the share of its budget that matches how much of the UTC day has
+ *  gone by, plus this head start. Otherwise a day's ~30 readings would all
+ *  go on whatever was in the feeds at 00:00 UTC and nothing published
+ *  later that day would be read until the next one. */
+const PACING_HEAD_START_MINUTES = 90;
+
+/** How many articles this tick may read on the free allowance.
+ *  `reached` is true once the day's reading budget is spent. */
+export function freeAllowancePacing(ai: Pick<AiUsage, "used" | "budget">, now = new Date()): { articles: number; reached: boolean } {
+  const coderBudget = ai.budget * CODER_BUDGET_SHARE;
+  if (ai.used + NEURONS_TO_READ_ONE_ARTICLE > coderBudget) return { articles: 0, reached: true };
+  const minutesIntoDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const allowedByNow = coderBudget * Math.min(1, (minutesIntoDay + PACING_HEAD_START_MINUTES) / 1440);
+  return { articles: Math.max(0, Math.floor((allowedByNow - ai.used) / TYPICAL_NEURONS_PER_ARTICLE)), reached: false };
+}
 const CODING_CONCURRENCY = 3;
 const SYNTHESES_PER_TICK = 4;
 const GEOCODER_CALLS_PER_TICK = 6;
@@ -895,10 +918,23 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
   await setState(env, "lock", String(Date.now()));
 
   const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, modelFailures: 0, candidates: 0, fresh: 0 };
+  let aiBudgetReached = false;
   try {
     await retireLegacyAlerts(env);
 
-    if ((env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false") {
+    // On the free Workers AI allowance, reading stops for the day once the
+    // coder's share of it is spent (lib/aiBudget.ts). Checked here, before
+    // any article is fetched, so a spent allowance costs nothing further —
+    // not even the downloads. Reading resumes by itself after 00:00 UTC.
+    // It is also paced through the day (freeAllowancePacing).
+    let paceLimit = Number.POSITIVE_INFINITY;
+    if (describeProvider(env).provider === "workers-ai") {
+      const pace = freeAllowancePacing(await getAiUsage(env));
+      aiBudgetReached = pace.reached;
+      paceLimit = pace.articles;
+    }
+
+    if ((env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false" && paceLimit > 0) {
       const [africaWire, wireFeeds, gdelt] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), gatherGdelt(env)]);
       // Wire feeds are generalist (world news); order them by priority so the
       // Africa-relevant conflict items are read first.
@@ -919,7 +955,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
       const lists = [freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
       stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
-      const perTick = Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK));
+      const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
       const batch = pickBatch(lists, perTick);
       const geocodeBudget: GeocodeBudget = { remaining: GEOCODER_CALLS_PER_TICK };
 
@@ -942,7 +978,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     const incidents = await refreshIncidents(env);
     if (new Date().getUTCMinutes() < 5) await pruneOldRows(env);
 
-    await setState(env, "last_run", JSON.stringify({ at: nowIso(), ...stats, incidents, ...describeProvider(env), lastModelError: stats.modelFailures > 0 ? getLastModelError() : null }));
+    await setState(env, "last_run", JSON.stringify({ at: nowIso(), ...stats, incidents, ...describeProvider(env), aiBudgetReached, lastModelError: stats.modelFailures > 0 ? getLastModelError() : null }));
     if (stats.coded + stats.rejected + stats.unreadable + stats.errors > 0) {
       console.log(`[escalation] tick: ${stats.coded} coded (${stats.reports} reports), ${stats.rejected} rejected, ${stats.unreadable} unreadable, ${stats.errors} errors (${stats.modelFailures} with no model answer); backlog ${stats.fresh}; incidents ${incidents.elevated} elevated / ${incidents.critical} critical`);
     }
@@ -1123,6 +1159,12 @@ export async function getAuditLog(env: Env, opts: { country?: string | null; q?:
 export interface PipelineStatus {
   provider: ReturnType<typeof describeProvider>;
   enabled: boolean;
+  /** Today's Workers AI use against the platform's own daily ceiling. */
+  ai: AiUsage;
+  /** Whether a paid model key is configured, and whether translation is on —
+   *  the two things, besides the ceiling being raised, that could cost money. */
+  paidModelKeySet: boolean;
+  translationEnabled: boolean;
   lastRun: Record<string, unknown> | null;
   last24h: { status: string; count: number }[];
   rejectionReasons24h: { reason: string; count: number }[];
@@ -1132,7 +1174,8 @@ export interface PipelineStatus {
 export async function getPipelineStatus(env: Env): Promise<PipelineStatus> {
   await ensureTables(env);
   const since = new Date(Date.now() - 86_400_000).toISOString();
-  const [lastRun, byStatus, byReason, byLevel] = await Promise.all([
+  const [ai, lastRun, byStatus, byReason, byLevel] = await Promise.all([
+    getAiUsage(env),
     getState(env, "last_run"),
     all<{ status: string; count: number }>(env.DB, "SELECT status, COUNT(*) AS count FROM escalation_articles WHERE processed_at >= ? GROUP BY status", [since]),
     all<{ reason: string; count: number }>(
@@ -1145,6 +1188,9 @@ export async function getPipelineStatus(env: Env): Promise<PipelineStatus> {
   return {
     provider: describeProvider(env),
     enabled: (env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false",
+    ai,
+    paidModelKeySet: !!env.ANTHROPIC_API_KEY,
+    translationEnabled: (env.TRANSLATION_ENABLED ?? "false") === "true",
     lastRun: parseJson<Record<string, unknown> | null>(lastRun, null),
     last24h: byStatus,
     rejectionReasons24h: byReason,

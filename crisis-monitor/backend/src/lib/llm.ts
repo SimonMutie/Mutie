@@ -1,4 +1,5 @@
 import type { Env } from "../bindings";
+import { dailyNeuronBudget, estimateNeurons, neuronsFor, reserveNeurons, settleNeurons } from "./aiBudget";
 
 /**
  * One structured-output model call, with a provider fallback chain.
@@ -9,6 +10,12 @@ import type { Env } from "../bindings";
  *      free text to be scraped.
  *   2. Workers AI (this Worker's own AI binding — no key needed) with JSON
  *      mode, when the key is unset or the Anthropic call failed.
+ *
+ * Cost: the Anthropic route is paid for per call and is only ever used if
+ * someone sets ANTHROPIC_API_KEY. The Workers AI route is held inside
+ * Cloudflare's free daily allowance by lib/aiBudget.ts — each call reserves
+ * its worst-case cost first and is not made if the day's budget would be
+ * exceeded, so with no key set this file cannot produce a bill.
  *
  * Returns null only when every provider failed; the caller decides what a
  * failure means (the escalation pipeline leaves the article queued for a
@@ -128,19 +135,68 @@ export function getLastModelError(): { at: string; provider: string; message: st
   return lastModelError;
 }
 
-async function runWorkersAi(env: Env, input: Record<string, unknown>): Promise<unknown> {
+interface WorkersAiResult {
+  response?: unknown;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+async function runWorkersAi(env: Env, input: Record<string, unknown>): Promise<WorkersAiResult> {
   const run = env.AI.run as unknown as (model: string, input: unknown) => Promise<unknown>;
   const result = await Promise.race([
     run(WORKERS_AI_MODEL, input),
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("workers-ai timeout")), WORKERS_AI_TIMEOUT_MS)),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error(WORKERS_AI_TIMEOUT_MESSAGE)), WORKERS_AI_TIMEOUT_MS)),
   ]);
-  return (result as { response?: unknown })?.response;
+  return (result ?? {}) as WorkersAiResult;
 }
+const WORKERS_AI_TIMEOUT_MESSAGE = "workers-ai timeout";
 
 function parseWorkersAiResponse<T>(response: unknown): T | null {
   if (response && typeof response === "object") return response as T;
   if (typeof response === "string") return extractJsonObject(response) as T | null;
   return null;
+}
+
+/** The coder (one call per article, many a day) may use at most this share
+ *  of the day's budget; the rest is kept for the analyst, which writes the
+ *  assessment of each flagged incident and runs far less often. Without
+ *  the split, article reading would spend everything and incidents would
+ *  be left with only their fallback summary. */
+export const CODER_BUDGET_SHARE = 0.85;
+
+export const AI_BUDGET_REACHED = "today's free AI allowance is used up; reading resumes when it resets at 00:00 UTC";
+
+/** One budgeted Workers AI call. Returns the parsed object, or null with
+ *  the reason noted. `outOfBudget` is set when the call was not made
+ *  because the day's allowance would have been exceeded. */
+async function budgetedWorkersAiCall<T>(env: Env, call: StructuredCall, label: string, input: Record<string, unknown>, inputChars: number): Promise<{ data: T | null; outOfBudget: boolean }> {
+  const limit = dailyNeuronBudget(env) * (call.role === "coder" ? CODER_BUDGET_SHARE : 1);
+  const reserved = estimateNeurons(WORKERS_AI_MODEL, inputChars, call.maxTokens);
+  if (!(await reserveNeurons(env, reserved, limit))) {
+    noteModelError("workers-ai", AI_BUDGET_REACHED);
+    return { data: null, outOfBudget: true };
+  }
+  try {
+    const result = await runWorkersAi(env, input);
+    // Charge what was really used: the model's own token counts when it
+    // reports them, otherwise an estimate from the length of the reply.
+    const replyChars = typeof result.response === "string" ? result.response.length : JSON.stringify(result.response ?? "").length;
+    const used =
+      result.usage?.prompt_tokens != null && result.usage?.completion_tokens != null
+        ? neuronsFor(WORKERS_AI_MODEL, result.usage.prompt_tokens, result.usage.completion_tokens)
+        : estimateNeurons(WORKERS_AI_MODEL, inputChars, Math.min(call.maxTokens, Math.ceil(replyChars / 3)));
+    await settleNeurons(env, reserved, used);
+    const data = parseWorkersAiResponse<T>(result.response);
+    if (!data) noteModelError(label, "response was empty or not valid JSON");
+    return { data, outOfBudget: false };
+  } catch (err) {
+    // A call that was refused never ran, so its reservation is handed back.
+    // One that timed out may still have run (and been counted by
+    // Cloudflare), so its reservation is kept.
+    const timedOut = err instanceof Error && err.message === WORKERS_AI_TIMEOUT_MESSAGE;
+    if (!timedOut) await settleNeurons(env, reserved, 0);
+    noteModelError(label, err);
+    return { data: null, outOfBudget: false };
+  }
 }
 
 /** Two attempts. The first asks for schema-constrained JSON; if the model or
@@ -149,27 +205,17 @@ function parseWorkersAiResponse<T>(response: unknown): T | null {
  *  the schema spelled out in the prompt, and the JSON is extracted from the
  *  reply. Either way the result still goes through the caller's own
  *  verification, so a loosely-shaped reply cannot introduce anything
- *  unchecked. */
+ *  unchecked. Both attempts are budgeted (see budgetedWorkersAiCall). */
 async function callWorkersAi<T>(env: Env, call: StructuredCall): Promise<T | null> {
   const messages = [
     { role: "system", content: `${call.system}\n\nRespond with a single JSON object that matches this JSON Schema exactly, and nothing else — no prose, no code fences:\n${JSON.stringify(call.schema)}` },
     { role: "user", content: call.user },
   ];
-  try {
-    const data = parseWorkersAiResponse<T>(await runWorkersAi(env, { messages, response_format: { type: "json_schema", json_schema: call.schema }, max_tokens: call.maxTokens, temperature: 0.1 }));
-    if (data) return data;
-    noteModelError("workers-ai (json mode)", "response was empty or not valid JSON");
-  } catch (err) {
-    noteModelError("workers-ai (json mode)", err);
-  }
-  try {
-    const data = parseWorkersAiResponse<T>(await runWorkersAi(env, { messages, max_tokens: call.maxTokens, temperature: 0.1 }));
-    if (data) return data;
-    noteModelError("workers-ai (plain)", "response was empty or not valid JSON");
-  } catch (err) {
-    noteModelError("workers-ai (plain)", err);
-  }
-  return null;
+  const inputChars = messages[0].content.length + messages[1].content.length;
+  const first = await budgetedWorkersAiCall<T>(env, call, "workers-ai (json mode)", { messages, response_format: { type: "json_schema", json_schema: call.schema }, max_tokens: call.maxTokens, temperature: 0.1 }, inputChars);
+  if (first.data || first.outOfBudget) return first.data;
+  const second = await budgetedWorkersAiCall<T>(env, call, "workers-ai (plain)", { messages, max_tokens: call.maxTokens, temperature: 0.1 }, inputChars);
+  return second.data;
 }
 
 export async function callStructured<T>(env: Env, call: StructuredCall): Promise<StructuredResult<T> | null> {

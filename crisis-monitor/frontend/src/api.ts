@@ -703,6 +703,11 @@ export interface EscalationAuditEntry {
 export interface EscalationPipelineStatus {
   provider: { provider: "anthropic" | "workers-ai"; coderModel: string; analystModel: string };
   enabled: boolean;
+  /** Today's (UTC) AI use against the platform's own daily ceiling. The
+   *  ceiling sits below Cloudflare's free allowance, so reaching it costs nothing. */
+  ai?: { day: string; used: number; calls: number; budget: number; freeAllowance: number; remaining: number };
+  paidModelKeySet?: boolean;
+  translationEnabled?: boolean;
   lastRun: Record<string, unknown> | null;
   last24h: { status: string; count: number }[];
   rejectionReasons24h: { reason: string; count: number }[];
