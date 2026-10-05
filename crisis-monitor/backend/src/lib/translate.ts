@@ -1,4 +1,5 @@
 import type { Env } from "../bindings";
+import { neuronsFor, reserveNeurons } from "./aiBudget";
 
 /**
  * Best-effort translation of African local-language press into English,
@@ -77,6 +78,11 @@ export async function translateToEnglish(env: Env, text: string): Promise<Transl
     // timeout is enforced from this side with a race — a model call that's
     // genuinely hung shouldn't be able to stall the whole ingestion batch
     // it was called from.
+    // Counted against the same daily ceiling as every other model call
+    // (lib/aiBudget.ts): if translation is ever switched back on, it still
+    // cannot take the account past the free allowance.
+    const tokens = Math.ceil(trimmed.length / 3);
+    if (!(await reserveNeurons(env, neuronsFor(MODEL, tokens, tokens)))) return { text, translated: false, sourceLang };
     const result = await Promise.race([
       env.AI.run(MODEL, { text: trimmed, source_lang: sourceLang, target_lang: "en" }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("translate timeout")), TRANSLATE_TIMEOUT_MS)),

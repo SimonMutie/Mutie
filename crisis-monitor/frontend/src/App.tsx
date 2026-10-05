@@ -187,7 +187,7 @@ export default function App() {
       <Suspense fallback={viewLoadingFallback}>
         {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-intel")} />}
 
-        {view === "settings" && <SettingsPanel onBack={() => setView("live-intel")} />}
+        {view === "settings" && <SettingsPanel user={user} onBack={() => setView("live-intel")} />}
 
         {view === "incidents" && <IncidentsDashboard user={user} />}
 

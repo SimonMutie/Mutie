@@ -383,7 +383,10 @@ describe("escalation pipeline, end to end", () => {
     db.prepare("DELETE FROM escalation_reports").run();
     db.prepare("DELETE FROM escalation_incidents").run();
     db.prepare("DELETE FROM alerts").run();
-    const noKeyEnv = { ...env, ANTHROPIC_API_KEY: undefined, AI: { run: workersAiRun } } as unknown as Env;
+    // A large budget here: this test is about the model fallback, not the
+    // daily ceiling (which test/aiBudget.test.ts covers) or the pacing of
+    // reading through the day, which would make it depend on the clock.
+    const noKeyEnv = { ...env, ANTHROPIC_API_KEY: undefined, AI: { run: workersAiRun }, AI_DAILY_NEURON_BUDGET: "1000000" } as unknown as Env;
     await runEscalationPipeline(noKeyEnv);
     const status = await getPipelineStatus(noKeyEnv);
     expect(status.provider.provider).toBe("workers-ai");

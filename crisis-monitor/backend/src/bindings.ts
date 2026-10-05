@@ -104,6 +104,13 @@ export interface Env {
    *  account's largest Workers AI cost. When on, each item is translated
    *  once, not on every crawl tick. */
   TRANSLATION_ENABLED?: string;
+  /** The most Workers AI "neurons" the platform may use in one UTC day.
+   *  Unset = 9,000, which keeps it inside Cloudflare's free 10,000 so no AI
+   *  charge can arise. "0" switches AI calls off. Anything above 10,000 is
+   *  a decision to pay. See lib/aiBudget.ts. */
+  AI_DAILY_NEURON_BUDGET?: string;
+  /** YYYY-MM-DD (UTC). Before this date the budget is zero. */
+  AI_BUDGET_NOT_BEFORE?: string;
   /** "false" switches off the online place geocoder (lib/geocoder.ts);
    *  locations then resolve from the bundled gazetteers only. Default on. */
   GEOCODER_ENABLED?: string;

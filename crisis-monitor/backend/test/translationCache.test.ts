@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterAll } from "vitest";
 import { AfricaWireActor } from "../src/durableObjects/africaWireActor";
 import type { Env } from "../src/bindings";
+import { fakeD1 } from "./fakeD1";
+import { resetAiBudgetTableCheck } from "../src/lib/aiBudget";
 
 const pub = new Date(Date.now() - 3600_000).toUTCString();
 const item = (n: number, title: string) => `<item><title>${title}</title><link>https://journal.example/a${n}</link><pubDate>${pub}</pubDate><description>Des combats ont éclaté près de la frontière, selon l'armée (${n}).</description></item>`;
@@ -14,7 +16,9 @@ describe("Africa Wire translation", () => {
     list: async ({ prefix }: { prefix: string }) => new Map([...store].filter(([k]) => k.startsWith(prefix))),
   };
   const aiRun = vi.fn(async () => ({ translated_text: "Fighting broke out near the border, the army said." }));
-  const env = { AI: { run: aiRun }, TRANSLATION_ENABLED: "true" } as unknown as Env;
+  // Translation is counted against the daily AI ceiling, so it needs a database to count in.
+  resetAiBudgetTableCheck();
+  const env = { AI: { run: aiRun }, TRANSLATION_ENABLED: "true", DB: fakeD1().DB } as unknown as Env;
   let current = feed([item(1, "Combats à la frontière"), item(2, "Attaque près de Djibo : dix soldats tués")]);
   vi.stubGlobal("fetch", async () => new Response(current, { headers: { "content-type": "application/rss+xml" } }));
   afterAll(() => vi.unstubAllGlobals());

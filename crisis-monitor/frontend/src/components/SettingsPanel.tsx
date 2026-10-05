@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { api } from "../api";
+import { useEffect, useState } from "react";
+import { api, type AuthUser, type EscalationPipelineStatus } from "../api";
 
 interface Props {
   onBack: () => void;
+  user: AuthUser;
 }
 
 /** Available to every authenticated user — platform admin or any client
@@ -10,7 +11,7 @@ interface Props {
  *  most of this app's other admin-facing panels. Currently just password
  *  change, but the container is deliberately named and structured to hold
  *  more personal-account settings later without needing a rework. */
-export default function SettingsPanel({ onBack }: Props) {
+export default function SettingsPanel({ onBack, user }: Props) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
       <button onClick={onBack} style={backBtnStyle}>
@@ -22,6 +23,77 @@ export default function SettingsPanel({ onBack }: Props) {
       </div>
 
       <ChangePasswordForm />
+
+      {user.role === "admin" && <AiUsageCard />}
+    </div>
+  );
+}
+
+/** Platform admin only: what the platform's AI use is today, what could
+ *  cost money, and whether the article reading behind escalation alerts is
+ *  actually running — so none of that needs the Cloudflare dashboard. */
+function AiUsageCard() {
+  const [status, setStatus] = useState<EscalationPipelineStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      api
+        .getEscalationStatus()
+        .then((s) => !cancelled && (setStatus(s), setError(null)))
+        .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Could not load the status."));
+    load();
+    const timer = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const row = (label: string, value: React.ReactNode, tone?: "ok" | "warn") => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 16, padding: "7px 0", borderTop: "1px solid var(--border-soft)", fontSize: 13 }}>
+      <span style={{ color: "var(--text-muted)" }}>{label}</span>
+      <span style={{ textAlign: "right", fontWeight: 600, color: tone === "ok" ? "var(--positive)" : tone === "warn" ? "var(--elevated)" : "var(--text-primary)" }}>{value}</span>
+    </div>
+  );
+
+  const ai = status?.ai;
+  const count = (name: string) => status?.last24h.find((s) => s.status === name)?.count ?? 0;
+  const lastRun = status?.lastRun as { at?: string; aiBudgetReached?: boolean; lastModelError?: { message?: string; provider?: string } | null; } | null | undefined;
+  const free = !!ai && ai.budget <= ai.freeAllowance && !status?.paidModelKeySet;
+  const lastRunAge = lastRun?.at ? Math.round((Date.now() - Date.parse(lastRun.at)) / 60_000) : null;
+
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600 }}>AI use and costs</div>
+      {error && <div style={{ fontSize: 12.5, color: "var(--critical)", marginTop: 8 }}>{error}</div>}
+      {!status && !error && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 8 }}>Loading…</div>}
+      {status && (
+        <>
+          <p style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-muted)", margin: "8px 0 12px" }}>
+            {free
+              ? "The platform's AI use is held inside Cloudflare's free daily allowance. When today's limit is reached it stops calling the AI until the allowance resets, so it cannot produce an AI charge."
+              : "The settings below allow AI use that is billed. See the lines marked in amber."}
+          </p>
+          {ai &&
+            row(
+              "AI used today",
+              `${ai.used.toLocaleString()} of ${ai.budget.toLocaleString()} (free allowance ${ai.freeAllowance.toLocaleString()})`,
+              ai.budget <= ai.freeAllowance ? "ok" : "warn"
+            )}
+          {ai && row("Resets", "03:00 Nairobi time (00:00 UTC)")}
+          {row("Paid AI key", status.paidModelKeySet ? "Set: article reading is billed by Anthropic" : "Not set", status.paidModelKeySet ? "warn" : "ok")}
+          {row("Translation", status.translationEnabled ? "On (counted within the daily limit)" : "Off", "ok")}
+          <div style={{ fontSize: 13.5, fontWeight: 600, margin: "18px 0 6px" }}>Article reading for escalation alerts</div>
+          {row("Last run", lastRunAge === null ? "Never" : lastRunAge <= 1 ? "Just now" : `${lastRunAge} minutes ago`, lastRunAge !== null && lastRunAge <= 15 ? "ok" : "warn")}
+          {row("Read in the last 24 hours", `${count("coded") + count("rejected")} articles (${count("coded")} with reportable events)`)}
+          {row("Could not be opened", String(count("unreadable")))}
+          {row("Failed", String(count("error")), count("error") > 0 ? "warn" : undefined)}
+          {lastRun?.aiBudgetReached && row("Today", "Daily AI limit reached. Reading resumes after the reset.", "warn")}
+          {lastRun?.lastModelError?.message && row("Last AI error", `${lastRun.lastModelError.provider ?? "model"}: ${lastRun.lastModelError.message}`, "warn")}
+        </>
+      )}
     </div>
   );
 }

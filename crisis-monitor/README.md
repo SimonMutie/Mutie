@@ -285,6 +285,17 @@ Implementation (`backend/src/auth.ts`, `middleware.ts`, `ownership.ts`):
 
 Known simplifications, worth knowing about before this handles anything sensitive: the bearer token lives in `localStorage` (accessible to any JS on the page — no `httpOnly` cookie), there's no password-reset flow (an admin just creates a new login), and there's no rate-limiting on login attempts.
 
+## AI use and cost ceiling
+
+The platform is set up so that its AI use cannot produce a charge.
+
+- **What uses AI:** reading articles for escalation alerts and writing each flagged incident's assessment (Workers AI). Translation of non-English feeds is off by default.
+- **The ceiling:** Cloudflare gives 10,000 Workers AI "neurons" a day free and bills beyond that. Nothing on Cloudflare's side stops a paid account at the free amount, so the Worker does: every model call first reserves its worst-case cost against a daily budget of 9,000 and is not made if that would go over (`backend/src/lib/aiBudget.ts`). The count resets at 00:00 UTC, with the allowance.
+- **What that buys:** roughly 25–30 articles read a day with the current model, highest priority first, spread through the day rather than spent at once.
+- **What would cost money:** setting `ANTHROPIC_API_KEY` (paid per call, not covered by the ceiling), or setting `AI_DAILY_NEURON_BUDGET` above 10,000. `AI_DAILY_NEURON_BUDGET = "0"` switches AI off entirely.
+- **Where to see it:** Settings → "AI use and costs" (platform admin) shows today's use, the limit, and whether article reading is running.
+- **Not covered:** the Cloudflare plan itself and non-AI usage (requests, database, queues) are outside this ceiling.
+
 ## Regional Spotlight — publications by region
 
 A database of publications ("products": analyses, situation updates, reports) filed under a region: Africa, Asia-Pacific, Europe & Central Asia, Latin America & the Caribbean, Middle East, United States & Canada. A region holds as many entries as you add.
