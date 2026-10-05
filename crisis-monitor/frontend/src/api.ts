@@ -1052,6 +1052,8 @@ export interface SpotlightEntry {
   publication_date: string;
   /** draft: admins only. published: live for every signed-in user. */
   status: "draft" | "published";
+  /** How much of the page the article takes. */
+  layout_width?: "standard" | "wide" | "full";
   /** Published AND public: also readable without signing in, at /spotlight/<id>. */
   is_public: boolean;
   published_at: string | null;
@@ -1200,6 +1202,11 @@ export const api = {
   createSpotlightEntry: (data: SpotlightEntryInput) => req<SpotlightEntry>("/api/spotlight", { method: "POST", body: JSON.stringify(data) }),
   updateSpotlightEntry: (id: string, data: SpotlightEntryInput) => req<SpotlightEntry>(`/api/spotlight/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteSpotlightEntry: (id: string) => req<{ ok: boolean }>(`/api/spotlight/${id}`, { method: "DELETE" }),
+  /** Uploads one image for an article and returns the address to show it from. */
+  uploadSpotlightImage: async (image: Blob) => {
+    const saved = await req<{ id: string; path: string }>("/api/spotlight/media", { method: "POST", headers: { "Content-Type": image.type || "application/octet-stream" }, body: image });
+    return `${API_URL}${saved.path}`;
+  },
   /** No sign-in needed: only answers for an entry that is published and public. */
   getPublicSpotlightEntry: (id: string) => req<SpotlightEntry>(`/api/public/spotlight/${id}`),
   getQueries: () => req<MonitoringQueryItem[]>("/api/queries"),

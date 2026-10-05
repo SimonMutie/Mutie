@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS spotlight_entries (
     product_type TEXT NOT NULL DEFAULT 'Analysis',
     countries TEXT,                             -- free text, e.g. "Sudan, South Sudan"
     summary TEXT,
-    body TEXT,
+    body TEXT,                                  -- formatting-editor document (JSON), or first-version plain text
     cover_image_url TEXT,
     link_url TEXT,                              -- the full report / original article, if hosted elsewhere
     link_label TEXT,
@@ -22,7 +22,18 @@ CREATE TABLE IF NOT EXISTS spotlight_entries (
     published_at TEXT,
     created_by TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    layout_width TEXT NOT NULL DEFAULT 'wide'   -- 'standard' | 'wide' | 'full'
+);
+
+-- Images uploaded into articles (maps, infographics, photos), base64-encoded.
+CREATE TABLE IF NOT EXISTS spotlight_media (
+    id TEXT PRIMARY KEY,
+    mime TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    data TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_spotlight_region_date ON spotlight_entries (region, publication_date DESC);

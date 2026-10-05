@@ -9,6 +9,10 @@ import Logo from "./Logo";
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 
 export default function PublicDashboardView({ token }: { token: string }) {
+  // "?embed=1": shown inside another page (a Regional Spotlight article), so
+  // the page's own header and outer padding are left off — the article
+  // supplies the title and caption.
+  const embedded = useMemo(() => new URLSearchParams(window.location.search).get("embed") === "1", []);
   const [data, setData] = useState<PublicDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +49,7 @@ export default function PublicDashboardView({ token }: { token: string }) {
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--base)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 24px", borderBottom: "1px solid var(--border-soft)", background: "var(--panel)" }}>
+      <div style={{ display: embedded ? "none" : "flex", alignItems: "center", gap: 10, padding: "16px 24px", borderBottom: "1px solid var(--border-soft)", background: "var(--panel)" }}>
         <Logo size={26} />
         <div>
           <div style={{ fontSize: 16, fontWeight: 700 }}>{data.name}</div>
@@ -72,7 +76,7 @@ export default function PublicDashboardView({ token }: { token: string }) {
         </span>
       </div>
 
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: embedded ? 8 : 24 }}>
         {data.widgets.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13.5 }}>This dashboard has no widgets yet.</div>
         ) : (

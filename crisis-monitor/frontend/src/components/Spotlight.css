@@ -8,9 +8,15 @@
   min-height: 0;
   overflow-y: auto;
 }
+/* The index uses most of a wide screen and sits in the middle of it; an
+   opened article decides its own width (see .spotlight-article--*). */
 .spotlight-wrap {
-  max-width: 1080px;
+  max-width: 1360px;
+  margin: 0 auto;
   padding: 40px 40px 72px;
+}
+.spotlight-wrap--reader {
+  max-width: none;
 }
 
 /* ── header ─────────────────────────────────────────────── */
@@ -334,8 +340,19 @@ textarea.spotlight-input {
   overflow-wrap: anywhere;
 }
 
+/* Three widths, chosen per article by its author. The article is centred
+   in whatever space the page has. */
 .spotlight-article {
+  margin: 0 auto;
+}
+.spotlight-article--standard {
   max-width: 46rem;
+}
+.spotlight-article--wide {
+  max-width: 80rem;
+}
+.spotlight-article--full {
+  max-width: none;
 }
 .spotlight-article__kicker {
   display: flex;
@@ -348,7 +365,7 @@ textarea.spotlight-input {
 .spotlight-article h1 {
   margin: 0;
   font-family: var(--font-display);
-  font-size: clamp(28px, 3.6vw, 40px);
+  font-size: clamp(28px, 3.6vw, 42px);
   font-weight: 700;
   line-height: 1.12;
   letter-spacing: -0.015em;
@@ -370,56 +387,433 @@ textarea.spotlight-input {
   margin: 28px 0 0;
   border-radius: 6px;
 }
-.spotlight-article__body {
+.spotlight-article__link {
+  margin: 30px 0 0;
+}
+
+/* ── article text (the same rules while editing and while reading) ── */
+.spotlight-rich {
   margin-top: 28px;
+}
+.spotlight-rich .tiptap {
   font-size: 16.5px;
   line-height: 1.72;
+  outline: none;
 }
-.spotlight-article__body p {
+.spotlight-rich .tiptap > :first-child {
+  margin-top: 0;
+}
+.spotlight-rich .tiptap p {
   margin: 0 0 1.1em;
 }
-.spotlight-article__body h2,
-.spotlight-article__body h3 {
+.spotlight-rich .tiptap h2,
+.spotlight-rich .tiptap h3,
+.spotlight-rich .tiptap h4 {
   margin: 1.7em 0 0.5em;
   font-family: var(--font-display);
   font-weight: 600;
   line-height: 1.25;
 }
-.spotlight-article__body h2 {
-  font-size: 24px;
+.spotlight-rich .tiptap h2 {
+  font-size: 26px;
 }
-.spotlight-article__body h3 {
-  font-size: 19px;
+.spotlight-rich .tiptap h3 {
+  font-size: 21px;
 }
-.spotlight-article__body ul,
-.spotlight-article__body ol {
+.spotlight-rich .tiptap h4 {
+  font-size: 17.5px;
+}
+.spotlight-rich .tiptap ul,
+.spotlight-rich .tiptap ol {
   margin: 0 0 1.1em;
-  padding-left: 1.3em;
+  padding-left: 1.4em;
 }
-.spotlight-article__body li {
+.spotlight-rich .tiptap li {
   margin-bottom: 0.35em;
 }
-.spotlight-article__body blockquote {
+.spotlight-rich .tiptap li > p {
+  margin-bottom: 0.35em;
+}
+.spotlight-rich .tiptap blockquote {
   margin: 0 0 1.1em;
   padding: 2px 0 2px 18px;
   border-left: 3px solid var(--signal);
   color: var(--text-muted);
 }
-.spotlight-article__body figure {
-  margin: 1.6em 0;
+.spotlight-rich .tiptap hr {
+  margin: 2em 0;
+  border: none;
+  border-top: 1px solid var(--border);
 }
-.spotlight-article__body figure img {
-  display: block;
-  max-width: 100%;
+.spotlight-rich .tiptap mark {
+  padding: 0.05em 0.15em;
+  border-radius: 2px;
+  color: inherit;
+}
+.spotlight-rich .tiptap code {
+  padding: 0.1em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  background: var(--panel-raised);
+  border-radius: 4px;
+}
+.spotlight-rich .tiptap pre {
+  margin: 0 0 1.1em;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  line-height: 1.6;
+  background: var(--panel-raised);
   border-radius: 6px;
 }
-.spotlight-article__body figcaption {
+.spotlight-rich .tiptap pre code {
+  padding: 0;
+  background: none;
+}
+.spotlight-rich .tiptap a {
+  color: var(--info);
+}
+
+/* Key points box */
+.spotlight-callout {
+  margin: 0 0 1.3em;
+  padding: 16px 20px 4px;
+  background: color-mix(in srgb, var(--signal) 9%, var(--panel));
+  border-left: 3px solid var(--signal);
+  border-radius: 0 6px 6px 0;
+}
+
+/* Tables scroll sideways inside the article rather than widening the page. */
+.spotlight-rich .tiptap .tableWrapper {
+  margin: 0 0 1.3em;
+  overflow-x: auto;
+}
+.spotlight-rich .tiptap table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.spotlight-rich .tiptap th,
+.spotlight-rich .tiptap td {
+  position: relative;
+  min-width: 3em;
+  padding: 8px 12px;
+  vertical-align: top;
+  text-align: left;
+  border: 1px solid var(--border);
+}
+.spotlight-rich .tiptap th {
+  font-weight: 600;
+  background: var(--panel-raised);
+}
+.spotlight-rich .tiptap td p,
+.spotlight-rich .tiptap th p {
+  margin: 0;
+}
+.spotlight-rich .tiptap .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--signal) 16%, transparent);
+  pointer-events: none;
+}
+.spotlight-rich .tiptap .column-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  bottom: -1px;
+  width: 4px;
+  background: var(--signal);
+  pointer-events: none;
+}
+.spotlight-rich .tiptap.resize-cursor {
+  cursor: col-resize;
+}
+
+/* Images and embedded live content */
+.spotlight-figure,
+.spotlight-embed {
+  position: relative;
+  margin-top: 1.7em;
+  margin-bottom: 1.7em;
+}
+.spotlight-figure img {
+  display: block;
+  width: 100%;
+  border-radius: 6px;
+}
+.spotlight-figure figcaption,
+.spotlight-embed figcaption {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: 13.5px;
+  line-height: 1.5;
   color: var(--text-muted);
 }
-.spotlight-article > p:last-child {
-  margin: 30px 0 0;
+.spotlight-embed__frame {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.spotlight-embed__frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+.spotlight-embed__shield {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+.spotlight-figure.is-selected img,
+.spotlight-embed.is-selected .spotlight-embed__frame {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+.spotlight-grip {
+  position: absolute;
+  z-index: 2;
+  background: var(--signal);
+  border: 2px solid var(--panel);
+  border-radius: 4px;
+  touch-action: none;
+}
+.spotlight-grip--corner {
+  right: -7px;
+  bottom: -7px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+.spotlight-figure__image {
+  position: relative;
+}
+.spotlight-grip--bottom {
+  left: 50%;
+  bottom: 0;
+  width: 56px;
+  height: 10px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.spotlight-block-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--text-muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(19, 23, 34, 0.08);
+}
+.spotlight-block-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.spotlight-block-controls label span {
+  min-width: 4.2em;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.spotlight-block-controls input[type="text"] {
+  flex: 1 1 200px;
+  padding: 6px 9px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.spotlight-block-controls button,
+.spotlight-block-controls a {
+  padding: 5px 9px;
+  font: inherit;
+  text-decoration: none;
+  color: var(--text-primary);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.spotlight-block-controls button.is-danger {
+  color: var(--critical);
+}
+.spotlight-block-controls__group {
+  display: inline-flex;
+}
+.spotlight-block-controls__group button {
+  display: inline-flex;
+  border-radius: 0;
+  margin-left: -1px;
+}
+.spotlight-block-controls__group button:first-child {
+  margin-left: 0;
+  border-radius: 6px 0 0 6px;
+}
+.spotlight-block-controls__group button:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.spotlight-block-controls__group button[aria-pressed="true"] {
+  background: var(--signal-dim);
+  border-color: var(--signal);
+  position: relative;
+}
+
+/* ── formatting toolbar ─────────────────────────────────── */
+.spotlight-editor-rich {
+  margin-top: 26px;
+}
+.spotlight-rich--editing {
+  margin-top: 18px;
+}
+.spotlight-rich--editing .tiptap {
+  min-height: 340px;
+  padding-bottom: 120px;
+}
+.spotlight-rich .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.spotlight-toolbar-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding-top: 8px; /* a solid strip, so text does not show above the bar as it scrolls under */
+  background: var(--base);
+}
+.spotlight-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(19, 23, 34, 0.06);
+}
+.spotlight-toolbar select {
+  height: 30px;
+  padding: 0 6px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.spotlight-toolbar__sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 5px;
+  background: var(--border);
+}
+.spotlight-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  min-width: 30px;
+  justify-content: center;
+  padding: 0 7px;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.spotlight-tool:hover:not(:disabled) {
+  background: var(--panel-raised);
+}
+.spotlight-tool[aria-pressed="true"] {
+  background: var(--signal-dim);
+  border-color: var(--signal);
+}
+.spotlight-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.spotlight-toolpanel {
+  max-height: 46vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 22px rgba(19, 23, 34, 0.1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.spotlight-toolpanel > span:first-child {
+  font-weight: 600;
+}
+.spotlight-toolpanel label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+.spotlight-toolpanel small {
+  flex: 1 1 100%;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.spotlight-toolpanel small.is-error {
+  color: var(--critical);
+}
+.spotlight-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid rgba(19, 23, 34, 0.18);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.spotlight-picklist {
+  flex: 1 1 100%;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.spotlight-picklist li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 14px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border-soft);
+}
+.spotlight-picklist li > span {
+  display: flex;
+  flex-direction: column;
+}
+.spotlight-picklist em {
+  font-style: normal;
+  font-size: 12.5px;
+  color: var(--text-muted);
 }
 
 /* ── editor ─────────────────────────────────────────────── */
@@ -429,17 +823,18 @@ textarea.spotlight-input {
   display: flex;
 }
 .spotlight-editor__form {
-  flex: 0 0 470px;
+  flex: 0 0 348px;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  background: var(--panel);
   border-right: 1px solid var(--border-soft);
 }
 .spotlight-editor__head {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--border-soft);
 }
 .spotlight-editor__head h2 {
@@ -450,35 +845,33 @@ textarea.spotlight-input {
 .spotlight-editor__fields {
   flex: 1;
   overflow-y: auto;
-  padding: 22px 24px;
+  padding: 18px 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 15px;
 }
 .spotlight-editor__pair {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  gap: 12px;
 }
 .spotlight-editor__foot {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 14px 24px;
+  padding: 14px 20px;
   border-top: 1px solid var(--border-soft);
-  background: var(--panel);
 }
-.spotlight-editor__preview {
+/* The article page itself, editable in place. */
+.spotlight-editor__canvas {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 26px 40px 60px;
+  padding: 0 40px 60px;
 }
-.spotlight-editor__preview > p:first-child {
-  margin: 0 0 26px;
-  font-size: 13px;
-  color: var(--text-faint);
+.spotlight-editor__canvas .spotlight-article {
+  padding-top: 34px;
 }
 
 /* ── the top-bar hover menu ─────────────────────────────── */
@@ -563,9 +956,7 @@ textarea.spotlight-input {
   color: var(--text-muted);
 }
 .spotlight-public-page main {
-  padding: 44px 24px 80px;
-  display: flex;
-  justify-content: center;
+  padding: 44px 40px 80px;
 }
 
 @media (max-width: 860px) {
@@ -595,9 +986,24 @@ textarea.spotlight-input {
   .spotlight-editor__fields {
     overflow: visible;
   }
-  .spotlight-editor__preview {
+  .spotlight-editor__canvas {
     overflow: visible;
     padding: 24px 18px 48px;
     border-top: 1px solid var(--border-soft);
   }
+  .spotlight-public-page main {
+    padding: 28px 18px 56px;
+  }
+  /* On a phone every image and embed takes the full width, whatever it was set to. */
+  .spotlight-figure,
+  .spotlight-embed {
+    width: 100% !important;
+  }
+}
+
+/* Entries written before the formatting editor: their images carry no block class. */
+.spotlight-rich .tiptap > figure:not(.spotlight-figure) img {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
 }
