@@ -187,18 +187,24 @@ export interface LivePreviewArticle {
   published_at: string;
   /** Where the headline says the story is, when it names a place. */
   place: string | null;
+  /** "feeds" — the news feeds the platform crawls itself; "search" — the wider news search. */
+  source?: "feeds" | "search";
 }
 
-/** A live news search for the query being typed — what it will fetch once saved. */
+/** What the query being typed will fetch once saved: matches in the
+ *  platform's own news feeds plus a wider news search. */
 export interface LivePreview {
+  /** "busy" / "error": nothing in the feeds and the wider search was unavailable. */
   status: "ok" | "unsearchable" | "busy" | "error";
-  /** The search actually sent, so it is visible how the query was read. */
+  /** The wider search actually sent, so it is visible how the query was read. */
   search: string | null;
   /** False when the query has parts a news search cannot express (NOT,
    *  NEAR, field filters, wildcards); the platform applies those itself. */
   exact: boolean;
   articles: LivePreviewArticle[];
   message: string | null;
+  /** Shown above the list when it is partial (e.g. the wider search was rate-limited). */
+  notice?: string | null;
 }
 
 export interface PreviewResult {

@@ -19,7 +19,7 @@ import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { ensureSchema } from "./lib/schemaHeal";
-import { fetchNewsForQuery, loadActiveCompiledQueries } from "./ingest";
+import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
 import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
@@ -231,7 +231,23 @@ export default {
 async function runGdeltLiveQueries(env: Env): Promise<void> {
   const MAX_CHUNKS_PER_QUERY = 15; // safety ceiling per query (150 terms) — the shared budget below is the real limiter
   const GDELT_REQUEST_STAGGER_MS = 3000;
+  // Feed items newer than this are (re)checked each tick. Longer than the
+  // tick interval by a wide margin, so an outlet that publishes its feed
+  // late, or a tick that fails, loses nothing.
+  const FEED_MATCH_WINDOW_HOURS = 12;
   const compiled = await loadActiveCompiledQueries(env);
+
+  // The platform's own news feeds, for every active query. Runs before the
+  // GDELT budget check on purpose: it does not use GDELT, so it must keep
+  // working while GDELT is rate-limiting this Worker.
+  if (compiled.length > 0) {
+    try {
+      const f = await ingestFeedMatches(env, compiled, FEED_MATCH_WINDOW_HOURS);
+      if (f.inserted > 0) console.log(`[feeds] ${f.inserted} new articles matched to monitoring queries`);
+    } catch (err) {
+      console.error("[feeds] matching failed:", err);
+    }
+  }
 
   const { budget, cooldownRemainingMs } = await getTickBudget(env);
   if (budget <= 0) {
