@@ -57,7 +57,7 @@ describe("what the headline tier codes", () => {
   });
 
   it("takes the place from the sentence that reports the event, not from where someone was speaking", () => {
-    const c = code("Minister briefs press in Nairobi", "Speaking in Nairobi, the minister gave an update. Clashes erupted in Jonglei State between rival militias on Sunday.");
+    const c = code("Rival militias fight in South Sudan", "Speaking in Nairobi, the minister gave an update. Clashes erupted in Jonglei State between rival militias on Sunday.");
     expect(c.where).toBe("Jonglei, SS");
   });
 
@@ -121,13 +121,13 @@ describe("when it happened: only the publication day or the day before", () => {
   it("leaves alone an event dated more than a day back", () => {
     expect(reason("Gunmen kill 12 villagers in Bokkos, Plateau", "Gunmen killed 12 villagers in Bokkos, Plateau State, on Friday, police confirmed.")).toBe("retrospective");
     expect(reason("Gunmen kill 12 villagers in Bokkos, Plateau", "Gunmen killed 12 villagers in Bokkos, Plateau State, last week, police confirmed on Monday.")).toBe("retrospective");
-    expect(reason("Drone strike hit Mekelle market on September 28, report finds")).toBe("retrospective");
+    expect(reason("Drone strike hit Mekelle market on September 28, officials confirm")).toBe("retrospective");
     expect(reason("Clashes erupted in Kidal three days ago, residents say")).toBe("retrospective");
     expect(reason("Onze villageois tués par des hommes armés à Djibo la semaine dernière")).toBe("retrospective");
   });
   it("reads the date from the story's opening when the headline gives none, and from when it was said", () => {
     // The headline states the attack; the opening sentence dates it to Saturday — two days before a Monday.
-    expect(reason("Aid agency condemns attack on trucks in South Kordofan, killing one driver", "The agency condemned an aerial attack that hit two trucks carrying food in South Kordofan in the early hours of Saturday, 3 October 2026.")).toBe("retrospective");
+    expect(reason("Aerial attack on aid trucks in South Kordofan kills one driver", "The attack hit two trucks carrying food in South Kordofan in the early hours of Saturday, 3 October 2026, the agency said.")).toBe("retrospective");
     // What residents said on Saturday had happened by Saturday.
     expect(reason("Rebels abandon Kidal as government forces advance", "Rebels are abandoning the town of Kidal, residents said on Saturday, as government forces advanced on the town.")).toBe("retrospective");
     expect(reason("Drone strike on El Obeid shelter kills boy", "A drone strike on a shelter for displaced people in El Obeid, North Kordofan, late on Thursday reportedly killed a boy.")).toBe("retrospective");
@@ -142,6 +142,48 @@ describe("when it happened: only the publication day or the day before", () => {
     expect(c.report.eventDate).toBe("2026-10-05");
     // "said on Monday" is when it was said, and is also inside the window; "March 23 Movement" is a name.
     expect(reason("M23 rebels capture town of Walikale, North Kivu", "Fighters of the March 23 Movement captured the town of Walikale in North Kivu, residents said.")).toBe("coded 2026-10-05");
+  });
+});
+
+describe("a report of an event, not a piece about one", () => {
+  // Shapes taken from a week of real Somalia headlines about fighting in one town, reworded.
+  const reason = (title: string, feedText = "") => {
+    const c = code(title, feedText);
+    return c.outcome.reports.length === 0 ? c.raw.rejection_reason : `coded ${c.ids.join(",")}`;
+  };
+  it("codes the report of the fighting itself", () => {
+    expect(reason("Fresh battle renewed in Baidoa town", "Combat erupted in Baidoa between forces supporting the regional leader and fighters loyal to his predecessor.")).toBe("coded armed_clash");
+  });
+  it("leaves alone reactions to it and statements about it", () => {
+    expect(reason("Britain urges restraint as fighting flares in Baidoa", "Britain expressed concern over renewed fighting in Baidoa, urging rival sides to exercise restraint.")).toBe("diplomatic_or_political_only");
+    expect(reason("Gulf state condemns killing of tanker crew in attack off Bosaso")).toBe("diplomatic_or_political_only");
+    expect(reason("Statement by agency representative on the impact of the recent outbreak of violence on children in Baidoa", "The agency expressed concern over reports of children killed and injured in Baidoa clashes.")).toBe("diplomatic_or_political_only");
+    expect(reason("Regional state claims victory over Baidoa fighting", "The administration claimed its forces repelled an Al-Shabaab assault on Baidoa, inflicting heavy losses.")).toBe("diplomatic_or_political_only");
+    expect(reason("Governor visits Marte after Boko Haram fighters kill 15 farmers")).toBe("diplomatic_or_political_only");
+  });
+  it("leaves alone pieces about its consequences", () => {
+    expect(reason("Families face renewed violence amid worsening hunger crisis", "Children were killed and injured in fresh fighting in Baidoa, where families already face severe hunger.")).toBe("humanitarian_only");
+    expect(reason("Humanitarian crisis deepens in El Fasher as shelling continues")).toBe("humanitarian_only");
+  });
+  it("leaves alone analysis, reports and round-ups", () => {
+    expect(reason("How the clashes in Baidoa began")).toBe("commentary_or_analysis");
+    expect(reason("Rights group report says soldiers killed 20 villagers in Djibo")).toBe("commentary_or_analysis");
+    expect(reason("Sudan war weekly update: drone strikes hit El Obeid, clashes in Babanusa")).toBe("commentary_or_analysis");
+    expect(reason("New rebel war redraws alliances as offensive on Mekelle continues")).toBe("commentary_or_analysis");
+  });
+  it("leaves alone a long-running situation presented as such", () => {
+    expect(reason("Al-Shabaab's 18-year insurgency: fighters attack army base near Baidoa")).toBe("retrospective");
+    expect(reason("Year-long siege tightens around El Fasher as fighting between army and RSF continues")).toBe("retrospective");
+  });
+  it("does not take a standing situation described in passing as a new event", () => {
+    // The siege is a year old; today's shelling is the event.
+    const elFasher = code("Shelling kills nine in El Fasher", "Shelling killed nine people in the besieged city of El Fasher, which has been under siege since May 2024.");
+    expect(elFasher.ids).toEqual(["heavy_weapons"]);
+    expect(elFasher.report.fatalities).toBe(9);
+    // Nothing new: what the group has done for years.
+    expect(reason("Al-Shabaab and the army in Bay region", "Al-Shabaab, which has been fighting the government since 2007, has repeatedly attacked army bases in Bay region.")).toBe("threat_or_warning_only");
+    // Laying a siege is an event.
+    expect(reason("Rebels lay siege to Kidal", "Rebel fighters laid siege to the town of Kidal today, cutting the main road.")).toBe("coded siege_or_blockade");
   });
 });
 

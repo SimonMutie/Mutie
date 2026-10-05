@@ -135,7 +135,7 @@ const CODING_SCHEMA = {
           lat: { type: ["number", "null"], description: "Latitude of `place` if you know it with confidence, else null." },
           lon: { type: ["number", "null"], description: "Longitude of `place` if you know it with confidence, else null." },
           event_date: { type: ["string", "null"], description: "Date the event happened, YYYY-MM-DD, resolved from the article ('on Tuesday', 'yesterday') against its publication date. Null if the article gives no indication." },
-          novelty: { type: "string", enum: ["new_event", "ongoing_update", "background"], description: "new_event: first report of something that just happened. ongoing_update: new facts about a situation already under way. background: context or history, nothing new." },
+          novelty: { type: "string", enum: ["new_event", "ongoing_update", "background"], description: "new_event: something that just happened. ongoing_update: a NEW armed event inside a situation already under way (today's shelling in a months-long siege) — not a restatement that the situation continues. background: context, history, a standing situation, or a reaction to an earlier event — nothing new has happened." },
           actors: { type: "array", items: { type: "string" }, description: "Armed actors involved, named as in the article." },
           indicators: {
             type: "array",
@@ -171,6 +171,12 @@ RULES
 1. Read the whole article before deciding. Headlines exaggerate; the body decides.
 
 2. An event counts only if it is concrete: something that happened, at a place, at a time, involving an armed actor. Threats, fears, analysis, anniversaries, court cases, statements and aid appeals are not events (see the rejection list).
+
+2a. The article must be a REPORT OF a new event, not a piece ABOUT one. Reject, however much fighting they mention:
+   - reactions and statements — a government, the UN or an organisation condemning, urging restraint, expressing concern, claiming victory, denying, visiting, meeting (diplomatic_or_political_only);
+   - pieces on the consequences of earlier fighting — humanitarian impact, displacement figures, hunger, survivors' accounts (humanitarian_only);
+   - explainers, rights reports, round-ups and updates that restate a long-running war, siege or insurgency without a specific new armed event of its own (commentary_or_analysis or retrospective).
+   If such a piece does contain a specific new armed event with its own place and date, code that event only, from the passage that reports it. A standing situation is never an indicator by itself: "the city has been under siege since May" is background; "shelling killed nine in the city on Monday" is an event.
 
 3. LOCATION is where the event physically happened — never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa, reject with outside_africa.
 

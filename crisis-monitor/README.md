@@ -129,7 +129,13 @@ report volume. Each 5-minute tick:
      fixed rules that recognise a limited set of explicit, completed events
      ("gunmen killed 12", "drone strike hit", "clashes erupted", "captured the
      town of") beside a named town or region; warnings, commentary, court
-     news, anniversaries and events outside Africa are left alone. Positives
+     news, anniversaries and events outside Africa are left alone. So are
+     pieces *about* an event rather than reports *of* one — reactions and
+     statements ("condemns", "urges restraint"), humanitarian-impact pieces,
+     analyses, rights reports and round-ups, and long-running situations
+     presented as such — and wording that describes a standing state ("under
+     siege since May") is not read as something that happened. When the rules
+     are tightened, first-pass codings they no longer support are withdrawn. Positives
      are stored as **low-confidence** reports marked `text_basis = 'headline'`
      and go through the same verification as a model's coding. This is what
      puts a marker on the map within minutes on the free AI allowance, which
