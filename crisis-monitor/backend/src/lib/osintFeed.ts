@@ -318,6 +318,22 @@ async function cachedFetch(key: string, ttl: number, load: () => Promise<Telegra
   return data;
 }
 
+/** The wire-service items alone (no Telegram), for the escalation pipeline
+ *  (escalationIncidents.ts) to read in full — these are real article URLs,
+ *  unlike Telegram posts. Shares buildOsintFeed's per-source cache, so this
+ *  costs no extra upstream fetches while that cache is warm. */
+export async function fetchWireArticleItems(): Promise<{ title: string; description: string; link: string; published: string; domain: string }[]> {
+  const now = Date.now();
+  const perFeed = await Promise.all(
+    WIRE_FEEDS.map(async (feed) => ({ feed, posts: await cachedFetch(`wire:${feed.handle}`, WIRE_TTL_MS, () => fetchWire(feed)).catch(() => [] as TelegramPost[]) }))
+  );
+  return perFeed.flatMap(({ feed, posts }) =>
+    recentPosts(posts, now)
+      .filter((p) => /^https?:\/\//i.test(p.url))
+      .map((p) => ({ title: p.headline, description: p.text, link: p.url, published: p.publishedAt, domain: sourceRef(feed) }))
+  );
+}
+
 export async function buildOsintFeed(): Promise<OsintFeedPayload> {
   const now = Date.now();
   const all = await Promise.all([

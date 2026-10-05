@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Map as MapLibreMap, NavigationControl, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
-import { api } from "../api";
+import { api, type EscalationIncident } from "../api";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
 // runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
@@ -64,6 +64,10 @@ export interface Map3DPoint {
   /** Conflict Escalation only — how many source links the evidence endpoint
    *  has for this country's current window. Undefined on every other layer. */
   evidenceCount?: number;
+  /** Conflict Escalation only — the full incident record. Not copied into
+   *  the MapLibre feature (its properties must be flat); looked up by id
+   *  when the marker is clicked. */
+  incident?: EscalationIncident;
 }
 
 export interface Map3DPath {
@@ -128,6 +132,7 @@ export type Map3DSelectedFeature =
       escalationLevel?: "elevated" | "critical";
       countryCode?: string;
       evidenceCount?: number;
+      incident?: EscalationIncident;
     };
 
 /** CARTO's free, keyless vector basemap CDN — distinct from the raster
@@ -290,6 +295,11 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
   onClickRef.current = onMapClick;
   const onFeatureSelectRef = useRef(onFeatureSelect);
   onFeatureSelectRef.current = onFeatureSelect;
+  // The click handler is registered once, at map load; this keeps the
+  // current points reachable from it so a clicked escalation marker can be
+  // matched back to its full incident record.
+  const pointsRef = useRef(points);
+  pointsRef.current = points;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -514,6 +524,7 @@ export default function Map3D({ points, paths, territoryChanges, drawAreaRing, o
             escalationLevel: props.escalationLevel ?? undefined,
             countryCode: props.countryCode,
             evidenceCount: props.evidenceCount,
+            incident: props.escalationLevel ? pointsRef.current.find((p) => p.id === props.id)?.incident : undefined,
           });
         });
       }
@@ -603,7 +614,10 @@ const LEVEL_LABEL: Record<"elevated" | "critical", string> = { elevated: "ELEVAT
  * DOM node after the fact.
  */
 export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedFeature | null; onClose: () => void }) {
-  const countryCode = feature?.kind === "point" ? feature.countryCode : undefined;
+  const incident = feature?.kind === "point" ? feature.incident : undefined;
+  // The country-level evidence fetch below only runs against a backend that
+  // predates incidents (no `incident` on the feature).
+  const countryCode = feature?.kind === "point" && !incident ? feature.countryCode : undefined;
   const [evidence, setEvidence] = useState<EscalationEvidenceItemLike[] | null>(null);
   const [evidenceError, setEvidenceError] = useState(false);
 
@@ -650,13 +664,13 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
             </a>
           )}
         </div>
+      ) : incident ? (
+        <EscalationIncidentCard incident={incident} />
       ) : feature.escalationLevel ? (
         <div className="osiris-popup-card osiris-popup-card--escalation">
           <div className={`osiris-popup-title osiris-popup-title--${feature.escalationLevel}`}>⚠ {title}</div>
-          {/* `subtitle` here is the 2-3 sentence AI ("what changed") brief
-           *  when the backend produced one this tick, falling back to the
-           *  mechanical numbers sentence otherwise — see
-           *  countryEscalation.ts's ai_summary. */}
+          {/* Fallback card, shown only against a backend that predates
+           *  incidents (no `incident` on the feature). */}
           <div className="osiris-popup-desc">{feature.subtitle}</div>
           <div className="osiris-popup-grid">
             <div>
@@ -692,7 +706,7 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
                     // all articles pulled with the specified indicators"
                     // link type) — plain GDELT bulk events only ever have a
                     // place name, no article title, so fall back to that.
-                    const isArticle = item.source === "africa-wire" || item.source === "gdelt-article";
+                    const isArticle = item.source === "africa-wire" || item.source === "gdelt-article" || item.source === "article";
                     const label = isArticle ? item.title || "Untitled report" : item.placeName || "Unknown location";
                     const tagText = item.source === "africa-wire" ? "Africa Wire" : item.source === "gdelt-article" ? "GDELT" : "";
                     return (
@@ -732,12 +746,147 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
   );
 }
 
+const PRECISION_NOTE: Record<EscalationIncident["geoPrecision"], string> = {
+  place: "Located at the place named in the reporting.",
+  approximate: "Approximate position for the place named in the reporting.",
+  region: "Region-level: the reporting names no locatable place, so the marker sits on the region.",
+  country: "Country-level only: the reporting names no place, so the marker sits on the country centre.",
+};
+
+/** Renders analyst text with its inline citations ("[2]") turned into links
+ *  to the numbered source they refer to. */
+function CitedText({ text, incident }: { text: string; incident: EscalationIncident }) {
+  const parts = text.split(/(\[\d+\])/g);
+  return (
+    <>
+      {parts.map((part, i) => {
+        const m = /^\[(\d+)\]$/.exec(part);
+        const src = m ? incident.sources.find((s) => s.n === Number(m[1])) : undefined;
+        if (!src) return <span key={i}>{part}</span>;
+        return (
+          <a key={i} className="osiris-incident-cite" href={src.url} target="_blank" rel="noopener noreferrer" title={src.title ?? src.domain}>
+            {part}
+          </a>
+        );
+      })}
+    </>
+  );
+}
+
+const shortDate = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
+
+/** The detail card for one flagged escalation incident: what happened and
+ *  what it means (analyst text, cited), then exactly why it is flagged —
+ *  the criteria met, each indicator with the quote that establishes it,
+ *  and the sources. */
+function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) {
+  const where = incident.locationLabel ? `${incident.locationLabel}, ${incident.countryName}` : incident.countryName;
+  const dates = incident.firstEventDate && incident.lastEventDate && incident.firstEventDate !== incident.lastEventDate
+    ? `${shortDate(incident.firstEventDate)} – ${shortDate(incident.lastEventDate)}`
+    : shortDate(incident.lastEventDate);
+  return (
+    <div className="osiris-popup-card osiris-popup-card--escalation osiris-incident">
+      <div className={`osiris-popup-title osiris-popup-title--${incident.level}`}>⚠ {incident.headline}</div>
+      <div className="osiris-popup-layer">{where}</div>
+      <div className={`osiris-incident-precision osiris-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
+
+      <div className="osiris-popup-grid osiris-incident-grid">
+        <div>
+          <div className="osiris-popup-label">SEVERITY</div>
+          <div className={`osiris-popup-value osiris-popup-value--${incident.level}`}>{LEVEL_LABEL[incident.level]}</div>
+        </div>
+        <div>
+          <div className="osiris-popup-label">EVENT DATE</div>
+          <div className="osiris-popup-value">{dates}</div>
+        </div>
+        <div>
+          <div className="osiris-popup-label">SOURCES</div>
+          <div className="osiris-popup-value">{incident.sources.length}</div>
+        </div>
+        <div>
+          <div className="osiris-popup-label">REPORTED DEATHS</div>
+          <div className="osiris-popup-value">{incident.fatalitiesMax ?? "none stated"}</div>
+        </div>
+      </div>
+
+      <div className="osiris-incident-heading">WHAT HAPPENED</div>
+      <div className="osiris-popup-desc">
+        <CitedText text={incident.summary} incident={incident} />
+      </div>
+      {incident.assessment && (
+        <>
+          <div className="osiris-incident-heading">ASSESSMENT</div>
+          <div className="osiris-popup-desc">
+            <CitedText text={incident.assessment} incident={incident} />
+          </div>
+        </>
+      )}
+      {incident.outlook && (
+        <>
+          <div className="osiris-incident-heading">WATCH FOR</div>
+          <div className="osiris-popup-desc">
+            <CitedText text={incident.outlook} incident={incident} />
+          </div>
+        </>
+      )}
+      {incident.caveats && <div className="osiris-incident-caveat">{incident.caveats}</div>}
+
+      <div className="osiris-incident-heading">WHY THIS IS FLAGGED — CRITERIA MET</div>
+      <ul className="osiris-incident-list">
+        {incident.criteriaMet.map((c, i) => (
+          <li key={i}>{c}</li>
+        ))}
+      </ul>
+
+      <div className="osiris-incident-heading">INDICATORS AND THE TEXT BEHIND THEM</div>
+      {incident.indicators.map((ind) => (
+        <div key={ind.id} className="osiris-incident-indicator">
+          <div className={`osiris-incident-indicator-label osiris-incident-indicator-label--${ind.tier}`}>{ind.label}</div>
+          {ind.evidence.map((ev, i) => {
+            const src = incident.sources.find((s) => s.n === ev.source);
+            return (
+              <div key={i} className="osiris-incident-quote">
+                “{ev.quote}”{" "}
+                {src && (
+                  <a className="osiris-incident-cite" href={src.url} target="_blank" rel="noopener noreferrer" title={src.title ?? src.domain}>
+                    [{src.n}] {src.domain}
+                  </a>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      {incident.actors.length > 0 && (
+        <>
+          <div className="osiris-incident-heading">ACTORS NAMED</div>
+          <div className="osiris-popup-desc">{incident.actors.join(" · ")}</div>
+        </>
+      )}
+
+      <div className="osiris-incident-heading">SOURCES ({incident.sources.length})</div>
+      <div className="osiris-incident-sources">
+        {incident.sources.map((s) => (
+          <a key={s.n} className="osiris-incident-source" href={s.url} target="_blank" rel="noopener noreferrer">
+            [{s.n}] {s.title || s.domain}
+            <span className="osiris-incident-source-meta">
+              {s.domain} · {shortDate(s.publishedAt)}
+              {s.textBasis === "feed_summary" ? " · summary only" : ""}
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Narrowed shape of api.ts's EscalationEvidenceItem — declared locally so
  *  this file doesn't need a type-only import just for these few fields. */
 interface EscalationEvidenceItemLike {
   placeName: string;
   sourceUrl: string;
-  source?: "gdelt" | "africa-wire" | "gdelt-article";
+  source?: "gdelt" | "africa-wire" | "gdelt-article" | "article";
   title?: string;
   /** An LLM's own reading of this specific item (backend's lib/deepRead.ts)
    *  — "every escalation gives a list of information that have warranted

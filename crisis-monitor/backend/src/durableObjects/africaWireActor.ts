@@ -1,11 +1,10 @@
 import type { Env } from "../bindings";
 import { AFRICA_SOURCES, PAN_AFRICAN, INSTITUTION } from "../data/africaSources";
-import { AFRICA_CENTROIDS } from "../countryEscalation";
-import { AFRICA_COUNTRIES } from "../routes/globalStatus";
+import { AFRICA_CENTROIDS } from "../lib/africaGeo";
 import { discoverFeed } from "../lib/feedDiscovery";
 import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
-import { matchEscalationKeywords, isConfirmedEscalationText, isLikelyWrongCountryText } from "../lib/escalationKeywords";
+import { isCandidateText, candidatePriority } from "../lib/escalationKeywords";
 
 /**
  * Crawls the ~260 African country/pan-African/institutional homepages in
@@ -82,23 +81,21 @@ interface WireItem {
   riskTextEn?: string;
 }
 
-/** One Africa Wire article that literally matched one or more of Simon's
- *  escalation keywords (see lib/escalationKeywords.ts) — the real,
- *  reachable article link + title this keyword flagged, not a GDELT
- *  structured-event row. Returned grouped by country so
- *  countryEscalation.ts's getAfricaWireEscalationEvidence() can merge these
- *  straight into a country's evidence list alongside its GDELT evidence. */
-export interface EscalationArticleMatch {
+/** One crawled item that is worth reading in full for the escalation
+ *  pipeline (escalationIncidents.ts). `sourceCountry` is where the OUTLET is
+ *  based — it says nothing about where the reported event happened, and the
+ *  pipeline never uses it for attribution. */
+export interface EscalationCandidate {
   id: string;
   title: string;
+  description: string;
+  /** English translation of title+description when the crawl produced one. */
+  textEn: string | null;
   link: string;
   published: string;
   domain: string;
-  matchedKeywords: string[];
-  /** The same (English, when translated) text the keyword match itself ran
-   *  against — carried through so a downstream deep-read pass (lib/deepRead.ts)
-   *  has real article body text to classify, not just the title. */
-  text: string;
+  sourceCountry: string;
+  priority: number;
 }
 
 function domainOf(url: string): string {
@@ -131,73 +128,47 @@ export class AfricaWireActor implements DurableObject {
       return Response.json(await this.buildSnapshot());
     }
 
-    if (url.pathname === "/keyword-matches") {
-      const country = url.searchParams.get("country") ?? undefined;
-      return Response.json({ matches: await this.getKeywordMatches(country) });
+    if (url.pathname === "/escalation-candidates") {
+      const maxAgeHours = Number(url.searchParams.get("maxAgeHours")) || 72;
+      return Response.json({ candidates: await this.getEscalationCandidates(maxAgeHours) });
     }
 
     return new Response("not found", { status: 404 });
   }
 
-  /** Scans every already-crawled Africa Wire item (across whichever of the
-   *  ~260 sources have been processed so far — no re-fetch, this just reads
-   *  back DO storage already populated by processSource()) for a literal
-   *  match against Simon's escalation keyword list, grouped by country code
-   *  — the real-article counterpart to countryEscalation.ts's CAMEO-code-
-   *  based GDELT scoring, which has no raw article text to match against.
-   *  `countryCode` narrows to one country; omitted, every country with at
-   *  least one match is returned. Each country's matches are capped and
-   *  newest-first, same shape as the GDELT evidence list this gets merged
-   *  with (see countryEscalation.ts's getAfricaWireEscalationEvidence). */
-  private async getKeywordMatches(countryCode?: string): Promise<Record<string, EscalationArticleMatch[]>> {
-    const MAX_PER_COUNTRY = 30;
+  /** Every already-crawled item from the last `maxAgeHours` whose text
+   *  mentions violence, an armed actor or military activity in any of the
+   *  crawl's languages — a deliberately loose, high-recall filter (see
+   *  lib/escalationKeywords.ts's isCandidateText). This does NOT decide
+   *  anything: it only picks what the escalation pipeline should fetch and
+   *  read. Reads back DO storage already populated by processSource(); no
+   *  re-fetch. Highest reading priority first, then newest. */
+  private async getEscalationCandidates(maxAgeHours: number): Promise<EscalationCandidate[]> {
+    const cutoff = Date.now() - maxAgeHours * 3_600_000;
     const itemEntries = await this.state.storage.list<WireItem[]>({ prefix: "items:" });
-    const byCountry: Record<string, EscalationArticleMatch[]> = {};
-
+    const out: EscalationCandidate[] = [];
     for (const items of itemEntries.values()) {
       for (const it of items) {
-        if (countryCode && it.country !== countryCode) continue;
-        // riskTextEn (translated) when present — matching the already-
-        // translated text catches a non-English source's own report of
-        // these terms, same as scoreRisk() does for the general risk score.
-        const text = `${it.riskTextEn ?? `${it.title} ${it.description}`}`;
-        // isConfirmedEscalationText, not a bare matchEscalationKeywords().length
-        // check — a named non-state armed group or an unambiguous action term
-        // (drone strike, massacre, car bomb...) confirms alone, but an
-        // ambiguous phrase (clash, siege, took control of...) only counts once
-        // a real armed actor (named group or named state military) is also
-        // present in the same text. This is what keeps this escalation-only
-        // evidence route from flagging a story just because it contains a
-        // word like "clash" or "siege" used in its ordinary, non-military
-        // sense. matchEscalationKeywords is still used for the display labels
-        // once confirmed — see lib/escalationKeywords.ts's own doc comment.
-        // The country name, when known from it.country, is also passed
-        // through: it's what lets the state-military tier reject a story
-        // about that country's OWN military fighting in a DIFFERENT named
-        // country (Kenya's KDF in Somalia, say) instead of wrongly confirming
-        // an escalation for the military's home country, and lets
-        // isConfirmedEscalationText reject a multi-country roundup piece
-        // outright. isLikelyWrongCountryText is also run directly here (the
-        // same check the GDELT-bulk/URL-slug path already had via
-        // isConfirmedEscalationUrl) — this crawled-article path matches on
-        // real title/description text and never ran that check before,
-        // which is how a Yemen/Taiz story datelined "Riyadh" could slip into
-        // an African country's evidence purely from its own text otherwise
-        // satisfying one of the confirmation tiers.
-        const countryName = AFRICA_COUNTRIES[it.country];
-        if (isLikelyWrongCountryText(text, countryName)) continue;
-        if (!isConfirmedEscalationText(text, countryName)) continue;
-        const matchedKeywords = matchEscalationKeywords(text);
-        const list = byCountry[it.country] ?? (byCountry[it.country] = []);
-        list.push({ id: it.id, title: it.title, link: it.link, published: it.published, domain: it.domain, matchedKeywords, text });
+        if (!it.link || !/^https?:\/\//i.test(it.link)) continue;
+        const published = Date.parse(it.published);
+        if (!Number.isFinite(published) || published < cutoff) continue;
+        const text = `${it.title} ${it.description} ${it.riskTextEn ?? ""}`;
+        if (!isCandidateText(text)) continue;
+        out.push({
+          id: it.id,
+          title: it.title,
+          description: it.description,
+          textEn: it.riskTextEn ?? null,
+          link: it.link,
+          published: it.published,
+          domain: it.domain,
+          sourceCountry: it.country,
+          priority: candidatePriority(text),
+        });
       }
     }
-
-    for (const key of Object.keys(byCountry)) {
-      byCountry[key].sort((a, b) => Date.parse(b.published) - Date.parse(a.published));
-      byCountry[key] = byCountry[key].slice(0, MAX_PER_COUNTRY);
-    }
-    return byCountry;
+    out.sort((a, b) => b.priority - a.priority || Date.parse(b.published) - Date.parse(a.published));
+    return out.slice(0, 600);
   }
 
   private async processSource(index: number): Promise<void> {

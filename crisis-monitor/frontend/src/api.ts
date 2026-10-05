@@ -120,6 +120,9 @@ export interface AlertItem {
   created_at: string;
   acknowledged_at: string | null;
   resolved_at: string | null;
+  /** Escalation-incident alerts carry the criteria that were met (see the
+   *  backend's escalationIncidents.ts); other alerts carry their own metrics. */
+  metric_snapshot?: { incidentId?: string; criteriaMet?: string[]; indicators?: string[]; sourceCount?: number; geoPrecision?: string } & Record<string, unknown>;
 }
 
 export interface MonitoringQueryItem {
@@ -605,7 +608,7 @@ export interface LiveLayerFeature {
      *  exactly how this is derived from NASA EONET's own category field.
      *  Undefined on every other layer. */
     naturalHazardCategory?: "wildfire" | "severe-weather";
-    /** Conflict Escalation only — see the backend's countryEscalation.ts.
+    /** Conflict Escalation only — see the backend's escalationIncidents.ts.
      *  Undefined on every other layer. */
     escalationLevel?: "elevated" | "critical";
     /** Conflict Escalation only — fetches the full evidence/source-link
@@ -613,7 +616,91 @@ export interface LiveLayerFeature {
     countryCode?: string;
     /** Conflict Escalation only — how many source links are available. */
     evidenceCount?: number;
+    /** Conflict Escalation only — the full incident record behind this
+     *  marker: criteria met, indicators with quotes, sources, location
+     *  precision. Absent only when talking to a backend older than the
+     *  incident pipeline. */
+    incident?: EscalationIncident;
   };
+}
+
+/** One article the escalation pipeline read, and what it decided. */
+export interface EscalationAuditEntry {
+  url: string;
+  domain: string;
+  title: string | null;
+  origin: string;
+  publishedAt: string | null;
+  status: "coded" | "rejected" | "unreadable" | "error";
+  textBasis: string | null;
+  rejectionReason: string | null;
+  rejectionNote: string | null;
+  processedAt: string;
+  reports: { country: string; location: string | null; geoPrecision: string; geoMethod: string; eventDate: string; indicators: string[]; confidence: string; incidentId: string | null; notes: string[] }[];
+}
+
+export interface EscalationPipelineStatus {
+  provider: { provider: "anthropic" | "workers-ai"; coderModel: string; analystModel: string };
+  enabled: boolean;
+  lastRun: Record<string, unknown> | null;
+  last24h: { status: string; count: number }[];
+  rejectionReasons24h: { reason: string; count: number }[];
+  incidents: { level: string; count: number }[];
+}
+
+/** One source article behind an escalation incident; `n` is the citation
+ *  number used in the incident's summary/assessment text ("[1]"). */
+export interface EscalationSource {
+  n: number;
+  url: string;
+  title: string | null;
+  domain: string;
+  publishedAt: string | null;
+  /** "full_text" when the whole article was read; "feed_summary" when only
+   *  the feed's teaser could be. */
+  textBasis: string | null;
+}
+
+/** One codebook indicator found for an incident, with the verbatim quote(s)
+ *  that establish it and the source each quote came from. */
+export interface EscalationIndicator {
+  id: string;
+  label: string;
+  tier: "critical" | "posture" | "contextual";
+  evidence: { quote: string; source: number }[];
+}
+
+/** A flagged escalation incident — see the backend's escalationIncidents.ts.
+ *  Every incident carries the criteria it met and the evidence behind them. */
+export interface EscalationIncident {
+  id: string;
+  countryCode: string;
+  countryName: string;
+  /** "Mekelle, Tigray" — null when reporting names no place below the country. */
+  locationLabel: string | null;
+  lat: number;
+  lon: number;
+  /** How the marker position was arrived at: a named place, an estimated
+   *  position for a named place, a region centroid, or the country centroid. */
+  geoPrecision: "place" | "approximate" | "region" | "country";
+  geoMethod: string | null;
+  level: "elevated" | "critical";
+  headline: string;
+  summary: string;
+  assessment: string;
+  outlook: string;
+  caveats: string | null;
+  analystWritten: boolean;
+  criteriaMet: string[];
+  indicators: EscalationIndicator[];
+  sources: EscalationSource[];
+  actors: string[];
+  places: string[];
+  fatalitiesMax: number | null;
+  reportCount: number;
+  firstEventDate: string | null;
+  lastEventDate: string | null;
+  updatedAt: string;
 }
 
 /** One contributing bulk-ingested GDELT event behind a country's escalation
@@ -632,7 +719,7 @@ export interface EscalationEvidenceItem {
    *  article whose text matched an escalation keyword), or "gdelt-article"
    *  (a real article from GDELT's own live text search, same keyword
    *  match) — absent on older cached rows, treat as "gdelt" in that case. */
-  source?: "gdelt" | "africa-wire" | "gdelt-article";
+  source?: "gdelt" | "africa-wire" | "gdelt-article" | "article";
   /** Real article title — set for "africa-wire" and "gdelt-article" items. */
   title?: string;
   /** Which escalation keyword(s) matched — set for "africa-wire" and "gdelt-article" items. */
@@ -1196,16 +1283,26 @@ export const api = {
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
-  // Country-level "deteriorating right now" overlay — one point per African
-  // country currently Elevated/Critical (see backend's countryEscalation.ts).
+  // Flagged escalation incidents — one point per incident, located from the
+  // reporting, each carrying its criteria, indicators (with quotes) and
+  // sources in `properties.incident` (see backend's escalationIncidents.ts).
   getConflictEscalation: () => req<LiveLayerCollection>("/api/live-layers/conflict-escalation"),
   getConflictEscalationEvidence: (countryCode: string) =>
     req<{ countryCode: string; items: EscalationEvidenceItem[]; fetchedAt: string }>(
       `/api/live-layers/conflict-escalation/${encodeURIComponent(countryCode)}/evidence`
     ),
-  // Approximate "area changed" circles around reported occupy-territory/
-  // blockade events — see TerritoryChangeFeature's own doc comment for the
-  // honesty caveat (not a verified control boundary).
+  // What the escalation pipeline decided about each article it read, and
+  // why — the answer to "why is / isn't this flagged".
+  getEscalationAudit: (params: { country?: string; q?: string; status?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== "").map(([k, v]) => [k, String(v)])).toString();
+    return req<{ items: EscalationAuditEntry[]; fetchedAt: string }>(`/api/live-layers/conflict-escalation/audit${qs ? `?${qs}` : ""}`);
+  },
+  // Pipeline health: which model is coding, what the last tick did, and
+  // what was read / rejected (and why) in the last 24 hours.
+  getEscalationStatus: () => req<EscalationPipelineStatus>("/api/live-layers/conflict-escalation/status"),
+  // Approximate circles around flagged incidents that include a territorial
+  // change, siege or blockade — see TerritoryChangeFeature's own doc comment
+  // for the caveat (not a verified control boundary).
   getTerritoryChanges: () => req<TerritoryChangeCollection>("/api/live-layers/territory-changes"),
   // Real ThreatFox IOC data geolocated via GeoLite2 — returns a real 502
   // ("Upstream feed unavailable") until the backend's abuse.ch Auth-Key

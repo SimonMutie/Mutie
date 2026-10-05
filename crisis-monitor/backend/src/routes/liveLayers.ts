@@ -7,7 +7,10 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getLatestCountryEscalations, getCountryEscalationEvidence, getCombinedEscalationEvidence, getTerritoryChangeEvents, AFRICA_CENTROIDS } from "../countryEscalation";
+import { getFlaggedIncidents, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
+import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
+import { resolveCountryCode } from "../lib/africaGeo";
+import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 
@@ -349,6 +352,14 @@ export async function fetchGdeltPoints(query: string): Promise<NormalizedFeature
  *  did (ceiling picked empirically, same reasoning as elsewhere in this
  *  file: one outlier event shouldn't flatten every other point's relative
  *  sizing to zero). */
+/** These two layers plot GDELT's own coordinates, which GDELT sometimes
+ *  assigns to the wrong country (a Taiz, Yemen battle pinned on Riyadh). A
+ *  point whose own article URL names a different country than the one it
+ *  was geocoded to is not plotted — see lib/gdeltGeoSanity.ts. */
+function isPlausiblyLocated(e: BulkEventPoint): boolean {
+  return !isGeocodeContradictedBySlug(e.placeName, e.sourceUrl);
+}
+
 function bulkEventToFeature(e: BulkEventPoint): NormalizedFeature {
   const mentions = e.numMentions ?? 1;
   return {
@@ -378,7 +389,7 @@ liveLayersRouter.get("/conflict-events", async (c) => {
     c.req.raw,
     async () => {
       const events = await queryBulkEvents(c.env, { hours: 48, minQuadClass: 4 });
-      const features = events.map(bulkEventToFeature);
+      const features = events.filter(isPlausiblyLocated).map(bulkEventToFeature);
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     30
@@ -408,136 +419,120 @@ liveLayersRouter.get("/global-incidents", async (c) => {
     c.req.raw,
     async () => {
       const events = await queryBulkEvents(c.env, { hours: 72, minQuadClass: 3 });
-      const features = events.map(bulkEventToFeature);
+      const features = events.filter(isPlausiblyLocated).map(bulkEventToFeature);
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     30
   );
 });
 
-/** Country-level "is this deteriorating right now" overlay — one point per
- *  African country currently flagged Elevated/Critical, placed at that
- *  country's centroid (see countryEscalation.ts's AFRICA_CENTROIDS), not
- *  one point per raw event like /conflict-events and /global-incidents
- *  above. Scored on the same 5-minute cron that ingests bulk events (see
- *  index.ts's scheduled() and countryEscalation.ts's scoreCountryEscalations)
- *  — this route only reads back whatever that last wrote, no live GDELT
- *  call of its own. `detail` carries the same analytical summary text used
- *  in the alert this scoring may have raised, so clicking the marker on the
- *  map shows the real reasoning (current vs. baseline count, tone, sample
- *  locations) without a second request — see /conflict-escalation/:code for
- *  the fuller, itemized version of that evidence. */
+/** A map feature for one flagged incident. `detail` is the incident's own
+ *  summary; the full record (criteria, indicators with quotes, sources) is
+ *  carried in `incident` so the popup needs no second request. */
+function incidentToFeature(i: IncidentView) {
+  const place = i.locationLabel ? `${i.locationLabel}, ${i.countryName}` : `${i.countryName} — location not specified in reporting`;
+  return {
+    type: "Feature" as const,
+    geometry: { type: "Point" as const, coordinates: [i.lon, i.lat] as [number, number] },
+    properties: {
+      id: `escalation-${i.id}`,
+      incidentId: i.id,
+      countryCode: i.countryCode,
+      title: place,
+      time: i.updatedAt,
+      intensity: i.level === "critical" ? 1 : 0.6,
+      intensityLabel: i.level === "critical" ? "Critical" : "Elevated",
+      detail: i.summary.replace(/\s*\[\d+\]/g, ""),
+      evidenceCount: i.sources.length,
+      url: i.sources[0]?.url ?? null,
+      escalationLevel: i.level,
+      incident: i,
+    },
+  };
+}
+
+/** One marker per flagged INCIDENT (not per country), placed where the
+ *  reporting says the event happened. Written by the escalation pipeline
+ *  (escalationIncidents.ts) on the 5-minute cron; this route only reads.
+ *  Every feature carries the criteria it met, the indicators with their
+ *  supporting quotes, its sources, and how precisely it is located. */
 liveLayersRouter.get("/conflict-escalation", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const snapshots = await getLatestCountryEscalations(c.env);
-      const features: NormalizedFeature[] = [];
-      for (const s of snapshots) {
-        if (s.level === "none") continue;
-        // Top contributing (most-mentioned) military-posture report — its
-        // own geocoded lat/lon places the marker at the actual reported
-        // location (e.g. Cabo Delgado, Tigray) instead of the country's
-        // fixed centroid (which previously put every flagged country's
-        // marker on its capital regardless of where the events actually
-        // were — "a deterioration in Ethiopia should not be placed in
-        // Addis when it is actually happening in Tigray").
-        //
-        // This is also, deliberately, this route's live re-confirmation of
-        // the snapshot's level: getCountryEscalationEvidence re-applies the
-        // full isConfirmedEscalationUrl gate against the CURRENT state of
-        // gdelt_bulk_events on every request, not the possibly-stale level
-        // the 5-minute scoring cron last wrote. A country can only reach
-        // "elevated"/"critical" via confirmed posture events in the first
-        // place (see scoreCountryEscalations), so an EMPTY live evidence
-        // list here means either the snapshot is stale (scored by an older
-        // build, or the confirming events have since aged out of the
-        // window) or was a transient edge case — either way, the marker
-        // should not be shown without a real, currently-confirmable report
-        // behind it ("danger only appears where a country has conversations
-        // with escalatory discussions" — a country isn't skipped here, it's
-        // skipped because there is, right now, nothing to show). No
-        // centroid fallback either: a danger marker with no real located
-        // evidence point has nowhere honest to go.
-        // "cache-only" — this route is polled for every flagged country's
-        // marker position (not a one-time drill-down a person just opened),
-        // so it must never trigger a fresh deep-read LLM call itself; see
-        // countryEscalation.ts's EvidenceMode doc comment. It still benefits
-        // from a deep-read location/verdict once the matching per-country
-        // drill-down (getCombinedEscalationEvidence, below) has cached one.
-        const [topEvidence] = await getCountryEscalationEvidence(c.env, s.countryCode, 1, "cache-only");
-        if (!topEvidence) continue;
-        const lat = topEvidence.lat ?? AFRICA_CENTROIDS[s.countryCode]?.[0];
-        const lng = topEvidence.lon ?? AFRICA_CENTROIDS[s.countryCode]?.[1];
-        if (lat == null || lng == null) continue;
-        // AI brief when the scorer produced one this tick (see
-        // countryEscalation.ts's ai_summary column); the mechanical
-        // fallback sentence otherwise — either way this is a real 2-3
-        // sentence "what changed" line, not just the raw numbers.
-        const mechanicalFallback =
-          `${s.postureCurrentCount} military-posture report${s.postureCurrentCount === 1 ? "" : "s"} (mobilization/clashes/airstrikes/heavy weapons/territory change) ` +
-          `in last ${s.windowHours}h (baseline ${s.postureBaselineCount}/${s.windowHours}h) — ${s.triggeredWindow === "fast" ? "rapid" : "sustained"} signal. ` +
-          `Overall conflict-toned volume ${s.currentCount} vs ${s.baselineCount.toFixed(0)}` +
-          `${s.avgTone !== null ? `, tone ${s.avgTone.toFixed(1)}` : ""} — score ${s.escalationScore.toFixed(2)}`;
-        features.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [lng, lat] },
-          properties: {
-            id: `escalation-${s.countryCode}`,
-            countryCode: s.countryCode,
-            // Country name alone doesn't say WHERE — append the actual
-            // reported place (e.g. "Mozambique — Cabo Delgado") whenever a
-            // real location is behind this marker, not just its centroid.
-            title: topEvidence?.placeName ? `${s.countryName} — ${topEvidence.placeName}` : s.countryName,
-            time: s.windowEnd,
-            intensity: s.level === "critical" ? 1 : 0.6,
-            intensityLabel: s.level === "critical" ? "Critical" : "Elevated",
-            detail: s.aiSummary ?? mechanicalFallback,
-            evidenceCount: s.currentCount,
-            url: topEvidence?.sourceUrl || null,
-            escalationLevel: s.level,
-          },
-        });
-      }
-      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+      const incidents = await getFlaggedIncidents(c.env);
+      return { type: "FeatureCollection", features: incidents.map(incidentToFeature), fetchedAt: new Date().toISOString() };
     },
     30
   );
 });
 
-/** The itemized drill-down behind a given country's danger icon — the
- *  actual contributing reports (place, tone, mentions, source link), most-
- *  mentioned first. There's no literal saved "query" behind this feature
- *  (unlike Social Listening's boolean search) since it comes from the
- *  QuadClass-filtered bulk pipeline, not a keyword search — this is the
- *  honest equivalent: the real evidence, not a fabricated query string. */
-liveLayersRouter.get("/conflict-escalation/:code/evidence", async (c) => {
-  const code = c.req.param("code");
-  // Raised from the old default of 10 — "168 conflict events reported"
-  // should mean 168 real, clickable source links are available, not just
-  // the top 10. 500 is a safety ceiling (D1 query cost), not an expected
-  // real-world count for one country's window.
-  // Combined now — the structured GDELT evidence plus real Africa Wire
-  // articles whose own text literally matched one of the escalation
-  // keywords (see countryEscalation.ts's getCombinedEscalationEvidence) —
-  // "combine their reachable links of all articles pulled with the
-  // specified indicators" under one list, not two separate ones.
-  const items = await getCombinedEscalationEvidence(c.env, code, 500);
-  return c.json({ countryCode: code.toUpperCase(), items, fetchedAt: new Date().toISOString() });
+/** The written criteria: every indicator and exclusion the coder applies,
+ *  and the thresholds that set a level. Lets the UI show "how is this
+ *  decided" from the same definitions the pipeline uses. */
+liveLayersRouter.get("/conflict-escalation/codebook", (c) =>
+  c.json({
+    indicators: INDICATORS,
+    exclusions: EXCLUSIONS,
+    thresholds: { activeWindowHours: ACTIVE_WINDOW_HOURS, massCasualty: MASS_CASUALTY_THRESHOLD, notableFatalities: NOTABLE_FATALITY_THRESHOLD, multiDomainPostureCount: MULTI_DOMAIN_POSTURE_COUNT },
+  })
+);
+
+/** Pipeline health: which model is doing the coding, what the last tick
+ *  did, and what was read/rejected (and why) in the last 24 hours. */
+liveLayersRouter.get("/conflict-escalation/status", async (c) => c.json(await getPipelineStatus(c.env)));
+
+/** What the pipeline decided about each article it read — the answer to
+ *  "why is / isn't this flagged". ?country=Ethiopia, ?q=Tigray,
+ *  ?status=coded|rejected|unreadable|error, ?limit=. */
+liveLayersRouter.get("/conflict-escalation/audit", async (c) => {
+  const items = await getAuditLog(c.env, {
+    country: c.req.query("country") ?? null,
+    q: c.req.query("q") ?? null,
+    status: c.req.query("status") ?? null,
+    limit: Number(c.req.query("limit")) || 100,
+  });
+  return c.json({ items, fetchedAt: new Date().toISOString() });
 });
 
-// Radius for the approximate territory-change circle — deliberately NOT
-// derived from anything (no data source here says how far a reported
-// "occupied"/"blockaded" claim actually extends), so it's a fixed,
-// honestly-arbitrary visual radius, not a claim of measured extent.
+liveLayersRouter.get("/conflict-escalation/incidents/:id", async (c) => {
+  const incident = await getIncident(c.env, c.req.param("id"));
+  if (!incident) return c.json({ error: "Incident not found" }, 404);
+  return c.json(incident);
+});
+
+/** Kept for clients built before incidents existed, which ask for a
+ *  country's "evidence" list: returns the sources of that country's flagged
+ *  incidents in the old item shape. New clients read `incident` from the
+ *  feature itself. */
+liveLayersRouter.get("/conflict-escalation/:code/evidence", async (c) => {
+  const code = resolveCountryCode(c.req.param("code"));
+  const incidents = code ? (await getFlaggedIncidents(c.env)).filter((i) => i.countryCode === code) : [];
+  const items = incidents.flatMap((i) =>
+    i.sources.map((s) => ({
+      placeName: i.locationLabel ?? i.countryName,
+      eventCode: "",
+      avgTone: null,
+      numMentions: null,
+      sourceUrl: s.url,
+      dateAdded: s.publishedAt ?? i.updatedAt,
+      lat: i.lat,
+      lon: i.lon,
+      source: "article" as const,
+      title: s.title ?? s.domain,
+      matchedKeywords: i.indicators.filter((ind) => ind.evidence.some((e) => e.source === s.n)).map((ind) => ind.label),
+    }))
+  );
+  return c.json({ countryCode: (code ?? c.req.param("code")).toUpperCase(), items, fetchedAt: new Date().toISOString() });
+});
+
+// Radius for the approximate territory-change circle — a fixed visual
+// radius, not a claim of measured extent.
 const TERRITORY_CHANGE_RADIUS_KM = 12;
 const EARTH_RADIUS_KM = 6371;
 
-/** A plain circle polygon around [lat, lon] — not a real control boundary
- *  (GDELT gives a single point, not a shape), just a way to make "an area
- *  near X" visually legible on the map instead of a point that looks
- *  identical to every other point layer. 24 vertices is smooth enough at
- *  any zoom this map actually renders at without bloating the GeoJSON. */
+/** A plain circle polygon around [lat, lon] — not a real control boundary,
+ *  just a way to make "an area near X" visually legible on the map. */
 function approximateCircle(lat: number, lon: number, radiusKm: number, points = 24): [number, number][] {
   const coords: [number, number][] = [];
   const latRad = (lat * Math.PI) / 180;
@@ -550,41 +545,43 @@ function approximateCircle(lat: number, lon: number, radiusKm: number, points = 
   return coords;
 }
 
-const TERRITORY_EVENT_LABEL: Record<string, string> = {
-  "191": "Blockade / movement restriction reported",
-  "192": "Territory occupation / control change reported",
-};
+const TERRITORY_INDICATORS = new Set(["major_territorial_change", "territorial_change", "siege_or_blockade"]);
 
-/** "Can this automatically plot a polygon of what changed" — this is the
- *  honest version of that: a fixed-radius circle around each reported
- *  occupy-territory/blockade event (CAMEO 191/192 — see
- *  countryEscalation.ts's TERRITORY_CHANGE_EVENT_CODES), clearly labeled as
- *  an approximation. What this is NOT: a verified front-line or control-
- *  boundary polygon — that needs a curated source (ACLED's own territorial
- *  control products, ISW-style terrain maps) built from confirmed ground
- *  reporting, which isn't something this pipeline has access to. A real
- *  boundary shape also isn't something a single lat/lon point plus a count
- *  can ever honestly produce, however it's drawn — so this stays a visibly
- *  approximate marker, not a map that overclaims precision it doesn't have. */
+/** Approximate circles around flagged incidents whose reports include a
+ *  territorial change, siege or blockade — taken from the same article-
+ *  coded incidents as the escalation markers, so each one is located from
+ *  the reporting and carries the quote behind it. (This used to draw a
+ *  circle at GDELT's own coordinates for every "occupy territory" event
+ *  code worldwide, which is how a Yemen battle ended up drawn on Riyadh.)
+ *  Only incidents located to a named place are drawn: a 12 km circle on a
+ *  regional or country centroid would claim a precision that isn't there.
+ *  Still a marker around a point, NOT a verified control boundary. */
 liveLayersRouter.get("/territory-changes", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const events = await getTerritoryChangeEvents(c.env, 24);
-      const features = events.map((e) => ({
-        type: "Feature" as const,
-        geometry: { type: "Polygon" as const, coordinates: [approximateCircle(e.lat, e.lon, TERRITORY_CHANGE_RADIUS_KM)] },
-        properties: {
-          id: `territory-${e.id}`,
-          title: e.placeName || "Unknown location",
-          detail:
-            `${TERRITORY_EVENT_LABEL[e.eventCode] ?? "Military control-related event reported"} near ${e.placeName || "this location"}. ` +
-            `Approximate ${TERRITORY_CHANGE_RADIUS_KM}km marker around a single reported point — NOT a verified control boundary.`,
-          time: e.dateAdded,
-          url: e.sourceUrl || null,
-          eventCode: e.eventCode,
-        },
-      }));
+      const incidents = (await getFlaggedIncidents(c.env)).filter(
+        (i) => (i.geoPrecision === "place" || i.geoPrecision === "approximate") && i.indicators.some((ind) => TERRITORY_INDICATORS.has(ind.id))
+      );
+      const features = incidents.map((i) => {
+        const ind = i.indicators.find((x) => TERRITORY_INDICATORS.has(x.id))!;
+        const ev = ind.evidence[0];
+        const src = ev ? i.sources.find((s) => s.n === ev.source) : undefined;
+        return {
+          type: "Feature" as const,
+          geometry: { type: "Polygon" as const, coordinates: [approximateCircle(i.lat, i.lon, TERRITORY_CHANGE_RADIUS_KM)] },
+          properties: {
+            id: `territory-${i.id}`,
+            title: `${i.locationLabel ?? i.countryName}, ${i.countryName}`,
+            detail:
+              `${ind.label} reported${ev ? `: "${ev.quote}"${src ? ` (${src.domain})` : ""}` : ""}. ` +
+              `Approximate ${TERRITORY_CHANGE_RADIUS_KM} km marker around the reported place — NOT a verified control boundary.`,
+            time: i.updatedAt,
+            url: src?.url ?? i.sources[0]?.url ?? null,
+            eventCode: ind.id,
+          },
+        };
+      });
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     60

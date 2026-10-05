@@ -6,7 +6,7 @@
  * outlets he wants pulled from, one entry per line, grouped by country in
  * the order he sent it. Nothing here is guessed or invented: these are the
  * homepages he provided, tagged with the ISO-3166 country code his own
- * AFRICA_CENTROIDS table (countryEscalation.ts) already uses, so a crawled
+ * AFRICA_CENTROIDS table (lib/africaGeo.ts) already uses, so a crawled
  * item can be pinned to that country's centroid.
  *
  * None of these homepages is assumed to expose a working RSS feed — that's
