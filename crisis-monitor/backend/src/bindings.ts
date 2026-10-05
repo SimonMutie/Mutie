@@ -120,4 +120,8 @@ export interface Env {
   /** How many new articles the escalation pipeline reads and codes per
    *  5-minute tick. Default 12 (about 3,400 a day at most). */
   ESCALATION_ARTICLES_PER_TICK?: string;
+  /** "false" switches off the headline first pass (lib/headlineCoder.ts),
+   *  which codes reports from their headlines by fixed rules at no cost.
+   *  Markers then come only from articles a model has read. Default on. */
+  ESCALATION_HEADLINE_TIER?: string;
 }

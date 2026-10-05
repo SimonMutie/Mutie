@@ -235,7 +235,10 @@ function plural(n: number, word: string): string {
  * CRITICAL — any one of:
  *   C1. a critical-tier indicator in a report coded with medium or high
  *       confidence, or in two or more independent sources;
- *   C2. MASS_CASUALTY_THRESHOLD or more deaths reported for a single event;
+ *   C2. MASS_CASUALTY_THRESHOLD or more deaths reported for a single event,
+ *       in a report coded with medium or high confidence or with two or more
+ *       independent sources on the incident (one low-confidence source —
+ *       typically a headline not yet read in full — makes it Elevated);
  *   C3. MULTI_DOMAIN_POSTURE_COUNT or more distinct military-posture
  *       indicators, reported by two or more independent sources.
  *
@@ -248,6 +251,12 @@ function plural(n: number, word: string): string {
  *       indicators from ONE report do not qualify on their own — a single
  *       roadside bomb that hits a patrol is both a bombing and an attack on
  *       security forces, and is still one routine event.)
+ *   E3. a military-posture or critical-tier indicator that does not count on
+ *       its own (one low-confidence source — typically a headline not yet
+ *       read in full) AND at least one of: NOTABLE_FATALITY_THRESHOLD or
+ *       more deaths; a second independent source reporting an armed event at
+ *       the same place. A lone low-confidence report of a strike with no
+ *       stated deaths still flags nothing.
  *
  * WATCH — a real, coded event that meets none of the above (kept in the
  * audit log, not shown as an alert).
@@ -282,8 +291,16 @@ export function decideLevel(reports: ScoringReport[]): LevelDecision {
   // C2
   const maxFatalities = Math.max(0, ...live.map((r) => r.fatalities ?? 0));
   if (maxFatalities >= MASS_CASUALTY_THRESHOLD) {
-    level = "critical";
-    criteriaMet.push(`${maxFatalities} deaths reported in a single event (threshold for Critical: ${MASS_CASUALTY_THRESHOLD}).`);
+    // A toll this high makes an incident Critical once it rests on more than
+    // one unread headline: a report coded with medium or high confidence, or
+    // two independent sources. Until then it is Elevated.
+    if (sources.size >= 2 || live.some((r) => (r.fatalities ?? 0) >= MASS_CASUALTY_THRESHOLD && r.confidence !== "low")) {
+      level = "critical";
+      criteriaMet.push(`${maxFatalities} deaths reported in a single event (threshold for Critical: ${MASS_CASUALTY_THRESHOLD}).`);
+    } else {
+      if (level !== "critical") level = "elevated";
+      criteriaMet.push(`${maxFatalities} deaths reported by one source at low confidence — Elevated until a second source reports it or the article is read in full (threshold for Critical: ${MASS_CASUALTY_THRESHOLD}).`);
+    }
   }
 
   // C3 / E1
@@ -318,6 +335,21 @@ export function decideLevel(reports: ScoringReport[]): LevelDecision {
       criteriaMet.push(`${labels.charAt(0).toUpperCase()}${labels.slice(1)} reported, with ${reasons.join("; ")}.`);
     } else {
       notes.push(`${labels.charAt(0).toUpperCase()}${labels.slice(1)} reported by one source with fewer than ${NOTABLE_FATALITY_THRESHOLD} deaths and no escalation framing — below the Elevated threshold.`);
+    }
+  }
+
+  // E3
+  const uncorroborated = [...present("critical"), ...posture].filter((d) => !qualifies(d.id));
+  if (level === "watch" && uncorroborated.length > 0) {
+    const reps = live.filter((r) => r.indicators.some((id) => uncorroborated.some((d) => d.id === id)));
+    const deaths = Math.max(0, ...reps.map((r) => r.fatalities ?? 0));
+    const reasons: string[] = [];
+    if (sources.size >= 2) reasons.push(`${sources.size} independent sources reporting armed events here`);
+    if (deaths >= NOTABLE_FATALITY_THRESHOLD) reasons.push(`${deaths} deaths reported`);
+    if (reasons.length > 0) {
+      level = "elevated";
+      const labels = uncorroborated.map((d) => d.label.toLowerCase()).join(", ");
+      criteriaMet.push(`${labels.charAt(0).toUpperCase()}${labels.slice(1)} reported by one source not yet corroborated, with ${reasons.join("; ")}.`);
     }
   }
 

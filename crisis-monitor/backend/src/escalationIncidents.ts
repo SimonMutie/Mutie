@@ -5,12 +5,13 @@ import { toGdeltTimestamp } from "./connectors/gdeltBulk";
 import { hashId, fetchWireArticleItems } from "./lib/osintFeed";
 import { candidatePriority, isCandidateText } from "./lib/escalationKeywords";
 import { normalizeForMatch, readArticle } from "./lib/articleReader";
-import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, type ArticleForCoding, type VerifiedIndicator, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
+import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
 import { countryAt, countryName, distanceKm, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
+import { codeHeadline, headlineText, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
 import type { EscalationCandidate } from "./durableObjects/africaWireActor";
 
 /**
@@ -25,7 +26,13 @@ import type { EscalationCandidate } from "./durableObjects/africaWireActor";
  *      the wire-service feeds, and the URLs behind GDELT's conflict-coded
  *      events located in Africa. A loose keyword filter only decides what is
  *      worth reading; GDELT's codes and coordinates are used for nothing else.
- *   2. READ each new candidate in full (lib/articleReader.ts).
+ *   1b. FIRST PASS on headlines (lib/headlineCoder.ts): every candidate that
+ *      came with a headline is read by fixed rules, at no cost, and coded at
+ *      low confidence when it states an armed event at a named place. This
+ *      is what lets a marker appear within minutes of two outlets reporting
+ *      the same thing, however little of the AI allowance is left.
+ *   2. READ each new candidate in full (lib/articleReader.ts) — those the
+ *      first pass coded come first, and the full reading replaces it.
  *   3. CODE it against the written codebook (lib/escalationCoder.ts): is this
  *      a real, dated event; where exactly; who; which indicators, each with a
  *      verbatim quote. The coding is then verified against the article text.
@@ -73,6 +80,11 @@ const GEOCODER_CALLS_PER_TICK = 6;
 const CANDIDATE_MAX_AGE_HOURS = 72;
 const GDELT_CANDIDATE_WINDOW_HOURS = 24;
 const MAX_ATTEMPTS = 3;
+/** The most first-pass (headline) reports stored in one tick. */
+const HEADLINE_REPORTS_PER_TICK = 40;
+/** Stored as an incident's synthesis_model when its text was assembled from
+ *  headlines alone, with no model involved. */
+const HEADLINE_SYNTHESIS = "headline-summary";
 /** Place-level reports within this distance of an incident's anchor join it. */
 export const CLUSTER_RADIUS_KM = 50;
 const LOCK_TTL_MS = 4 * 60_000;
@@ -339,6 +351,8 @@ interface ProcessStats {
   reports: number;
   /** Articles for which no model returned a coding this tick. */
   modelFailures: number;
+  /** Reports stored this tick by the headline first pass. */
+  headlineCoded: number;
 }
 
 async function claimArticle(env: Env, c: Candidate): Promise<boolean> {
@@ -350,15 +364,123 @@ async function claimArticle(env: Env, c: Candidate): Promise<boolean> {
     .bind(c.id, c.url, c.domain, c.title, c.origin, c.publishedAt, now)
     .run();
   if ((inserted.meta?.changes ?? 0) > 0) return true;
-  // Already known: retry only a failed or abandoned attempt, a bounded number of times.
+  // Already known: retry only a failed or abandoned attempt, a bounded number
+  // of times — or take an article the headline first pass coded, to read it
+  // in full (processCandidate then replaces the first-pass coding).
   const stale = new Date(Date.now() - 15 * 60_000).toISOString();
   const retried = await env.DB.prepare(
     `UPDATE escalation_articles SET status = 'processing', attempts = attempts + 1, processed_at = ?
-     WHERE id = ? AND ((status = 'error' AND (attempts < ? OR rejection_reason = 'model_unavailable')) OR (status = 'processing' AND processed_at < ?))`
+     WHERE id = ? AND ((status = 'error' AND (attempts < ? OR rejection_reason = 'model_unavailable'))
+                    OR (status = 'processing' AND processed_at < ?)
+                    OR (status = 'coded' AND model = ? AND attempts < ?))`
   )
-    .bind(now, c.id, MAX_ATTEMPTS, stale)
+    .bind(now, c.id, MAX_ATTEMPTS, stale, HEADLINE_CODER, MAX_ATTEMPTS)
     .run();
   return (retried.meta?.changes ?? 0) > 0;
+}
+
+async function storeReports(env: Env, articleId: string, reports: VerifiedReport[], text: string, geocodeBudget: GeocodeBudget): Promise<void> {
+  for (const r of reports) {
+    const loc = await resolvePlace(env, { countryCode: r.countryCode, place: r.place, admin1: r.admin1, modelLat: r.modelLat, modelLon: r.modelLon }, geocodeBudget);
+    await run(
+      env.DB,
+      `INSERT INTO escalation_reports
+        (id, article_id, incident_id, country_code, country_name, place, admin1, lat, lon, geo_precision, geo_method, geo_label,
+         event_date, date_basis, actors, indicators, fatalities, trajectory, trajectory_reason, what_happened, significance, confidence, notes, excerpt, created_at)
+       VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        newId(), articleId, r.countryCode, r.countryName, r.place, r.admin1, loc.lat, loc.lon, loc.precision, loc.method, loc.label,
+        r.eventDate, r.dateBasis, JSON.stringify(r.actors), JSON.stringify(r.indicators), r.fatalities, r.trajectory, r.trajectoryReason,
+        r.whatHappened, r.significance, r.confidence, JSON.stringify(r.notes), excerptAround(text, r.indicators), nowIso(),
+      ]
+    );
+  }
+}
+
+// ── The headline first pass ──────────────────────────────────────────────
+
+/** Items the first pass has already looked at and found nothing in. They are
+ *  not stored (the full reading may still find an event the rules cannot
+ *  see), so this only saves looking at them again on every tick. Per
+ *  isolate; losing it costs a few milliseconds of pattern matching. */
+const headlineSeen = new Set<string>();
+
+/** Test hook. */
+export function resetHeadlinePass(): void {
+  headlineSeen.clear();
+}
+
+interface ArticleOnRecord {
+  id: string;
+  status: string;
+  attempts: number;
+  rejection_reason: string | null;
+  model: string | null;
+}
+
+/**
+ * Codes candidates from their headline and feed summary with fixed rules
+ * (lib/headlineCoder.ts) — no model, no article download, no cost — and
+ * stores the positives as low-confidence reports.
+ *
+ * `onRecord` is every recent row of escalation_articles by id, and is kept
+ * up to date with what is stored here. An article is looked at when it has
+ * no row yet, or when the attempt to read it in full got nowhere (the page
+ * could not be opened, or no model answered): its headline is then the only
+ * reading there is. An article a model has read and decided on is never
+ * second-guessed from its headline.
+ */
+async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<string, ArticleOnRecord>, stats: ProcessStats): Promise<void> {
+  if (headlineSeen.size > 20_000) headlineSeen.clear();
+  const now = new Date();
+  // Never calls the online geocoder: the place was found in the platform's own gazetteer.
+  const noGeocoding: GeocodeBudget = { remaining: 0 };
+  const newestFirst = [...candidates].sort((a, b) => (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+
+  for (const c of newestFirst) {
+    if (stats.headlineCoded >= HEADLINE_REPORTS_PER_TICK) break;
+    const row = onRecord.get(c.id);
+    if (!c.title || headlineSeen.has(c.id) || (row && row.status !== "error" && row.status !== "unreadable")) continue;
+    try {
+      const item = { title: c.title, feedText: c.feedText, publishedAt: c.publishedAt };
+      const text = headlineText(item);
+      const outcome = verifyCoding(codeHeadline(item, now), { url: c.url, title: c.title, text, textBasis: HEADLINE_TEXT_BASIS, publishedAt: c.publishedAt, domain: c.domain }, now);
+      const reports = outcome.reports.filter((r) => isLive(r.eventDate, now));
+      if (reports.length === 0) {
+        headlineSeen.add(c.id);
+        continue;
+      }
+      // A page that could not be opened, or that failed repeatedly, is not
+      // tried again; one that only lacked a model is, when a model answers.
+      const attempts = !row || (row.status === "error" && row.rejection_reason === "model_unavailable") ? 0 : MAX_ATTEMPTS;
+      const ts = nowIso();
+      const taken = row
+        ? await env.DB.prepare(
+            `UPDATE escalation_articles SET status = 'processing', text_basis = ?, model = ?, attempts = ?, rejection_reason = NULL, rejection_note = NULL, report_count = 0, processed_at = ?
+             WHERE id = ? AND status IN ('error', 'unreadable')`
+          )
+            .bind(HEADLINE_TEXT_BASIS, HEADLINE_CODER, attempts, ts, c.id)
+            .run()
+        : await env.DB.prepare(
+            `INSERT INTO escalation_articles (id, url, domain, title, origin, published_at, text_basis, status, report_count, attempts, model, processed_at)
+             VALUES (?,?,?,?,?,?,?, 'processing', 0, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
+          )
+            .bind(c.id, c.url, c.domain, c.title, c.origin, c.publishedAt, HEADLINE_TEXT_BASIS, attempts, HEADLINE_CODER, ts)
+            .run();
+      if ((taken.meta?.changes ?? 0) === 0) {
+        // Another run got there first; whatever it decided stands.
+        onRecord.set(c.id, row ?? { id: c.id, status: "processing", attempts: 0, rejection_reason: null, model: null });
+        continue;
+      }
+      await storeReports(env, c.id, reports, text, noGeocoding);
+      await run(env.DB, `UPDATE escalation_articles SET status = 'coded', report_count = ? WHERE id = ?`, [reports.length, c.id]);
+      onRecord.set(c.id, { id: c.id, status: "coded", attempts, rejection_reason: null, model: HEADLINE_CODER });
+      stats.headlineCoded += reports.length;
+    } catch (err) {
+      headlineSeen.add(c.id);
+      console.error(`[escalation] headline pass failed for ${c.url}`, err);
+    }
+  }
 }
 
 async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBudget, stats: ProcessStats): Promise<void> {
@@ -368,6 +490,19 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
       `UPDATE escalation_articles SET status = ?, rejection_reason = ?, rejection_note = ?, report_count = ?, model = ?, title = COALESCE(?, title), text_basis = ?, published_at = COALESCE(?, published_at), processed_at = ? WHERE id = ?`,
       [status, fields.reason ?? null, fields.note ?? null, fields.reports ?? 0, fields.model ?? null, fields.title ?? null, fields.textBasis ?? null, fields.publishedAt ?? null, nowIso(), c.id]
     );
+
+  // An article the headline first pass already coded is here to be read in
+  // full. Its first-pass reports stay in place until this reading has an
+  // answer, and are kept if it cannot produce one.
+  const firstPass = (await first<{ model: string | null }>(env.DB, "SELECT model FROM escalation_articles WHERE id = ?", [c.id]))?.model === HEADLINE_CODER;
+  const dropFirstPass = () => (firstPass ? run(env.DB, "DELETE FROM escalation_reports WHERE article_id = ?", [c.id]) : Promise.resolve());
+  /** Puts a first-pass article back as it was. "final": no further attempt
+   *  at a full reading; "uncounted": this attempt does not count against the
+   *  limit (no model was available); "counted": it does. */
+  const keepFirstPass = (attempt: "final" | "uncounted" | "counted") => {
+    const attempts = attempt === "final" ? String(MAX_ATTEMPTS) : attempt === "uncounted" ? "MAX(0, attempts - 1)" : "attempts";
+    return run(env.DB, `UPDATE escalation_articles SET status = 'coded', attempts = ${attempts} WHERE id = ?`, [c.id]);
+  };
 
   try {
     const page = await readArticle(c.url);
@@ -381,11 +516,13 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     }
     if (!article) {
       stats.unreadable++;
-      await finish("unreadable", { reason: "unreadable", note: "The article page could not be fetched or had no readable body." });
+      if (firstPass) await keepFirstPass("final"); // nothing more can be read: the headline reading stands
+      else await finish("unreadable", { reason: "unreadable", note: "The article page could not be fetched or had no readable body." });
       return;
     }
     if (article.publishedAt && Date.now() - Date.parse(article.publishedAt) > 6 * 86_400_000) {
       stats.rejected++;
+      await dropFirstPass();
       await finish("rejected", { reason: "retrospective", note: "Published more than six days ago.", title: article.title, textBasis: article.textBasis, publishedAt: article.publishedAt });
       return;
     }
@@ -394,38 +531,36 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     if (!coded) {
       stats.errors++;
       stats.modelFailures++;
-      await finish("error", { reason: "model_unavailable", note: "No model produced a coding for this article; it will be retried.", title: article.title, textBasis: article.textBasis });
+      if (firstPass) await keepFirstPass("uncounted"); // retried when a model next answers
+      else await finish("error", { reason: "model_unavailable", note: "No model produced a coding for this article; it will be retried.", title: article.title, textBasis: article.textBasis });
       return;
     }
     const outcome = verifyCoding(coded.raw, article);
     if (outcome.reports.length === 0) {
+      // The model found an event but none of what it returned survived
+      // verification (a misquoted passage, say). That is a failed reading,
+      // not a finding that the headline was wrong: the first pass stands.
+      if (firstPass && coded.raw?.is_event_report === true) {
+        stats.errors++;
+        await keepFirstPass("final");
+        return;
+      }
       stats.rejected++;
+      await dropFirstPass();
       await finish("rejected", { reason: outcome.rejectionReason, note: outcome.rejectionNote, model: coded.model, title: article.title, textBasis: article.textBasis, publishedAt: article.publishedAt });
       return;
     }
 
-    for (const r of outcome.reports) {
-      const loc = await resolvePlace(env, { countryCode: r.countryCode, place: r.place, admin1: r.admin1, modelLat: r.modelLat, modelLon: r.modelLon }, geocodeBudget);
-      await run(
-        env.DB,
-        `INSERT INTO escalation_reports
-          (id, article_id, incident_id, country_code, country_name, place, admin1, lat, lon, geo_precision, geo_method, geo_label,
-           event_date, date_basis, actors, indicators, fatalities, trajectory, trajectory_reason, what_happened, significance, confidence, notes, excerpt, created_at)
-         VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [
-          newId(), c.id, r.countryCode, r.countryName, r.place, r.admin1, loc.lat, loc.lon, loc.precision, loc.method, loc.label,
-          r.eventDate, r.dateBasis, JSON.stringify(r.actors), JSON.stringify(r.indicators), r.fatalities, r.trajectory, r.trajectoryReason,
-          r.whatHappened, r.significance, r.confidence, JSON.stringify(r.notes), excerptAround(article.text, r.indicators), nowIso(),
-        ]
-      );
-      stats.reports++;
-    }
+    await dropFirstPass();
+    await storeReports(env, c.id, outcome.reports, article.text, geocodeBudget);
+    stats.reports += outcome.reports.length;
     stats.coded++;
     await finish("coded", { reports: outcome.reports.length, model: coded.model, title: article.title, textBasis: article.textBasis, publishedAt: article.publishedAt });
   } catch (err) {
     stats.errors++;
     console.error(`[escalation] processing failed for ${c.url}`, err);
-    await finish("error", { reason: "processing_error", note: err instanceof Error ? err.message.slice(0, 200) : "unknown error" }).catch(() => {});
+    if (firstPass) await keepFirstPass("counted").catch(() => {});
+    else await finish("error", { reason: "processing_error", note: err instanceof Error ? err.message.slice(0, 200) : "unknown error" }).catch(() => {});
   }
 }
 
@@ -600,12 +735,26 @@ export function computeIncident(live: StoredReport[]): IncidentComputed {
   // same wire story (identical supporting quotes on different sites) count
   // as ONE source, so a single agency report republished by three outlets
   // is not mistaken for three-way corroboration.
+  //
+  // The same goes for one story under one headline on two sites. An
+  // aggregator often adds a prefix ("Sudan: ...") and trims the summary, so
+  // the headline is compared from its end and the summary from its start.
   const quoteOwner = new Map<string, string>();
   const sourceKeyOf = new Map<string, string>();
+  const stories: { title: string; opening: string; owner: string }[] = [];
   for (const r of [...live].sort((a, b) => (a.publishedAt ?? "").localeCompare(b.publishedAt ?? ""))) {
     const quotes = r.indicators.map((i) => normalizeForMatch(i.quote)).filter((q) => q.length >= 40);
-    const owner = quotes.map((q) => quoteOwner.get(q)).find((o): o is string => !!o) ?? r.domain;
+    const title = normalizeForMatch(r.title ?? "");
+    // Headline-only reports keep "headline. summary" as their excerpt.
+    const opening = r.textBasis === HEADLINE_TEXT_BASIS && title ? normalizeForMatch(r.excerpt ?? "").slice(title.length).trim().slice(0, 60) : "";
+    const sameStory = stories.find(
+      (s) =>
+        (title.length >= 25 && s.title.length >= 25 && (title.endsWith(s.title) || s.title.endsWith(title))) ||
+        (opening.length >= 60 && opening === s.opening)
+    );
+    const owner = quotes.map((q) => quoteOwner.get(q)).find((o): o is string => !!o) ?? sameStory?.owner ?? r.domain;
     for (const q of quotes) if (!quoteOwner.has(q)) quoteOwner.set(q, owner);
+    stories.push({ title, opening, owner });
     sourceKeyOf.set(r.id, owner);
   }
 
@@ -799,13 +948,21 @@ async function refreshIncidents(env: Env): Promise<{ active: number; elevated: n
     const hasAnalystText = !!inc.headline && !!inc.summary && inc.synthesis_model !== "fallback" && inc.content_hash === c.contentHash;
     if (inc.state_hash === c.contentHash && inc.level === c.level && (!flagged || hasAnalystText)) continue;
 
+    // Known so far only from headlines (no source read in full): the text is
+    // assembled from those headlines directly. The analyst model is kept for
+    // incidents with an article behind them — on the free allowance its calls
+    // come out of the same budget as reading the articles.
+    const headlinesOnly = c.sources.length > 0 && c.sources.every((s) => s.textBasis === HEADLINE_TEXT_BASIS);
+
     let synthesis: IncidentSynthesis | null = inc.headline && inc.summary ? { headline: inc.headline, summary: inc.summary, assessment: inc.assessment ?? "", outlook: inc.outlook ?? "", caveats: inc.caveats } : null;
     let synthesisModel = inc.synthesis_model;
     let storedHash = inc.content_hash;
     if (flagged && (c.contentHash !== inc.content_hash || !synthesis || inc.synthesis_model === "fallback")) {
       const input = { locationLabel: label ?? "location not specified in reporting", countryName: inc.country_name, level: c.level as "elevated" | "critical", criteriaMet: c.criteriaMet, sources: c.synthesisSources };
       let fresh: { synthesis: IncidentSynthesis; model: string } | null = null;
-      if (synthBudget > 0) {
+      if (headlinesOnly) {
+        fresh = { synthesis: headlineSynthesis(input), model: HEADLINE_SYNTHESIS };
+      } else if (synthBudget > 0) {
         synthBudget--;
         fresh = await synthesizeIncident(env, input);
         if (fresh) out.synthesized++;
@@ -814,9 +971,11 @@ async function refreshIncidents(env: Env): Promise<{ active: number; elevated: n
         synthesis = fresh.synthesis;
         synthesisModel = fresh.model;
         storedHash = c.contentHash;
-      } else if (!synthesis || inc.synthesis_model === "fallback") {
+      } else if (!synthesis || inc.synthesis_model === "fallback" || inc.synthesis_model === HEADLINE_SYNTHESIS) {
         // No analyst text exists for this incident yet: show text assembled
         // directly from the coded reports, and retry the analyst next tick.
+        // (A headline-only text is replaced the same way: once an article
+        // has been read, text calling the incident "preliminary" is wrong.)
         synthesis = fallbackSynthesis(input);
         synthesisModel = "fallback";
         storedHash = c.contentHash;
@@ -917,7 +1076,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
   if (lock && Date.now() - Number(lock) < LOCK_TTL_MS) return;
   await setState(env, "lock", String(Date.now()));
 
-  const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, modelFailures: 0, candidates: 0, fresh: 0 };
+  const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, modelFailures: 0, headlineCoded: 0, candidates: 0, fresh: 0 };
   let aiBudgetReached = false;
   try {
     await retireLegacyAlerts(env);
@@ -934,43 +1093,76 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
       paceLimit = pace.articles;
     }
 
-    if ((env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false" && paceLimit > 0) {
-      const [africaWire, wireFeeds, gdelt] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), gatherGdelt(env)]);
+    if ((env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false") {
+      const reading = paceLimit > 0;
+      // GDELT rows carry no headline, so they are only fetched when articles can be read in full.
+      const [africaWire, wireFeeds, gdelt] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), reading ? gatherGdelt(env) : Promise.resolve([] as Candidate[])]);
       // Wire feeds are generalist (world news); order them by priority so the
       // Africa-relevant conflict items are read first.
       wireFeeds.sort((a, b) => b.priority - a.priority || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
       stats.candidates = africaWire.length + wireFeeds.length + gdelt.length;
 
-      // Drop everything already decided (coded, rejected, unreadable, or out of retries).
-      // (Candidates are at most CANDIDATE_MAX_AGE_HOURS old, so only recent rows can match.)
+      // What is already on record. (Candidates are at most
+      // CANDIDATE_MAX_AGE_HOURS old, so only recent rows can match.)
       const knownSince = new Date(Date.now() - (CANDIDATE_MAX_AGE_HOURS + 72) * 3600_000).toISOString();
-      const known = new Set(
-        // An article that failed only because no model answered stays
-        // retryable however many times that has happened: a model outage or
-        // an empty credit balance must not permanently discard the news of
-        // that period.
-        (await all<{ id: string }>(env.DB, `SELECT id FROM escalation_articles WHERE processed_at >= ? AND NOT (status = 'error' AND (attempts < ? OR rejection_reason = 'model_unavailable'))`, [knownSince, MAX_ATTEMPTS])).map((r) => r.id)
+      const onRecord = new Map(
+        (await all<ArticleOnRecord>(env.DB, `SELECT id, status, attempts, rejection_reason, model FROM escalation_articles WHERE processed_at >= ?`, [knownSince])).map((r) => [r.id, r])
       );
-      const freshOf = (list: Candidate[]) => list.filter((c) => !known.has(c.id));
-      const lists = [freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
-      stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
-      const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
-      const batch = pickBatch(lists, perTick);
-      const geocodeBudget: GeocodeBudget = { remaining: GEOCODER_CALLS_PER_TICK };
+      // The headline first pass: every candidate with a headline, at no cost.
+      if ((env.ESCALATION_HEADLINE_TIER ?? "true") !== "false") await runHeadlinePass(env, [...africaWire, ...wireFeeds], onRecord, stats);
 
-      for (let i = 0; i < batch.length; i += CODING_CONCURRENCY) {
-        const failuresBefore = stats.modelFailures;
-        const chunk = batch.slice(i, i + CODING_CONCURRENCY);
-        await Promise.all(
-          chunk.map(async (c) => {
-            if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats);
-          })
+      if (reading) {
+        const rows = [...onRecord.values()];
+        // Awaiting a full reading: what the first pass coded, now or earlier.
+        const awaitingFullReading = new Set(rows.filter((r) => r.model === HEADLINE_CODER && (r.status === "coded" || r.status === "processing") && r.attempts < MAX_ATTEMPTS).map((r) => r.id));
+        // Decided — not to be read again: coded, rejected, unreadable, or out
+        // of retries. An article that failed only because no model answered
+        // stays retryable however many times that has happened: a model
+        // outage or an empty credit balance must not permanently discard the
+        // news of that period.
+        const decided = new Set(rows.filter((r) => !(r.status === "error" && (r.attempts < MAX_ATTEMPTS || r.rejection_reason === "model_unavailable")) && !awaitingFullReading.has(r.id)).map((r) => r.id));
+        const freshOf = (list: Candidate[]) => list.filter((c) => !decided.has(c.id) && !awaitingFullReading.has(c.id));
+
+        // First-pass articles are read first within their share of the tick,
+        // those behind a marker already on the map before the rest: the
+        // reading either confirms the marker or takes it down.
+        const flagged = new Set(
+          awaitingFullReading.size === 0
+            ? []
+            : (
+                await all<{ article_id: string }>(
+                  env.DB,
+                  `SELECT DISTINCT r.article_id FROM escalation_reports r JOIN escalation_incidents i ON i.id = r.incident_id
+                   WHERE i.status = 'active' AND i.level IN ('elevated','critical')`
+                )
+              ).map((r) => r.article_id)
         );
-        // If no model answered for a whole group, the model is down or out of
-        // credit: stop reading for this tick instead of fetching more articles
-        // that cannot be coded. They stay queued and are retried next tick.
-        if (stats.modelFailures - failuresBefore >= chunk.length) break;
+        const seenUpgrade = new Set<string>();
+        const upgrades = [...africaWire, ...wireFeeds]
+          .filter((c) => awaitingFullReading.has(c.id) && !seenUpgrade.has(c.id) && !!seenUpgrade.add(c.id))
+          .sort((a, b) => Number(flagged.has(b.id)) - Number(flagged.has(a.id)) || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+
+        const lists = [upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
+        stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
+
+        const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
+        const batch = pickBatch(lists, perTick);
+        const geocodeBudget: GeocodeBudget = { remaining: GEOCODER_CALLS_PER_TICK };
+
+        for (let i = 0; i < batch.length; i += CODING_CONCURRENCY) {
+          const failuresBefore = stats.modelFailures;
+          const chunk = batch.slice(i, i + CODING_CONCURRENCY);
+          await Promise.all(
+            chunk.map(async (c) => {
+              if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats);
+            })
+          );
+          // If no model answered for a whole group, the model is down or out of
+          // credit: stop reading for this tick instead of fetching more articles
+          // that cannot be coded. They stay queued and are retried next tick.
+          if (stats.modelFailures - failuresBefore >= chunk.length) break;
+        }
       }
     }
 
@@ -979,8 +1171,8 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     if (new Date().getUTCMinutes() < 5) await pruneOldRows(env);
 
     await setState(env, "last_run", JSON.stringify({ at: nowIso(), ...stats, incidents, ...describeProvider(env), aiBudgetReached, lastModelError: stats.modelFailures > 0 ? getLastModelError() : null }));
-    if (stats.coded + stats.rejected + stats.unreadable + stats.errors > 0) {
-      console.log(`[escalation] tick: ${stats.coded} coded (${stats.reports} reports), ${stats.rejected} rejected, ${stats.unreadable} unreadable, ${stats.errors} errors (${stats.modelFailures} with no model answer); backlog ${stats.fresh}; incidents ${incidents.elevated} elevated / ${incidents.critical} critical`);
+    if (stats.coded + stats.rejected + stats.unreadable + stats.errors + stats.headlineCoded > 0) {
+      console.log(`[escalation] tick: ${stats.headlineCoded} from headlines; ${stats.coded} coded (${stats.reports} reports), ${stats.rejected} rejected, ${stats.unreadable} unreadable, ${stats.errors} errors (${stats.modelFailures} with no model answer); backlog ${stats.fresh}; incidents ${incidents.elevated} elevated / ${incidents.critical} critical`);
     }
   } finally {
     await setState(env, "lock", "0");
@@ -1008,6 +1200,9 @@ export interface IncidentView {
   /** True when the text was written by the analyst model; false when it was
    *  assembled directly from the coded reports because that call failed. */
   analystWritten: boolean;
+  /** True while the incident is known only from headlines — no article
+   *  behind it has yet been read in full. */
+  preliminary: boolean;
   criteriaMet: string[];
   indicators: IncidentIndicator[];
   sources: IncidentSourceRef[];
@@ -1048,7 +1243,8 @@ function toIncidentView(r: IncidentDbRow): IncidentView {
     assessment: r.assessment ?? "",
     outlook: r.outlook ?? "",
     caveats: r.caveats,
-    analystWritten: !!r.synthesis_model && r.synthesis_model !== "fallback",
+    analystWritten: !!r.synthesis_model && r.synthesis_model !== "fallback" && r.synthesis_model !== HEADLINE_SYNTHESIS,
+    preliminary: (d.sources ?? []).length > 0 && (d.sources ?? []).every((s) => s.textBasis === HEADLINE_TEXT_BASIS),
     criteriaMet: d.criteriaMet ?? [],
     indicators: d.indicators ?? [],
     sources: d.sources ?? [],
@@ -1166,7 +1362,12 @@ export interface PipelineStatus {
   paidModelKeySet: boolean;
   translationEnabled: boolean;
   lastRun: Record<string, unknown> | null;
+  /** Articles a model read, by outcome. Articles known only from the
+   *  headline first pass are not in here — see headline24h. */
   last24h: { status: string; count: number }[];
+  /** Reports picked up from headlines in the last 24 hours and not (yet) read in full. */
+  headline24h: number;
+  headlineTierEnabled: boolean;
   rejectionReasons24h: { reason: string; count: number }[];
   incidents: { level: string; count: number }[];
 }
@@ -1174,10 +1375,11 @@ export interface PipelineStatus {
 export async function getPipelineStatus(env: Env): Promise<PipelineStatus> {
   await ensureTables(env);
   const since = new Date(Date.now() - 86_400_000).toISOString();
-  const [ai, lastRun, byStatus, byReason, byLevel] = await Promise.all([
+  const [ai, lastRun, byStatus, headline, byReason, byLevel] = await Promise.all([
     getAiUsage(env),
     getState(env, "last_run"),
-    all<{ status: string; count: number }>(env.DB, "SELECT status, COUNT(*) AS count FROM escalation_articles WHERE processed_at >= ? GROUP BY status", [since]),
+    all<{ status: string; count: number }>(env.DB, "SELECT status, COUNT(*) AS count FROM escalation_articles WHERE processed_at >= ? AND COALESCE(model, '') <> ? GROUP BY status", [since, HEADLINE_CODER]),
+    first<{ count: number }>(env.DB, "SELECT COUNT(*) AS count FROM escalation_articles WHERE processed_at >= ? AND model = ?", [since, HEADLINE_CODER]),
     all<{ reason: string; count: number }>(
       env.DB,
       "SELECT COALESCE(rejection_reason, 'unspecified') AS reason, COUNT(*) AS count FROM escalation_articles WHERE processed_at >= ? AND status IN ('rejected','unreadable','error') GROUP BY rejection_reason ORDER BY count DESC",
@@ -1193,6 +1395,8 @@ export async function getPipelineStatus(env: Env): Promise<PipelineStatus> {
     translationEnabled: (env.TRANSLATION_ENABLED ?? "false") === "true",
     lastRun: parseJson<Record<string, unknown> | null>(lastRun, null),
     last24h: byStatus,
+    headline24h: headline?.count ?? 0,
+    headlineTierEnabled: (env.ESCALATION_HEADLINE_TIER ?? "true") !== "false",
     rejectionReasons24h: byReason,
     incidents: byLevel,
   };

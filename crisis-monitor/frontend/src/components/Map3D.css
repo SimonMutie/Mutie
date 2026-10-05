@@ -261,6 +261,17 @@
   margin-bottom: 0;
 }
 
+.osiris-incident-preliminary {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: #ffb55c;
+  border: 1px solid rgba(255, 181, 92, 0.55);
+  border-radius: 3px;
+}
+
 .osiris-incident-caveat {
   font-size: 10.5px;
   line-height: 1.45;
