@@ -15,10 +15,13 @@ import "./IntroOverlay.css";
 
 type Phase = "playing" | "leaving" | "skipped" | "gone";
 
-const HOLD_MS = 2600; // eye open and words readable before the zoom starts
-const LEAVE_MS = 1200; // the zoom through the pupil, then the fade
+// The welcome is 22 words and is fully on screen about 1.7 s in. The zoom
+// waits long enough after that for it to be read at an unhurried pace
+// (roughly five seconds); anyone who has seen it can click to skip.
+const HOLD_MS = 6500;
+const LEAVE_MS = 2000; // the zoom through the pupil, then the fade (see IntroOverlay.css)
 const SKIP_MS = 240;
-const REDUCED_HOLD_MS = 2200;
+const REDUCED_HOLD_MS = 6000;
 
 export default function IntroOverlay() {
   // Decided once, when the page loads; "Play it now" in Settings can start it again.
@@ -125,7 +128,10 @@ export default function IntroOverlay() {
     setSoundOn(next);
     setIntroSoundEnabled(next);
     if (!next) stopWelcome();
-    else void speakWelcome();
+    else {
+      playOpeningTone(); // so switching sound on is heard straight away
+      void speakWelcome();
+    }
   }
 
   return (
