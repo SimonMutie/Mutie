@@ -7,6 +7,12 @@ import "react-resizable/css/styles.css";
 import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, valueMapKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 import ErrorBoundary from "./ErrorBoundary";
+import { VizProvider, useViz } from "./viz/context";
+import { THEMES, themeFor, themeStyle } from "./viz/themes";
+import { compileQuery, type VizFilter, type VizSpec } from "./viz/types";
+import VizBuilder from "./viz/VizBuilder";
+import VizCard, { flattenForCapture } from "./viz/VizCard";
+import "./viz/viz.css";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 const SIZE_DEFAULTS: Record<DashboardWidget["size"], { w: number; h: number }> = {
@@ -86,6 +92,13 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [locked, setLocked] = useState(false);
   const [dateRangeFrom, setDateRangeFrom] = useState<string | undefined>(undefined);
   const [dateRangeTo, setDateRangeTo] = useState<string | undefined>(undefined);
+  // The dashboard's look (viz/themes.ts), saved with it. Null is the default look.
+  const [themeKey, setThemeKey] = useState<string | null>(null);
+  const themeKeyRef = useRef<string | null>(null);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeMenuRef = useRef<HTMLDivElement>(null);
+  // The visual builder: closed, adding a new visual, or changing the one with this id.
+  const [vizBuilder, setVizBuilder] = useState<null | { id: string | null }>(null);
   // Session-scoped, not persisted with the dashboard the way date range is —
   // date range already has a saved column on the dashboard record; giving
   // these the same treatment would need a schema change for what's
@@ -164,7 +177,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     if (!dashboardCaptureRef.current) return;
     setDownloadingImage(true);
     try {
-      const canvas = await html2canvas(dashboardCaptureRef.current, { useCORS: true, allowTaint: false, logging: false, backgroundColor: null });
+      // A dashboard with a look of its own is photographed on that look's page colour; the default stays transparent as before.
+      const canvas = await html2canvas(dashboardCaptureRef.current, { useCORS: true, allowTaint: false, logging: false, backgroundColor: themeKey ? theme.page : null, onclone: flattenForCapture });
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
@@ -382,13 +396,16 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     }
     load.then((d) => {
       setName(d.name);
-      setWidgets(ensureLayouts(d.widgets));
+      // Each visual's saved request is recompiled from its definition, so the copy a shared link runs is never stale.
+      setWidgets(ensureLayouts(d.widgets).map((w) => (w.type === "viz" && w.viz ? { ...w, viz: { ...w.viz, query: compileQuery(w.viz) ?? undefined } } : w)));
       setBackendId(d.id);
       setIsPublic(d.is_public);
       setShareToken(d.share_token);
       setLocked(d.locked);
       setDateRangeFrom(d.date_range_from ?? undefined);
       setDateRangeTo(d.date_range_to ?? undefined);
+      setThemeKey(d.theme ?? null);
+      themeKeyRef.current = d.theme ?? null;
       setLoaded(true);
       skipNextAutoSave.current = true;
     });
@@ -453,6 +470,46 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     setWidgets((ws) => ws.map((w) => (w.id === id ? { ...w, ...patch } : w)));
   }
 
+  /** A visual from the builder: added at the bottom, or swapped in for the one being changed. */
+  function saveViz(out: { title: string; label?: string; viz: VizSpec; size: { w: number; h: number } }) {
+    const editingId = vizBuilder?.id;
+    if (editingId) {
+      updateWidget(editingId, { title: out.title, label: out.label, viz: out.viz });
+    } else {
+      const maxY = widgets.reduce((m, w) => Math.max(m, (w.layout?.y ?? 0) + (w.layout?.h ?? 0)), 0);
+      setWidgets((ws) => [...ws, { id: crypto.randomUUID(), type: "viz", title: out.title, label: out.label, size: "medium", viz: out.viz, layout: { x: 0, y: maxY, w: out.size.w, h: out.size.h } }]);
+    }
+    setVizBuilder(null);
+  }
+
+  /** Saved at once, like the date range: the whole dashboard visibly changes, so it should not wait on the autosave. */
+  async function updateTheme(key: string) {
+    const next = key === "classic" ? null : key;
+    setThemeKey(next);
+    themeKeyRef.current = next;
+    setThemeMenuOpen(false);
+    if (backendId) await api.updateCustomDashboard(backendId, { theme: next });
+  }
+
+  useEffect(() => {
+    if (!themeMenuOpen) return;
+    function close(e: MouseEvent) {
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) setThemeMenuOpen(false);
+    }
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [themeMenuOpen]);
+
+  const theme = themeFor(themeKey);
+  // The dashboard's own category filters, in the form the visuals' queries take.
+  const vizExternalFilters: VizFilter[] = useMemo(
+    () =>
+      Object.entries(effectiveFilters)
+        .filter(([, v]) => !!v)
+        .map(([field, v]) => ({ field, op: "in" as const, values: [v as string] })),
+    [effectiveFilters]
+  );
+
   function removeWidget(id: string) {
     setWidgets((w) => w.filter((x) => x.id !== id));
   }
@@ -471,6 +528,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         await api.updateCustomDashboard(backendId, { name, widgets });
       } else {
         const created = await api.createCustomDashboard(name, widgets);
+        // A look chosen before the first save is saved with it.
+        if (themeKeyRef.current) await api.updateCustomDashboard(created.id, { theme: themeKeyRef.current });
         setBackendId(created.id);
         onSavedNew?.(created.id);
       }
@@ -744,15 +803,45 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
           </div>
         )}
         {!locked && (
+          <button onClick={() => setVizBuilder({ id: null })} style={{ ...primaryBtnStyle, background: "var(--signal)", color: "#fff" }} title="Build a pivot table or chart from any data: Incidents or any spreadsheet you have uploaded">
+            + Add visual
+          </button>
+        )}
+        {!locked && (
           <button
             onClick={() => {
               resetDraft();
               setAddingWidget(true);
             }}
             style={primaryBtnStyle}
+            title="The maps, globe, flows and other widgets built for Incidents"
           >
             + Add widget
           </button>
+        )}
+        {!locked && (
+          <div className="vz-themes" ref={themeMenuRef}>
+            <button onClick={() => setThemeMenuOpen((v) => !v)} style={secondaryBtnStyle} aria-haspopup="menu" aria-expanded={themeMenuOpen} title="Change the look of the whole dashboard">
+              Look: {theme.name} ▾
+            </button>
+            {themeMenuOpen && (
+              <div className="vz-themes__list" role="menu">
+                {THEMES.map((t) => (
+                  <button key={t.key} type="button" role="menuitem" className={t.key === theme.key ? "is-on" : ""} onClick={() => updateTheme(t.key)}>
+                    <span className="vz-themes__swatch" style={{ background: t.surface, borderColor: t.grid }} aria-hidden>
+                      {[0.55, 1, 0.7, 0.4].map((h, i) => (
+                        <i key={i} style={{ height: `${h * 100}%`, background: t.palette[i] }} />
+                      ))}
+                    </span>
+                    <span>
+                      <b>{t.name}</b>
+                      <small>{t.blurb}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {!locked && (
           <button onClick={save} disabled={saveStatus === "saving"} style={primaryBtnStyle}>
@@ -1035,12 +1124,14 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         </div>
       )}
 
-      <div ref={dashboardCaptureRef} style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+      <VizProvider mode="edit" theme={theme} dateFrom={dateRangeFrom} dateTo={dateRangeTo} external={vizExternalFilters}>
+      <VizSelectionStrip />
+      <div ref={dashboardCaptureRef} data-viz-theme={theme.key} style={{ flex: 1, overflowY: "auto", padding: 24, ...themeStyle(theme) }}>
         {!loaded || !stats ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>
         ) : widgets.length === 0 ? (
           <div className="panel" style={{ padding: "40px 24px", textAlign: "center", color: "var(--text-muted)", fontSize: 13.5 }}>
-            No widgets yet — click "+ Add widget" to build this dashboard from stat cards, charts, and a map. Drag any widget's edges to resize it, or click it to edit labels, color, and legend.
+            Nothing here yet. “+ Add visual” builds a pivot table or chart from any data — Incidents, or any spreadsheet uploaded under Datasets. “+ Add widget” has the maps, globe and flow diagrams made for Incidents. Drag a card by its handle to move it and by its corner to resize it.
           </div>
         ) : (
           <ResponsiveGridLayout
@@ -1091,6 +1182,16 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                     </div>
                   )}
                 >
+                  {w.type === "viz" ? (
+                    <VizCard
+                      widget={w}
+                      editable={!locked}
+                      onEdit={() => setVizBuilder({ id: w.id })}
+                      onRemove={() => removeWidget(w.id)}
+                      onRename={(title) => renameWidget(w.id, title)}
+                      onToggleLock={() => updateWidget(w.id, { locked: !w.locked })}
+                    />
+                  ) : (
                   <DashboardWidgetCard
                     widget={w}
                     stats={stats}
@@ -1120,12 +1221,49 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                     onRename={locked ? undefined : (title) => renameWidget(w.id, title)}
                     onUpdate={locked ? undefined : (patch) => updateWidget(w.id, patch)}
                   />
+                  )}
                 </ErrorBoundary>
               </div>
             ))}
           </ResponsiveGridLayout>
         )}
       </div>
+      </VizProvider>
+      {vizBuilder && (
+        <VizBuilder
+          initial={(() => {
+            const w = vizBuilder.id ? widgets.find((x) => x.id === vizBuilder.id) : undefined;
+            return w?.viz ? { title: w.title, label: w.label, viz: w.viz } : undefined;
+          })()}
+          datasets={datasets}
+          theme={theme}
+          dateFrom={dateRangeFrom}
+          dateTo={dateRangeTo}
+          onSave={saveViz}
+          onClose={() => setVizBuilder(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** What has been picked on the visuals (a click on a bar, a slicer choice) and is narrowing the others, with a way to clear each. */
+function VizSelectionStrip() {
+  const { selections, select, clearAll } = useViz();
+  if (selections.length === 0) return null;
+  return (
+    <div className="vz-strip">
+      <span>Visuals filtered by</span>
+      {selections.map((s) => (
+        <button key={s.origin} type="button" className="vz-chip" style={{ maxWidth: 320 }} onClick={() => select(s.origin, null)} title="Click to clear">
+          {s.label} ✕
+        </button>
+      ))}
+      {selections.length > 1 && (
+        <button type="button" className="vz-link" onClick={clearAll}>
+          Clear all
+        </button>
+      )}
     </div>
   );
 }
