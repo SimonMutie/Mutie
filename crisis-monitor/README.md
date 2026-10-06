@@ -167,11 +167,34 @@ ones suiting the fields chosen, and a live preview.
   optional roll-ups. Nothing a caller sends is placed into the SQL text:
   dataset column names travel as bound JSON paths, Incidents fields come
   from a fixed table.
-- **Kinds** (`components/viz/charts/`): pivot table (subtotals, totals, heat
-  shading or data bars, collapsible groups), leaderboard, bar (grouped,
-  stacked, 100%, upright or lying down), line, area, heat grid, slope,
-  waterfall, donut, treemap, waffle, scatter/bubble, histogram, headline
-  figure with trend, gauge, slicer and text card.
+- **Kinds** (`components/viz/charts/`, 52 of them, listed with their wells in
+  `components/viz/types.ts`). Every type the older widgets offer is here too,
+  along with the families Tableau, Flourish and Power BI offer:
+  - *Compare*: bar (grouped, stacked, 100%, upright or lying down), lollipop,
+    dumbbell, butterfly (population pyramid), bullet, Pareto, Marimekko,
+    radar, heat grid, slope.
+  - *Over time*: line (smooth, stepped, running total), area, streamgraph,
+    bump chart, small multiples, bars-and-line, calendar, bar race, waterfall.
+  - *Parts of a whole*: donut, pie, rose, radial bars, treemap, sunburst,
+    funnel, waffle, progress bars.
+  - *Spread and relationship*: scatter/bubble, histogram, box plot.
+  - *Flow and links*: Sankey (two or three stages), chord, network.
+  - *Maps*: choropleth, symbol map, Africa tile map, dot map (latitude and
+    longitude), 3D globe. Country names are matched through
+    `components/viz/geo.ts` (spellings, abbreviations, ISO codes); a name
+    that matches nothing is reported on the visual.
+  - *Infographic*: pictogram, hemicycle, packed bubbles, word cloud.
+  - *Single figures*: headline figure with trend, row of figures, gauge,
+    progress ring.
+  - *Tables*: pivot table (subtotals, totals, heat shading or bars,
+    collapsible groups), leaderboard, trend table (a spark line per row).
+  - *Controls and text*: slicer, text card.
+- **Two-axis charts are avoided on purpose.** "Bars and line" draws its two
+  figures on two stacked panels, and the Pareto puts bars and running share
+  on one percentage axis, because two unrelated value axes on one plot can
+  make any pair of series look related.
+- **Medians and quartiles** are worked out by the engine (window functions),
+  for the box plot and as a "Median" choice on any number.
 - **Totals come from the server**, as their own groupings, so the total of an
   average or a distinct count is right rather than a sum of the rows.
 - **Clicking filters.** A click on a bar, slice or row — or a choice in a
@@ -182,10 +205,11 @@ ones suiting the fields chosen, and a live preview.
   adding it up is valid; a period that is still running is drawn dashed and
   left out of "change on the previous period"; every chart has a table view
   and downloads as Excel, CSV or an image.
-- **Looks** (`components/viz/themes.ts`): Classic, Situation room (dark),
-  Report (white, flat) and Atlas. A look re-points the site's colour
-  variables on the dashboard, so older widgets take it too. Series colours
-  are fixed sets checked for colour-blind separation.
+- **Looks** (`components/viz/themes.ts`): Classic, Situation room, Report,
+  Atlas, Blueprint, Editorial, Dusk, Projector and Soft. A look re-points the
+  site's colour variables on the dashboard, so older widgets take it too,
+  and may change card shape and typefaces (`viz.css`, `data-viz-theme`).
+  Series colours are fixed sets checked for colour-blind separation.
 - **Shared links** run only the request saved with each visual
   (`POST /api/public/dashboards-viz/:token`); a viewer's clicks can add
   filters, but only on fields the dashboard already shows.

@@ -109,4 +109,4 @@ export function barPath(x: number, y: number, w: number, h: number, r: number, s
 }
 
 /** SVG text attributes for the small print on a chart. Set as attributes, not classes, so a downloaded image matches. */
-export const axisText = (theme: DashTheme, size = 11) => ({ fill: theme.muted, fontSize: size, fontFamily: "Inter, system-ui, sans-serif" }) as const;
+export const axisText = (theme: DashTheme, size = 11) => ({ fill: theme.muted, fontSize: size, fontFamily: theme.font }) as const;

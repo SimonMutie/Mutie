@@ -828,7 +828,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
               <div className="vz-themes__list" role="menu">
                 {THEMES.map((t) => (
                   <button key={t.key} type="button" role="menuitem" className={t.key === theme.key ? "is-on" : ""} onClick={() => updateTheme(t.key)}>
-                    <span className="vz-themes__swatch" style={{ background: t.surface, borderColor: t.grid }} aria-hidden>
+                    <span className="vz-themes__swatch" style={{ background: t.surface, borderColor: t.page === t.surface ? t.grid : t.page, borderWidth: 3 }} aria-hidden>
                       {[0.55, 1, 0.7, 0.4].map((h, i) => (
                         <i key={i} style={{ height: `${h * 100}%`, background: t.palette[i] }} />
                       ))}

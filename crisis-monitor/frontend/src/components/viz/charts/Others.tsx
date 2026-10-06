@@ -530,7 +530,7 @@ export function Heatmap({ viz, result, theme, selectedKey, onPick }: ChartProps)
                           textAnchor="middle"
                           fontSize={10.5}
                           fontWeight={600}
-                          fontFamily="Inter, system-ui, sans-serif"
+                          fontFamily={theme.font}
                           fill={inkOn(fill)}
                           pointerEvents="none"
                         >

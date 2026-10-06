@@ -22,7 +22,7 @@ import { jsonPathFor } from "../routes/datasets";
  * chosen from a fixed list.
  */
 
-export type Agg = "count" | "distinct" | "sum" | "avg" | "min" | "max";
+export type Agg = "count" | "distinct" | "sum" | "avg" | "min" | "max" | "median" | "q1" | "q3";
 export type Grain = "year" | "quarter" | "month" | "week" | "day";
 export type FieldType = "text" | "number" | "date";
 
@@ -199,6 +199,14 @@ export async function runQuery(db: D1Database, source: Source, spec: QuerySpec, 
   });
 
   // Measures
+  //
+  // The middle value and the quartiles need the rows of each group in order.
+  // For each field they are asked of, two extra columns are worked out per
+  // row before grouping: its position among the group's non-empty values,
+  // and how many of those there are. The median is then the value at the
+  // middle position (the mean of the two middle ones when the count is
+  // even); the quartiles use the nearest-rank rule.
+  const ranked = new Map<string, number>();
   const measureSql = measures.map((m) => {
     if (m.agg === "count" && !m.field) return "COUNT(*)";
     const f = need(m.field);
@@ -207,6 +215,13 @@ export async function runQuery(db: D1Database, source: Source, spec: QuerySpec, 
     if (m.agg === "count") return `SUM(CASE WHEN ${present} THEN 1 ELSE 0 END)`;
     if (m.agg === "distinct") return `COUNT(DISTINCT CASE WHEN ${present} THEN ${a} END)`;
     if (f.type !== "number") throw new QueryError(`“${f.label}” is not a number, so it can be counted but not ${m.agg === "avg" ? "averaged" : m.agg === "sum" ? "added up" : "compared"}.`);
+    if (m.agg === "median" || m.agg === "q1" || m.agg === "q3") {
+      if (!ranked.has(a)) ranked.set(a, ranked.size);
+      const k = ranked.get(a)!;
+      const v = `CASE WHEN ${present} AND w${k}r`;
+      if (m.agg === "median") return `AVG(${v} IN ((w${k}c + 1) / 2, (w${k}c + 2) / 2) THEN CAST(${a} AS REAL) END)`;
+      return `MAX(${v} = ${m.agg === "q1" ? `(w${k}c + 3) / 4` : `(3 * w${k}c + 3) / 4`} THEN CAST(${a} AS REAL) END)`;
+    }
     const fn = { sum: "SUM", avg: "AVG", min: "MIN", max: "MAX" }[m.agg];
     if (!fn) throw new QueryError("Unknown calculation.");
     return `${fn}(CASE WHEN ${present} THEN CAST(${a} AS REAL) END)`;
@@ -277,7 +292,7 @@ export async function runQuery(db: D1Database, source: Source, spec: QuerySpec, 
   // count has to go back to the rows, because the same value can sit in
   // several groups.
   const wantsRollups = (spec.rollups?.length ?? 0) > 0;
-  const derivable = opts.deriveRollups !== false && wantsRollups && includeBlanks && measures.every((m) => m.agg !== "distinct");
+  const derivable = opts.deriveRollups !== false && wantsRollups && includeBlanks && measures.every((m) => m.agg === "count" || m.agg === "sum" || m.agg === "avg" || m.agg === "min" || m.agg === "max");
   const extraSql: string[] = [];
   const avgParts = new Map<number, number>();
   if (derivable) {
@@ -307,7 +322,14 @@ export async function runQuery(db: D1Database, source: Source, spec: QuerySpec, 
     const order = kept.length ? `ORDER BY ${dated ? kept.map((_, i) => `d${i}`).join(", ") : `m0 DESC, ${kept.map((_, i) => `d${i}`).join(", ")}`}` : "";
     const params = [...baseParams, ...whereParams, rowLimit + 1];
     if (params.length > MAX_BOUND) throw new QueryError("That is too many filter values for one visual. Use fewer, or split it into two visuals.");
-    const sql = `SELECT ${[...selectDims, ...selectMeasures].join(", ")} FROM (${inner}) ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ${group} ${order} LIMIT ?`;
+    const filtered = `(${inner}) ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}`;
+    // Positions are counted within each group of this very query (a total's groups are wider than the main answer's).
+    const windows = [...ranked.entries()].flatMap(([a, k]) => {
+      const part = `PARTITION BY ${[...kept, `(${a} IS NOT NULL AND ${a} != '')`].join(", ")}`;
+      return [`ROW_NUMBER() OVER (${part} ORDER BY CAST(${a} AS REAL)) AS w${k}r`, `COUNT(*) OVER (${part}) AS w${k}c`];
+    });
+    const rowsFrom = windows.length ? `(SELECT *, ${windows.join(", ")} FROM ${filtered})` : filtered;
+    const sql = `SELECT ${[...selectDims, ...selectMeasures].join(", ")} FROM ${rowsFrom} ${group} ${order} LIMIT ?`;
     const raw = await all<Record<string, string | number | null>>(db, sql, params);
     const num = (v: string | number | null | undefined) => (v == null ? null : Number(v));
     const rows = raw.slice(0, rowLimit).map((r): Row => {

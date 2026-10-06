@@ -154,6 +154,14 @@ export function luminance(hex: string): number {
 /** Black or white, whichever reads better on this fill. */
 export const inkOn = (fill: string) => (luminance(fill) > 0.36 ? "#10151d" : "#ffffff");
 
+/** Text cut in the middle, keeping both ends: for names that differ only at the end ("Armed group (sample 1)"). */
+export function clipMid(text: string, width: number, fontSize = 11): string {
+  const max = Math.max(Math.floor(width / (fontSize * 0.56)), 3);
+  if (text.length <= max) return text;
+  const tail = Math.max(Math.floor((max - 1) * 0.4), 1);
+  return `${text.slice(0, max - 1 - tail).trimEnd()}…${text.slice(-tail).trimStart()}`;
+}
+
 /** Text cut to fit a width, by rough character count (SVG text does not wrap or clip itself). */
 export function clip(text: string, width: number, fontSize = 11): string {
   const max = Math.max(Math.floor(width / (fontSize * 0.56)), 1);

@@ -1,13 +1,19 @@
 import { useEffect, useMemo } from "react";
 import { useOwnSelection, useViz, useVizData } from "./context";
 import { dimLabel, fmtMeasure } from "./format";
-import { dimTitle, fieldInfo, filtersForValue, measureLabel, missing, valuesOf, type FieldType, type VizDim, type VizResult, type VizSpec } from "./types";
+import { compileQuery, dimTitle, fieldInfo, filtersForValue, measureLabel, measuresOf, missing, valuesOf, type FieldType, type VizDim, type VizResult, type VizSpec } from "./types";
+import { Bullet, BoxPlot, Butterfly, Dumbbell, Lollipop, Pareto, Progress } from "./charts/Compare";
+import { Chord, Funnel, Marimekko, Network, Sankey } from "./charts/Flow";
 import HBars from "./charts/HBars";
+import { Bubbles, Figures, Pictogram, WordCloud } from "./charts/Info";
+import { Choropleth, DotMap, GlobeMap, SymbolMap, TileMap } from "./charts/Maps";
 import { Heatmap, Rank, Scatter, Slope, Waterfall } from "./charts/Others";
-import { Donut, Treemap, Waffle } from "./charts/Parts";
+import { Donut, Pie, Treemap, Waffle } from "./charts/Parts";
 import Pivot from "./charts/Pivot";
+import { Parliament, Radar, RadialBar, Ring, Rose, Sunburst } from "./charts/Radial";
 import { Gauge, Kpi, TextCard } from "./charts/Singles";
 import Slicer from "./charts/Slicer";
+import { Bump, Calendar, Combo, Multiples, Race, Stream, Trends } from "./charts/Time";
 import XYChart from "./charts/XYChart";
 import type { ChartProps } from "./charts/kit";
 
@@ -18,17 +24,16 @@ import type { ChartProps } from "./charts/kit";
  */
 
 /** Kinds whose figures are also offered as a plain table (the rest are tables, single figures or controls already). */
-export const HAS_TABLE_VIEW = new Set(["bar", "line", "area", "heatmap", "scatter", "histogram", "treemap", "donut", "waffle", "waterfall", "slope"]);
+/** Kinds whose figures are also offered as a plain table. The rest are tables, single figures, controls or text already. */
+const NO_TABLE_VIEW = new Set<string>(["pivot", "rank", "trends", "kpi", "figures", "gauge", "ring", "slicer", "text", "progress"]);
+export const HAS_TABLE_VIEW = { has: (kind: string) => !NO_TABLE_VIEW.has(kind) };
 
 /** The data behind a visual as a flat table: one row per group, the figures as numbers. Used for the table view and for downloads. */
 export function flatTable(viz: VizSpec, result: VizResult): { columns: string[]; rows: (string | number | null)[][]; numeric: boolean[] } {
-  const dims: VizDim[] =
-    viz.kind === "histogram"
-      ? [{ field: viz.rows[0].field, bin: viz.rows[0].bin ?? 1 }]
-      : viz.kind === "kpi"
-        ? viz.rows.slice(0, 1).map((d) => ({ field: d.field, grain: d.grain ?? "month" }))
-        : [...viz.rows, ...viz.columns];
-  const measures = valuesOf(viz);
+  // The request the visual made says exactly which groups and figures came back (a calendar groups by day, a box plot asks for six figures).
+  const query = compileQuery(viz);
+  const dims: VizDim[] = query?.dimensions ?? [...viz.rows, ...viz.columns];
+  const measures = query?.measures ?? valuesOf(viz);
   const width = result.rows[0]?.d.length ?? dims.length;
   const used = dims.slice(0, width);
   return {
@@ -40,7 +45,7 @@ export function flatTable(viz: VizSpec, result: VizResult): { columns: string[];
 
 function FlatTable({ viz, result }: { viz: VizSpec; result: VizResult }) {
   const table = useMemo(() => flatTable(viz, result), [viz, result]);
-  const measures = valuesOf(viz);
+  const measures = measuresOf(viz);
   const nDims = table.columns.length - Math.min(measures.length, result.rows[0]?.m.length ?? measures.length);
   return (
     <div className="vz-frame">
@@ -99,14 +104,14 @@ export default function VizBody({ widgetId, viz, view = "chart", interactive = t
     onData?.(result);
   }, [result, onData]);
 
-  if (viz.kind === "text") return <TextCard viz={viz} />;
+  if (viz.kind === "text") return <TextCard viz={viz} theme={ctx.theme} />;
   if (why) return <div className="vz-empty">{why}</div>;
   if (data.error) return <div className="vz-empty vz-empty--error">{data.error}</div>;
   if (!result) return <div className="vz-empty">Loading…</div>;
 
   if (viz.kind === "slicer") return <Slicer widgetId={widgetId} viz={viz} result={result} />;
 
-  const hasFigure = viz.kind === "kpi" || viz.kind === "gauge";
+  const hasFigure = viz.kind === "kpi" || viz.kind === "gauge" || viz.kind === "ring" || viz.kind === "figures";
   if (!hasFigure && result.rows.length === 0) return <div className="vz-empty">{data.narrowed ? "Nothing matches the current filters." : "There is no data for this yet."}</div>;
 
   if (view === "table" && HAS_TABLE_VIEW.has(viz.kind)) return <FlatTable viz={viz} result={result} />;
@@ -153,6 +158,76 @@ export default function VizBody({ widgetId, viz, view = "chart", interactive = t
       return <Kpi {...props} />;
     case "gauge":
       return <Gauge {...props} />;
+    case "trends":
+      return <Trends {...props} />;
+    case "lollipop":
+      return <Lollipop {...props} />;
+    case "dumbbell":
+      return <Dumbbell {...props} />;
+    case "butterfly":
+      return <Butterfly {...props} />;
+    case "bullet":
+      return <Bullet {...props} />;
+    case "pareto":
+      return <Pareto {...props} />;
+    case "marimekko":
+      return <Marimekko {...props} />;
+    case "radar":
+      return <Radar {...props} />;
+    case "stream":
+      return <Stream {...props} />;
+    case "bump":
+      return <Bump {...props} />;
+    case "multiples":
+      return <Multiples {...props} />;
+    case "combo":
+      return <Combo {...props} />;
+    case "calendar":
+      return <Calendar {...props} />;
+    case "race":
+      return <Race {...props} />;
+    case "pie":
+      return <Pie {...props} />;
+    case "rose":
+      return <Rose {...props} />;
+    case "radialbar":
+      return <RadialBar {...props} />;
+    case "sunburst":
+      return <Sunburst {...props} />;
+    case "funnel":
+      return <Funnel {...props} />;
+    case "progress":
+      return <Progress {...props} />;
+    case "boxplot":
+      return <BoxPlot {...props} />;
+    case "sankey":
+      return <Sankey {...props} />;
+    case "chord":
+      return <Chord {...props} />;
+    case "network":
+      return <Network {...props} />;
+    case "choropleth":
+      return <Choropleth {...props} />;
+    case "symbolmap":
+      return <SymbolMap {...props} />;
+    case "tilemap":
+      return <TileMap {...props} />;
+    case "dotmap":
+      return <DotMap {...props} />;
+    case "globe":
+      return <GlobeMap {...props} />;
+    case "figures":
+      return <Figures {...props} />;
+    case "ring":
+      return <Ring {...props} />;
+    case "pictogram":
+      return <Pictogram {...props} />;
+    case "parliament":
+      return <Parliament {...props} />;
+    case "bubbles":
+      return <Bubbles {...props} />;
+    case "wordcloud":
+      return <WordCloud {...props} />;
     default:
       return <div className="vz-empty">This kind of visual is not known to this version of the site.</div>;
   }

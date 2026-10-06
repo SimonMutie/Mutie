@@ -14,7 +14,7 @@ import { axisText, barPath, Frame, Legend, Tip, useTip, type ChartProps, type Ti
 type Stack = "none" | "grouped" | "stacked" | "percent";
 
 /** A curve through the points that never overshoots them (so a smoothed line cannot dip below zero between two zeros). */
-function monotone(pts: [number, number][]): string {
+export function monotone(pts: [number, number][]): string {
   const n = pts.length;
   if (n === 0) return "";
   if (n < 3) return `M${pts.map((p) => p.join(",")).join("L")}`;
@@ -51,7 +51,7 @@ function monotone(pts: [number, number][]): string {
 }
 
 /** A name broken over at most two lines of about `max` characters, at a space where there is one. */
-function wrap(text: string, max: number): string[] {
+export function wrap(text: string, max: number): string[] {
   if (text.length <= max) return [text];
   const cut = text.lastIndexOf(" ", max);
   const first = cut > max * 0.4 ? text.slice(0, cut) : text.slice(0, max);
@@ -59,7 +59,16 @@ function wrap(text: string, max: number): string[] {
   return [first, rest.length > max ? `${rest.slice(0, Math.max(max - 1, 1)).trimEnd()}…` : rest];
 }
 
-const straight = (pts: [number, number][]) => (pts.length ? `M${pts.map((p) => `${p[0]},${p[1]}`).join("L")}` : "");
+/** Flat until the next point, then straight up or down to it: for figures that hold until they change. */
+const stepped = (pts: [number, number][]) =>
+  pts.length
+    ? `M${pts[0][0]},${pts[0][1]}${pts
+        .slice(1)
+        .map((p) => `H${p[0]}V${p[1]}`)
+        .join("")}`
+    : "";
+
+export const straight = (pts: [number, number][]) => (pts.length ? `M${pts.map((p) => `${p[0]},${p[1]}`).join("L")}` : "");
 
 export default function XYChart({ viz, result, theme, selectedKey, onPick }: ChartProps) {
   const matrix = useMemo(() => shapeMatrix(viz, result, theme, { topN: viz.kind === "bar" ? 12 : 60 }), [viz, result, theme]);
@@ -67,7 +76,18 @@ export default function XYChart({ viz, result, theme, selectedKey, onPick }: Cha
   const { box, tip, show, hide } = useTip();
   const [hover, setHover] = useState<number | null>(null);
 
-  const { cats, series } = matrix;
+  const { cats } = matrix;
+  // A running total: each point is everything up to and including its period.
+  const series = useMemo(
+    () =>
+      viz.options?.cumulative && viz.kind !== "bar" && viz.kind !== "histogram" && matrix.ordered
+        ? matrix.series.map((s) => {
+            let run = 0;
+            return { ...s, values: s.values.map((v) => (run += v ?? 0)) };
+          })
+        : matrix.series,
+    [matrix, viz.options?.cumulative, viz.kind],
+  );
   const histogram = viz.kind === "histogram";
   const mode: "bar" | "line" | "area" = histogram ? "bar" : (viz.kind as "bar" | "line" | "area");
   const many = series.length > 1;
@@ -192,7 +212,7 @@ export default function XYChart({ viz, result, theme, selectedKey, onPick }: Cha
     if (run.length) out.push(run);
     return out;
   };
-  const curve = options?.smooth ? monotone : straight;
+  const curve = options?.step ? stepped : options?.smooth ? monotone : straight;
   const showMarkers = n <= 31;
 
   return (
