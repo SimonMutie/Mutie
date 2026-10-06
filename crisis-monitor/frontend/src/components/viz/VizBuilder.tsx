@@ -11,6 +11,7 @@ import {
   GRAIN_LABEL,
   KIND,
   KINDS,
+  KIND_GROUPS,
   measureLabel,
   missing,
   newViz,
@@ -28,6 +29,7 @@ import {
   type VizSpec,
   type WellMeta,
 } from "./types";
+import KindIcon from "./KindIcon";
 import VizBody from "./VizBody";
 import "./viz.css";
 
@@ -65,8 +67,7 @@ const TYPE_GLYPH: Record<FieldType, ReactNode> = {
   ),
 };
 const TYPE_NAME: Record<FieldType, string> = { text: "Text", number: "Number", date: "Date" };
-const GROUPS: KindGroup[] = ["Tables", "Compare", "Over time", "Parts of a whole", "Spread and relationship", "Single figures", "Controls and text"];
-const AGGS_NUMBER: Agg[] = ["sum", "avg", "min", "max", "count", "distinct"];
+const AGGS_NUMBER: Agg[] = ["sum", "avg", "median", "min", "max", "count", "distinct"];
 const AGGS_OTHER: Agg[] = ["distinct", "count"];
 const GRAINS: Grain[] = ["year", "quarter", "month", "week", "day"];
 
@@ -94,6 +95,9 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
   const [dragOver, setDragOver] = useState<WellKey | "filters" | null>(null);
   // Until a kind is picked by hand, the builder switches to the best fit as fields are added (Tableau's "Show Me").
   const [kindTouched, setKindTouched] = useState(!!initial);
+  // Which shelf of the gallery is open: a family of kinds, the ones suiting the chosen fields, or all of them.
+  const [shelf, setShelf] = useState<KindGroup | "Suggested" | "All">(initial ? KIND[initial.viz.kind].group : "All");
+  const [shelfTouched, setShelfTouched] = useState(!!initial);
   const dialog = useRef<HTMLDivElement>(null);
 
   const meta = KIND[viz.kind];
@@ -168,13 +172,13 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
 
   const asDim = (name: string): VizDim => {
     const t = typeOf(name);
-    if (viz.kind === "histogram") return { field: name };
+    if (viz.kind === "histogram" || viz.kind === "dotmap" || viz.kind === "calendar") return { field: name };
     return t === "date" ? { field: name, grain: "month" } : { field: name };
   };
   const asMeasure = (name: string): VizMeasure => ({ field: name, agg: typeOf(name) === "number" ? "sum" : "distinct" });
   const accepts = (key: WellKey, name: string) => {
     const w = well(key);
-    return !!w && (key === "values" || !w.types || w.types.includes(typeOf(name)));
+    return !!w && (!w.types || w.types.includes(typeOf(name)));
   };
 
   /** Puts a field on a well. A full single-field well swaps its field; a full list drops its last. */
@@ -202,7 +206,10 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
   /** A click on a field in the list: it goes where a field of its type is most likely wanted. */
   function smartAdd(name: string) {
     const t = typeOf(name);
-    if (t === "number" && viz.kind !== "histogram" && well("values")) return addTo("values", name);
+    // A visual whose grouping well takes only numbers (a dot map's latitude and longitude) gets its numbers there first.
+    const rowsWell = well("rows");
+    const numbersOnRows = rowsWell?.types?.length === 1 && rowsWell.types[0] === "number" && viz.rows.length < rowsWell.max && !viz.rows.some((d) => d.field === name);
+    if (t === "number" && viz.kind !== "histogram" && !numbersOnRows && well("values")) return addTo("values", name);
     for (const key of ["rows", "columns"] as const) {
       const w = well(key);
       if (w && accepts(key, name) && viz[key].length < w.max && !viz[key].some((d) => d.field === name)) return addTo(key, name);
@@ -220,6 +227,9 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
   }
 
   const best = suggested[0];
+  useEffect(() => {
+    if (!shelfTouched && suggested.length > 0) setShelf("Suggested");
+  }, [shelfTouched, suggested.length]);
   useEffect(() => {
     if (kindTouched || !best || best === viz.kind || fields.length === 0) return;
     setViz((v) => (v.kind === best ? v : adaptTo(v, best, fields)));
@@ -296,7 +306,8 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
                     aria-label="How this figure is worked out"
                     value={m.agg}
                     onChange={(e) => patch({ values: viz.values.map((x, j) => (j === i ? { ...x, agg: e.target.value as Agg } : x)) })}
-                    disabled={!m.field}
+                    disabled={!m.field || viz.kind === "boxplot"}
+                    title={viz.kind === "boxplot" ? "A box plot shows the spread itself" : undefined}
                   >
                     {(m.field ? (typeOf(m.field) === "number" ? AGGS_NUMBER : AGGS_OTHER) : (["count"] as Agg[])).map((a) => (
                       <option key={a} value={a}>
@@ -313,7 +324,7 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
             : (items as VizDim[]).map((d, i) => (
                 <div className="vzb-pill" key={d.field}>
                   <span title={labelOf(d.field)}>{labelOf(d.field)}</span>
-                  {typeOf(d.field) === "date" && viz.kind !== "slicer" && (
+                  {typeOf(d.field) === "date" && viz.kind !== "slicer" && viz.kind !== "calendar" && (
                     <select
                       aria-label="Group the dates by"
                       value={d.grain ?? "day"}
@@ -449,22 +460,45 @@ export default function VizBuilder({ initial, datasets, theme, dateFrom, dateTo,
 
           {/* 3. The preview */}
           <section className="vzb__preview">
-            <div className="vzb-kinds" role="group" aria-label="Kind of visual">
-              {GROUPS.flatMap((group) =>
-                KINDS.filter((k) => k.group === group).map((k, i) => (
+            <div className="vzb-shelves" role="tablist" aria-label="Families of visual">
+              {(["Suggested", ...KIND_GROUPS, "All"] as const).map((g) =>
+                g === "Suggested" && suggested.length === 0 ? null : (
                   <button
-                    key={k.key}
+                    key={g}
                     type="button"
-                    className={`vzb-kind${viz.kind === k.key ? " is-on" : ""}${suggested.includes(k.key) ? " is-suggested" : ""}${i === 0 ? " is-first" : ""}`}
-                    aria-pressed={viz.kind === k.key}
-                    onClick={() => changeKind(k.key)}
-                    title={`${group}. ${k.blurb}${suggested[0] === k.key ? " Best fit for the fields chosen." : suggested.includes(k.key) ? " A good fit for the fields chosen." : ""}`}
+                    role="tab"
+                    aria-selected={shelf === g}
+                    className={shelf === g ? "is-on" : ""}
+                    onClick={() => {
+                      setShelf(g);
+                      setShelfTouched(true);
+                    }}
                   >
-                    <KindIcon kind={k.key} />
-                    <span>{k.label}</span>
+                    {g}
+                    <span>{g === "Suggested" ? suggested.length : g === "All" ? KINDS.length : KINDS.filter((k) => k.group === g).length}</span>
                   </button>
-                )),
+                ),
               )}
+            </div>
+            <div className="vzb-kinds" role="group" aria-label="Kind of visual">
+              {(shelf === "Suggested"
+                ? suggested.map((key) => KIND[key])
+                : shelf === "All"
+                  ? KIND_GROUPS.flatMap((g) => KINDS.filter((k) => k.group === g))
+                  : KINDS.filter((k) => k.group === shelf)
+              ).map((k) => (
+                <button
+                  key={k.key}
+                  type="button"
+                  className={`vzb-kind${viz.kind === k.key ? " is-on" : ""}${suggested.includes(k.key) ? " is-suggested" : ""}`}
+                  aria-pressed={viz.kind === k.key}
+                  onClick={() => changeKind(k.key)}
+                  title={`${k.group}. ${k.blurb}${suggested[0] === k.key ? " Best fit for the fields chosen." : suggested.includes(k.key) ? " A good fit for the fields chosen." : ""}`}
+                >
+                  <KindIcon kind={k.key} />
+                  <span>{k.label}</span>
+                </button>
+              ))}
             </div>
             <p className="vzb-blurb">
               <b>{meta.label}.</b> {meta.blurb}
@@ -619,13 +653,43 @@ function Options({ viz, fields, setOption, patch }: { viz: VizSpec; fields: VizF
         onChange={(stack) => setOption({ stack })}
       />,
     );
-  if (viz.kind === "bar" || viz.kind === "rank")
-    parts.push(<Num key="top" label="Show the largest" value={o.topN} placeholder={viz.kind === "bar" ? "12" : "10"} min={0} onChange={(topN) => setOption({ topN })} />);
-  if (viz.kind === "line" || viz.kind === "area") parts.push(<Check key="smooth" label="Smooth the line" checked={!!o.smooth} onChange={(smooth) => setOption({ smooth })} />);
+  if (["bar", "rank", "lollipop", "progress", "trends"].includes(viz.kind))
+    parts.push(
+      <Num
+        key="top"
+        label="Show the largest"
+        value={o.topN}
+        placeholder={viz.kind === "bar" || viz.kind === "trends" ? "12" : viz.kind === "lollipop" ? "15" : "10"}
+        min={0}
+        onChange={(topN) => setOption({ topN })}
+      />,
+    );
+  if (viz.kind === "line" || viz.kind === "area")
+    parts.push(<Check key="smooth" label="Smooth the line" checked={!!o.smooth} onChange={(smooth) => setOption({ smooth, step: smooth ? false : o.step })} />);
+  if (viz.kind === "line") parts.push(<Check key="step" label="Draw as steps" checked={!!o.step} onChange={(step) => setOption({ step, smooth: step ? false : o.smooth })} />);
+  if (viz.kind === "line" || viz.kind === "area" || viz.kind === "race")
+    parts.push(<Check key="cumulative" label="Running total (each period adds to the last)" checked={!!o.cumulative} onChange={(cumulative) => setOption({ cumulative })} />);
+  if (viz.kind === "ring" || viz.kind === "progress" || viz.kind === "bullet")
+    parts.push(<Num key="target2" label="Target" value={o.target} min={0} placeholder={viz.kind === "progress" ? "none: show shares" : undefined} onChange={(target) => setOption({ target })} />);
+  if (viz.kind === "choropleth" || viz.kind === "symbolmap")
+    parts.push(
+      <Seg
+        key="scope"
+        label="Show"
+        value={o.scope ?? "auto"}
+        options={[
+          ["auto", "Best fit"],
+          ["africa", "Africa"],
+          ["world", "The world"],
+        ]}
+        onChange={(scope) => setOption({ scope })}
+      />,
+    );
+  if (viz.kind === "dotmap") parts.push(<Num key="cell" label="Gather rows within (degrees)" value={o.cell} placeholder="0.5" min={0} onChange={(cell) => setOption({ cell })} />);
   if (viz.kind === "bar" || viz.kind === "line") parts.push(<Check key="labels" label="Write the figure on each mark" checked={!!o.labels} onChange={(labels) => setOption({ labels })} />);
   if (viz.kind === "histogram" && viz.rows[0])
     parts.push(<Num key="bin" label="Width of each bar" value={viz.rows[0].bin} min={0} onChange={(bin) => patch({ rows: [{ field: viz.rows[0].field, bin: bin && bin > 0 ? bin : undefined }] })} />);
-  if (viz.kind === "kpi" && viz.rows.length > 0)
+  if ((viz.kind === "kpi" && viz.rows.length > 0) || viz.kind === "trends")
     parts.push(
       <Seg
         key="dir"
@@ -842,139 +906,5 @@ function FilterEditor({
         </>
       )}
     </div>
-  );
-}
-
-// ── Small pictures of each kind, for the gallery ────────────────────────
-
-function KindIcon({ kind }: { kind: VizKind }) {
-  const s = { fill: "currentColor" } as const;
-  const l = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" } as const;
-  const body: Record<VizKind, ReactNode> = {
-    pivot: (
-      <>
-        <rect x="2" y="2" width="20" height="4" rx="1" {...s} />
-        <rect x="2" y="8" width="5" height="10" rx="1" {...s} opacity=".55" />
-        <rect x="9" y="8" width="6" height="4" rx="1" {...s} opacity=".3" />
-        <rect x="16.5" y="8" width="5.5" height="4" rx="1" {...s} opacity=".8" />
-        <rect x="9" y="14" width="6" height="4" rx="1" {...s} opacity=".65" />
-        <rect x="16.5" y="14" width="5.5" height="4" rx="1" {...s} opacity=".3" />
-      </>
-    ),
-    rank: (
-      <>
-        <rect x="2" y="3" width="20" height="3.2" rx="1.6" {...s} />
-        <rect x="2" y="8.4" width="14" height="3.2" rx="1.6" {...s} opacity=".7" />
-        <rect x="2" y="13.8" width="9" height="3.2" rx="1.6" {...s} opacity=".45" />
-      </>
-    ),
-    bar: (
-      <>
-        <rect x="3" y="10" width="4" height="8" rx="1" {...s} />
-        <rect x="10" y="4" width="4" height="14" rx="1" {...s} />
-        <rect x="17" y="8" width="4" height="10" rx="1" {...s} />
-      </>
-    ),
-    heatmap: (
-      <>
-        {[0, 1, 2].flatMap((r) =>
-          [0, 1, 2, 3].map((c) => (
-            <rect key={`${r}${c}`} x={2 + c * 5.2} y={2 + r * 5.6} width="4.2" height="4.6" rx="1" {...s} opacity={[0.25, 0.9, 0.5, 0.35, 0.7, 0.3, 1, 0.55, 0.4, 0.6, 0.25, 0.8][r * 4 + c]} />
-          )),
-        )}
-      </>
-    ),
-    slope: (
-      <>
-        <path d="M4 5 20 13M4 15 20 6" {...l} />
-        <circle cx="4" cy="5" r="1.8" {...s} />
-        <circle cx="20" cy="13" r="1.8" {...s} />
-        <circle cx="4" cy="15" r="1.8" {...s} />
-        <circle cx="20" cy="6" r="1.8" {...s} />
-      </>
-    ),
-    line: <path d="M2 15 8 9l4 4 9-9" {...l} />,
-    area: (
-      <>
-        <path d="M2 18V12l6-5 5 4 9-7v14Z" {...s} opacity=".35" />
-        <path d="M2 12l6-5 5 4 9-7" {...l} />
-      </>
-    ),
-    waterfall: (
-      <>
-        <rect x="2" y="11" width="4" height="7" rx="1" {...s} />
-        <rect x="7.3" y="7" width="4" height="4" rx="1" {...s} opacity=".6" />
-        <rect x="12.6" y="3" width="4" height="4" rx="1" {...s} opacity=".6" />
-        <rect x="18" y="3" width="4" height="15" rx="1" {...s} />
-      </>
-    ),
-    donut: (
-      <>
-        <circle cx="12" cy="10" r="6.5" fill="none" stroke="currentColor" strokeWidth="4" opacity=".35" />
-        <path d="M12 3.5A6.5 6.5 0 0 1 17.6 13.2" fill="none" stroke="currentColor" strokeWidth="4" />
-      </>
-    ),
-    treemap: (
-      <>
-        <rect x="2" y="2" width="11" height="16" rx="1" {...s} />
-        <rect x="14.5" y="2" width="7.5" height="9" rx="1" {...s} opacity=".6" />
-        <rect x="14.5" y="12.5" width="7.5" height="5.5" rx="1" {...s} opacity=".35" />
-      </>
-    ),
-    waffle: (
-      <>{[0, 1, 2, 3].flatMap((r) => [0, 1, 2, 3, 4].map((c) => <rect key={`${r}${c}`} x={2.5 + c * 4} y={2 + r * 4.2} width="3" height="3.2" rx=".8" {...s} opacity={r * 5 + c < 12 ? 1 : 0.3} />))}</>
-    ),
-    scatter: (
-      <>
-        <circle cx="5" cy="14" r="2" {...s} />
-        <circle cx="10" cy="9" r="3" {...s} opacity=".6" />
-        <circle cx="16" cy="12" r="1.8" {...s} />
-        <circle cx="19" cy="5" r="2.6" {...s} opacity=".6" />
-      </>
-    ),
-    histogram: (
-      <>
-        <rect x="2" y="13" width="3.6" height="5" {...s} />
-        <rect x="6" y="8" width="3.6" height="10" {...s} />
-        <rect x="10" y="3" width="3.6" height="15" {...s} />
-        <rect x="14" y="7" width="3.6" height="11" {...s} />
-        <rect x="18" y="12" width="3.6" height="6" {...s} />
-      </>
-    ),
-    kpi: (
-      <>
-        <rect x="2" y="3" width="12" height="6" rx="1.5" {...s} />
-        <path d="M2 16l5-3 4 2 5-4 6 1" {...l} strokeWidth={1.5} />
-      </>
-    ),
-    gauge: (
-      <>
-        <path d="M3 16a9 9 0 0 1 18 0" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" opacity=".3" />
-        <path d="M3 16a9 9 0 0 1 11.5-8.6" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
-      </>
-    ),
-    slicer: (
-      <>
-        <rect x="2" y="3" width="4" height="4" rx="1" {...s} />
-        <rect x="8" y="4" width="13" height="2" rx="1" {...s} opacity=".5" />
-        <rect x="2" y="9" width="4" height="4" rx="1" fill="none" stroke="currentColor" strokeWidth="1.4" />
-        <rect x="8" y="10" width="10" height="2" rx="1" {...s} opacity=".5" />
-        <rect x="2" y="15" width="4" height="4" rx="1" {...s} />
-        <rect x="8" y="16" width="12" height="2" rx="1" {...s} opacity=".5" />
-      </>
-    ),
-    text: (
-      <>
-        <rect x="2" y="3" width="14" height="3.6" rx="1" {...s} />
-        <rect x="2" y="9.5" width="20" height="2" rx="1" {...s} opacity=".5" />
-        <rect x="2" y="13.5" width="20" height="2" rx="1" {...s} opacity=".5" />
-        <rect x="2" y="17.5" width="12" height="2" rx="1" {...s} opacity=".5" />
-      </>
-    ),
-  };
-  return (
-    <svg viewBox="0 0 24 21" width="30" height="26" aria-hidden>
-      {body[kind]}
-    </svg>
   );
 }

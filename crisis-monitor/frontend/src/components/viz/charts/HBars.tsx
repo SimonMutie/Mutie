@@ -86,7 +86,7 @@ export default function HBars({ viz, result, theme, selectedKey, onPick }: Chart
                           <g key={s.key}>
                             <path d={barPath(x0, y0 + (rowH - thick) / 2, w, thick, 3, last ? "right" : "none")} fill={s.color} />
                             {percent && w > 34 && (
-                              <text x={x0 + w / 2} y={y0 + rowH / 2 + 3.5} textAnchor="middle" fontSize={10.5} fontFamily="Inter, system-ui, sans-serif" fontWeight={600} fill={inkOn(s.color)}>
+                              <text x={x0 + w / 2} y={y0 + rowH / 2 + 3.5} textAnchor="middle" fontSize={10.5} fontFamily={theme.font} fontWeight={600} fill={inkOn(s.color)}>
                                 {pct(share)}
                               </text>
                             )}

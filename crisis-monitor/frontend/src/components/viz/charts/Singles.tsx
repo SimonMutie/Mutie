@@ -8,8 +8,6 @@ import type { ChartProps } from "./kit";
 
 /** Single figures: the headline number with its trend, the gauge against a target, and the text card. */
 
-const DISPLAY = '"Space Grotesk", Inter, system-ui, sans-serif';
-
 /** A rise or fall, coloured only when the author has said which direction is good news. */
 function changeColor(delta: number, viz: VizSpec, theme: DashTheme): string {
   const lower = viz.options?.lowerIsBetter;
@@ -57,7 +55,7 @@ export function Kpi({ viz, result, theme, title }: ChartProps) {
   return (
     <div className="vz-kpi" ref={ref}>
       {measureLabel(viz, measure).toLowerCase() !== (title ?? "").trim().toLowerCase() && <div className="vz-kpi__label">{measureLabel(viz, measure)}</div>}
-      <div className="vz-kpi__value" style={{ fontSize: big, fontFamily: DISPLAY }} title={fmtMeasure(overall, measure, viz.options)}>
+      <div className="vz-kpi__value" style={{ fontSize: big, fontFamily: theme.display }} title={fmtMeasure(overall, measure, viz.options)}>
         {overall !== null && Math.abs(overall) >= 100_000 ? fmtCompact(overall, viz.options) : fmtMeasure(overall, measure, viz.options)}
       </div>
       {trend && trend.cats.length > 0 && (
@@ -164,16 +162,16 @@ export function Gauge({ viz, result, theme }: ChartProps) {
             y={cy - r * 0.1}
             textAnchor="middle"
             fill={theme.ink}
-            fontFamily={DISPLAY}
+            fontFamily={theme.display}
             fontWeight={700}
             fontSize={Math.max(Math.min(r * 0.42, 46, ((r - thick) * 1.75) / (shown.length * 0.6)), 14)}
           >
             {shown}
           </text>
-          <text x={cx - r} y={cy + 8} textAnchor="middle" fill={theme.faint} fontSize={10.5} fontFamily="Inter, system-ui, sans-serif" dy={8}>
+          <text x={cx - r} y={cy + 8} textAnchor="middle" fill={theme.faint} fontSize={10.5} fontFamily={theme.font} dy={8}>
             0
           </text>
-          <text x={cx + r} y={cy + 8} textAnchor="middle" fill={theme.faint} fontSize={10.5} fontFamily="Inter, system-ui, sans-serif" dy={8}>
+          <text x={cx + r} y={cy + 8} textAnchor="middle" fill={theme.faint} fontSize={10.5} fontFamily={theme.font} dy={8}>
             {fmtCompact(top, viz.options)}
           </text>
         </svg>
@@ -191,11 +189,11 @@ export function Gauge({ viz, result, theme }: ChartProps) {
   );
 }
 
-export function TextCard({ viz }: { viz: VizSpec }) {
+export function TextCard({ viz, theme }: { viz: VizSpec; theme: DashTheme }) {
   const paragraphs = (viz.options?.text ?? "").split(/\n\s*\n/).filter((p) => p.trim());
   return (
     <div className={`vz-text${viz.options?.align === "center" ? " is-center" : ""}`}>
-      {viz.options?.heading && <h3 style={{ fontFamily: DISPLAY }}>{viz.options.heading}</h3>}
+      {viz.options?.heading && <h3 style={{ fontFamily: theme.display }}>{viz.options.heading}</h3>}
       {paragraphs.map((p, i) => (
         <p key={i}>{p}</p>
       ))}

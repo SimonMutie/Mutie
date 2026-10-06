@@ -40,7 +40,7 @@ const layoutSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: 
 
 // ── "viz" widgets: visuals built on the any-data engine (lib/analytics.ts) ──
 const vizDimSchema = z.object({ field: z.string().min(1).max(200), grain: z.enum(["year", "quarter", "month", "week", "day"]).optional(), bin: z.number().positive().optional() });
-const vizMeasureSchema = z.object({ field: z.string().max(200).optional(), agg: z.enum(["count", "distinct", "sum", "avg", "min", "max"]), label: z.string().max(80).optional() });
+const vizMeasureSchema = z.object({ field: z.string().max(200).optional(), agg: z.enum(["count", "distinct", "sum", "avg", "min", "max", "median", "q1", "q3"]), label: z.string().max(80).optional() });
 const vizFilterSchema = z.object({
   field: z.string().min(1).max(200),
   op: z.enum(["in", "not_in", "gte", "lte", "contains"]),

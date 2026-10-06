@@ -142,6 +142,24 @@ describe("grouping and measuring an uploaded dataset", () => {
     expect(grand.m[5]).toBe(30);
   });
 
+  it("finds the middle value and the quartiles of each group, and of everything", async () => {
+    // Amounts: Kenya 7.5, 12.5, 30 · Sudan 4, 9, 21 · Mali 15 (and one with none) · no country 2.
+    const r = await q({
+      dimensions: [{ field: "Country" }],
+      measures: [{ agg: "median", field: "Amount (USD m.)" }, { agg: "q1", field: "Amount (USD m.)" }, { agg: "q3", field: "Amount (USD m.)" }, { agg: "min", field: "Amount (USD m.)" }, { agg: "max", field: "Amount (USD m.)" }, { agg: "count", field: "Amount (USD m.)" }],
+      blanks: "include",
+      rollups: [[]],
+    });
+    const of = (c: string | null) => r.rows.find((x) => x.d[0] === c)!.m;
+    expect(of("Kenya")).toEqual([12.5, 7.5, 30, 7.5, 30, 3]);
+    expect(of("Sudan")).toEqual([9, 4, 21, 4, 21, 3]);
+    expect(of("Mali")).toEqual([15, 15, 15, 15, 15, 1]); // the grant with no amount is not a value
+    expect(of(null)).toEqual([2, 2, 2, 2, 2, 1]);
+    // Everything: 2, 4, 7.5, 9, 12.5, 15, 21, 30 — an even count, so the median is the mean of the middle two.
+    expect(r.rollups![0].rows[0].m).toEqual([10.75, 4, 15, 2, 30, 8]);
+    await expect(q({ dimensions: [], measures: [{ agg: "median", field: "Country" }] })).rejects.toThrow(/not a number/);
+  });
+
   it("goes back to the rows for a total it cannot work out: a distinct count, or groups that left blank rows out", async () => {
     // Donor codes A, B and C each appear under several countries: adding the per-country counts would count them twice.
     const distinct = await q({ dimensions: [{ field: "Country" }], measures: [{ agg: "distinct", field: "Donor.code" }], blanks: "include", rollups: [[]] });

@@ -43,9 +43,10 @@ export interface Matrix {
 
 const keyOf = (v: string | number | null) => (v === null || v === "" ? "\u0000" : String(v));
 const OTHER = "\u0001other";
-const MAX_SERIES = 7;
+const DEFAULT_MAX_SERIES = 7;
 
-export function shapeMatrix(viz: VizSpec, result: VizResult, theme: DashTheme, defaults: { topN: number }): Matrix {
+export function shapeMatrix(viz: VizSpec, result: VizResult, theme: DashTheme, defaults: { topN: number; maxSeries?: number }): Matrix {
+  const MAX_SERIES = defaults.maxSeries ?? DEFAULT_MAX_SERIES;
   const measures = valuesOf(viz);
   const catDim: VizDim = viz.kind === "histogram" ? { field: viz.rows[0].field, bin: viz.rows[0].bin ?? 1 } : viz.rows[0];
   const catType = fieldInfo(viz, catDim.field).type;
@@ -241,4 +242,147 @@ export function shapeParts(viz: VizSpec, result: VizResult, theme: DashTheme, ma
   const total = parts.reduce((s, p) => s + p.value, 0);
   for (const p of parts) p.share = total ? p.value / total : 0;
   return { parts, total, dim, type, measure, note: notes.length ? notes.join(" ") : null };
+}
+
+// ── Two points compared, item by item ────────────────────────────────────
+
+export interface Pair {
+  /** The two things compared: the first and last of an ordered field, or the two largest of an unordered one. */
+  from: string;
+  to: string;
+  rows: { key: string; raw: string | number | null; label: string; a: number | null; b: number | null }[];
+  note: string | null;
+}
+
+/** For the dumbbell and the butterfly: each value of the first field, with its figure under each of two values of the second. */
+export function shapePair(viz: VizSpec, result: VizResult, max: number, opts: { keepOrder?: boolean } = {}): Pair | null {
+  const measure = valuesOf(viz)[0];
+  const dim = viz.rows[0];
+  const type = fieldInfo(viz, dim.field).type;
+  const colDim = viz.columns[0];
+  const colType = fieldInfo(viz, colDim.field).type;
+  const totals = new Map<string, { raw: string | number | null; total: number }>();
+  for (const r of result.rows) {
+    if (r.d[1] == null) continue;
+    const k = keyOf(r.d[1]);
+    const c = totals.get(k) ?? { raw: r.d[1], total: 0 };
+    c.total += Math.abs(r.m[0] ?? 0);
+    totals.set(k, c);
+  }
+  const ordered = !!colDim.grain || colType === "date" || colType === "number";
+  const keys = [...totals.keys()].sort((a, b) => (ordered ? (colType === "number" && !colDim.grain ? Number(a) - Number(b) : a < b ? -1 : 1) : totals.get(b)!.total - totals.get(a)!.total));
+  if (keys.length < 2) return null;
+  const [from, to] = ordered ? [keys[0], keys[keys.length - 1]] : [keys[0], keys[1]];
+  const empty = measure.agg === "count" || measure.agg === "sum" || measure.agg === "distinct" ? 0 : null;
+  const lines = new Map<string, { raw: string | number | null; a: number | null; b: number | null }>();
+  for (const r of result.rows) {
+    const ck = keyOf(r.d[1] ?? null);
+    if (ck !== from && ck !== to) continue;
+    const k = keyOf(r.d[0] ?? null);
+    const line = lines.get(k) ?? { raw: r.d[0] ?? null, a: empty, b: empty };
+    if (ck === from) line.a = r.m[0];
+    else line.b = r.m[0];
+    lines.set(k, line);
+  }
+  let rows = [...lines.entries()].map(([key, l]) => ({ key, raw: l.raw, label: dimLabel(l.raw, dim, type), a: l.a, b: l.b }));
+  const rowOrdered = !!dim.grain || dim.bin !== undefined || type === "date" || type === "number";
+  if (opts.keepOrder && rowOrdered) rows.sort((x, y) => (dim.bin !== undefined || type === "number" ? Number(x.key) - Number(y.key) : x.key < y.key ? -1 : 1));
+  else rows.sort((x, y) => Math.max(y.a ?? 0, y.b ?? 0) - Math.max(x.a ?? 0, x.b ?? 0));
+  const all = rows.length;
+  rows = rows.slice(0, max);
+  const notes = [
+    all > max ? `The ${max} largest of ${all} are shown.` : "",
+    keys.length > 2 ? (ordered ? `Compares the first and the last of ${keys.length} values of the second field.` : "Compares the two largest values of the second field.") : "",
+  ];
+  return { from: dimLabel(totals.get(from)!.raw, colDim, colType), to: dimLabel(totals.get(to)!.raw, colDim, colType), rows, note: notes.filter(Boolean).join(" ") || null };
+}
+
+// ── Flows and ties ───────────────────────────────────────────────────────
+
+export interface FlowNode {
+  key: string;
+  raw: string | number | null;
+  label: string;
+  /** Which stage (field) the node belongs to. */
+  stage: number;
+  value: number;
+  color: string;
+  other?: boolean;
+}
+export interface FlowLink {
+  source: string;
+  target: string;
+  value: number;
+}
+export interface Flows {
+  nodes: FlowNode[];
+  links: FlowLink[];
+  stages: number;
+  note: string | null;
+}
+
+/**
+ * The answer's rows as stages of nodes with links between neighbouring
+ * stages. Each stage keeps its largest `perStage` nodes; the rest are joined
+ * as "Other" (the flows through them are still drawn, so totals hold).
+ */
+export function shapeFlows(viz: VizSpec, result: VizResult, theme: DashTheme, perStage: number): Flows {
+  const dims = [...viz.rows, ...viz.columns];
+  const stages = Math.min(dims.length, result.rows[0]?.d.length ?? dims.length);
+  const totals = dims.map(() => new Map<string, { raw: string | number | null; value: number }>());
+  for (const r of result.rows) {
+    const v = r.m[0] ?? 0;
+    if (v <= 0) continue;
+    for (let s = 0; s < stages; s++) {
+      const k = keyOf(r.d[s] ?? null);
+      const t = totals[s].get(k) ?? { raw: r.d[s] ?? null, value: 0 };
+      t.value += v;
+      totals[s].set(k, t);
+    }
+  }
+  const kept = totals.map(
+    (m) =>
+      new Set(
+        [...m.entries()]
+          .sort((a, b) => b[1].value - a[1].value)
+          .slice(0, perStage)
+          .map(([k]) => k),
+      ),
+  );
+  const folded = totals.some((m, s) => m.size > kept[s].size);
+  const nodes = new Map<string, FlowNode>();
+  const links = new Map<string, FlowLink>();
+  const id = (s: number, k: string) => `${s}\u0002${kept[s].has(k) ? k : OTHER}`;
+  for (const r of result.rows) {
+    const v = r.m[0] ?? 0;
+    if (v <= 0) continue;
+    for (let s = 0; s < stages; s++) {
+      const k = keyOf(r.d[s] ?? null);
+      const nodeId = id(s, k);
+      const isOther = !kept[s].has(k);
+      const node = nodes.get(nodeId) ?? {
+        key: nodeId,
+        raw: isOther ? null : (r.d[s] ?? null),
+        label: isOther ? "Other" : dimLabel(r.d[s] ?? null, dims[s], fieldInfo(viz, dims[s].field).type),
+        stage: s,
+        value: 0,
+        color: theme.neutral,
+        other: isOther || undefined,
+      };
+      node.value += v;
+      nodes.set(nodeId, node);
+      if (s < stages - 1) {
+        const target = id(s + 1, keyOf(r.d[s + 1] ?? null));
+        const linkId = `${nodeId}\u0003${target}`;
+        const link = links.get(linkId) ?? { source: nodeId, target, value: 0 };
+        link.value += v;
+        links.set(linkId, link);
+      }
+    }
+  }
+  const list = [...nodes.values()].sort((a, b) => a.stage - b.stage || Number(!!a.other) - Number(!!b.other) || b.value - a.value);
+  // Colour belongs to the first stage: a flow keeps the colour of where it started.
+  let c = 0;
+  for (const n of list) if (n.stage === 0 && !n.other) n.color = seriesColor(theme, c++);
+  return { nodes: list, links: [...links.values()], stages, note: folded ? `Each side shows its ${perStage} largest; the rest are joined as “Other”.` : null };
 }

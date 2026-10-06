@@ -10,7 +10,7 @@ import { Frame, Tip, useTip, type ChartProps } from "./kit";
 /** Parts of a whole: the donut, the waffle (a hundred squares) and the treemap. */
 
 /** The list beside a donut or waffle: each part's name, figure and share. It is the chart's legend and its labels at once. */
-function PartList({
+export function PartList({
   parts,
   hover,
   selectedKey,
@@ -46,22 +46,25 @@ function PartList({
   );
 }
 
-function arc(cx: number, cy: number, r0: number, r1: number, a0: number, a1: number): string {
+export function arc(cx: number, cy: number, r0: number, r1: number, a0: number, a1: number): string {
   const end = Math.min(a1, a0 + Math.PI * 2 - 0.0001);
   const at = (r: number, a: number) => `${cx + r * Math.sin(a)},${cy - r * Math.cos(a)}`;
   const large = end - a0 > Math.PI ? 1 : 0;
   return `M${at(r1, a0)}A${r1},${r1} 0 ${large} 1 ${at(r1, end)}L${at(r0, end)}A${r0},${r0} 0 ${large} 0 ${at(r0, a0)}Z`;
 }
 
-export function Donut({ viz, result, theme, selectedKey, onPick }: ChartProps) {
-  const shaped = useMemo(() => shapeParts(viz, result, theme, 7), [viz, result, theme]);
+/** A pie is the same drawing with no hole; its shares are written on the slices instead of in the middle. */
+export const Pie = (props: ChartProps) => <Donut {...props} hole={0} />;
+
+export function Donut({ viz, result, theme, selectedKey, onPick, hole = 0.62 }: ChartProps & { hole?: number }) {
+  const shaped = useMemo(() => shapeParts(viz, result, theme, hole ? 7 : 6), [viz, result, theme, hole]);
   const [ref, size] = useSize<HTMLDivElement>();
   const [hover, setHover] = useState<string | null>(null);
   const { parts, total, measure } = shaped;
   const wide = size.width > size.height * 1.35 && size.width > 300;
   const d = Math.max(Math.min(wide ? size.height : size.height * 0.62, wide ? size.width * 0.46 : size.width, 260), 60);
   const r1 = d / 2 - 5;
-  const r0 = r1 * 0.62;
+  const r0 = r1 * hole;
   const focus = parts.find((p) => p.key === (hover ?? selectedKey)) ?? null;
   const format = (n: number) => fmtMeasure(n, measure, viz.options);
   // A sliver of the panel between slices keeps neighbours apart whatever their colours.
@@ -73,30 +76,50 @@ export function Donut({ viz, result, theme, selectedKey, onPick }: ChartProps) {
       <div className={`vz-donut${wide ? " is-wide" : ""}`} ref={ref}>
         {size.width > 0 && parts.length > 0 && (
           <>
-            <svg width={d} height={d} role="img" aria-label="Donut chart" style={{ flexShrink: 0 }}>
+            <svg width={d} height={d} role="img" aria-label={hole ? "Donut chart" : "Pie chart"} style={{ flexShrink: 0 }}>
               {parts.map((p) => {
                 const a0 = angle;
                 angle += p.share * Math.PI * 2;
                 const grown = hover === p.key ? 4 : 0;
+                const mid = (a0 + angle) / 2;
                 return (
-                  <path
-                    key={p.key}
-                    d={arc(d / 2, d / 2, r0, r1 + grown, a0 + pad, Math.max(angle - pad, a0 + pad + 0.002))}
-                    fill={p.color}
-                    opacity={(hover ?? selectedKey) !== null && (hover ?? selectedKey) !== p.key ? 0.35 : 1}
-                    style={{ cursor: onPick && !p.other ? "pointer" : "default", transition: "opacity .15s" }}
-                    onMouseEnter={() => setHover(p.key)}
-                    onMouseLeave={() => setHover(null)}
-                    onClick={() => onPick && !p.other && onPick(shaped.dim, shaped.type, p.raw, p.label, p.key)}
-                  />
+                  <g key={p.key}>
+                    <path
+                      d={arc(d / 2, d / 2, r0, r1 + grown, a0 + pad, Math.max(angle - pad, a0 + pad + 0.002))}
+                      fill={p.color}
+                      opacity={(hover ?? selectedKey) !== null && (hover ?? selectedKey) !== p.key ? 0.35 : 1}
+                      style={{ cursor: onPick && !p.other ? "pointer" : "default", transition: "opacity .15s" }}
+                      onMouseEnter={() => setHover(p.key)}
+                      onMouseLeave={() => setHover(null)}
+                      onClick={() => onPick && !p.other && onPick(shaped.dim, shaped.type, p.raw, p.label, p.key)}
+                    />
+                    {!hole && p.share >= 0.07 && (
+                      <text
+                        x={d / 2 + r1 * 0.62 * Math.sin(mid)}
+                        y={d / 2 - r1 * 0.62 * Math.cos(mid) + 4}
+                        textAnchor="middle"
+                        fill={inkOn(p.color)}
+                        fontFamily={theme.font}
+                        fontWeight={700}
+                        fontSize={12}
+                        pointerEvents="none"
+                      >
+                        {pct(p.share)}
+                      </text>
+                    )}
+                  </g>
                 );
               })}
-              <text x={d / 2} y={d / 2 - 2} textAnchor="middle" fill={theme.ink} fontFamily='"Space Grotesk", Inter, sans-serif' fontWeight={700} fontSize={Math.max(Math.min(r0 * 0.46, 30), 13)}>
-                {focus ? pct(focus.share, 1) : fmtCompact(total, viz.options)}
-              </text>
-              <text x={d / 2} y={d / 2 + 15} textAnchor="middle" fill={theme.muted} fontFamily="Inter, system-ui, sans-serif" fontSize={10.5}>
-                {clip(focus ? focus.label : isAdditive(measure) ? measureLabel(viz, measure) : "all shown", r0 * 1.7, 10.5)}
-              </text>
+              {hole > 0 && (
+                <>
+                  <text x={d / 2} y={d / 2 - 2} textAnchor="middle" fill={theme.ink} fontFamily={theme.display} fontWeight={700} fontSize={Math.max(Math.min(r0 * 0.46, 30), 13)}>
+                    {focus ? pct(focus.share, 1) : fmtCompact(total, viz.options)}
+                  </text>
+                  <text x={d / 2} y={d / 2 + 15} textAnchor="middle" fill={theme.muted} fontFamily={theme.font} fontSize={10.5}>
+                    {clip(focus ? focus.label : isAdditive(measure) ? measureLabel(viz, measure) : "all shown", r0 * 1.7, 10.5)}
+                  </text>
+                </>
+              )}
             </svg>
             <PartList
               parts={parts}
@@ -285,7 +308,7 @@ export function Treemap({ viz, result, theme, selectedKey, onPick }: ChartProps)
               const h = n.y1 - n.y0;
               if (n.depth === 1 && nested && n.data.group) {
                 return (
-                  <text key={`g${i}`} x={n.x0 + 3} y={n.y0 + 12.5} fill={theme.ink} fontSize={11} fontWeight={700} fontFamily="Inter, system-ui, sans-serif">
+                  <text key={`g${i}`} x={n.x0 + 3} y={n.y0 + 12.5} fill={theme.ink} fontSize={11} fontWeight={700} fontFamily={theme.font}>
                     {clip(n.data.group.label, w - 6)}
                   </text>
                 );
@@ -310,12 +333,12 @@ export function Treemap({ viz, result, theme, selectedKey, onPick }: ChartProps)
                 >
                   <rect x={n.x0} y={n.y0} width={w} height={h} rx={3} fill={leaf.color} />
                   {w > 46 && h > 20 && (
-                    <text x={n.x0 + 6} y={n.y0 + 15} fill={ink} fontSize={11.5} fontWeight={600} fontFamily="Inter, system-ui, sans-serif">
+                    <text x={n.x0 + 6} y={n.y0 + 15} fill={ink} fontSize={11.5} fontWeight={600} fontFamily={theme.font}>
                       {clip(leaf.label, w - 10, 11.5)}
                     </text>
                   )}
                   {w > 46 && h > 38 && (
-                    <text x={n.x0 + 6} y={n.y0 + 30} fill={ink} opacity={0.85} fontSize={11} fontFamily="Inter, system-ui, sans-serif">
+                    <text x={n.x0 + 6} y={n.y0 + 30} fill={ink} opacity={0.85} fontSize={11} fontFamily={theme.font}>
                       {w > 96 ? `${fmtCompact(leaf.value, viz.options)} (${pct(share)})` : clip(fmtCompact(leaf.value, viz.options), w - 10)}
                     </text>
                   )}
