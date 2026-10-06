@@ -56,10 +56,12 @@ interface Fixture {
 
 const pad = (s: string) => `${s} The report could not be independently verified. Communications in the area remain intermittent and aid agencies said access was restricted. Local officials said further details would be released, and residents described the situation as tense through the night.`;
 
-/** The fixtures name weekdays ("on Thursday"). Whatever day the tests run,
- *  those are made to mean the day before publication, so the events are
- *  always inside the 24-hour window. */
-const DAY_BEFORE_PUBLICATION = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(NOW.getTime() - 6 * 3_600_000 - 86_400_000).getUTCDay()];
+/** The fixtures name weekdays ("on Thursday"). Whatever day and hour the
+ *  tests run, those are made to mean yesterday, so the events are always
+ *  inside the 24-hour window. (Yesterday, not "the day before publication":
+ *  the articles are published six hours ago, which before 06:00 UTC is
+ *  already yesterday — and the day before that is outside the window.) */
+const DAY_BEFORE_PUBLICATION = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][new Date(NOW.getTime() - 86_400_000).getUTCDay()];
 const recent = <T,>(fixtures: T): T => JSON.parse(JSON.stringify(fixtures).replace(/\b(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day\b/g, DAY_BEFORE_PUBLICATION)) as T;
 
 const FIXTURES: Fixture[] = recent<Fixture[]>([

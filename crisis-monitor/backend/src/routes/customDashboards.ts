@@ -38,9 +38,42 @@ export const publicDashboardsRouter = new Hono<{ Bindings: Env }>();
 
 const layoutSchema = z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() });
 
+// ── "viz" widgets: visuals built on the any-data engine (lib/analytics.ts) ──
+const vizDimSchema = z.object({ field: z.string().min(1).max(200), grain: z.enum(["year", "quarter", "month", "week", "day"]).optional(), bin: z.number().positive().optional() });
+const vizMeasureSchema = z.object({ field: z.string().max(200).optional(), agg: z.enum(["count", "distinct", "sum", "avg", "min", "max"]), label: z.string().max(80).optional() });
+const vizFilterSchema = z.object({
+  field: z.string().min(1).max(200),
+  op: z.enum(["in", "not_in", "gte", "lte", "contains"]),
+  values: z.array(z.union([z.string().max(200), z.number(), z.null()])).max(60),
+});
+export const vizQuerySchema = z.object({
+  dimensions: z.array(vizDimSchema).max(4),
+  measures: z.array(vizMeasureSchema).min(1).max(6),
+  filters: z.array(vizFilterSchema).max(12).optional(),
+  blanks: z.enum(["exclude", "include"]).optional(),
+  rollups: z.array(z.array(z.number().int().min(0).max(3)).max(4)).max(6).optional(),
+  limit: z.number().int().positive().max(5000).optional(),
+});
+const vizSchema = z.object({
+  /** Which visual (pivot, kpi, bar, …). Free text: an unknown kind is simply not drawn. */
+  kind: z.string().min(1).max(40),
+  /** "incidents" or "dataset:<id>". Empty for a visual with no data (a text card). */
+  source: z.string().max(120),
+  rows: z.array(vizDimSchema).max(4),
+  columns: z.array(vizDimSchema).max(2),
+  values: z.array(vizMeasureSchema).max(6),
+  filters: z.array(vizFilterSchema).max(12),
+  /** The request the visual makes, as compiled by the editor. Stored so the
+   *  shared view can run exactly this and nothing a viewer supplies. */
+  query: vizQuerySchema.optional(),
+  /** Presentation only (orientation, colours, a text card's wording…): never read by the server. */
+  options: z.record(z.unknown()).optional().refine((o) => !o || JSON.stringify(o).length <= 20_000, "options too large"),
+});
+
 const widgetSchema = z.object({
   id: z.string(),
-  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar", "sankey", "network", "bubble", "globe", "heatmap_table", "bullet"]),
+  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar", "sankey", "network", "bubble", "globe", "heatmap_table", "bullet", "viz"]),
+  viz: vizSchema.optional(),
   title: z.string(),
   label: z.string().optional(),
   /** For incidents-sourced widgets, one of the fixed by_X/total/etc. values
@@ -252,6 +285,8 @@ const updateSchema = z.object({
   // filter and show all time".
   date_range_from: z.string().nullable().optional(),
   date_range_to: z.string().nullable().optional(),
+  /** The dashboard's look — a theme key the frontend knows. Null restores the default. */
+  theme: z.string().max(40).nullable().optional(),
 });
 
 customDashboardsRouter.patch("/:id", async (c) => {
@@ -301,6 +336,10 @@ customDashboardsRouter.patch("/:id", async (c) => {
   if (parsed.data.date_range_to !== undefined) {
     updates.push("date_range_to = ?");
     params.push(parsed.data.date_range_to);
+  }
+  if (parsed.data.theme !== undefined) {
+    updates.push("theme = ?");
+    params.push(parsed.data.theme);
   }
   updates.push("updated_at = ?");
   params.push(nowIso());
@@ -499,6 +538,7 @@ publicDashboardsRouter.get("/:token", async (c) => {
     stats,
     date_range_from: dateFrom,
     date_range_to: dateTo,
+    theme: (dashboard.theme as string | null) ?? null,
     crosstabs,
     breakdowns,
     dailyBreakdowns,

@@ -31,6 +31,7 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
     ["locked", "INTEGER NOT NULL DEFAULT 0"], // 011
     ["date_range_from", "TEXT"], // 013
     ["date_range_to", "TEXT"],
+    ["theme", "TEXT"], // dashboard themes (no hand-run migration)
   ],
   users: [
     ["client_id", "TEXT REFERENCES clients(id) ON DELETE SET NULL"], // 014

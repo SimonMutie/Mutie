@@ -146,6 +146,54 @@ further capped at `DAY_SUMMARIES_PER_DAY` (default 15) so that browsing many
 days cannot crowd out the escalation reader. When it cannot be written the
 day view says why and still shows the non-AI overview.
 
+### Trends & Patterns — visuals on any data
+
+A dashboard under Trends & Patterns can hold two kinds of card. The older
+widgets (map, globe, flows, calendar…) are built for Incidents. **Visuals**
+("+ Add visual") work on any table: Incidents, or any spreadsheet uploaded
+under Datasets, whatever its columns are called.
+
+They work the way Tableau and Power BI do. Every column is either something
+to group by (text and dates) or something to work out (numbers); a visual is
+"group the rows by these fields and work out these figures". The builder
+(`frontend/src/components/viz/VizBuilder.tsx`) has the same wells those tools
+have — Rows, Columns, Values, Filters — a gallery of kinds that marks the
+ones suiting the fields chosen, and a live preview.
+
+- **One engine** (`backend/src/lib/analytics.ts`, routes in
+  `routes/analytics.ts`): a request is dimensions (a date can be grouped by
+  year, quarter, month, week or day; a number can be binned), measures
+  (count, distinct count, sum, average, smallest, largest), filters, and
+  optional roll-ups. Nothing a caller sends is placed into the SQL text:
+  dataset column names travel as bound JSON paths, Incidents fields come
+  from a fixed table.
+- **Kinds** (`components/viz/charts/`): pivot table (subtotals, totals, heat
+  shading or data bars, collapsible groups), leaderboard, bar (grouped,
+  stacked, 100%, upright or lying down), line, area, heat grid, slope,
+  waterfall, donut, treemap, waffle, scatter/bubble, histogram, headline
+  figure with trend, gauge, slicer and text card.
+- **Totals come from the server**, as their own groupings, so the total of an
+  average or a distinct count is right rather than a sum of the rows.
+- **Clicking filters.** A click on a bar, slice or row — or a choice in a
+  slicer — narrows every other visual built on the same data
+  (`components/viz/context.tsx`). The dashboard's own date range and
+  category filter apply to visuals built on Incidents.
+- **Honest by default**: the long tail is folded into "Other" only where
+  adding it up is valid; a period that is still running is drawn dashed and
+  left out of "change on the previous period"; every chart has a table view
+  and downloads as Excel, CSV or an image.
+- **Looks** (`components/viz/themes.ts`): Classic, Situation room (dark),
+  Report (white, flat) and Atlas. A look re-points the site's colour
+  variables on the dashboard, so older widgets take it too. Series colours
+  are fixed sets checked for colour-blind separation.
+- **Shared links** run only the request saved with each visual
+  (`POST /api/public/dashboards-viz/:token`); a viewer's clicks can add
+  filters, but only on fields the dashboard already shows.
+
+A visual is saved inside the dashboard's `widgets` as `type: "viz"` with its
+definition in `viz` (`components/viz/types.ts`). All of this is ordinary
+SQL over data already stored: no AI, no outside service, no cost.
+
 ### Conflict Escalation — how a flag is decided
 
 The Conflict Escalation layer and its alerts come from

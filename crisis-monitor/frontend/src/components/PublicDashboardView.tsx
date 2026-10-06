@@ -5,6 +5,10 @@ import "react-resizable/css/styles.css";
 import { api, type PublicDashboardData } from "../api";
 import DashboardWidgetCard from "./DashboardWidgetCard";
 import Logo from "./Logo";
+import { VizProvider, useViz } from "./viz/context";
+import { themeFor, themeStyle } from "./viz/themes";
+import VizCard from "./viz/VizCard";
+import "./viz/viz.css";
 
 const ResponsiveGridLayout = WidthProvider(GridLayout);
 
@@ -15,6 +19,8 @@ export default function PublicDashboardView({ token }: { token: string }) {
   const embedded = useMemo(() => new URLSearchParams(window.location.search).get("embed") === "1", []);
   const [data, setData] = useState<PublicDashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Counts the refreshes, so the visuals that fetch their own data refetch with the rest.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     api
@@ -24,8 +30,18 @@ export default function PublicDashboardView({ token }: { token: string }) {
 
     // Live viewing: refresh the underlying data periodically so a link left
     // open on a screen stays current without anyone needing to reload it.
+    let ticks = 0;
     const interval = setInterval(() => {
-      api.getPublicDashboard(token).then(setData).catch(() => {});
+      ticks++;
+      api
+        .getPublicDashboard(token)
+        .then((d) => {
+          setData(d);
+          // The visuals each run their own query, and a query reads the whole table; a screen left open all day
+          // should not spend the database's daily allowance, so they refresh every ten minutes rather than every one.
+          if (ticks % 10 === 0) setRefreshKey((k) => k + 1);
+        })
+        .catch(() => {});
     }, 60_000);
     return () => clearInterval(interval);
   }, [token]);
@@ -47,8 +63,11 @@ export default function PublicDashboardView({ token }: { token: string }) {
     );
   }
 
+  // The look its owner chose applies to the whole page, header included.
+  const theme = themeFor(data.theme);
+
   return (
-    <div style={{ minHeight: "100vh", background: "var(--base)" }}>
+    <div data-viz-theme={theme.key} style={{ minHeight: "100vh", background: "var(--base)", ...themeStyle(theme) }}>
       <div style={{ display: embedded ? "none" : "flex", alignItems: "center", gap: 10, padding: "16px 24px", borderBottom: "1px solid var(--border-soft)", background: "var(--panel)" }}>
         <Logo size={26} />
         <div>
@@ -80,7 +99,10 @@ export default function PublicDashboardView({ token }: { token: string }) {
         {data.widgets.length === 0 ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13.5 }}>This dashboard has no widgets yet.</div>
         ) : (
-          <PublicWidgetGrid data={data} />
+          <VizProvider mode="public" token={token} theme={theme} refreshKey={refreshKey}>
+            <PublicSelections />
+            <PublicWidgetGrid data={data} />
+          </VizProvider>
         )}
       </div>
     </div>
@@ -102,9 +124,34 @@ function PublicWidgetGrid({ data }: { data: PublicDashboardData }) {
     <ResponsiveGridLayout className="layout" layout={layout} cols={12} rowHeight={26} margin={[16, 16]} isDraggable={false} isResizable={false}>
       {data.widgets.map((w) => (
         <div key={w.id}>
-          <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} crosstabs={data.crosstabs} breakdowns={data.breakdowns} dailyBreakdowns={data.dailyBreakdowns} datasetSummaries={data.datasetSummaries} />
+          {w.type === "viz" ? (
+            <VizCard widget={w} editable={false} />
+          ) : (
+            <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} crosstabs={data.crosstabs} breakdowns={data.breakdowns} dailyBreakdowns={data.dailyBreakdowns} datasetSummaries={data.datasetSummaries} />
+          )}
         </div>
       ))}
     </ResponsiveGridLayout>
+  );
+}
+
+/** What the viewer has picked on the visuals, with a way to clear it. */
+function PublicSelections() {
+  const { selections, select, clearAll } = useViz();
+  if (selections.length === 0) return null;
+  return (
+    <div className="vz-strip" style={{ padding: "0 0 12px", border: "none" }}>
+      <span>Filtered by</span>
+      {selections.map((s) => (
+        <button key={s.origin} type="button" className="vz-chip" style={{ maxWidth: 320 }} onClick={() => select(s.origin, null)} title="Click to clear">
+          {s.label} ✕
+        </button>
+      ))}
+      {selections.length > 1 && (
+        <button type="button" className="vz-link" onClick={clearAll}>
+          Clear all
+        </button>
+      )}
+    </div>
   );
 }

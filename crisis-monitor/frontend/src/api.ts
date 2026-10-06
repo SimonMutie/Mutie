@@ -360,7 +360,10 @@ export type WidgetType =
   | "bubble"
   | "globe"
   | "heatmap_table"
-  | "bullet";
+  | "bullet"
+  // A visual built on the any-data engine (components/viz): its definition
+  // lives in the widget's `viz` field, not in dataField/datasetId.
+  | "viz";
 
 /** Bar/line charts only — one of the pivotable columns the /crosstab
  *  endpoint accepts, matching the backend's PIVOTABLE_FIELDS allowlist
@@ -549,6 +552,8 @@ export interface DashboardWidget {
    *  lat/lng) aren't offered once a dataset is the source, since a generic
    *  dataset can't be assumed to have any of that. */
   datasetId?: string;
+  /** Only for type "viz": what the visual shows (components/viz/types.ts). */
+  viz?: import("./components/viz/types").VizSpec;
 }
 
 export type DatasetColumnType = "text" | "number" | "date";
@@ -594,6 +599,8 @@ export interface CustomDashboard {
    *  those the way Incidents has occurred_at. */
   date_range_from: string | null;
   date_range_to: string | null;
+  /** The dashboard's look (components/viz/themes.ts); null is the default. */
+  theme?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -622,6 +629,7 @@ export interface PublicDashboardData {
    *  stats/breakdowns/etc. above are already computed with it applied. */
   date_range_from: string | null;
   date_range_to: string | null;
+  theme?: string | null;
   /** Keyed "primaryColumn|secondaryColumn" — only the specific pairs this
    *  dashboard's own widgets actually use, not every possible combination. */
   crosstabs: Record<string, CrosstabRow[]>;
@@ -1445,9 +1453,17 @@ export const api = {
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
   updateCustomDashboard: (
     id: string,
-    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null }
+    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null }
   ) =>
     req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  // The any-data engine (backend: routes/analytics.ts). A source is "incidents" or "dataset:<id>".
+  getVizFields: (source: string) => req<{ source: string; fields: import("./components/viz/types").VizField[] }>(`/api/analytics/fields?source=${encodeURIComponent(source)}`),
+  runVizQuery: (source: string, query: import("./components/viz/types").VizQuery, range?: { from?: string | null; to?: string | null }) =>
+    req<import("./components/viz/types").VizResult>("/api/analytics/query", { method: "POST", body: JSON.stringify({ source, query, dateFrom: range?.from ?? null, dateTo: range?.to ?? null }) }),
+  /** A shared dashboard's visual: runs the query saved with it, optionally narrowed by the viewer's selections. */
+  runPublicViz: (token: string, widgetId: string, filters?: import("./components/viz/types").VizFilter[]) =>
+    req<import("./components/viz/types").VizResult>(`/api/public/dashboards-viz/${encodeURIComponent(token)}`, { method: "POST", body: JSON.stringify({ widgetId, filters }) }),
   deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
   // Public — no auth token needed, works for anyone with the share link.
   getPublicDashboard: (token: string) => req<PublicDashboardData>(`/api/public/dashboards/${token}`),

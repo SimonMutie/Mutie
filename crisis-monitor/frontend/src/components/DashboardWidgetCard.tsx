@@ -115,6 +115,8 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   // mechanism, just displayed against threshold markers instead of as a
   // plain number.
   bullet: ["total", "deaths", "injuries", "kidnappings_ngo"],
+  // Visuals built on the any-data engine are drawn by components/viz, never by this card.
+  viz: [],
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },

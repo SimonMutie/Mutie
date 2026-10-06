@@ -102,10 +102,11 @@ export async function ensureFieldIndex(db: D1Database, fieldName: string): Promi
  *  callers are responsible for their own ownership check, since the public
  *  route's notion of "authorized" (matches the dashboard's owner) differs
  *  from the authed routes' (matches the logged-in caller). */
-export async function loadDatasetSchema(db: D1Database, datasetId: string): Promise<{ owner_id: string | null; schema: { name: string; type: string }[] } | null> {
+export async function loadDatasetSchema(db: D1Database, datasetId: string): Promise<{ owner_id: string | null; schema: { name: string; type: string }[]; version: string } | null> {
   const dataset = await first<Record<string, unknown>>(db, `SELECT * FROM datasets WHERE id = ?`, [datasetId]);
   if (!dataset) return null;
-  return { owner_id: (dataset.owner_id as string | null) ?? null, schema: JSON.parse(String(dataset.schema_json ?? "[]")) };
+  // `version` changes whenever rows are added or removed, so anything remembered about the dataset's contents can tell it is out of date.
+  return { owner_id: (dataset.owner_id as string | null) ?? null, schema: JSON.parse(String(dataset.schema_json ?? "[]")), version: `${dataset.updated_at ?? ""}:${dataset.row_count ?? ""}` };
 }
 
 export async function fetchDatasetBreakdown(
@@ -298,7 +299,7 @@ async function grantedDatasetIds(db: D1Database, userId: string): Promise<string
  *  summary, daily) — owns it (or a teammate under the same client does —
  *  see teamOwnerIds in incidents.ts), is the platform admin, or their
  *  client has been explicitly granted access to it. */
-async function canReadDataset(db: D1Database, role: string, userId: string, dataset: { owner_id: string | null }, datasetId: string): Promise<boolean> {
+export async function canReadDataset(db: D1Database, role: string, userId: string, dataset: { owner_id: string | null }, datasetId: string): Promise<boolean> {
   if (role === "admin") return true;
   if (dataset.owner_id === userId) return true;
   if (dataset.owner_id) {
