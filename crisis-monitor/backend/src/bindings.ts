@@ -145,4 +145,9 @@ export interface Env {
   SIGNAL_API_URL?: string;
   SIGNAL_SENDER_NUMBER?: string;
   SIGNAL_API_TOKEN?: string;
+  /** How many AI analytical summaries (the query dashboard's Analyst
+   *  Notebook, lib/notebook.ts) may be drafted per UTC day across the
+   *  platform. Default 30. They run inside the daily AI budget. "0" switches
+   *  them off; analysts can still write and edit the text by hand. */
+  NOTEBOOK_DRAFTS_PER_DAY?: string;
 }

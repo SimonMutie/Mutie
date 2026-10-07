@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, type AlertItem, type EventItem, type MonitoringQueryItem, type QueryInsights, type QueryNote, type QueryOverview, type QueryTopic, type QueryWatch } from "../api";
-import { changeWords, downloadBriefing } from "../queryBriefing";
+import { api, type AlertItem, type EventItem, type MonitoringQueryItem, type QueryInsights, type QueryNote, type QueryNotebook, type QueryOverview, type QueryTopic, type QueryWatch } from "../api";
+import { changeWords, downloadBriefing, printBriefing } from "../queryBriefing";
+import { buildNotebookDigest } from "../queryNotebook";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import CategoryBadge, { categoryMeta } from "./CategoryBadge";
 import MapPanel from "./query/MapPanel";
@@ -18,7 +19,8 @@ import StoriesPanel from "./query/StoriesPanel";
 import NamesPanel from "./query/NamesPanel";
 import PlaceTrend from "./query/PlaceTrend";
 import OwnIncidents from "./query/OwnIncidents";
-import NotesPanel from "./query/NotesPanel";
+import NotebookPanel from "./query/NotebookPanel";
+import DownloadMenu from "./query/DownloadMenu";
 import { Panel, bucketLabel, timeAgo, useSize, viewerTz } from "./query/shared";
 import "./query/QueryDashboard.css";
 
@@ -82,11 +84,11 @@ const DEFAULT_LAYOUT: Layout[] = [
   { i: "sources", x: 9, y: 14, w: 3, h: 9, minW: 3, minH: 6 },
   { i: "stories", x: 0, y: 23, w: 7, h: 13, minW: 4, minH: 8 },
   { i: "names", x: 7, y: 23, w: 5, h: 13, minW: 3, minH: 8 },
-  { i: "places", x: 0, y: 36, w: 5, h: 10, minW: 4, minH: 7 },
-  { i: "incidents", x: 5, y: 36, w: 4, h: 10, minW: 3, minH: 8 },
-  { i: "notes", x: 9, y: 36, w: 3, h: 10, minW: 3, minH: 7 },
-  { i: "topics", x: 0, y: 46, w: 5, h: 13, minW: 3, minH: 8 },
-  { i: "stream", x: 5, y: 46, w: 7, h: 13, minW: 4, minH: 8 },
+  { i: "places", x: 0, y: 36, w: 6, h: 10, minW: 4, minH: 7 },
+  { i: "incidents", x: 6, y: 36, w: 6, h: 10, minW: 3, minH: 8 },
+  { i: "notes", x: 0, y: 46, w: 7, h: 18, minW: 4, minH: 10 },
+  { i: "topics", x: 7, y: 46, w: 5, h: 18, minW: 3, minH: 8 },
+  { i: "stream", x: 0, y: 64, w: 12, h: 13, minW: 4, minH: 8 },
 ];
 
 /** The saved arrangement, if it still describes exactly today's panels. */
@@ -125,6 +127,8 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [notes, setNotes] = useState<QueryNote[] | null>(null);
   const [notesError, setNotesError] = useState<string | null>(null);
+  const [notebook, setNotebook] = useState<QueryNotebook | null>(null);
+  const [notebookError, setNotebookError] = useState<string | null>(null);
   /** Names the query and period whose data is on screen. It changes together with that data — not when a new period is merely chosen — so the map re-frames the new items, never the old ones. */
   const [shownKey, setShownKey] = useState("");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
@@ -207,6 +211,15 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
       .catch((err) => (setNotes([]), setNotesError(err instanceof Error ? err.message : "Notes could not be loaded.")));
   }, [query.id]);
 
+  useEffect(() => {
+    setNotebook(null);
+    setNotebookError(null);
+    api
+      .getQueryNotebook(query.id)
+      .then(setNotebook)
+      .catch((err) => setNotebookError(err instanceof Error ? err.message : "The summary could not be loaded."));
+  }, [query.id]);
+
   // Live messages: a new alert appears at once; a new item brings the figures up to date a few seconds later.
   const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -243,6 +256,26 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
     const note = await api.addQueryNote(query.id, day, body);
     setNotes((prev) => [note, ...(prev ?? [])].sort((a, b) => b.day.localeCompare(a.day) || b.created_at.localeCompare(a.created_at)));
   }
+  async function saveSummary(body: string) {
+    setNotebook(await api.saveQueryNotebook(query.id, body, notebook?.updated_at ?? null));
+  }
+  async function draftSummary() {
+    if (!overview) throw new Error("Wait for the figures to finish loading.");
+    setNotebook(await api.draftQueryNotebook(query.id, buildNotebookDigest({ query, periodLabel, overview, insights, watch })));
+  }
+  async function restoreSummary() {
+    setNotebook(await api.restoreQueryNotebook(query.id));
+  }
+  const briefingInput = () => (overview ? { query, periodLabel, overview, insights, watch, notes: notes ?? [], summary: notebook?.body.trim() ? notebook : null } : null);
+  const downloadWord = () => {
+    const b = briefingInput();
+    if (b) downloadBriefing(b);
+  };
+  const downloadPdf = () => {
+    const b = briefingInput();
+    if (b) printBriefing(b);
+  };
+
   async function deleteNote(id: string) {
     await api.deleteQueryNote(query.id, id);
     setNotes((prev) => (prev ?? []).filter((n) => n.id !== id));
@@ -337,14 +370,13 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
         <button onClick={onShowOnMap} className="qd-btn" style={{ borderColor: "var(--signal)", color: "var(--text-primary)", background: "var(--signal-dim)", fontWeight: 600 }}>
           Show on Live OSINT map
         </button>
-        <button
-          onClick={() => overview && downloadBriefing({ query, periodLabel, overview, insights, watch, notes: notes ?? [] })}
-          className="qd-btn"
+        <DownloadMenu
+          onWord={downloadWord}
+          onPdf={downloadPdf}
           disabled={!overview}
-          title="One Word document of what this dashboard shows for the chosen period: figures, open alerts, top stories, names, places, sources and your notes"
-        >
-          ⭳ Briefing
-        </button>
+          label="⭳ Briefing"
+          title="One document of what this dashboard shows for the chosen period: your analytical summary, figures, open alerts, top stories, names, places, sources and notes"
+        />
         <button onClick={onEdit} className="qd-btn">
           Edit
         </button>
@@ -504,7 +536,22 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
                 <OwnIncidents overview={overview} />
               </div>
               <div key="notes">
-                <NotesPanel notes={notes} defaultDay={selectedDay ?? today} error={notesError} onAdd={addNote} onDelete={deleteNote} onOpenDay={setSelectedDay} />
+                <NotebookPanel
+                  notebook={notebook}
+                  notebookError={notebookError}
+                  onSaveSummary={saveSummary}
+                  onDraft={draftSummary}
+                  onRestore={restoreSummary}
+                  canDraft={!!overview}
+                  onDownloadWord={downloadWord}
+                  onDownloadPdf={downloadPdf}
+                  notes={notes}
+                  defaultDay={selectedDay ?? today}
+                  error={notesError}
+                  onAdd={addNote}
+                  onDelete={deleteNote}
+                  onOpenDay={setSelectedDay}
+                />
               </div>
               <div key="topics">
                 <TopicBubbles overview={overview} selected={filter?.term ?? null} onSelect={selectTopic} />

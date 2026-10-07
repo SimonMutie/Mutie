@@ -1,4 +1,5 @@
-import type { MonitoringQueryItem, QueryInsights, QueryNote, QueryOverview, QueryWatch } from "./api";
+import type { MonitoringQueryItem, QueryInsights, QueryNote, QueryNotebook, QueryOverview, QueryWatch } from "./api";
+import { notebookHtml } from "./queryNotebook";
 
 /**
  * The briefing: one document of everything the query dashboard is showing
@@ -7,9 +8,11 @@ import type { MonitoringQueryItem, QueryInsights, QueryNote, QueryOverview, Quer
  * reporting comes from, the analyst's notes, and the daily counts.
  *
  * Built in the browser from data the dashboard already holds, as a
- * formatted page that Word and Google Docs open. Nothing is written by a
- * model: it is the dashboard's own figures and lists, laid out to be read
- * and edited.
+ * formatted page that Word and Google Docs open, or that the browser prints
+ * to PDF. Everything is the dashboard's own figures and lists, laid out to
+ * be read and edited, except the analytical summary at the top, which is the
+ * Analyst Notebook's text: drafted by a model if the analyst asked for that,
+ * and as edited by them.
  */
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -40,9 +43,11 @@ export interface BriefingInput {
   insights: QueryInsights | null;
   watch: QueryWatch | null;
   notes: QueryNote[];
+  /** The Analyst Notebook's analytical summary, when it has any text. */
+  summary?: Pick<QueryNotebook, "body" | "source" | "model" | "updated_at" | "updated_by_name"> | null;
 }
 
-export function briefingHtml({ query, periodLabel, overview, insights, watch, notes }: BriefingInput): string {
+export function briefingHtml({ query, periodLabel, overview, insights, watch, notes, summary }: BriefingInput): string {
   const tone = overview.sentiment.overall;
   const toned = tone.negative + tone.neutral + tone.positive;
   const negative = toned ? tone.negative / toned : null;
@@ -50,6 +55,17 @@ export function briefingHtml({ query, periodLabel, overview, insights, watch, no
   const busiest = overview.volume.reduce<QueryOverview["volume"][number] | null>((best, v) => (v.count > (best?.count ?? 0) ? v : best), null);
   const prev = overview.previous && !overview.previous.partial ? overview.previous : null;
   const parts: string[] = [];
+
+  // ── The analyst's reading ──
+  const summaryText = summary?.body.trim() ? summary.body : null;
+  if (summaryText) {
+    const who = summary?.updated_by_name ? ` Last edited by ${esc(summary.updated_by_name)}${summary.updated_at ? `, ${esc(day(summary.updated_at))}` : ""}.` : "";
+    parts.push(
+      `<h2>Analytical summary</h2><p class="meta">${
+        summary?.source === "ai" ? "Drafted by an AI model from the figures, stories and alerts below, and not yet edited by an analyst. Check it against the sources before relying on it." : "Written or edited by an analyst, starting from an AI draft where one was used."
+      }${who}</p>${notebookHtml(summaryText)}`,
+    );
+  }
 
   // ── At a glance ──
   const glance: [string, string][] = [["Items collected", `${num(overview.total)}${prev ? `, ${changeWords(overview.total, prev.total) ?? ""}` : ""}`]];
@@ -147,7 +163,7 @@ export function briefingHtml({ query, periodLabel, overview, insights, watch, no
   const inPeriod = notes.filter((n) => n.day >= overview.from.slice(0, 10) && n.day <= overview.to.slice(0, 10));
   if (inPeriod.length)
     parts.push(
-      `<h2>Notes</h2><ul>${inPeriod.map((n) => `<li><b>${esc(bucketDay(n.day))}</b>${n.author_name ? ` <span class="meta">${esc(n.author_name)}</span>` : ""}<br>${esc(n.body)}</li>`).join("")}</ul>`,
+      `<h2>Analyst notes</h2><ul>${inPeriod.map((n) => `<li><b>${esc(bucketDay(n.day))}</b>${n.author_name ? ` <span class="meta">${esc(n.author_name)}</span>` : ""}<br>${esc(n.body)}</li>`).join("")}</ul>`,
     );
 
   // ── Daily counts ──
@@ -161,7 +177,7 @@ export function briefingHtml({ query, periodLabel, overview, insights, watch, no
   }
 
   parts.push(
-    `<h2>How these figures are made</h2><p class="meta">Counts are of the items this query collected. Tone is an estimate from the wording of each item. Stories are grouped by headline wording, names are picked out by their capital letters, and places are those the items themselves name; none of these is written by a model. Escalation incidents come from the platform's incident pipeline, which codes reports against written criteria. ${
+    `<h2>How these figures are made</h2><p class="meta">Counts are of the items this query collected. Tone is an estimate from the wording of each item. Stories are grouped by headline wording, names are picked out by their capital letters, and places are those the items themselves name; none of these is written by a model.${summaryText ? (summary?.source === "ai" ? " The analytical summary is the exception: it was drafted by an AI model from these figures." : " The analytical summary is the analyst's own text, which may have begun as an AI draft.") : ""} Escalation incidents come from the platform's incident pipeline, which codes reports against written criteria. ${
       overview.sampled.used < overview.sampled.total ? `Tone, topics and places use the most recent ${num(overview.sampled.used)} of ${num(overview.total)} items.` : ""
     }</p>`,
   );
@@ -173,6 +189,21 @@ export function briefingHtml({ query, periodLabel, overview, insights, watch, no
 .sub,.meta{color:#5b6577;font-size:9.5pt}.label{font-size:9.5pt;color:#5b6577;margin:6pt 0 2pt}.query{font-family:Consolas,monospace;font-size:9.5pt;color:#3c4454;background:#f1f3f7;padding:4pt 6pt}
 table{border-collapse:collapse;margin:0 0 6pt}th,td{border:1px solid #c9d1d9;padding:3pt 6pt;font-size:10pt;text-align:left;vertical-align:top}th{background:#e6f2f0;font-weight:bold}.num{text-align:right}</style></head>
 <body><h1>${esc(title)}</h1><p class="sub">${esc(sub)}</p><p class="query">${esc(query.boolean_query)}</p>${parts.join("\n")}</body></html>`;
+}
+
+/** The briefing as a PDF: opens the browser's print box with the document loaded, where "Save as PDF" is the destination. */
+export function printBriefing(input: BriefingInput): void {
+  const html = briefingHtml(input).replace("</style>", "@page{margin:16mm}a{color:#0b5cad}h2,h3{page-break-after:avoid}li,tr{page-break-inside:avoid}</style>");
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  frame.srcdoc = html;
+  frame.onload = () => {
+    frame.contentWindow?.focus();
+    frame.contentWindow?.print();
+    setTimeout(() => frame.remove(), 120_000);
+  };
+  document.body.appendChild(frame);
 }
 
 export function downloadBriefing(input: BriefingInput): void {

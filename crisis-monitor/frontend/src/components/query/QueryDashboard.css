@@ -1379,3 +1379,30 @@ a.qd-cite:hover {
     margin-bottom: 8px;
   }
 }
+
+/* Analyst Notebook: the analytical summary above the dated notes */
+.qd-summary__title {
+  font-size: 12.5px;
+}
+.qd-summary__stamp {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+}
+.qd-summary textarea {
+  min-height: 160px;
+  line-height: 1.5;
+}
+.qd-summary__buttons {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.qd-summary__hint {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}

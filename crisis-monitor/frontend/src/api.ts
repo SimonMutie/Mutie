@@ -846,6 +846,22 @@ export interface QueryNote {
   created_at: string;
 }
 
+/** The Analyst Notebook's shared analytical summary (backend: lib/notebook.ts). */
+export interface QueryNotebook {
+  query_id: string;
+  body: string;
+  /** The text the last AI redraft replaced, kept so it can be restored. */
+  previous_body: string | null;
+  source: "ai" | "manual";
+  model: string | null;
+  period_from: string | null;
+  period_to: string | null;
+  generated_at: string | null;
+  /** Null until anything has been saved. */
+  updated_at: string | null;
+  updated_by_name: string | null;
+}
+
 export interface QueryDayDigest {
   total: number;
   events: number;
@@ -1467,6 +1483,11 @@ export const api = {
   getQueryNotes: (queryId: string) => req<QueryNote[]>(`/api/query-insights/${encodeURIComponent(queryId)}/notes`),
   addQueryNote: (queryId: string, day: string, body: string) => req<QueryNote>(`/api/query-insights/${encodeURIComponent(queryId)}/notes`, { method: "POST", body: JSON.stringify({ day, body }) }),
   deleteQueryNote: (queryId: string, noteId: string) => req<{ ok: boolean }>(`/api/query-insights/${encodeURIComponent(queryId)}/notes/${encodeURIComponent(noteId)}`, { method: "DELETE" }),
+  getQueryNotebook: (queryId: string) => req<QueryNotebook>(`/api/query-insights/${encodeURIComponent(queryId)}/notebook`),
+  saveQueryNotebook: (queryId: string, body: string, expectedUpdatedAt: string | null) =>
+    req<QueryNotebook>(`/api/query-insights/${encodeURIComponent(queryId)}/notebook`, { method: "PUT", body: JSON.stringify({ body, expected_updated_at: expectedUpdatedAt }) }),
+  draftQueryNotebook: (queryId: string, digest: unknown) => req<QueryNotebook>(`/api/query-insights/${encodeURIComponent(queryId)}/notebook/draft`, { method: "POST", body: JSON.stringify({ digest }) }),
+  restoreQueryNotebook: (queryId: string) => req<QueryNotebook>(`/api/query-insights/${encodeURIComponent(queryId)}/notebook/restore`, { method: "POST" }),
   getQueryDay: (queryId: string, day: string, tz: number) => req<QueryDay>(`/api/query-insights/${encodeURIComponent(queryId)}/day?${new URLSearchParams({ day, tz: String(tz) })}`),
   writeQueryDaySummary: (queryId: string, day: string, tz: number) =>
     req<QueryAiSummaryState>(`/api/query-insights/${encodeURIComponent(queryId)}/day-summary`, { method: "POST", body: JSON.stringify({ day, tz }) }),

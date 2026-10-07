@@ -17,6 +17,7 @@ import { getTickBudget } from "../lib/gdeltAdaptiveBudget";
 import { rowToAlert } from "../mappers";
 import { run, nowIso } from "../db";
 import { newId } from "../ids";
+import { digestSchema, draftNotebook, ensureNotebookTables, getNotebook, NOTEBOOK_MAX, restorePrevious, saveNotebook } from "../lib/notebook";
 
 /**
  * What a monitoring query's dashboard shows about the items the query has
@@ -564,4 +565,50 @@ queryInsightsRouter.delete("/:queryId/notes/:noteId", async (c) => {
   if (c.get("role") !== "admin" && note.author_id !== c.get("userId")) return c.json({ error: "Only the person who wrote a note can delete it." }, 403);
   await run(c.env.DB, "DELETE FROM query_notes WHERE id = ?", [c.req.param("noteId")]);
   return c.json({ ok: true });
+});
+
+// ── The Analyst Notebook's analytical summary ────────────────────────────
+
+async function authorName(c: { env: Env; get: (k: "userId") => string }): Promise<string | null> {
+  const a = await first<{ display_name: string | null; username: string | null }>(c.env.DB, "SELECT display_name, username FROM users WHERE id = ?", [c.get("userId")]).catch(() => null);
+  return a?.display_name || a?.username || null;
+}
+
+const emptyNotebook = (queryId: string) => ({ query_id: queryId, body: "", previous_body: null, source: "manual", model: null, period_from: null, period_to: null, generated_at: null, updated_at: null, updated_by_name: null });
+
+/** GET /:queryId/notebook — the shared summary text, or an empty one. */
+queryInsightsRouter.get("/:queryId/notebook", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  return c.json((await getNotebook(c.env, query.id)) ?? emptyNotebook(query.id));
+});
+
+/** PUT /:queryId/notebook { body, expected_updated_at } — the analyst's own edit. */
+queryInsightsRouter.put("/:queryId/notebook", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  const input = (await c.req.json().catch(() => ({}))) as { body?: unknown; expected_updated_at?: unknown };
+  if (typeof input.body !== "string") return c.json({ error: "body must be text" }, 400);
+  if (input.body.length > NOTEBOOK_MAX) return c.json({ error: `The summary can be at most ${NOTEBOOK_MAX.toLocaleString()} characters.` }, 400);
+  const result = await saveNotebook(c.env, query.id, input.body, typeof input.expected_updated_at === "string" ? input.expected_updated_at : null, await authorName(c));
+  return result.ok ? c.json(result.row) : c.json({ error: result.error }, result.status);
+});
+
+/** POST /:queryId/notebook/draft { digest } — the model's reading of the dashboard, replacing the text (the old text is kept for "restore"). */
+queryInsightsRouter.post("/:queryId/notebook/draft", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  const parsed = digestSchema.safeParse(((await c.req.json().catch(() => ({}))) as { digest?: unknown }).digest);
+  if (!parsed.success) return c.json({ error: "The dashboard's figures could not be read. Reload the page and try again." }, 400);
+  const result = await draftNotebook(c.env, query, parsed.data, await authorName(c));
+  return result.ok ? c.json(result.row) : c.json({ error: result.error }, result.status);
+});
+
+/** POST /:queryId/notebook/restore — swaps back to the text a redraft replaced. */
+queryInsightsRouter.post("/:queryId/notebook/restore", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  await ensureNotebookTables(c.env);
+  const row = await restorePrevious(c.env, query.id, await authorName(c));
+  return row ? c.json(row) : c.json({ error: "There is no earlier text to restore." }, 404);
 });
