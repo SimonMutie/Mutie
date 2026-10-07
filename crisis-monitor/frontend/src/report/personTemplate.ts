@@ -1,5 +1,6 @@
 import type { DdCase, DdMediaItem, DdResult } from "../api";
 import { B, CALL, PHOTO, CH, CHOICE, H, KV, LISTS, LIST_NAME, P, TBL, choice, clip, day, pct, redFlags, resetIds, sec, severityRank, txt, type Flag } from "./kit";
+import { buildNetwork, linkRows } from "./network";
 import type { Block, Col, Report, Section } from "./model";
 
 /**
@@ -253,6 +254,7 @@ export function buildPersonReport(c: DdCase): Report {
       : "No adverse finding was raised from the public sources searched."
   } ${thin ? "The screening was incomplete, so the absence of findings is weak evidence. " : ""}Findings are weighed by both severity and the strength of evidence (Section 22), so an unverified allegation does not carry the weight of an official finding.`;
 
+  const network = buildNetwork(r, c.name);
   const sections: Section[] = [];
   const meta = (k: string, v: string): [string, string] => [k, v];
 
@@ -494,8 +496,10 @@ export function buildPersonReport(c: DdCase): Report {
 
   // 10 ─ Associates
   sections.push(
-    sec("10", "Associates, Affiliates & Network Analysis", "analyst", [
-      TBL([txt("Relationship", 18), txt("Nature", 18), txt("Period", 10), txt("Evidence", 22), txt("Significance", 16), txt("Risk implication", 16)], [], { blank: 3 }),
+    sec("10", "Associates, Affiliates & Network Analysis", "partly", [
+      network,
+      P("Every link shown is a documented connection, not a finding. Add associates, directors and counterparties you have established, with the evidence, using the editor below the diagram.", undefined),
+      TBL([txt("Relationship", 18), txt("Nature", 18), txt("Period", 10), txt("Evidence", 22), txt("Significance", 16), txt("Risk implication", 16)], linkRows(network).filter((row) => row[0] === c.name).map((row) => [row[2], row[1], "", row[3], "", ""]), { blank: 3 }),
       CALL("Association standard", "A relationship is not evidence of wrongdoing because two people appeared together, follow each other online, attended the same event, work in the same sector or share an acquaintance. State the actual nature and evidence of each relationship.", "none"),
     ])
   );

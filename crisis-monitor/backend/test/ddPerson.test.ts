@@ -107,3 +107,31 @@ describe("photo section", () => {
     expect((await reportToDocx(rep)).size).toBeGreaterThan(20000);
   });
 });
+
+import { buildNetwork, graphSvg, linkRows, layout } from "../../frontend/src/report/network";
+
+describe("link analysis", () => {
+  const r = JSON.parse(JSON.stringify(base.result));
+  r.office.hits = [r.office.hits[0]];
+  it("connects the subject to offices, employers, parties, registers and risk records", () => {
+    const g = buildNetwork(r, base.name);
+    const labels = g.nodes.map((n) => n.label);
+    expect(labels).toEqual(expect.arrayContaining(["Cabinet Secretary for Energy", "Example Power Ltd", "Example Party"]));
+    expect(g.edges.find((e) => e.label === "officer")?.basis).toBe("register");
+    expect(g.edges.find((e) => e.label === "employer 2002–2012")?.basis).toBe("reported");
+    expect(g.nodes.some((n) => n.kind === "risk")).toBe(true);
+    const pos = layout(g.nodes, g.edges);
+    expect(pos.size).toBe(g.nodes.length);
+    expect(graphSvg(g)).toContain("Jane Q Example");
+    expect(linkRows(g)[0][0]).toBe(base.name);
+  });
+  it("leaves out Wikidata links when a namesake makes the match ambiguous", () => {
+    const amb = buildNetwork(base.result, base.name);
+    expect(amb.nodes.some((n) => n.label === "Example Power Ltd")).toBe(false);
+  });
+  it("is in the individual report, the PDF and the entity report", () => {
+    const rep = buildReport(base);
+    expect(rep.sections.find((s) => s.no === "10")!.blocks.some((b) => b.t === "graph")).toBe(true);
+    expect(reportHtml(rep)).toContain("<svg");
+  });
+});

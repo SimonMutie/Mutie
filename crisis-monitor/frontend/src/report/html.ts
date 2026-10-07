@@ -1,4 +1,5 @@
 import { photoSize } from "./photo";
+import { graphSvg, linkRows } from "./network";
 import { EMPTY, isEmpty, shownRows, toneOf, type Block, type Report, type Tone } from "./model";
 import { COLORS, FONT, pieces, TONE } from "./theme";
 
@@ -53,6 +54,8 @@ function block(b: Block): string {
     }
     case "choice":
       return `<table class="kv"><tbody><tr><td class="k">${esc(b.label)}</td><td>${b.options.map((o) => `<div class="${o === b.value ? "sel" : ""}"><span class="box">${o === b.value ? "☒" : "☐"}</span> ${esc(o)}</div>`).join("")}</td></tr></tbody></table>${b.note ? `<p class="note">${esc(b.note)}</p>` : ""}`;
+    case "graph":
+      return `<div class="graph">${graphSvg(b)}</div><p class="note">${esc(b.caption)}</p>${block({ t: "table", id: `${b.id}t`, cols: [{ h: "From", w: 26 }, { h: "Link", w: 22 }, { h: "To", w: 30 }, { h: "Basis", w: 22 }], rows: linkRows(b), canAdd: false })}`;
     case "photo": {
       const sz = photoSize(b);
       return `${b.src ? `<img src="${b.src}" width="${sz.w}" height="${sz.h}" style="display:block;margin:4px 0;border:1px solid #${COLORS.rule}">` : ""}<p class="note">${esc(b.caption)}</p>`;
@@ -104,7 +107,7 @@ a{color:#${COLORS.blue}}
   const body = rep.sections
     .map((s, i) => `<section id="sec${esc(s.no)}" class="${i === 0 || ["5", "18", "22", "A"].includes(s.no) ? "brk" : ""}"><h1>${esc(s.no)}.&nbsp; ${esc(s.title)}</h1>${s.origin !== "analyst" ? `<div class="origin">${s.origin === "screening" ? "Prepared from public-source screening" : "Partly pre-filled from public-source screening"}</div>` : ""}${s.blocks.map(block).join("")}</section>`)
     .join("");
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`${m.purpose}: ${m.target}`)}</title><style>${css}</style></head><body>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`${m.purpose}: ${m.target}`)}</title><style>${css}.graph svg{width:100%;height:auto;display:block;margin:6px 0}</style></head><body>
 <div class="cover"><div class="band"><div class="k1">${esc(m.purpose)}</div><div class="t">${esc(m.target)}</div><div class="s">${esc(m.transaction)}</div></div>
 <table class="kv"><thead><tr><th>Field</th><th>Detail</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${esc(r[0])}</td><td>${val(r[1])}</td></tr>`).join("")}</tbody></table>
 <div class="callout"><div class="ct">Document control</div>This report supports a structured diligence decision. Findings marked Not provided or Not assessed depend on information not yet received. Material conclusions are supported by the evidence cited and the screening audit trail in the appendices.</div></div>

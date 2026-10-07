@@ -1,6 +1,7 @@
 import { LineRuleType, AlignmentType, BorderStyle, Document, ExternalHyperlink, Footer, Header, ImageRun, InternalHyperlink, Bookmark, LevelFormat, Packer, PageNumber, Paragraph, ShadingType, Table, TableCell, TableLayoutType, TableRow, TabStopType, TextRun, VerticalAlign, WidthType, type ParagraphChild } from "docx";
 import { EMPTY, isEmpty, shownRows, toneOf, type Block, type Report, type Tone } from "./model";
 import { photoSize } from "./photo";
+import { GRAPH_H, GRAPH_W, graphPng, linkRows } from "./network";
 import { COLORS, FONT, pieces, TONE } from "./theme";
 
 const W = 9866; // content width in DXA on A4 with 18 mm side margins
@@ -200,6 +201,15 @@ function blockToDocx(b: Block): (Paragraph | Table)[] {
     }
     case "callout":
       return [callout(b.title, b.text, b.tone ?? "none"), spacer()];
+    case "graph": {
+      const rows = linkRows(b);
+      return [
+        ...(b.png ? [new Paragraph({ spacing: { after: 80 }, children: [new ImageRun({ type: "png", data: Uint8Array.from(atob(b.png.split(",")[1]), (ch) => ch.charCodeAt(0)), transformation: { width: 600, height: Math.round((600 * GRAPH_H) / GRAPH_W) } })] })] : []),
+        ...para(b.caption, { size: 17, color: COLORS.muted, italics: true }),
+        spacer(),
+        ...blockToDocx({ t: "table", id: `${b.id}t`, cols: [{ h: "From", w: 26 }, { h: "Link", w: 22 }, { h: "To", w: 30 }, { h: "Basis", w: 22 }], rows, canAdd: false }),
+      ];
+    }
     case "photo": {
       const sz = photoSize(b);
       return [
@@ -260,7 +270,14 @@ function cover(rep: Report): (Paragraph | Table)[] {
   ];
 }
 
-export async function reportToDocx(rep: Report): Promise<Blob> {
+/** Draws each link-analysis diagram to a picture, since Word cannot hold the SVG. */
+async function withGraphImages(rep: Report): Promise<Report> {
+  const sections = await Promise.all(rep.sections.map(async (s) => ({ ...s, blocks: await Promise.all(s.blocks.map(async (b) => (b.t === "graph" ? { ...b, png: (await graphPng(b)) ?? undefined } : b))) })));
+  return { ...rep, sections };
+}
+
+export async function reportToDocx(input: Report): Promise<Blob> {
+  const rep = await withGraphImages(input);
   inst = 0;
   instMap.clear();
   const m = rep.meta;

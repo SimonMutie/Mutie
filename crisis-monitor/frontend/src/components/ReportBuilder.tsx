@@ -4,6 +4,7 @@ import { downloadReportDocx, printReport, reportHtml } from "../report/html";
 import { isCalcRow, shownRows, type Block, type Report, type Section } from "../report/model";
 import { buildReport } from "../report/template";
 import { photoFromFile, photoSize, resolvePhotos } from "../report/photo";
+import GraphBlock from "./GraphBlock";
 import DownloadMenu from "./query/DownloadMenu";
 
 /**
@@ -292,6 +293,8 @@ function BlockEditor({ b, onChange }: { b: Block; onChange: (fn: (b: Block) => B
           {b.note && <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 4 }}>{b.note}</div>}
         </div>
       );
+    case "graph":
+      return <GraphBlock b={b} onChange={onChange as unknown as React.ComponentProps<typeof GraphBlock>["onChange"]} />;
     case "photo": {
       const sz = photoSize(b);
       return (

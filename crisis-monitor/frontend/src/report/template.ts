@@ -1,5 +1,6 @@
 import type { DdCase, DdResult } from "../api";
 import { B, CALL, PHOTO, CH, CHOICE, H, KV, LISTS, LIST_NAME, P, TBL, choice, clip, day, nid, num, pct, redFlags, resetIds, sec, severityRank, sourceFor, txt, type Flag, type Severity } from "./kit";
+import { buildNetwork } from "./network";
 import { buildPersonReport } from "./personTemplate";
 import { LMH, RAG, RISK, SENTIMENT, STATUS_IN, type Block, type CalcRule, type Col, type Report, type Section } from "./model";
 
@@ -195,6 +196,8 @@ export function buildReport(c: DdCase): Report {
   ];
   sections.push(
     sec("4", "Corporate & Ownership Due Diligence", "partly", [
+      H("Ownership and link analysis"),
+      buildNetwork(r, c.name),
       TBL([txt("Area", 20), txt("Finding", 40), choice("Risk", 12, RISK), txt("Action", 28)], corpRows),
       H("Red Flags"),
       B(flags.filter((f) => f.category === "Legal" && !/sanction|screening/i.test(f.flag)).map((f) => f.flag)),

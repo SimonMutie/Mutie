@@ -29,6 +29,12 @@ export interface CalcRule {
   only?: number[];
 }
 
+export type GKind = "subject" | "person" | "company" | "office" | "party" | "risk";
+export interface GNode { id: string; label: string; kind: GKind }
+/** How well a link is evidenced: an official register, a report or reference entry, or a name match that is not yet confirmed. */
+export type GBasis = "register" | "reported" | "name-match";
+export interface GEdge { from: string; to: string; label: string; basis: GBasis }
+
 export type Block =
   | { t: "h"; id: string; text: string }
   | { t: "para"; id: string; label?: string; text: string; hint?: string }
@@ -39,6 +45,8 @@ export type Block =
   | { t: "choice"; id: string; label: string; options: string[]; value: string | null; note?: string }
   | { t: "callout"; id: string; title: string; text: string; tone?: Tone }
   /** A picture (a subject photograph or an organisation logo). `url` is fetched into `src` when the report is opened or exported; the analyst can replace or remove it. */
+  /** Link analysis: the subject at the centre and everyone and everything documented as connected to it. Drawn as a diagram; the same data is listed as a table. */
+  | { t: "graph"; id: string; nodes: GNode[]; edges: GEdge[]; caption: string; png?: string }
   | { t: "photo"; id: string; src: string | null; w?: number; h?: number; url?: string; caption: string; shape: "portrait" | "logo" };
 
 export interface Section {
