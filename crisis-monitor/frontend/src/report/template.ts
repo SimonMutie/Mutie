@@ -181,13 +181,13 @@ function dimensionRatings(r: DdResult, flags: Flag[]) {
 
 const worst = (rs: Rag[]): Rag => (rs.includes("Red") ? "Red" : rs.includes("Amber") ? "Amber" : rs.includes("Green") ? "Green" : "Not assessed");
 
-const people = (r: DdResult) => r.companiesHouse.hits.flatMap((h) => h.people).slice(0, 8).map((p) => `${p.name} (${p.role}${p.resigned ? ", resigned" : ""})`);
+const people = (r: DdResult) => r.companiesHouse.hits.filter((h) => h.strength === "strong").flatMap((h) => h.people).slice(0, 8).map((p) => `${p.name} (${p.role}${p.resigned ? ", resigned" : ""})`);
 function ownershipText(r: DdResult): string {
-  const g = r.gleif.hits[0];
+  const g = r.gleif.hits.find((x) => x.strength === "strong");
   const parts: string[] = [];
   if (g?.directParent) parts.push(`Direct parent: ${g.directParent}`);
   if (g?.ultimateParent) parts.push(`Ultimate parent: ${g.ultimateParent}`);
-  const ch = r.companiesHouse.hits.flatMap((h) => h.people).filter((p) => /control|owner|shareholder/i.test(p.role)).slice(0, 4);
+  const ch = r.companiesHouse.hits.filter((h) => h.strength === "strong").flatMap((h) => h.people).filter((p) => /control|owner|shareholder/i.test(p.role)).slice(0, 4);
   if (ch.length) parts.push(`Persons of significant control: ${ch.map((p) => p.name).join("; ")}`);
   const wd = r.office.hits.flatMap((h) => h.facts.filter((f) => /owned|parent/i.test(f))).slice(0, 2);
   parts.push(...wd);
@@ -222,6 +222,11 @@ export function buildReport(c: DdCase): Report {
   const so = r.social?.hits[0];
   const entity = r.input.kind === "entity";
   const when = day(r.generatedAt);
+  // Identity fields are filled only from strong (90%+) matches, so a similarly named company is never presented as the target.
+  const sg = r.gleif.hits.filter((h) => h.strength === "strong");
+  const sch = r.companiesHouse.hits.filter((h) => h.strength === "strong" && h.kind === "company");
+  const prof = r.office.hits.find((h) => h.profile && !h.isHuman && h.strength === "strong")?.profile;
+  const weakIdentity = (r.gleif.hits.length > sg.length || r.companiesHouse.hits.length > sch.length) && r.input.kind === "entity";
   const topSev = flags[0]?.severity;
   const rec = strong ? "Do not proceed" : listsDown || flags.some((f) => f.severity === "High" || f.severity === "Critical") ? "Further diligence" : null;
   const overallRisk = topSev === "Critical" ? "Critical" : topSev === "High" ? "High" : topSev === "Medium" ? "Moderate" : null;
@@ -277,26 +282,28 @@ export function buildReport(c: DdCase): Report {
   // 3 ─ Target overview
   sections.push(
     sec("3", "Target Overview", "partly", [
+      ...(weakIdentity ? [CALL("Check the match", "Registry records with a name match below 90% were found but not used to fill this section, in case they belong to a different company. Review them in the screening findings.", "watch")] : []),
       KV(["Item", "Details"], [
-        ["Legal name", c.name],
+        ["Legal name", sg[0]?.name ?? sch[0]?.name ?? c.name],
         ["Trading name", r.input.aliases.join("; ")],
-        ["Incorporation date", r.companiesHouse.hits.find((h) => h.incorporated)?.incorporated ?? ""],
-        ["Jurisdiction", r.gleif.hits[0]?.jurisdiction ?? r.input.country ?? ""],
-        ["Registered address", ""],
-        ["Business activities", r.office.hits[0]?.description ?? r.input.identifiers ?? ""],
+        ["Incorporation date", sch.find((h) => h.incorporated)?.incorporated ?? sg.find((h) => h.incorporated)?.incorporated ?? prof?.inception ?? ""],
+        ["Jurisdiction", [sg[0]?.jurisdiction ?? r.input.country ?? "", sg[0]?.legalForm ?? sch.find((h) => h.companyType)?.companyType ?? ""].filter(Boolean).join(" · ")],
+        ["Registered address", sch.find((h) => h.address)?.address ?? sg.find((h) => h.address)?.address ?? ""],
+        ["Business activities", [prof?.industry.join(", "), sch.find((h) => h.sic?.length)?.sic?.map((x) => `SIC ${x}`).join(", "), r.office.hits[0]?.description, r.input.identifiers].filter(Boolean).join(". ")],
         ["Ownership", ownershipText(r)],
-        ["Management", people(r).join("; ")],
-        ["Employees", ""],
-        ["Locations", r.input.country ?? ""],
+        ["Management", [...people(r), ...(prof?.leaders ?? [])].slice(0, 10).join("; ")],
+        ["Employees", prof?.employees ? String(prof.employees) : ""],
+        ["Locations", [prof?.headquarters, r.input.country].filter((x, i, a): x is string => !!x && a.indexOf(x) === i).join("; ")],
         ["Key products / services", ""],
         ["Key customers", ""],
         ["Key suppliers", ""],
         ["Regulatory licences", ""],
+        ["Website", prof?.website ?? r.social?.hits[0]?.accounts.find((a) => a.platform === "Website")?.url ?? ""],
       ]),
       H("Business Model"),
       P("", undefined, "How the company creates, delivers and captures value."),
       H("Organisational / Ownership Structure"),
-      B([...(ownershipText(r) ? [ownershipText(r)] : []), ...r.gleif.hits.slice(0, 2).map((g) => `${g.name}: LEI ${g.lei}${g.status ? `, ${g.status}` : ""}`)], "Add the group structure, legal-entity chart or transaction structure."),
+      B([...(ownershipText(r) ? [ownershipText(r)] : []), ...sg.slice(0, 2).map((g) => `${g.name}: LEI ${g.lei}${g.status ? `, ${g.status}` : ""}`)], "Add the group structure, legal-entity chart or transaction structure."),
       H("Strategic Position"),
       P("", undefined, "Competitive position, growth strategy, principal dependencies and value drivers."),
     ])
@@ -308,7 +315,7 @@ export function buildReport(c: DdCase): Report {
     ["Ownership / shareholding", ownershipText(r) || "No ownership record found in GLEIF or UK Companies House.", r.offshore.hits.length ? "Medium" : "Not assessed", "Obtain the share register and a certified UBO declaration."],
     ["Share capital", "", "Not assessed", "Obtain the register of members and cap table."],
     ["Directors & officers", people(r).join("; ") || (pepHit ? `Public record: ${pepHit.label}` : ""), "Not assessed", "Verify directors against the registry and run individual screening."],
-    ["Subsidiaries / affiliates", r.gleif.hits[0]?.directParent ? `Parent: ${r.gleif.hits[0].directParent}` : "", "Not assessed", "Obtain the group structure chart."],
+    ["Subsidiaries / affiliates", sg[0]?.directParent ? `Parent: ${sg[0].directParent}` : "", "Not assessed", "Obtain the group structure chart."],
     ["Shareholder agreements", "", "Not assessed", "Review for veto rights, drag/tag and change-of-control terms."],
     ["Corporate governance", "", "Not assessed", "Review board composition, committees and delegated authorities."],
     ["Beneficial ownership & PEP exposure", pepHit ? `${pepHit.label}: ${pepHit.positions.slice(0, 2).map((p) => p.label).join("; ")}` : "No public-office record found for the subject in Wikidata.", pepHit ? "High" : "Not assessed", "Apply enhanced due diligence where a PEP is involved."],

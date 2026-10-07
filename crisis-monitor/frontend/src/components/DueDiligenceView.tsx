@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type DdCase, type DdCaseRow } from "../api";
-import { downloadDdReport, OUTCOME_LABEL, printDdReport } from "../ddReport";
+import { OUTCOME_LABEL } from "../ddReport";
+import { downloadReportDocx, printReport } from "../report/html";
+import { reportFor } from "../report/load";
 import DownloadMenu from "./query/DownloadMenu";
 import ReportBuilder from "./ReportBuilder";
 
@@ -26,6 +28,7 @@ export default function DueDiligenceView() {
   const [cases, setCases] = useState<DdCaseRow[]>([]);
   const [open, setOpen] = useState<DdCase | null>(null);
   const [busy, setBusy] = useState(false);
+  const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
@@ -79,6 +82,7 @@ export default function DueDiligenceView() {
         reference: reference || undefined,
       });
       setOpen(c);
+      setFresh(c.id);
       load();
     } catch (err) {
       setError(errText(err, "The screening could not be run."));
@@ -158,14 +162,14 @@ export default function DueDiligenceView() {
         </div>
       </div>
 
-      <div>{open ? <Tabs c={open} /> : <div style={{ ...card, color: "var(--text-muted)", fontSize: 13.5 }}>Run a screening or open a saved one. The report shows what was found, how confident each match is, and which sources could not be checked.</div>}</div>
+      <div>{open ? <Tabs c={open} startOnReport={fresh === open.id} /> : <div style={{ ...card, color: "var(--text-muted)", fontSize: 13.5 }}>Run a screening or open a saved one. The report shows what was found, how confident each match is, and which sources could not be checked.</div>}</div>
     </div>
   );
 }
 
-function Tabs({ c }: { c: DdCase }) {
-  const [tab, setTab] = useState<"findings" | "report">("findings");
-  useEffect(() => setTab("findings"), [c.id]);
+function Tabs({ c, startOnReport }: { c: DdCase; startOnReport: boolean }) {
+  const [tab, setTab] = useState<"findings" | "report">(startOnReport ? "report" : "findings");
+  useEffect(() => setTab(startOnReport ? "report" : "findings"), [c.id, startOnReport]);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", gap: 6 }}>
@@ -201,7 +205,7 @@ function Report({ c }: { c: DdCase }) {
             {r.input.country ? ` · ${r.input.country}` : ""} · screened {new Date(r.generatedAt).toLocaleString()}
           </div>
         </div>
-        <DownloadMenu onWord={() => downloadDdReport(c)} onPdf={() => printDdReport(c)} />
+        <DownloadMenu label="⭳ Download report" onWord={() => void reportFor(c).then(downloadReportDocx)} onPdf={() => void reportFor(c).then(printReport)} />
       </div>
 
       <div style={{ marginTop: 12, padding: "10px 12px", borderLeft: `4px solid ${OUTCOME_COLOR[r.outcome]}`, background: "var(--panel-raised)", borderRadius: 6 }}>

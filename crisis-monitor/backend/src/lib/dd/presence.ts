@@ -3,7 +3,7 @@ import { fetchGdeltArticles } from "../../connectors/gdelt";
 import { parseBooleanQuery } from "../../booleanQuery";
 import { searchFeeds } from "../feedSearch";
 import { callStructured } from "../llm";
-import { nameSimilarity, normalizeName, STRONG } from "./match";
+import { nameSimilarity, nameTokens, normalizeName, STRONG } from "./match";
 import type { Check, Kind } from "./sources";
 
 /**
@@ -89,7 +89,12 @@ export async function checkMediaCoverage(env: Env, input: { names: string[]; kin
     } catch {
       /* feeds are a bonus */
     }
-    const keys = input.names.map((n) => normalizeName(n)).filter(Boolean);
+    // Headlines often drop "Company"/"Ltd", so the name without suffixes (two or more words) counts too.
+    const keys = input.names.flatMap((n) => {
+      const full = normalizeName(n);
+      const core = nameTokens(n, "entity").join(" ");
+      return core !== full && core.split(" ").length >= 2 ? [full, core] : [full];
+    }).filter(Boolean);
     const items = [...found.values()].filter((i) => keys.some((k) => normalizeName(i.title).includes(k)));
     if (!items.length) {
       const note = gd.length === 0 ? "No articles came back; the news search may have been rate-limited, so absence here is weak evidence." : undefined;

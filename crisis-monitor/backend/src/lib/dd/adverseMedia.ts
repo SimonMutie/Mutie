@@ -4,7 +4,7 @@ import { parseBooleanQuery } from "../../booleanQuery";
 import { searchFeeds } from "../feedSearch";
 import { readArticle } from "../articleReader";
 import { callStructured } from "../llm";
-import { normalizeName } from "./match";
+import { nameTokens, normalizeName } from "./match";
 import type { Check, Kind } from "./sources";
 
 /**
@@ -122,7 +122,12 @@ async function gather(env: Env, names: string[]): Promise<Candidate[]> {
   await Promise.all([gdelt, feeds]);
   void primary;
   // Only articles whose headline or snippet carries the name are worth reading.
-  const keys = names.map((n) => normalizeName(n)).filter(Boolean);
+  // Headlines often drop "Company"/"Ltd", so the name without suffixes (two or more words) counts too.
+  const keys = names.flatMap((n) => {
+    const full = normalizeName(n);
+    const core = nameTokens(n, "entity").join(" ");
+    return core !== full && core.split(" ").length >= 2 ? [full, core] : [full];
+  }).filter(Boolean);
   const list = [...out.values()].filter((c) => {
     const hay = normalizeName(`${c.title} ${c.snippet}`);
     return keys.some((k) => hay.includes(k));

@@ -47,6 +47,8 @@ export interface WikidataHit {
   countries: string[];
   /** For organisations: what it is, and its parent or owner. */
   facts: string[];
+  /** Descriptive record of an organisation, where Wikidata holds one. */
+  profile?: { inception: string | null; headquarters: string | null; employees: number | null; industry: string[]; leaders: string[]; website: string | null; founders: string[] };
 }
 
 type Claim = { mainsnak?: { datavalue?: { value?: unknown } }; qualifiers?: Record<string, { datavalue?: { value?: { time?: string } } }[]> };
@@ -86,7 +88,7 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
         return { e, score, human };
       })
       .filter((x) => x.score >= POSSIBLE && (kind === "person" ? x.human : !x.human));
-    for (const { e } of picked) for (const prop of ["P39", "P27", "P17", "P31", "P749", "P127"]) for (const c of e.claims?.[prop] ?? []) { const q = qidOf(c); if (q) wanted.add(q); }
+    for (const { e } of picked) for (const prop of ["P39", "P27", "P17", "P31", "P749", "P127", "P159", "P452", "P169", "P488", "P112"]) for (const c of e.claims?.[prop] ?? []) { const q = qidOf(c); if (q) wanted.add(q); }
     const labels = new Map<string, string>();
     const list = [...wanted].slice(0, 50);
     for (let i = 0; i < list.length; i += 50) {
@@ -104,10 +106,25 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
               ...(e.claims?.P749 ?? []).map((c) => labels.get(qidOf(c) ?? "")).filter((x): x is string => !!x).map((x) => `Parent organisation: ${x}`),
               ...(e.claims?.P127 ?? []).map((c) => labels.get(qidOf(c) ?? "")).filter((x): x is string => !!x).map((x) => `Owned by: ${x}`),
             ];
-        return { qid: e.id, url: `https://www.wikidata.org/wiki/${e.id}`, label: e.labels?.en?.value ?? e.id, description: e.descriptions?.en?.value ?? null, score, strength: strengthOf(score) ?? ("possible" as Strength), isHuman: human, positions, countries, facts };
+        const lab = (prop: string) => (e.claims?.[prop] ?? []).map((c) => labels.get(qidOf(c) ?? "")).filter((x): x is string => !!x);
+        const inc = (e.claims?.P571 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
+        const emp = (e.claims?.P1128 ?? [])[0]?.mainsnak?.datavalue?.value as { amount?: string } | undefined;
+        const site = (e.claims?.P856 ?? [])[0]?.mainsnak?.datavalue?.value;
+        const profile = human
+          ? undefined
+          : {
+              inception: inc?.time ? inc.time.replace(/^\+/, "").slice(0, 10).replace(/-00/g, "") : null,
+              headquarters: lab("P159")[0] ?? null,
+              employees: emp?.amount ? Math.round(Number(emp.amount.replace(/^\+/, ""))) || null : null,
+              industry: lab("P452").slice(0, 4),
+              leaders: [...lab("P169").map((n) => `${n} (chief executive)`), ...lab("P488").map((n) => `${n} (chair)`)].slice(0, 4),
+              website: typeof site === "string" ? site : null,
+              founders: lab("P112").slice(0, 3),
+            };
+        return { qid: e.id, url: `https://www.wikidata.org/wiki/${e.id}`, label: e.labels?.en?.value ?? e.id, description: e.descriptions?.en?.value ?? null, score, strength: strengthOf(score) ?? ("possible" as Strength), isHuman: human, positions, countries, facts, profile };
       })
       // For a person only those who hold or held office matter here; an organisation is kept if the entry says anything about ownership.
-      .filter((h) => (kind === "person" ? h.positions.length > 0 : h.facts.length > 0))
+      .filter((h) => (kind === "person" ? h.positions.length > 0 : h.facts.length > 0 || !!(h.profile && (h.profile.inception || h.profile.headquarters || h.profile.employees || h.profile.industry.length || h.profile.leaders.length))))
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
     return { id, label, state: "ok", hits };
@@ -131,11 +148,14 @@ export interface GleifHit {
   registeredAs: string | null;
   directParent: string | null;
   ultimateParent: string | null;
+  address: string | null;
+  incorporated: string | null;
+  legalForm: string | null;
 }
 
 interface GleifRecord {
   id: string;
-  attributes?: { lei?: string; entity?: { legalName?: { name?: string }; status?: string; jurisdiction?: string; category?: string; registeredAs?: string; legalAddress?: { country?: string } } };
+  attributes?: { lei?: string; entity?: { legalName?: { name?: string }; status?: string; jurisdiction?: string; category?: string; registeredAs?: string; legalAddress?: { country?: string; city?: string; addressLines?: string[]; postalCode?: string }; creationDate?: string; legalForm?: { id?: string; other?: string } } };
 }
 
 export async function checkGleif(name: string): Promise<Check<GleifHit>> {
@@ -162,7 +182,7 @@ export async function checkGleif(name: string): Promise<Check<GleifHit>> {
       const lei = r.attributes?.lei ?? r.id;
       const e = r.attributes?.entity;
       const [directParent, ultimateParent] = await Promise.all([parentName(lei, "direct-parent").catch(() => null), parentName(lei, "ultimate-parent").catch(() => null)]);
-      hits.push({ lei, url: `https://search.gleif.org/#/record/${lei}`, name: e?.legalName?.name ?? lei, score, strength: strengthOf(score) ?? "possible", status: e?.status ?? null, jurisdiction: e?.jurisdiction ?? null, country: e?.legalAddress?.country ?? null, category: e?.category ?? null, registeredAs: e?.registeredAs ?? null, directParent, ultimateParent });
+      hits.push({ lei, url: `https://search.gleif.org/#/record/${lei}`, name: e?.legalName?.name ?? lei, score, strength: strengthOf(score) ?? "possible", status: e?.status ?? null, jurisdiction: e?.jurisdiction ?? null, country: e?.legalAddress?.country ?? null, category: e?.category ?? null, registeredAs: e?.registeredAs ?? null, directParent, ultimateParent, address: [...(e?.legalAddress?.addressLines ?? []), e?.legalAddress?.city, e?.legalAddress?.postalCode, e?.legalAddress?.country].filter(Boolean).join(", ") || null, incorporated: e?.creationDate ? e.creationDate.slice(0, 10) : null, legalForm: e?.legalForm?.other ?? e?.legalForm?.id ?? null });
     }
     return { id, label, state: "ok", hits };
   } catch (err) {
@@ -186,6 +206,8 @@ export interface CompaniesHouseHit {
   people: { name: string; role: string; resigned: boolean }[];
   /** For an officer: how many appointments the register lists. */
   appointments: number | null;
+  address?: string | null;
+  sic?: string[];
 }
 
 export async function checkCompaniesHouse(env: Env, name: string, kind: Kind): Promise<Check<CompaniesHouseHit>> {
@@ -205,7 +227,8 @@ export async function checkCompaniesHouse(env: Env, name: string, kind: Kind): P
         .slice(0, 3);
       const hits: CompaniesHouseHit[] = [];
       for (const { c, score } of top) {
-        const [off, psc] = await Promise.all([
+        const [prof, off, psc] = await Promise.all([
+          getJson<{ registered_office_address?: Record<string, string>; sic_codes?: string[] }>(`${base}/company/${c.company_number}`, auth).catch(() => null),
           getJson<{ items?: { name: string; officer_role?: string; resigned_on?: string }[] }>(`${base}/company/${c.company_number}/officers?items_per_page=30`, auth).catch(() => null),
           getJson<{ items?: { name: string; kind?: string; ceased_on?: string }[] }>(`${base}/company/${c.company_number}/persons-with-significant-control?items_per_page=30`, auth).catch(() => null),
         ]);
@@ -213,7 +236,7 @@ export async function checkCompaniesHouse(env: Env, name: string, kind: Kind): P
           ...(off?.body?.items ?? []).map((o) => ({ name: o.name, role: (o.officer_role ?? "officer").replace(/-/g, " "), resigned: !!o.resigned_on })),
           ...(psc?.body?.items ?? []).map((p) => ({ name: p.name, role: "person with significant control", resigned: !!p.ceased_on })),
         ].slice(0, 40);
-        hits.push({ kind: "company", number: c.company_number, url: `https://find-and-update.company-information.service.gov.uk/company/${c.company_number}`, name: c.title, score, strength: strengthOf(score) ?? "possible", status: c.company_status ?? null, incorporated: c.date_of_creation ?? null, companyType: c.company_type ?? null, people, appointments: null });
+        hits.push({ kind: "company", number: c.company_number, url: `https://find-and-update.company-information.service.gov.uk/company/${c.company_number}`, name: c.title, score, strength: strengthOf(score) ?? "possible", status: c.company_status ?? null, incorporated: c.date_of_creation ?? null, companyType: c.company_type ?? null, people, appointments: null, address: prof?.body?.registered_office_address ? Object.values(prof.body.registered_office_address).filter(Boolean).join(", ") : null, sic: prof?.body?.sic_codes ?? [] });
       }
       return { id, label, state: "ok", hits };
     }
