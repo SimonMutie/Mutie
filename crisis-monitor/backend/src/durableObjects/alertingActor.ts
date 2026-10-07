@@ -1,33 +1,26 @@
 import type { Env } from "../bindings";
-import { scoreEscalations } from "../alerting";
 
-const TICK_MS = 30_000;
-
-/** Single global Durable Object that replaces the old `setInterval(..., 30_000)` escalation-scoring loop. */
+/**
+ * Retired. This object used to score every monitoring query every 30
+ * seconds from its alarm; that work now runs from the scheduled handler
+ * (see queryWatch.ts), far less often and against a daily baseline.
+ *
+ * The class stays because the Worker's Durable Object bindings and
+ * migrations name it. It no longer sets an alarm, and an alarm left over
+ * from before fires once, does nothing, and is not set again.
+ */
 export class AlertingActor implements DurableObject {
   constructor(
     private readonly state: DurableObjectState,
     private readonly env: Env
   ) {}
 
-  async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname === "/start") {
-      const existing = await this.state.storage.getAlarm();
-      if (existing === null) {
-        await this.state.storage.setAlarm(Date.now() + TICK_MS);
-      }
-      return new Response("started");
-    }
-    return new Response("ok");
+  async fetch(_request: Request): Promise<Response> {
+    await this.state.storage.deleteAlarm();
+    return new Response("retired");
   }
 
   async alarm() {
-    try {
-      await scoreEscalations(this.env);
-    } catch (err) {
-      console.error("[alerting] scoring failed:", err);
-    }
-    await this.state.storage.setAlarm(Date.now() + TICK_MS);
+    // Intentionally empty: not rescheduled.
   }
 }

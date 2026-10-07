@@ -122,7 +122,21 @@ export interface AlertItem {
   resolved_at: string | null;
   /** Escalation-incident alerts carry the criteria that were met (see the
    *  backend's escalationIncidents.ts); other alerts carry their own metrics. */
-  metric_snapshot?: { incidentId?: string; criteriaMet?: string[]; indicators?: string[]; sourceCount?: number; geoPrecision?: string } & Record<string, unknown>;
+  metric_snapshot?: {
+    incidentId?: string;
+    criteriaMet?: string[];
+    indicators?: string[];
+    sourceCount?: number;
+    geoPrecision?: string;
+    /** "surge" for a coverage surge on a monitoring query (backend: queryWatch.ts). */
+    kind?: string;
+    major?: boolean;
+    last24h?: number;
+    usual?: number;
+    threshold?: number;
+    basisDays?: number;
+    headlines?: { title: string; url: string | null; source: string | null; published_at: string }[];
+  } & Record<string, unknown>;
 }
 
 /** One monitoring-query match located for the Live OSINT map — placed from
@@ -718,7 +732,118 @@ export interface QueryOverview {
   located: number;
   /** Tone, topics and the map use the most recent `used` of `total` items. */
   sampled: { used: number; total: number };
+  /** Where the news outlets are based, relative to the countries the reporting is about. */
+  sourceMix?: QuerySourceMix;
+  /** The places most often named, period by period. Null when the period is too short to split. */
+  placeTrend?: { bucket: "day" | "week"; buckets: string[]; rows: { label: string; total: number; counts: number[] }[] } | null;
+  /** The period of the same length just before this one. `partial` when the query is newer than that period, so there is nothing fair to compare with. */
+  previous?: { from: string; to: string; total: number; negative: number | null; partial: boolean };
+  /** When the newest of these items was collected. */
+  lastCollectedAt?: string | null;
   fetchedAt: string;
+}
+
+export interface QuerySourceMix {
+  countries: string[];
+  inCountry: number;
+  elsewhereInAfrica: number;
+  international: number;
+  unclassified: number;
+  outlets: number;
+  largest: { label: string; share: number } | null;
+}
+
+/** Reports of the same event, grouped by their headlines. */
+export interface QueryStory {
+  id: string;
+  title: string;
+  url: string | null;
+  outlets: number;
+  items: number;
+  firstAt: string;
+  lastAt: string;
+  sources: string[];
+  place: string | null;
+  tone: number;
+  members: { id: string; title: string; url: string | null; source: string | null; published_at: string }[];
+}
+
+export interface QueryNamed {
+  label: string;
+  term: string;
+  count: number;
+  /** Items in the later and the earlier half of the period. */
+  recent: number;
+  earlier: number;
+  fresh?: boolean;
+}
+
+export interface QueryInsights {
+  queryId: string;
+  from: string;
+  to: string;
+  stories: QueryStory[];
+  names: QueryNamed[];
+  rising: QueryNamed[];
+  splitAt: string;
+  used: number;
+  fetchedAt: string;
+}
+
+/** How a query's last 24 hours compare with what is usual for it (backend: queryWatch.ts). */
+export interface QueryWatchStatus {
+  last24h: number;
+  usual: number;
+  basisDays: number;
+  busiest: number;
+  threshold: number;
+  multiple: number;
+  state: "learning" | "quiet" | "normal" | "above" | "surge";
+  lastItemAt: string | null;
+  computedAt: string;
+}
+
+/** A flagged escalation incident that a query's own wording matches. */
+export interface QueryIncident {
+  id: string;
+  level: "elevated" | "critical";
+  headline: string;
+  summary: string;
+  place: string;
+  lat: number;
+  lon: number;
+  geoPrecision: string;
+  preliminary: boolean;
+  criteriaMet: string[];
+  fatalitiesMax: number | null;
+  reportCount: number;
+  lastEventDate: string | null;
+  updatedAt: string;
+  sources: { n: number; url: string; title: string | null; domain: string }[];
+  sourceCount: number;
+}
+
+export interface QueryWatch {
+  queryId: string;
+  status: QueryWatchStatus | null;
+  alerts: AlertItem[];
+  incidents: QueryIncident[];
+  closed: AlertItem[];
+  health: {
+    feeds: { total: number; ok: number; no_feed: number; error: number; pending: number } | null;
+    search: { state: "off" | "ok" | "paused"; minutes?: number };
+  };
+  fetchedAt: string;
+}
+
+export interface QueryNote {
+  id: string;
+  /** The viewer's day it is pinned to, "2026-10-05". */
+  day: string;
+  body: string;
+  author_id: string | null;
+  author_name: string | null;
+  created_at: string;
 }
 
 export interface QueryDayDigest {
@@ -1315,6 +1440,12 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));
     return req<{ total: number; offset: number; limit: number; items: QueryStreamItem[] }>(`/api/query-insights/${encodeURIComponent(queryId)}/stream?${qs}`);
   },
+  getQueryInsights: (queryId: string, range: { from: string; to: string }, tz: number) =>
+    req<QueryInsights>(`/api/query-insights/${encodeURIComponent(queryId)}/insights?${new URLSearchParams({ from: range.from, to: range.to, tz: String(tz) })}`),
+  getQueryWatch: (queryId: string) => req<QueryWatch>(`/api/query-insights/${encodeURIComponent(queryId)}/watch`),
+  getQueryNotes: (queryId: string) => req<QueryNote[]>(`/api/query-insights/${encodeURIComponent(queryId)}/notes`),
+  addQueryNote: (queryId: string, day: string, body: string) => req<QueryNote>(`/api/query-insights/${encodeURIComponent(queryId)}/notes`, { method: "POST", body: JSON.stringify({ day, body }) }),
+  deleteQueryNote: (queryId: string, noteId: string) => req<{ ok: boolean }>(`/api/query-insights/${encodeURIComponent(queryId)}/notes/${encodeURIComponent(noteId)}`, { method: "DELETE" }),
   getQueryDay: (queryId: string, day: string, tz: number) => req<QueryDay>(`/api/query-insights/${encodeURIComponent(queryId)}/day?${new URLSearchParams({ day, tz: String(tz) })}`),
   writeQueryDaySummary: (queryId: string, day: string, tz: number) =>
     req<QueryAiSummaryState>(`/api/query-insights/${encodeURIComponent(queryId)}/day-summary`, { method: "POST", body: JSON.stringify({ day, tz }) }),

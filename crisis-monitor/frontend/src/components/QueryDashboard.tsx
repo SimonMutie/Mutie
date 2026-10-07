@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import GridLayout, { type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, type AlertItem, type EventItem, type MonitoringQueryItem, type QueryOverview, type QueryTopic } from "../api";
-import AlertFeed from "./AlertFeed";
+import { api, type AlertItem, type EventItem, type MonitoringQueryItem, type QueryInsights, type QueryNote, type QueryOverview, type QueryTopic, type QueryWatch } from "../api";
+import { changeWords, downloadBriefing } from "../queryBriefing";
 import CategoryBadge, { categoryMeta } from "./CategoryBadge";
 import MapPanel from "./query/MapPanel";
 import VolumeLine from "./query/VolumeLine";
@@ -12,13 +12,21 @@ import TopicBubbles from "./query/TopicBubbles";
 import SourcesPanel from "./query/SourcesPanel";
 import StreamPanel from "./query/StreamPanel";
 import DayView from "./query/DayView";
-import { Panel, bucketLabel, useSize, viewerTz } from "./query/shared";
+import AlertsPanel from "./query/AlertsPanel";
+import StoriesPanel from "./query/StoriesPanel";
+import NamesPanel from "./query/NamesPanel";
+import PlaceTrend from "./query/PlaceTrend";
+import OwnIncidents from "./query/OwnIncidents";
+import NotesPanel from "./query/NotesPanel";
+import { Panel, bucketLabel, timeAgo, useSize, viewerTz } from "./query/shared";
 import "./query/QueryDashboard.css";
 
 /**
- * One monitoring query's dashboard: where its items are, how many a day,
- * what they are about and in what tone, the items themselves, and — from a
- * click on any day — that day in detail.
+ * One monitoring query's dashboard: where its items are, how many a day and
+ * how that compares with the period before, what is open against it, its
+ * top stories, the names and places in it and where its outlets are based,
+ * your own recorded incidents beside it, your notes, the items themselves,
+ * and — from a click on any day — that day in detail.
  *
  * The panels sit on a grid: each can be dragged by its header and resized
  * from its corner, and the arrangement is remembered on this browser.
@@ -62,7 +70,7 @@ const REFRESH_MS = 5 * 60_000;
 
 // ── The arrangement of panels ────────────────────────────────────────────
 
-const LAYOUT_KEY = "lens.queryDashboard.layout.v1";
+const LAYOUT_KEY = "lens.queryDashboard.layout.v2";
 const COLS = 12;
 const ROW = 30;
 const DEFAULT_LAYOUT: Layout[] = [
@@ -71,8 +79,13 @@ const DEFAULT_LAYOUT: Layout[] = [
   { i: "volume", x: 0, y: 14, w: 6, h: 9, minW: 4, minH: 7 },
   { i: "sentiment", x: 6, y: 14, w: 3, h: 9, minW: 3, minH: 7 },
   { i: "sources", x: 9, y: 14, w: 3, h: 9, minW: 3, minH: 6 },
-  { i: "topics", x: 0, y: 23, w: 5, h: 13, minW: 3, minH: 8 },
-  { i: "stream", x: 5, y: 23, w: 7, h: 13, minW: 4, minH: 8 },
+  { i: "stories", x: 0, y: 23, w: 7, h: 13, minW: 4, minH: 8 },
+  { i: "names", x: 7, y: 23, w: 5, h: 13, minW: 3, minH: 8 },
+  { i: "places", x: 0, y: 36, w: 5, h: 10, minW: 4, minH: 7 },
+  { i: "incidents", x: 5, y: 36, w: 4, h: 10, minW: 3, minH: 8 },
+  { i: "notes", x: 9, y: 36, w: 3, h: 10, minW: 3, minH: 7 },
+  { i: "topics", x: 0, y: 46, w: 5, h: 13, minW: 3, minH: 8 },
+  { i: "stream", x: 5, y: 46, w: 7, h: 13, minW: 4, minH: 8 },
 ];
 
 /** The saved arrangement, if it still describes exactly today's panels. */
@@ -104,7 +117,12 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
   const [error, setError] = useState<string | null>(null);
   /** The period the stream is showing. It only moves when the period changes or new items have arrived, so that a routine refresh does not reset a list the viewer is reading. */
   const [streamRange, setStreamRange] = useState<{ from: string; to: string } | null>(null);
-  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [watch, setWatch] = useState<QueryWatch | null>(null);
+  const [watchError, setWatchError] = useState<string | null>(null);
+  const [insights, setInsights] = useState<QueryInsights | null>(null);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<QueryNote[] | null>(null);
+  const [notesError, setNotesError] = useState<string | null>(null);
   /** Names the query and period whose data is on screen. It changes together with that data — not when a new period is merely chosen — so the map re-frames the new items, never the old ones. */
   const [shownKey, setShownKey] = useState("");
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
@@ -130,7 +148,14 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
         setOverview(data);
         if (fresh) setShownKey(`${query.id}:${periodKey}`);
         setError(null);
-        if (fresh || lastTotal.current !== data.total) setStreamRange(range);
+        if (fresh || lastTotal.current !== data.total) {
+          setStreamRange(range);
+          // Stories, names and rising terms: worked out afresh only when the period or its items have changed.
+          api
+            .getQueryInsights(query.id, range, tz)
+            .then((i) => mine === request.current && (setInsights(i), setInsightsError(null)))
+            .catch((err) => mine === request.current && setInsightsError(err instanceof Error ? err.message : "Could not be worked out just now."));
+        }
         lastTotal.current = data.total;
       } catch (err) {
         if (mine === request.current) setError(err instanceof Error ? err.message : "Could not load this dashboard.");
@@ -144,6 +169,8 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
   // A new query or period starts clean; a moving period is then refreshed every few minutes.
   useEffect(() => {
     setOverview(null);
+    setInsights(null);
+    setInsightsError(null);
     setStreamRange(null);
     setFilter(null);
     setSelectedDay(null);
@@ -154,11 +181,28 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
     return () => clearInterval(timer);
   }, [load, periodKey]);
 
-  useEffect(() => {
+  // The watch: status against usual, open alerts, matching incidents. It is scored every 15 minutes; asking as often as the rest of the dashboard is plenty.
+  const loadWatch = useCallback(() => {
     api
-      .getAlerts({ query_id: query.id, status: "open" })
-      .then(setAlerts)
-      .catch(() => setAlerts([]));
+      .getQueryWatch(query.id)
+      .then((w) => (setWatch(w), setWatchError(null)))
+      .catch((err) => setWatchError(err instanceof Error ? err.message : "Alerts could not be loaded."));
+  }, [query.id]);
+  useEffect(() => {
+    setWatch(null);
+    setWatchError(null);
+    loadWatch();
+    const timer = setInterval(loadWatch, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [loadWatch]);
+
+  useEffect(() => {
+    setNotes(null);
+    setNotesError(null);
+    api
+      .getQueryNotes(query.id)
+      .then(setNotes)
+      .catch((err) => (setNotes([]), setNotesError(err instanceof Error ? err.message : "Notes could not be loaded.")));
   }, [query.id]);
 
   // Live messages: a new alert appears at once; a new item brings the figures up to date a few seconds later.
@@ -167,7 +211,8 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
     if (!liveMessage) return;
     if (liveMessage.type === "alert") {
       const al = liveMessage.payload as AlertItem;
-      if (al.query_id === query.id) setAlerts((prev) => (prev.some((a) => a.id === al.id) ? prev : [al, ...prev]));
+      // An alert for this query, or a new escalation incident (not tied to any query) that may match it.
+      if (al.query_id === query.id || al.query_id == null) loadWatch();
     } else if (liveMessage.type === "event" && "preset" in period) {
       const ev = liveMessage.payload as EventItem;
       if (!ev.matched_query_ids?.includes(query.id)) return;
@@ -180,11 +225,25 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
 
   async function handleAcknowledge(id: string) {
     await api.acknowledgeAlert(id);
-    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, acknowledged_at: new Date().toISOString() } : a)));
+    setWatch((w) => w && { ...w, alerts: w.alerts.map((a) => (a.id === id ? { ...a, acknowledged_at: new Date().toISOString() } : a)) });
   }
   async function handleResolve(id: string) {
     await api.resolveAlert(id);
-    setAlerts((prev) => prev.filter((a) => a.id !== id));
+    setWatch((w) => {
+      if (!w) return w;
+      const done = w.alerts.find((a) => a.id === id);
+      const closed = done && done.metric_snapshot?.kind === "surge" ? [{ ...done, resolved_at: new Date().toISOString() }, ...w.closed].slice(0, 5) : w.closed;
+      return { ...w, alerts: w.alerts.filter((a) => a.id !== id), closed };
+    });
+  }
+
+  async function addNote(day: string, body: string) {
+    const note = await api.addQueryNote(query.id, day, body);
+    setNotes((prev) => [note, ...(prev ?? [])].sort((a, b) => b.day.localeCompare(a.day) || b.created_at.localeCompare(a.created_at)));
+  }
+  async function deleteNote(id: string) {
+    await api.deleteQueryNote(query.id, id);
+    setNotes((prev) => (prev ?? []).filter((n) => n.id !== id));
   }
 
   function applyCustom() {
@@ -227,13 +286,29 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
     const busiest = overview.volume.reduce<QueryOverview["volume"][number] | null>((best, v) => (v.count > (best?.count ?? 0) ? v : best), null);
     const tone = overview.sentiment.overall;
     const toned = tone.negative + tone.neutral + tone.positive;
+    // The period just before, where the query is old enough for that to be a fair comparison.
+    const prev = overview.previous && !overview.previous.partial ? overview.previous : null;
+    const negative = toned ? Math.round((tone.negative / toned) * 100) : null;
+    const prevNegative = prev?.negative != null ? Math.round(prev.negative * 100) : null;
     return {
       total: overview.total,
+      totalChange: prev ? changeWords(overview.total, prev.total) : overview.previous?.partial ? "this query is newer than the previous period" : null,
       perDay: days.length ? overview.total / days.length : null,
       busiest: busiest && busiest.count > 0 ? busiest : null,
-      negative: toned ? Math.round((tone.negative / toned) * 100) : null,
+      negative,
+      negativeChange:
+        negative != null && prevNegative != null
+          ? negative === prevNegative
+            ? `the same as the previous period`
+            : `${negative > prevNegative ? "up" : "down"} ${Math.abs(negative - prevNegative)} points on the previous period (${prevNegative}%)`
+          : null,
     };
   }, [overview]);
+
+  const openAlerts = (watch?.alerts.length ?? 0) + (watch?.incidents.length ?? 0);
+  /** Today in the viewer's own calendar: the day a new note is offered for. */
+  const today = useMemo(() => new Date(Date.now() + tz * 60_000).toISOString().slice(0, 10), [tz]);
+  const search = (term: string, label?: string) => setFilter({ term: term.toLowerCase(), label: label ?? term });
 
   const stackedLayout = useMemo<Layout[]>(() => {
     let y = 0;
@@ -259,6 +334,14 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
         </div>
         <button onClick={onShowOnMap} className="qd-btn" style={{ borderColor: "var(--signal)", color: "var(--text-primary)", background: "var(--signal-dim)", fontWeight: 600 }}>
           Show on Live OSINT map
+        </button>
+        <button
+          onClick={() => overview && downloadBriefing({ query, periodLabel, overview, insights, watch, notes: notes ?? [] })}
+          className="qd-btn"
+          disabled={!overview}
+          title="One Word document of what this dashboard shows for the chosen period: figures, open alerts, top stories, names, places, sources and your notes"
+        >
+          ⭳ Briefing
         </button>
         <button onClick={onEdit} className="qd-btn">
           Edit
@@ -332,7 +415,7 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
         )}
 
         <div className="qd-stats" style={{ opacity: loading && overview ? 0.7 : 1 }}>
-          <Stat label="Items collected" value={stats ? stats.total.toLocaleString() : "—"} sub={`in ${periodLabel}`} />
+          <Stat label="Items collected" value={stats ? stats.total.toLocaleString() : "—"} sub={`in ${periodLabel}`} change={stats?.totalChange} arrow={arrowOf(stats?.totalChange)} />
           <Stat
             label="Average per day"
             value={stats?.perDay != null ? (stats.perDay >= 10 ? Math.round(stats.perDay).toLocaleString() : stats.perDay.toFixed(1)) : "—"}
@@ -343,9 +426,26 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
             value={stats?.busiest ? stats.busiest.count.toLocaleString() : "—"}
             sub={stats?.busiest ? bucketLabel(stats.busiest.bucket, overview?.bucket === "hour") : undefined}
           />
-          <Stat label="Negative in tone" value={stats?.negative != null ? `${stats.negative}%` : "—"} sub="estimate from the wording" />
-          <Stat label="Open alerts" value={alerts.filter((a) => !a.resolved_at).length.toLocaleString()} sub="for this query, now" />
+          <Stat
+            label="Negative in tone"
+            value={stats?.negative != null ? `${stats.negative}%` : "—"}
+            sub="estimate from the wording"
+            change={stats?.negativeChange}
+            arrow={arrowOf(stats?.negativeChange)}
+          />
+          <Stat
+            label="Open alerts"
+            value={watch ? openAlerts.toLocaleString() : "—"}
+            sub={watch?.status ? `${watch.status.last24h.toLocaleString()} items in the last 24 hours` : "for this query, now"}
+            change={
+              watch?.status && watch.status.state !== "learning"
+                ? `a usual day has ${watch.status.usual < 1 ? "fewer than one" : `about ${Number.isInteger(watch.status.usual) ? watch.status.usual : watch.status.usual.toFixed(1)}`}`
+                : null
+            }
+          />
         </div>
+
+        <Health overview={overview} watch={watch} />
 
         <div ref={gridRef} className={`qd-grid${stacked ? " qd-static" : ""}`}>
           {gridSize.width > 0 && (
@@ -367,18 +467,31 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
                 <MapPanel overview={overview} fitKey={shownKey} />
               </div>
               <div key="alerts">
-                <Panel title="Alerts" note="open, for this query" bodyStyle={{ padding: 0 }}>
-                  <AlertFeed embedded alerts={alerts} onAcknowledge={handleAcknowledge} onResolve={handleResolve} />
-                </Panel>
+                <AlertsPanel watch={watch} error={watchError} onAcknowledge={handleAcknowledge} onResolve={handleResolve} onSearch={search} />
               </div>
               <div key="volume">
-                <VolumeLine overview={overview} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+                <VolumeLine overview={overview} selectedDay={selectedDay} onSelectDay={setSelectedDay} notes={notes} />
               </div>
               <div key="sentiment">
                 <SentimentChart overview={overview} onSelectDay={setSelectedDay} />
               </div>
               <div key="sources">
-                <SourcesPanel overview={overview} onSearch={(term) => setFilter({ term: term.toLowerCase(), label: term })} />
+                <SourcesPanel overview={overview} onSearch={search} />
+              </div>
+              <div key="stories">
+                <StoriesPanel insights={insights} error={insightsError} />
+              </div>
+              <div key="names">
+                <NamesPanel insights={insights} error={insightsError} onSearch={search} />
+              </div>
+              <div key="places">
+                <PlaceTrend overview={overview} onSearch={search} />
+              </div>
+              <div key="incidents">
+                <OwnIncidents overview={overview} />
+              </div>
+              <div key="notes">
+                <NotesPanel notes={notes} defaultDay={selectedDay ?? today} error={notesError} onAdd={addNote} onDelete={deleteNote} onOpenDay={setSelectedDay} />
               </div>
               <div key="topics">
                 <TopicBubbles overview={overview} selected={filter?.term ?? null} onSelect={selectTopic} />
@@ -409,12 +522,58 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+/** "up …" and "down …" get an arrow; everything else is plain words. Direction is in the words too, never in colour: more coverage is neither good nor bad. */
+const arrowOf = (change: string | null | undefined): "up" | "down" | undefined => (change?.startsWith("up ") ? "up" : change?.startsWith("down ") ? "down" : undefined);
+
+function Stat({ label, value, sub, change, arrow }: { label: string; value: string; sub?: string; change?: string | null; arrow?: "up" | "down" }) {
   return (
     <div className="panel qd-stat">
       <div className="qd-stat__label">{label}</div>
       <div className="qd-stat__value">{value}</div>
       {sub && <div className="qd-stat__sub">{sub}</div>}
+      {change && (
+        <div className="qd-stat__change">
+          {arrow && <span aria-hidden>{arrow === "up" ? "▲" : "▼"} </span>}
+          {change}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One line on whether collection is healthy: when the newest item came in, how the platform's own feeds are answering, and whether the wider news search is running. */
+function Health({ overview, watch }: { overview: QueryOverview | null; watch: QueryWatch | null }) {
+  const last = watch?.status?.lastItemAt ?? overview?.lastCollectedAt ?? null;
+  const feeds = watch?.health.feeds ?? null;
+  const search = watch?.health.search;
+  if (!last && !feeds && !search) return null;
+  const stale = last ? Date.now() - Date.parse(last) > 24 * 3_600_000 : false;
+  return (
+    <div className="qd-health" role="status">
+      <span className="qd-health__label">Collection</span>
+      {last ? (
+        <span className={stale ? "is-warn" : ""} title={new Date(last).toLocaleString()}>
+          {stale ? "⚠ " : ""}newest item {timeAgo(last)}
+        </span>
+      ) : (
+        <span>no items yet</span>
+      )}
+      {feeds && feeds.ok + feeds.error + feeds.no_feed > 0 && (
+        <span
+          className={feeds.error > feeds.ok ? "is-warn" : ""}
+          title={`Of the ${feeds.total} outlets the platform reads directly: ${feeds.ok} answering, ${feeds.error} failing, ${feeds.no_feed} with no feed to read, ${feeds.pending} not yet tried.`}
+        >
+          {feeds.error > feeds.ok ? "⚠ " : ""}
+          {feeds.ok.toLocaleString()} of {feeds.total.toLocaleString()} outlet feeds answering{feeds.error > 0 ? `, ${feeds.error.toLocaleString()} failing` : ""}
+        </span>
+      )}
+      {search?.state === "paused" && (
+        <span className="is-warn" title="The wider news search limits how often it can be asked. The platform's own feeds are not affected.">
+          ⚠ wider news search paused for about {search.minutes} min
+        </span>
+      )}
+      {search?.state === "ok" && <span>wider news search running</span>}
+      {search?.state === "off" && <span title="Items come from the outlets the platform reads directly.">wider news search off</span>}
     </div>
   );
 }

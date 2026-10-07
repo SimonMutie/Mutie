@@ -13,7 +13,7 @@
  * clicking one can search for it — and never a category invented here.
  */
 
-const STOPWORDS = new Set(
+export const STOPWORDS = new Set(
   (
     "a an the and or but if then than that this these those of in on at by for with from to into onto over under about after before between during against among within without across " +
     "is are was were be been being am do does did done doing has have had having will would shall should can could may might must not no nor so too very just also only own same such " +

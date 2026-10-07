@@ -244,4 +244,12 @@ describe("a new query fetches its own results", () => {
       gdeltLimited = false;
     }
   });
+
+  it("saves the surge setting, and refuses one that would call every ordinary day a surge", async () => {
+    const patch = (body: unknown) => queriesRouter.request(`/${queryId}`, { method: "PATCH", headers: { ...auth, "content-type": "application/json" }, body: JSON.stringify(body) }, env, ctx);
+    expect((await patch({ elevated_threshold: 1.5, critical_threshold: 3 })).status).toBe(200);
+    expect(db.prepare("SELECT elevated_threshold AS e, critical_threshold AS c FROM monitoring_queries WHERE id = ?").get(queryId)).toEqual({ e: 1.5, c: 3 });
+    for (const bad of [1, 0, -2, "lots", null]) expect((await patch({ elevated_threshold: bad })).status).toBe(400);
+    expect((db.prepare("SELECT elevated_threshold AS e FROM monitoring_queries WHERE id = ?").get(queryId) as { e: number }).e).toBe(1.5);
+  });
 });
