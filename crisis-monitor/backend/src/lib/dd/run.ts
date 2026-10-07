@@ -85,7 +85,7 @@ export function coverageStatement(r: Pick<DdResult, "sources">): string {
   const ok = r.sources.filter((s) => s.state === "ok");
   const missing = r.sources.filter((s) => s.state !== "ok");
   let t = `Checked: ${ok.map((s) => s.label).join("; ") || "nothing"}.`;
-  if (missing.length) t += ` Not checked (${missing.map((s) => `${s.label}: ${s.state === "not_configured" ? "not set up" : "unavailable"}`).join("; ")}).`;
+  if (missing.length) t += ` Not checked (${missing.map((s) => `${s.label}: ${s.state === "not_configured" ? "not set up" : "unavailable"}${s.note ? ` - ${s.note}` : ""}`).join("; ")}).`;
   t += " Not covered: non-public records, court files not reported in the media, most national company registers (links provided), and sources in languages the news search does not index.";
   return t;
 }
@@ -100,7 +100,8 @@ function fallbackSummary(r: DdResult): DdResult["summary"] {
   if (r.offshore.hits.length) keyPoints.push(`${r.offshore.hits.length} possible match(es) in the ICIJ Offshore Leaks database.`);
   const mi = r.media.hits[0]?.items ?? [];
   if (mi.length) keyPoints.push(`${mi.length} adverse-media item(s); most serious: ${mi[0].what || mi[0].title}`);
-  if (!keyPoints.length) keyPoints.push("No matches were found in the sources that could be checked.");
+  const down = r.sources.filter((x) => x.state === "unavailable");
+  if (!keyPoints.length) keyPoints.push(down.length ? "Nothing was found, but this is NOT a clear result: " + down.map((x) => x.label).join(", ") + " could not be checked." : "No matches were found in the sources checked.");
   const text = {
     potential_sanctions_match: "A strong name match on a sanctions list was found. Treat as a potential match until identifiers are verified.",
     pep_indicators: "Public records indicate the subject holds or has held public office. Enhanced due diligence is usually expected.",
