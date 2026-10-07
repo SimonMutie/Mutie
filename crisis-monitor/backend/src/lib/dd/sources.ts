@@ -49,6 +49,8 @@ export interface WikidataHit {
   facts: string[];
   /** Descriptive record of an organisation, where Wikidata holds one. */
   profile?: { inception: string | null; headquarters: string | null; employees: number | null; industry: string[]; leaders: string[]; website: string | null; founders: string[] };
+  /** Descriptive record of a person: public-biography facts only (birth year, never address or family). */
+  person?: { born: string | null; died: string | null; occupations: string[]; education: { label: string; from: string | null; to: string | null }[]; employers: { label: string; from: string | null; to: string | null }[]; parties: string[]; memberships: string[]; awards: string[] };
 }
 
 type Claim = { mainsnak?: { datavalue?: { value?: unknown } }; qualifiers?: Record<string, { datavalue?: { value?: { time?: string } } }[]> };
@@ -88,7 +90,7 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
         return { e, score, human };
       })
       .filter((x) => x.score >= POSSIBLE && (kind === "person" ? x.human : !x.human));
-    for (const { e } of picked) for (const prop of ["P39", "P27", "P17", "P31", "P749", "P127", "P159", "P452", "P169", "P488", "P112"]) for (const c of e.claims?.[prop] ?? []) { const q = qidOf(c); if (q) wanted.add(q); }
+    for (const { e } of picked) for (const prop of ["P39", "P27", "P17", "P31", "P749", "P127", "P159", "P452", "P169", "P488", "P112", "P106", "P69", "P108", "P102", "P463", "P166"]) for (const c of e.claims?.[prop] ?? []) { const q = qidOf(c); if (q) wanted.add(q); }
     const labels = new Map<string, string>();
     const list = [...wanted].slice(0, 50);
     for (let i = 0; i < list.length; i += 50) {
@@ -110,6 +112,21 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
         const inc = (e.claims?.P571 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
         const emp = (e.claims?.P1128 ?? [])[0]?.mainsnak?.datavalue?.value as { amount?: string } | undefined;
         const site = (e.claims?.P856 ?? [])[0]?.mainsnak?.datavalue?.value;
+        const born = (e.claims?.P569 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
+        const died = (e.claims?.P570 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
+        const dated = (prop: string) => (e.claims?.[prop] ?? []).map((c) => ({ label: labels.get(qidOf(c) ?? "") ?? "", from: year(c, "P580"), to: year(c, "P582") })).filter((x) => x.label).slice(0, 6);
+        const person = human
+          ? {
+              born: born?.time ? born.time.replace(/^\+/, "").slice(0, 4) : null,
+              died: died?.time ? died.time.replace(/^\+/, "").slice(0, 4) : null,
+              occupations: lab("P106").slice(0, 5),
+              education: dated("P69"),
+              employers: dated("P108"),
+              parties: lab("P102").slice(0, 3),
+              memberships: lab("P463").slice(0, 5),
+              awards: lab("P166").slice(0, 4),
+            }
+          : undefined;
         const profile = human
           ? undefined
           : {
@@ -121,10 +138,10 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
               website: typeof site === "string" ? site : null,
               founders: lab("P112").slice(0, 3),
             };
-        return { qid: e.id, url: `https://www.wikidata.org/wiki/${e.id}`, label: e.labels?.en?.value ?? e.id, description: e.descriptions?.en?.value ?? null, score, strength: strengthOf(score) ?? ("possible" as Strength), isHuman: human, positions, countries, facts, profile };
+        return { qid: e.id, url: `https://www.wikidata.org/wiki/${e.id}`, label: e.labels?.en?.value ?? e.id, description: e.descriptions?.en?.value ?? null, score, strength: strengthOf(score) ?? ("possible" as Strength), isHuman: human, positions, countries, facts, profile, person };
       })
       // For a person only those who hold or held office matter here; an organisation is kept if the entry says anything about ownership.
-      .filter((h) => (kind === "person" ? h.positions.length > 0 : h.facts.length > 0 || !!(h.profile && (h.profile.inception || h.profile.headquarters || h.profile.employees || h.profile.industry.length || h.profile.leaders.length))))
+      .filter((h) => (kind === "person" ? h.positions.length > 0 || !!(h.person && (h.person.born || h.person.occupations.length || h.person.education.length || h.person.employers.length || h.person.parties.length)) : h.facts.length > 0 || !!(h.profile && (h.profile.inception || h.profile.headquarters || h.profile.employees || h.profile.industry.length || h.profile.leaders.length))))
       .sort((a, b) => b.score - a.score)
       .slice(0, 5);
     return { id, label, state: "ok", hits };

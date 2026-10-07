@@ -234,7 +234,7 @@ function cover(rep: Report): (Paragraph | Table)[] {
     ],
   });
   const widths = colWidths([30, 70]);
-  const rows: [string, string][] = [["Target / transaction", `${m.target}${m.transaction ? ` · ${m.transaction}` : ""}`], ["Prepared for", m.preparedFor], ["Prepared by", m.preparedBy], ["Date", m.date], ["Version", m.versionLabel], ["Confidentiality", m.confidentiality]];
+  const rows: [string, string][] = [[m.purpose.startsWith("Individual") ? "Subject" : "Target / transaction", `${m.target}${m.transaction ? ` · ${m.transaction}` : ""}`], ["Prepared for", m.preparedFor], ["Prepared by", m.preparedBy], ["Date", m.date], ["Version", m.versionLabel], ["Confidentiality", m.confidentiality]];
   return [
     spacer(900),
     band,
@@ -245,7 +245,7 @@ function cover(rep: Report): (Paragraph | Table)[] {
       rows.map((r) => new TableRow({ cantSplit: true, children: [textCell(r[0], widths[0], { shade: COLORS.tint, bold: true }), textCell(r[1], widths[1])] }))
     ),
     spacer(280),
-    callout("Document control", "This report supports a structured diligence decision. Findings marked Not provided or Not assessed depend on information not yet received. Material conclusions are supported by the evidence cited and the audit trail in Appendix J.", "none"),
+    callout("Document control", "This report supports a structured diligence decision. Findings marked Not provided or Not assessed depend on information not yet received. Material conclusions are supported by the evidence cited and the screening audit trail in the appendices.", "none"),
   ];
 }
 
@@ -261,7 +261,7 @@ export async function reportToDocx(rep: Report): Promise<Blob> {
   rep.sections.forEach((s, idx) => {
     body.push(
       new Paragraph({
-        pageBreakBefore: idx === 0 || s.no === "18" || s.no === "22" || s.no === "5",
+        pageBreakBefore: idx === 0 || s.no === "18" || s.no === "22" || s.no === "5" || s.no === "A",
         keepNext: true,
         spacing: { before: idx === 0 ? 0 : 360, after: 60 },
         border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: COLORS.blue, space: 4 } },

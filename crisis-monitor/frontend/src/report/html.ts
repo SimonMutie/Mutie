@@ -61,7 +61,7 @@ function block(b: Block): string {
 
 export function reportHtml(rep: Report): string {
   const m = rep.meta;
-  const rows: [string, string][] = [["Target / transaction", `${m.target}${m.transaction ? ` · ${m.transaction}` : ""}`], ["Prepared for", m.preparedFor], ["Prepared by", m.preparedBy], ["Date", m.date], ["Version", m.versionLabel], ["Confidentiality", m.confidentiality]];
+  const rows: [string, string][] = [[m.purpose.startsWith("Individual") ? "Subject" : "Target / transaction", `${m.target}${m.transaction ? ` · ${m.transaction}` : ""}`], ["Prepared for", m.preparedFor], ["Prepared by", m.preparedBy], ["Date", m.date], ["Version", m.versionLabel], ["Confidentiality", m.confidentiality]];
   const css = `
 @page{size:A4;margin:22mm 18mm 20mm 18mm;@top-left{content:"${m.target.replace(/"/g, "'")}  ·  ${m.purpose}";font:8pt ${FONT.body},Carlito,Arial,sans-serif;color:#${COLORS.muted}}@top-right{content:"${m.confidentiality.toUpperCase()}";font:bold 8pt ${FONT.body},Carlito,Arial,sans-serif;color:#${COLORS.navy}}@bottom-left{content:"Afrilens Consulting  ·  ${m.date}  ·  ${m.versionLabel}";font:8pt ${FONT.body},Carlito,Arial,sans-serif;color:#${COLORS.muted}}@bottom-right{content:"Page " counter(page) " of " counter(pages);font:8pt ${FONT.body},Carlito,Arial,sans-serif;color:#${COLORS.muted}}}
 @page:first{margin:14mm 18mm 16mm 18mm;@top-left{content:""}@top-right{content:""}@bottom-left{content:""}@bottom-right{content:""}}
@@ -97,12 +97,12 @@ a{color:#${COLORS.blue}}
 `;
   const toc = rep.sections.map((s) => `<div><b>${esc(s.no)}</b><a href="#sec${esc(s.no)}" style="color:#${COLORS.navy};text-decoration:none">${esc(s.title)}</a></div>`).join("");
   const body = rep.sections
-    .map((s, i) => `<section id="sec${esc(s.no)}" class="${i === 0 || ["5", "18", "22"].includes(s.no) ? "brk" : ""}"><h1>${esc(s.no)}.&nbsp; ${esc(s.title)}</h1>${s.origin !== "analyst" ? `<div class="origin">${s.origin === "screening" ? "Prepared from public-source screening" : "Partly pre-filled from public-source screening"}</div>` : ""}${s.blocks.map(block).join("")}</section>`)
+    .map((s, i) => `<section id="sec${esc(s.no)}" class="${i === 0 || ["5", "18", "22", "A"].includes(s.no) ? "brk" : ""}"><h1>${esc(s.no)}.&nbsp; ${esc(s.title)}</h1>${s.origin !== "analyst" ? `<div class="origin">${s.origin === "screening" ? "Prepared from public-source screening" : "Partly pre-filled from public-source screening"}</div>` : ""}${s.blocks.map(block).join("")}</section>`)
     .join("");
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(`${m.purpose}: ${m.target}`)}</title><style>${css}</style></head><body>
 <div class="cover"><div class="band"><div class="k1">${esc(m.purpose)}</div><div class="t">${esc(m.target)}</div><div class="s">${esc(m.transaction)}</div></div>
 <table class="kv"><thead><tr><th>Field</th><th>Detail</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="k">${esc(r[0])}</td><td>${val(r[1])}</td></tr>`).join("")}</tbody></table>
-<div class="callout"><div class="ct">Document control</div>This report supports a structured diligence decision. Findings marked Not provided or Not assessed depend on information not yet received. Material conclusions are supported by the evidence cited and the audit trail in Appendix J.</div></div>
+<div class="callout"><div class="ct">Document control</div>This report supports a structured diligence decision. Findings marked Not provided or Not assessed depend on information not yet received. Material conclusions are supported by the evidence cited and the screening audit trail in the appendices.</div></div>
 <div class="toc"><h1>Contents</h1>${toc}</div>${body}
 <div class="callout"><div class="ct">Confidentiality notice</div>This report contains confidential information prepared solely for the intended recipient and purpose. It should not be distributed, reproduced or relied upon by third parties without appropriate authorisation.</div>
 </body></html>`;

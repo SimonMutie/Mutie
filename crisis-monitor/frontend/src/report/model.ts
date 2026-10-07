@@ -72,7 +72,7 @@ export interface Report {
 // ── Tones for words that appear in cells ────────────────────────────────
 
 const TONES: Record<string, Tone> = {
-  green: "good", low: "good", positive: "good", received: "good", yes: "none", recommended: "good", "no match": "good", clear: "good",
+  green: "good", low: "good", minimal: "good", positive: "good", received: "good", yes: "none", recommended: "good", "no match": "good", clear: "good",
   amber: "watch", medium: "watch", moderate: "watch", neutral: "watch", partial: "watch", mixed: "watch", possible: "watch",
   orange: "high", high: "high",
   red: "bad", critical: "bad", negative: "bad", outstanding: "bad", strong: "bad",
