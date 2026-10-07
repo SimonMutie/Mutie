@@ -27,6 +27,7 @@ import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
 import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
 import { runEscalationPipeline } from "./escalationIncidents";
+import { isWatchTick, runQueryWatch } from "./queryWatch";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
 export { IngestionActor } from "./durableObjects/ingestionActor";
@@ -54,19 +55,18 @@ app.onError((err, c) => {
 });
 
 /**
- * The mock-ingestion and alerting loops live in Durable Object alarms, which
- * need one initial `/start` kick to begin self-rescheduling (see
- * IngestionActor/AlertingActor). This is idempotent — once an alarm is
+ * The mock-ingestion loop and the ship-position feed live in Durable Object
+ * alarms, which need one initial `/start` kick to begin self-rescheduling
+ * (see IngestionActor/AisIngestionActor). Query alerting used to be a third;
+ * it now runs from scheduled() below (queryWatch.ts). This is idempotent — once an alarm is
  * pending it's a no-op — so it's cheap to call opportunistically from both
  * the health check and the cron handler as a self-healing safety net.
  */
 async function bootstrapActors(env: Env) {
   const ingestionId = env.INGESTION_ACTOR.idFromName("global");
-  const alertingId = env.ALERTING_ACTOR.idFromName("global");
   const aisId = env.AIS_INGESTION_ACTOR.idFromName("global");
   await Promise.all([
     env.INGESTION_ACTOR.get(ingestionId).fetch("http://ingestion-actor/start"),
-    env.ALERTING_ACTOR.get(alertingId).fetch("http://alerting-actor/start"),
     env.AIS_INGESTION_ACTOR.get(aisId).fetch("http://ais-ingestion-actor/start"),
   ]);
 }
@@ -152,7 +152,7 @@ export default {
 
   queue: processAfricaWireQueueBatch,
 
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     await ensureSchema(env);
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
@@ -190,6 +190,18 @@ export default {
     // per tick (ESCALATION_ARTICLES_PER_TICK) and self-locking, so a slow
     // tick never overlaps the next one.
     ctx.waitUntil(runEscalationPipeline(env).catch((err) => console.error("[escalation] pipeline tick failed", err)));
+
+    // The watch on each monitoring query (see queryWatch.ts): its last 24
+    // hours against its own usual day, and a coverage-surge alert when the
+    // first runs well above the second. Every fifteen minutes is ample for
+    // a daily measure, and keeps its database use small.
+    if (isWatchTick(controller.scheduledTime)) {
+      ctx.waitUntil(
+        runQueryWatch(env)
+          .then((r) => r.surges > 0 && console.log(`[watch] ${r.surges} of ${r.queries} queries in surge`))
+          .catch((err) => console.error("[watch] run failed", err))
+      );
+    }
 
     // Africa Wire crawl (see durableObjects/africaWireActor.ts) — enqueues
     // one message per source onto the "africa-wire-crawl" Cloudflare Queue

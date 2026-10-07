@@ -328,6 +328,14 @@ queriesRouter.patch("/:id", async (c) => {
         const err = validateBooleanQuery(String(body.boolean_query));
         if (err) return c.json({ error: `Invalid boolean query: ${err}` }, 400);
       }
+      // The surge multiples (see queryWatch.ts) must be real numbers above one: a multiple of one or less would call every ordinary day a surge.
+      if (field === "elevated_threshold" || field === "critical_threshold") {
+        const n = Number(body[field]);
+        if (!Number.isFinite(n) || n < 1.2 || n > 50) return c.json({ error: "The surge setting must be a number between 1.2 and 50." }, 400);
+        updates.push(`${field} = ?`);
+        values.push(n);
+        continue;
+      }
       updates.push(`${field} = ?`);
       values.push(field === "is_active" ? (body[field] ? 1 : 0) : body[field]);
     }

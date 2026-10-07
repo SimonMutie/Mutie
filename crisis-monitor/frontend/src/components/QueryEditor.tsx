@@ -11,6 +11,12 @@ interface Props {
 }
 
 const CATEGORIES = ["general", "public_health", "civil_unrest", "infrastructure", "natural_disaster", "cyber"];
+/** How far above its usual day a query must run before a coverage surge is raised, and the higher mark at which the surge is called major. */
+const SURGE_LEVELS = [
+  { multiple: 1.5, major: 3, label: "Sensitive", hint: "1.5 times the usual day" },
+  { multiple: 2.5, major: 4, label: "Standard", hint: "2.5 times the usual day" },
+  { multiple: 4, major: 6, label: "Only large", hint: "4 times the usual day" },
+];
 const PREVIEW_DEBOUNCE_MS = 600;
 // The live news search goes to a shared, rate-limited public service, so it
 // waits for a longer pause in typing than the check of held articles does.
@@ -38,6 +44,8 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
   const [name, setName] = useState(existingQuery?.name ?? "");
   const [category, setCategory] = useState(existingQuery?.category ?? "general");
   const [booleanQuery, setBooleanQuery] = useState(existingQuery?.boolean_query ?? "");
+  // When this query's coverage counts as a surge: a multiple of its own usual day (see the backend's queryWatch.ts).
+  const [surge, setSurge] = useState<number>(() => SURGE_LEVELS.reduce((best, l) => (Math.abs(l.multiple - (existingQuery?.elevated_threshold ?? 2.5)) < Math.abs(best.multiple - (existingQuery?.elevated_threshold ?? 2.5)) ? l : best)).multiple);
   const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -110,6 +118,8 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
     };
   }, [booleanQuery]);
 
+  const surgeSetting = { elevated_threshold: surge, critical_threshold: SURGE_LEVELS.find((l) => l.multiple === surge)?.major ?? 4 };
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !booleanQuery.trim()) {
@@ -127,8 +137,8 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
       }
       const saved =
         mode === "edit" && existingQuery
-          ? await api.updateQuery(existingQuery.id, { name, boolean_query: booleanQuery, category })
-          : await api.createQuery({ name, boolean_query: booleanQuery, category });
+          ? await api.updateQuery(existingQuery.id, { name, boolean_query: booleanQuery, category, ...surgeSetting })
+          : await api.createQuery({ name, boolean_query: booleanQuery, category, ...surgeSetting });
       onSaved(saved);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save query");
@@ -184,6 +194,35 @@ export default function QueryEditor({ mode, existingQuery, onSaved, onCancel }: 
                   {categoryMeta(c).label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Coverage surge alert</label>
+            <div role="group" aria-label="Coverage surge alert" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {SURGE_LEVELS.map((l) => (
+                <button
+                  key={l.multiple}
+                  type="button"
+                  aria-pressed={surge === l.multiple}
+                  onClick={() => setSurge(l.multiple)}
+                  title={`Raise an alert when a day's coverage reaches ${l.hint}`}
+                  style={{
+                    padding: "5px 10px",
+                    borderRadius: 999,
+                    border: `1px solid ${surge === l.multiple ? "var(--signal)" : "var(--border)"}`,
+                    background: surge === l.multiple ? "var(--signal-dim)" : "var(--panel)",
+                    color: "var(--text-primary)",
+                    fontSize: 12.5,
+                    cursor: "pointer",
+                  }}
+                >
+                  {l.label} <span style={{ color: "var(--text-faint)" }}>· {l.hint}</span>
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 6, lineHeight: 1.4 }}>
+              An alert is raised when the items collected in 24 hours reach this many times the query's own usual day, and never on fewer than six items.
             </div>
           </div>
 

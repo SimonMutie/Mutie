@@ -7,6 +7,16 @@ import { locateEventText } from "../lib/eventLocation";
 import { sentimentFor, toneOf } from "../lib/sentiment";
 import { extractTopics, queryWords } from "../lib/topics";
 import { buildDigest, countTop, readAiSummary, writeAiSummary, type DayItem } from "../lib/daySummary";
+import { groupStories } from "../lib/stories";
+import { extractNames, risingTerms } from "../lib/names";
+import { sourceMix } from "../lib/outlets";
+import { evaluate, parseBooleanQuery } from "../booleanQuery";
+import { getFlaggedIncidents, type IncidentView } from "../escalationIncidents";
+import { ensureWatchTables, getWatchStatus } from "../queryWatch";
+import { getTickBudget } from "../lib/gdeltAdaptiveBudget";
+import { rowToAlert } from "../mappers";
+import { run, nowIso } from "../db";
+import { newId } from "../ids";
 
 /**
  * What a monitoring query's dashboard shows about the items the query has
@@ -30,6 +40,10 @@ const DAY_MS = 86_400_000;
 /** Tone and topics are worked out from at most this many of the most recent items in the period. */
 const SAMPLE_LIMIT = 3000;
 const MAP_POINT_LIMIT = 600;
+/** The previous period's tone is estimated from this many of its most recent items. */
+const PREVIOUS_TONE_SAMPLE = 800;
+/** Top stories, names and rising terms are worked out from this many of the most recent items. */
+const INSIGHT_SAMPLE = 1200;
 const CONVERSATION_TYPES = new Set(["social", "forum", "darkweb"]);
 
 interface Row {
@@ -41,6 +55,7 @@ interface Row {
   author: string | null;
   sentiment: number | null;
   published_at: string;
+  ingested_at?: string | null;
 }
 
 const tzOf = (raw: string | undefined) => {
@@ -94,12 +109,42 @@ function locate(r: Row): { item: DayItem; lat: number | null; lon: number | null
   return { item, lat: loc?.lat ?? null, lon: loc?.lon ?? null, precision: loc?.precision ?? null };
 }
 
-const ROW_COLUMNS = "e.id, e.source_type, e.title, substr(e.content, 1, 900) AS content, e.url, e.author, e.sentiment, e.published_at";
+const ROW_COLUMNS = "e.id, e.source_type, e.title, substr(e.content, 1, 900) AS content, e.url, e.author, e.sentiment, e.published_at, e.ingested_at";
 const FROM_MATCHES = "FROM query_matches qm JOIN events e ON e.id = qm.event_id";
 
 async function accessibleQuery(c: { env: Env; get: (k: "userId" | "role") => string }, queryId: string) {
   if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role") as never, queryId))) return null;
-  return first<{ id: string; name: string; boolean_query: string }>(c.env.DB, "SELECT id, name, boolean_query FROM monitoring_queries WHERE id = ?", [queryId]);
+  return first<{ id: string; name: string; boolean_query: string; created_at?: string | null }>(c.env.DB, "SELECT * FROM monitoring_queries WHERE id = ?", [queryId]);
+}
+
+/** The start of the bucket a moment falls in for the place grid: its day, or the Monday of its week, in the viewer's time. */
+function gridBucket(iso: string, tz: number, weekly: boolean): string {
+  const local = new Date(Date.parse(iso) + tz * 60_000);
+  if (weekly) local.setUTCDate(local.getUTCDate() - ((local.getUTCDay() + 6) % 7));
+  return local.toISOString().slice(0, 10);
+}
+
+/** Where the items of a period are, period by period: the places most often named, each with its count per day (per week for a period over a fortnight). */
+function placeTrend(items: DayItem[], from: string, to: string, tz: number) {
+  const weekly = Date.parse(to) - Date.parse(from) > 14 * DAY_MS;
+  const buckets: string[] = [];
+  for (let t = Date.parse(from); ; t += DAY_MS) {
+    const b = gridBucket(new Date(Math.min(t, Date.parse(to))).toISOString(), tz, weekly);
+    if (buckets[buckets.length - 1] !== b) buckets.push(b);
+    if (t >= Date.parse(to)) break;
+  }
+  const index = new Map(buckets.map((b, i) => [b, i]));
+  const rows = new Map<string, { label: string; total: number; counts: number[] }>();
+  for (const i of items) {
+    if (!i.place) continue;
+    const at = index.get(gridBucket(i.published_at, tz, weekly));
+    if (at === undefined) continue;
+    let r = rows.get(i.place);
+    if (!r) rows.set(i.place, (r = { label: i.place, total: 0, counts: buckets.map(() => 0) }));
+    r.total++;
+    r.counts[at]++;
+  }
+  return { bucket: weekly ? ("week" as const) : ("day" as const), buckets, rows: [...rows.values()].sort((a, b) => b.total - a.total || a.label.localeCompare(b.label)).slice(0, 8) };
 }
 
 /** The period asked for: `from`/`to` (ISO), defaulting to the last 30 days. */
@@ -122,16 +167,52 @@ queryInsightsRouter.get("/:queryId/overview", async (c) => {
   const hourly = Date.parse(to) - Date.parse(from) <= 2 * DAY_MS;
   const bucketLen = hourly ? 13 : 10;
 
-  const [counts, sample] = await Promise.all([
-    all<{ bucket: string | null; source_type: string; count: number }>(
+  // The period of the same length just before this one, for "change on the previous period".
+  // Its items are counted by the same statement as this period's, so the comparison costs no second pass.
+  const prevFrom = new Date(Date.parse(from) - (Date.parse(to) - Date.parse(from))).toISOString();
+  // A query holds items from three days before it was written; before that there is nothing to compare with.
+  const created = query.created_at ? Date.parse(query.created_at) : NaN;
+  const prevPartial = Number.isFinite(created) && created - 3 * DAY_MS > Date.parse(prevFrom);
+
+  // An item is matched when it is collected, which is at or after it was published. So nothing published in
+  // the period was matched before the period began, and the match index can skip everything older — which,
+  // for a query that has run for months, is most of what it holds. A day's margin allows for odd timestamps.
+  const matchedSince = (iso: string) => new Date(Date.parse(iso) - DAY_MS).toISOString();
+
+  const [allCounts, sample, prevSample] = await Promise.all([
+    all<{ bucket: string | null; source_type: string; cur: number; count: number }>(
       c.env.DB,
-      `SELECT substr(datetime(e.published_at, ?), 1, ${bucketLen}) AS bucket, e.source_type, COUNT(*) AS count
-       ${FROM_MATCHES} WHERE qm.query_id = ? AND e.published_at >= ? AND e.published_at <= ?
-       GROUP BY bucket, e.source_type`,
-      [sqlShift(tz), query.id, from, to]
+      `SELECT substr(datetime(e.published_at, ?), 1, ${bucketLen}) AS bucket, e.source_type, (e.published_at >= ?) AS cur, COUNT(*) AS count
+       ${FROM_MATCHES} WHERE qm.query_id = ? AND qm.matched_at >= ? AND e.published_at >= ? AND e.published_at <= ?
+       GROUP BY bucket, e.source_type, cur`,
+      [sqlShift(tz), from, query.id, matchedSince(prevFrom), prevFrom, to]
     ),
-    all<Row>(c.env.DB, `SELECT ${ROW_COLUMNS} ${FROM_MATCHES} WHERE qm.query_id = ? AND e.published_at >= ? AND e.published_at <= ? ORDER BY e.published_at DESC LIMIT ?`, [query.id, from, to, SAMPLE_LIMIT]),
+    all<Row>(c.env.DB, `SELECT ${ROW_COLUMNS} ${FROM_MATCHES} WHERE qm.query_id = ? AND qm.matched_at >= ? AND e.published_at >= ? AND e.published_at <= ? ORDER BY e.published_at DESC LIMIT ?`, [
+      query.id,
+      matchedSince(from),
+      from,
+      to,
+      SAMPLE_LIMIT,
+    ]),
+    prevPartial
+      ? Promise.resolve([] as Pick<Row, "title" | "content" | "sentiment">[])
+      : all<Pick<Row, "title" | "content" | "sentiment">>(
+          c.env.DB,
+          `SELECT e.title, substr(e.content, 1, 500) AS content, e.sentiment ${FROM_MATCHES} WHERE qm.query_id = ? AND qm.matched_at >= ? AND e.published_at >= ? AND e.published_at < ? ORDER BY e.published_at DESC LIMIT ?`,
+          [query.id, matchedSince(prevFrom), prevFrom, from, PREVIOUS_TONE_SAMPLE]
+        ),
   ]);
+  const counts = allCounts.filter((r) => Number(r.cur) === 1);
+  const prevTotal = allCounts.filter((r) => Number(r.cur) !== 1).reduce((n, r) => n + Number(r.count), 0);
+  let prevNegative: number | null = null;
+  if (prevSample.length > 0) {
+    let negative = 0;
+    for (const r of prevSample) {
+      const text = (r.content ?? "").replace(/https?:\/\/\S+/g, " ").replace(/\s+/g, " ").trim();
+      if (toneOf(sentimentFor(r.sentiment, r.title, text)) === "negative") negative++;
+    }
+    prevNegative = Number((negative / prevSample.length).toFixed(3));
+  }
 
   // Every bucket in the period, including the empty ones, so the line shows quiet days as zero.
   const key = (ms: number) => new Date(ms + tz * 60_000).toISOString().slice(0, bucketLen);
@@ -192,6 +273,12 @@ queryInsightsRouter.get("/:queryId/overview", async (c) => {
     ),
     outlets: countTop(items.filter((i) => i.kind === "event").map((i) => i.source), 10),
     places: countTop(items.map((i) => i.place), 10),
+    // Where the news outlets are based, relative to the countries the reporting is about.
+    sourceMix: sourceMix(items.filter((i) => i.kind === "event").map((i) => ({ source: i.source, place: i.place }))),
+    placeTrend: hourly ? null : placeTrend(items, from, to, tz),
+    previous: { from: prevFrom, to: from, total: prevTotal, negative: prevNegative, partial: prevPartial },
+    // When the newest of these items was collected (not when it was published).
+    lastCollectedAt: sample.reduce<string | null>((best, r) => (r.ingested_at && (!best || r.ingested_at > best) ? r.ingested_at : best), null),
     points,
     located: locatedCount,
     // Tone, topics and the map are worked out from the most recent items when the period holds more than this.
@@ -286,4 +373,195 @@ queryInsightsRouter.post("/:queryId/day-summary", async (c) => {
     console.error("[day-summary] failed", err);
     return c.json({ status: "unavailable", reason: "The summary could not be written just now. The digest below needs no AI." });
   }
+});
+
+// ── Stories, names and rising terms ──────────────────────────────────────
+
+/** A short-lived answer cache, so that a dashboard left open (it refreshes itself) does not redo this work every few minutes. Per isolate; nothing is stored. */
+const remembered = new Map<string, { at: number; value: unknown }>();
+async function remember<T>(key: string, ttlMs: number, compute: () => Promise<T>): Promise<T> {
+  const hit = remembered.get(key);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value as T;
+  const value = await compute();
+  if (remembered.size > 200) remembered.clear();
+  remembered.set(key, { at: Date.now(), value });
+  return value;
+}
+/** Test hook. */
+export function resetInsightCache(): void {
+  remembered.clear();
+}
+
+/**
+ * GET /:queryId/insights?from=&to=&tz=
+ * What the period's reporting is made of: its top stories (reports of the
+ * same event grouped, ranked by how many outlets carried them), the names
+ * most often written, and the terms that rose within the period. Worked out
+ * from headlines and openings with ordinary code; see lib/stories.ts and
+ * lib/names.ts for exactly how, and for what each can get wrong.
+ */
+queryInsightsRouter.get("/:queryId/insights", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  const { from, to } = periodOf(c.req.query("from"), c.req.query("to"));
+  // Ten-minute steps: a moving period asked for again a few minutes later is the same question.
+  const key = `${query.id}|${from.slice(0, 15)}|${to.slice(0, 15)}`;
+  const body = await remember(key, 5 * 60_000, async () => {
+    const rows = await all<Row>(c.env.DB, `SELECT ${ROW_COLUMNS} ${FROM_MATCHES} WHERE qm.query_id = ? AND qm.matched_at >= ? AND e.published_at >= ? AND e.published_at <= ? ORDER BY e.published_at DESC LIMIT ?`, [
+      query.id,
+      new Date(Date.parse(from) - DAY_MS).toISOString(),
+      from,
+      to,
+      INSIGHT_SAMPLE,
+    ]);
+    const items = rows.map(toItem);
+    const exclude = queryWords(query.boolean_query);
+    const docs = items.map((i) => ({ id: i.id, title: i.title, text: i.snippet, sentiment: i.sentiment, published_at: i.published_at }));
+    // The halves are halves of the period asked for, not of whatever happens to have been collected.
+    const splitAt = (Date.parse(from) + Date.parse(to)) / 2;
+    return {
+      stories: groupStories(items.filter((i) => i.kind === "event").map((i) => ({ id: i.id, title: i.title, url: i.url, source: i.source, published_at: i.published_at, sentiment: i.sentiment, place: i.place }))),
+      names: extractNames(docs, { limit: 20, exclude, splitAt }),
+      rising: risingTerms(docs, { limit: 10, exclude, splitAt }),
+      splitAt: new Date(splitAt).toISOString(),
+      used: items.length,
+    };
+  });
+  return c.json({ queryId: query.id, from, to, ...body, fetchedAt: new Date().toISOString() });
+});
+
+// ── The watch: status, alerts, matching incidents, collection health ─────
+
+/** A flagged incident as the alerts panel shows it. */
+function incidentCard(i: IncidentView) {
+  return {
+    id: i.id,
+    level: i.level,
+    headline: i.headline,
+    summary: i.summary,
+    place: i.locationLabel ? `${i.locationLabel}, ${i.countryName}` : i.countryName,
+    lat: i.lat,
+    lon: i.lon,
+    geoPrecision: i.geoPrecision,
+    preliminary: i.preliminary,
+    criteriaMet: i.criteriaMet,
+    fatalitiesMax: i.fatalitiesMax,
+    reportCount: i.reportCount,
+    lastEventDate: i.lastEventDate,
+    updatedAt: i.updatedAt,
+    sources: i.sources.slice(0, 6).map((s) => ({ n: s.n, url: s.url, title: s.title, domain: s.domain })),
+    sourceCount: i.sources.length,
+  };
+}
+
+/** Everything about an incident the query's own wording can be tested against. */
+const incidentText = (i: IncidentView) => [i.headline, i.summary, i.assessment, i.locationLabel, i.countryName, ...i.places, ...i.actors, ...i.sources.map((s) => s.title ?? "")].filter(Boolean).join(". ");
+
+async function collectionHealth(env: Env) {
+  const feeds = await remember("health:feeds", 10 * 60_000, async () => {
+    try {
+      const stub = env.AFRICA_WIRE_ACTOR.get(env.AFRICA_WIRE_ACTOR.idFromName("global"));
+      const res = await stub.fetch("http://africa-wire-actor/health");
+      return res.ok ? ((await res.json()) as { total: number; ok: number; no_feed: number; error: number; pending: number }) : null;
+    } catch {
+      return null;
+    }
+  });
+  let search: { state: "off" | "ok" | "paused"; minutes?: number } = { state: "off" };
+  if ((env.GDELT_ENABLED ?? "false") === "true") {
+    try {
+      const { cooldownRemainingMs } = await getTickBudget(env);
+      search = cooldownRemainingMs > 0 ? { state: "paused", minutes: Math.ceil(cooldownRemainingMs / 60_000) } : { state: "ok" };
+    } catch {
+      search = { state: "ok" };
+    }
+  }
+  return { feeds, search };
+}
+
+/**
+ * GET /:queryId/watch
+ * What the alerts panel shows: how the last 24 hours compare with what is
+ * usual for this query; its open alerts; the escalation incidents (coded
+ * against the written criteria by the incident pipeline) that this query's
+ * own wording matches; the alerts most recently closed; and whether
+ * collection is healthy.
+ */
+queryInsightsRouter.get("/:queryId/watch", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  await ensureWatchTables(c.env);
+
+  // The status first: working it out is what opens or closes this query's surge alert, and the lists below must show the result.
+  const status = await getWatchStatus(c.env, query.id).catch((err) => {
+    console.error("[watch] status failed", err);
+    return null;
+  });
+  const [alertRows, closedRows, flagged, health] = await Promise.all([
+    all<Record<string, unknown>>(c.env.DB, "SELECT * FROM alerts WHERE query_id = ? AND resolved_at IS NULL ORDER BY created_at DESC LIMIT 20", [query.id]),
+    all<Record<string, unknown>>(c.env.DB, "SELECT * FROM alerts WHERE query_id = ? AND resolved_at IS NOT NULL ORDER BY resolved_at DESC LIMIT 12", [query.id]),
+    remember("flagged-incidents", 60_000, () => getFlaggedIncidents(c.env)).catch((err) => {
+      console.error("[watch] incidents failed", err);
+      return [] as IncidentView[];
+    }),
+    collectionHealth(c.env),
+  ]);
+
+  let incidents: ReturnType<typeof incidentCard>[] = [];
+  try {
+    const parsed = parseBooleanQuery(query.boolean_query);
+    incidents = flagged.filter((i) => evaluate(parsed, { content: incidentText(i), title: i.headline })).map(incidentCard);
+  } catch {
+    incidents = []; // a query that cannot be parsed matches nothing
+  }
+
+  // Alerts the retired five-minute scorer raised carry no criteria; they are not listed as history.
+  const closed = closedRows
+    .map(rowToAlert)
+    .filter((a) => (a.metric_snapshot as { kind?: string } | undefined)?.kind === "surge")
+    .slice(0, 5);
+
+  return c.json({ queryId: query.id, status, alerts: alertRows.map(rowToAlert), incidents, closed, health, fetchedAt: new Date().toISOString() });
+});
+
+// ── Notes on the timeline ────────────────────────────────────────────────
+
+const NOTE_MAX = 600;
+
+/** GET /:queryId/notes — the analyst's notes on this query, each pinned to a day. */
+queryInsightsRouter.get("/:queryId/notes", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  await ensureWatchTables(c.env);
+  const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT id, day, body, author_id, author_name, created_at FROM query_notes WHERE query_id = ? ORDER BY day DESC, created_at DESC LIMIT 500", [query.id]);
+  return c.json(rows);
+});
+
+/** POST /:queryId/notes { day: "YYYY-MM-DD", body } */
+queryInsightsRouter.post("/:queryId/notes", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  const input = (await c.req.json().catch(() => ({}))) as { day?: string; body?: string };
+  const day = String(input.day ?? "");
+  const body = String(input.body ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`))) return c.json({ error: "day must be YYYY-MM-DD" }, 400);
+  if (!body) return c.json({ error: "A note needs some text." }, 400);
+  if (body.length > NOTE_MAX) return c.json({ error: `A note can be at most ${NOTE_MAX} characters.` }, 400);
+  await ensureWatchTables(c.env);
+  const author = await first<{ display_name: string | null; username: string | null }>(c.env.DB, "SELECT display_name, username FROM users WHERE id = ?", [c.get("userId")]).catch(() => null);
+  const note = { id: newId(), day, body, author_id: c.get("userId"), author_name: author?.display_name || author?.username || null, created_at: nowIso() };
+  await run(c.env.DB, "INSERT INTO query_notes (id, query_id, day, body, author_id, author_name, created_at) VALUES (?,?,?,?,?,?,?)", [note.id, query.id, note.day, note.body, note.author_id, note.author_name, note.created_at]);
+  return c.json(note, 201);
+});
+
+/** DELETE /:queryId/notes/:noteId — by whoever wrote it, or an admin. */
+queryInsightsRouter.delete("/:queryId/notes/:noteId", async (c) => {
+  const query = await accessibleQuery(c, c.req.param("queryId"));
+  if (!query) return c.json({ error: "Query not found" }, 404);
+  await ensureWatchTables(c.env);
+  const note = await first<{ author_id: string | null }>(c.env.DB, "SELECT author_id FROM query_notes WHERE id = ? AND query_id = ?", [c.req.param("noteId"), query.id]);
+  if (!note) return c.json({ error: "Note not found" }, 404);
+  if (c.get("role") !== "admin" && note.author_id !== c.get("userId")) return c.json({ error: "Only the person who wrote a note can delete it." }, 403);
+  await run(c.env.DB, "DELETE FROM query_notes WHERE id = ?", [c.req.param("noteId")]);
+  return c.json({ ok: true });
 });

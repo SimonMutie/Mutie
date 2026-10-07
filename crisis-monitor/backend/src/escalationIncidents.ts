@@ -94,6 +94,10 @@ const LOCK_TTL_MS = 4 * 60_000;
 // ── Schema ───────────────────────────────────────────────────────────────
 
 let tablesReady = false;
+/** Test hook: a new in-memory database needs its tables made again. */
+export function resetEscalationTableCheck(): void {
+  tablesReady = false;
+}
 async function ensureTables(env: Env): Promise<void> {
   if (tablesReady) return;
   const stmts = [

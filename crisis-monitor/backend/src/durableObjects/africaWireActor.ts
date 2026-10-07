@@ -143,6 +143,19 @@ export class AfricaWireActor implements DurableObject {
       return Response.json(await this.buildSnapshot());
     }
 
+    // Just the tally of how the sources are doing — for the query
+    // dashboard's collection-health line, which has no use for the items.
+    if (url.pathname === "/health") {
+      const sourceEntries = await this.state.storage.list<SourceState>({ prefix: "source:" });
+      let ok = 0, noFeed = 0, error = 0;
+      for (const s of sourceEntries.values()) {
+        if (s.status === "ok") ok++;
+        else if (s.status === "no_feed") noFeed++;
+        else error++;
+      }
+      return Response.json({ total: AFRICA_SOURCES.length, ok, no_feed: noFeed, error, pending: Math.max(0, AFRICA_SOURCES.length - sourceEntries.size) });
+    }
+
     if (url.pathname === "/escalation-candidates") {
       const maxAgeHours = Number(url.searchParams.get("maxAgeHours")) || 72;
       return Response.json({ candidates: await this.getEscalationCandidates(maxAgeHours) });

@@ -133,11 +133,39 @@ and `components/query/`), fed by `backend/src/routes/queryInsights.ts`:
 - **Information stream** — the items, searchable, split into events (news)
   and conversations (social and forum posts), downloadable as Excel, CSV,
   Word or JSON.
-- **Top sources / places**, and the query's open **alerts**.
+- **Top sources / places / mix** — the outlets with the most items, the
+  places most often named, and where those outlets are based relative to the
+  countries the reporting is about (`lib/outlets.ts`), with the share carried
+  by the single largest outlet.
+- **Alerts** — a status line that is always there (the last 24 hours against
+  this query's usual day), the escalation incidents that the query's own
+  wording matches (with their criteria and sources), open coverage surges,
+  and the surges most recently closed. See *Query alerts* below.
+- **Top stories** — reports of the same event grouped by headline wording
+  and ranked by how many outlets carried them (`lib/stories.ts`).
+- **Names in the coverage / Rising terms** — the people, organisations and
+  armed groups written most often, found by their capital letters, and the
+  terms used markedly more in the later half of the period (`lib/names.ts`).
+- **Places by week** — the places most often named against the weeks (days,
+  for a short period) of the period: a heat grid with a table twin.
+- **Your incidents** — your own recorded incidents (Trends & Patterns) for
+  the countries the reporting is about, day by day, under the items the
+  query collected: two charts on one time axis, never a shared pair of axes.
+- **Notes** — the analyst's notes, each pinned to a day and flagged on the
+  events-per-day line.
+
+Above the panels: the headline figures with the **change on the previous
+period** of the same length, a **collection health** line (when the newest
+item came in, how the platform's own feeds are answering, whether the wider
+news search is running), and **Briefing**, which downloads everything the
+dashboard is showing as one Word document.
 
 Panels can be dragged by their title and resized from their corner; the
 arrangement is remembered in the browser. Days are the viewer's own days
 (every route takes the viewer's UTC offset).
+
+None of the stories, names, rising terms or source mix uses a model. Each
+panel states how its content was found and what that method can get wrong.
 
 Everything is computed from the stored items with ordinary code, at no cost,
 except the AI day summary (`lib/daySummary.ts`): it is written on request,
@@ -335,9 +363,9 @@ VITE_API_URL=http://localhost:8787 VITE_WS_URL=ws://localhost:8787 npm run dev
                                                         |
                                         +---------------+----------------+
                                         |                                |
-                          AlertingActor (DO, 30s alarm)         REST API (Hono Worker)
-                          - volume vs baseline                          |
-                          - sentiment penalty                           v
+                          Query watch (cron, every 15 min)      REST API (Hono Worker)
+                          - last 24h vs the usual day                   |
+                          - coverage-surge alerts                       v
                                         |                        React dashboard
                                         v                    (map, charts, alert feed,
                                  alerts table                  query builder — all
@@ -358,11 +386,13 @@ The original prototype was a long-lived Node process: a `setInterval` every
 don't run long-lived processes — each invocation is short-lived and
 stateless. Two Cloudflare primitives replace that:
 
-- **Durable Object alarms** (`IngestionActor`, `AlertingActor`) — a Durable
-  Object can schedule a wake-up at an arbitrary future time (no 1-minute
-  floor, unlike Cron Triggers) and re-schedule itself from inside the alarm
-  handler, which is exactly a `setInterval` translated to the serverless
-  world.
+- **Durable Object alarms** (`IngestionActor`) — a Durable Object can
+  schedule a wake-up at an arbitrary future time (no 1-minute floor, unlike
+  Cron Triggers) and re-schedule itself from inside the alarm handler, which
+  is exactly a `setInterval` translated to the serverless world. It only
+  does so while `MOCK_MODE` is on: with it off there is nothing to generate,
+  and no alarm is set. (`AlertingActor` is retired; its class remains only
+  because the bindings name it. Query alerting runs from the cron trigger.)
 - **A Durable Object as a WebSocket hub** (`LiveFeedHub`) — a single global
   DO instance accepts every dashboard's WebSocket connection (using the
   hibernatable WebSocket API, so idle connections don't keep it billed as
@@ -389,15 +419,29 @@ it's live within seconds — each ingestion tick re-reads and re-parses the
 active query set from D1 (cheap at this scale, and avoids trying to keep an
 in-memory cache coherent across Worker/Durable-Object isolates).
 
-### Escalation scoring (`backend/src/alerting.ts`)
+### Query alerts (`backend/src/queryWatch.ts`)
 
-Every 30 seconds (`AlertingActor`'s alarm), for each active query: compares
-match volume in the last 5 minutes against a rolling baseline (default 60
-min), computes a simple escalation score (volume growth relative to baseline
-variance + a penalty for negative average sentiment), and opens an `elevated`
-or `critical` alert if it crosses the query's configured thresholds.
-Thresholds, baseline window, and category are all per-query and editable via
-`PATCH /api/queries/:id`.
+Every fifteen minutes, from the cron trigger, for each active query: counts
+the items matched in the last 24 hours and compares that with the query's
+own **usual day** — the median of the last 28 complete days, worked out once
+a day. A **coverage surge** is raised when the 24-hour count reaches the
+query's multiple of usual (2.5 by default; "Sensitive", "Standard" or "Only
+large" in the query editor) and is at least six items. A query under a week
+old has no usual yet and raises nothing.
+
+One surge is one alert: its figures are kept current while it lasts, and it
+closes by itself when coverage falls back to 70% of the bar. An alert the
+analyst resolves is not raised again for the same surge. A surge is stored
+at level `info` and worded as a count of reporting — it is never an
+"escalation", which on this platform is a claim about events and is made
+only by the incident pipeline against written criteria.
+
+Each query has one row in `query_watch`, overwritten in place. This replaced
+a scorer that ran every 30 seconds, compared five minutes with the last
+hour (which news on one subject almost never trips), and appended a row per
+query per run to `escalation_snapshots`. That table is no longer written; it
+is emptied 150 rows per run so that the clean-up never spends the database's
+daily write allowance at once.
 
 ### Dashboard
 
@@ -480,5 +524,5 @@ instead of enums, JSON stored as `TEXT`, timestamps stored as ISO-8601 text.
 - Sentiment is randomly assigned per mock event, not computed from text — a real deployment needs an actual NLP sentiment/entity pipeline.
 - Geolocation is asserted per event rather than extracted from text/metadata.
 - No deduplication across sources for the same real-world story.
-- Escalation scoring is a simple heuristic (documented in `alerting.ts`), not a calibrated statistical/ML anomaly model — tune `elevated_threshold`/`critical_threshold` per query against your own baseline data before relying on it operationally.
-- The mock ingestion tick and escalation scoring loop are single global Durable Object instances — fine for a demo/prototype's event volume, but a real production system would want to shard ingestion across multiple DOs or move to Cloudflare Queues once volume grows past what one DO's alarm loop can process per tick.
+- A query's coverage-surge alert is a simple rule (documented in `queryWatch.ts`): a day's count against the median day, not a calibrated statistical model. It measures how much is being reported, not what is happening.
+- The mock ingestion tick is a single global Durable Object instance — fine for a demo/prototype's event volume, but a real production system would want to shard ingestion across multiple DOs or move to Cloudflare Queues once volume grows past what one DO's alarm loop can process per tick.
