@@ -75,14 +75,14 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
       <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
         <nav style={{ display: "flex", gap: 6 }}>
           {/* Datasets now lives inside Trends & Patterns (its own tab there),
-           *  and Live Monitoring inside Live Intel (the Monitor tool, plus
+           *  and Live Monitoring inside Live OSINT (the Monitor tool, plus
            *  each query's dashboard and editor) — so a monitoring query's
-           *  pages keep "Live Intel" highlighted. */}
+           *  pages keep "Live OSINT" highlighted. */}
+          <button onClick={() => onNavigate("live-intel")} style={navBtnStyle(view === "live-intel" || view === "monitoring")}>
+            Live OSINT
+          </button>
           <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
             Trends & Patterns
-          </button>
-          <button onClick={() => onNavigate("live-intel")} style={navBtnStyle(view === "live-intel" || view === "monitoring")}>
-            Live Intel
           </button>
           {/* Publications by region. Hovering shows the regions; see SpotlightMenu. */}
           <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />
