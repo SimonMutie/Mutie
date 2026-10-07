@@ -74,7 +74,7 @@ export const THEMES: DashTheme[] = [
   {
     key: "situation",
     name: "Situation room",
-    blurb: "Dark, for a wall screen or a late briefing. Echoes Live Intel.",
+    blurb: "Dark, for a wall screen or a late briefing. Echoes Live OSINT.",
     dark: true,
     vars: {
       "--base": "#0a121d",

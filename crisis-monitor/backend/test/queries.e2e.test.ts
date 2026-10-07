@@ -221,7 +221,7 @@ describe("a new query fetches its own results", () => {
     expect(shire.geo_lat).toBeCloseTo(14.1, 1);
   });
 
-  it("serves them located for the Live Intel map", async () => {
+  it("serves them located for the Live OSINT map", async () => {
     const res = await eventsRouter.request(`/located?query_id=${queryId}&hours=24`, { headers: auth }, env, ctx);
     const body = (await res.json()) as { total: number; located: number; events: { place: string; precision: string }[] };
     expect(body.total).toBe(6);

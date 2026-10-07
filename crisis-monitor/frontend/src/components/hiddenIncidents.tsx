@@ -6,7 +6,7 @@ import type { IncidentItem } from "../api";
  *  Hidden incidents stay in the database, in exports, dashboards and the
  *  Manage table; they're only left off the map markers/heatmap. Stored in
  *  localStorage so it survives a reload, and shared between every map in
- *  the app (Mapping, Search, Live Intel) via a same-tab custom event plus
+ *  the app (Mapping, Search, Live OSINT) via a same-tab custom event plus
  *  the cross-tab `storage` event — hiding an incident on one map hides it
  *  on all of them. Every storage access is wrapped: in a private window or
  *  with site data blocked it simply falls back to in-memory for the session. */

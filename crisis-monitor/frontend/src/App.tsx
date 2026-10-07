@@ -30,11 +30,11 @@ const viewLoadingFallback = <div style={{ padding: 24, color: "var(--text-muted)
 
 type BootState = "checking" | "bootstrap" | "login" | "authed";
 /** Two top-level sections — Trends & Patterns ("incidents", which now also
- *  holds Datasets) and Live Intel. Live Monitoring lives inside Live Intel:
+ *  holds Datasets) and Live OSINT. Live Monitoring lives inside Live OSINT:
  *  its queries are listed and toggled in the Monitor tool on the map, and a
  *  query's dashboard / editor are the three object-or-"new-query" views
  *  here, reached from that tool and returning to it. */
-type View = { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-intel" | { spotlight: SpotlightScope };
+type View = { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-osint" | { spotlight: SpotlightScope };
 
 /** Minimal, single-purpose routing: this app is otherwise entirely
  *  state-driven (no URLs for any authenticated view), but a "share for live
@@ -61,14 +61,14 @@ export default function App() {
   const shareToken = sharedDashboardToken ?? publicSpotlightId;
   const [bootState, setBootState] = useState<BootState>("checking");
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [view, setView] = useState<View>("live-intel");
+  const [view, setView] = useState<View>("live-osint");
   // Set when coming back from a monitoring page, so the map reopens with
   // the Monitor tool showing instead of dropping the user on a bare map.
   const [openMonitorTool, setOpenMonitorTool] = useState(false);
 
   function backToMonitoring() {
     setOpenMonitorTool(true);
-    setView("live-intel");
+    setView("live-osint");
   }
   const [queries, setQueries] = useState<MonitoringQueryItem[]>([]);
   const [connected, setConnected] = useState(false);
@@ -163,7 +163,7 @@ export default function App() {
   const spotlightScope = typeof view === "object" && "spotlight" in view ? view.spotlight : null;
 
   async function handleSaved(saved: MonitoringQueryItem, created: boolean) {
-    // A newly created query is shown on the Live Intel map straight away;
+    // A newly created query is shown on the Live OSINT map straight away;
     // it can be switched off again from the Monitor tool.
     if (created) enableMonitorLayer(saved.id);
     await loadQueries();
@@ -175,7 +175,7 @@ export default function App() {
       <TopBar
         connected={connected}
         user={user}
-        view={view === "admin" || view === "settings" || view === "incidents" || view === "live-intel" ? view : spotlightScope ? "spotlight" : "monitoring"}
+        view={view === "admin" || view === "settings" || view === "incidents" || view === "live-osint" ? view : spotlightScope ? "spotlight" : "monitoring"}
         spotlightScope={spotlightScope}
         onOpenSpotlight={(scope) => {
           setOpenMonitorTool(false);
@@ -189,13 +189,13 @@ export default function App() {
       />
 
       <Suspense fallback={viewLoadingFallback}>
-        {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-intel")} />}
+        {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-osint")} />}
 
-        {view === "settings" && <SettingsPanel user={user} onBack={() => setView("live-intel")} />}
+        {view === "settings" && <SettingsPanel user={user} onBack={() => setView("live-osint")} />}
 
         {view === "incidents" && <IncidentsDashboard user={user} />}
 
-        {view === "live-intel" && (
+        {view === "live-osint" && (
           <LiveIntelView
             queries={queries}
             onQueriesChanged={loadQueries}

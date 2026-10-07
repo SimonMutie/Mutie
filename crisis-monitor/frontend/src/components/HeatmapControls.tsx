@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
 
 /** One shared set of heatmap controls for every incident map (Mapping,
- *  Incident Search, Live Intel) — previously three hand-copied blocks that
+ *  Incident Search, Live OSINT) — previously three hand-copied blocks that
  *  had to be kept in sync by hand. Each host passes its own label/select
  *  styling so it still matches that view's look (light panel vs. HUD). */
 export function HeatmapControls({

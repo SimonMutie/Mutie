@@ -29,7 +29,7 @@ interface Props {
   liveMessage: { type: string; payload: unknown } | null;
   onBack: () => void;
   onEdit: () => void;
-  /** Switches this query's layer on and returns to the Live Intel map. */
+  /** Switches this query's layer on and returns to the Live OSINT map. */
   onShowOnMap: () => void;
 }
 
@@ -250,7 +250,7 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap", rowGap: 8 }}>
         <button onClick={onBack} className="qd-btn">
-          ← Live Intel
+          ← Live OSINT
         </button>
         <CategoryBadge category={query.category} size={26} />
         <div style={{ flex: 1, minWidth: 160 }}>
@@ -258,7 +258,7 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
           <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{categoryMeta(query.category).label}</div>
         </div>
         <button onClick={onShowOnMap} className="qd-btn" style={{ borderColor: "var(--signal)", color: "var(--text-primary)", background: "var(--signal-dim)", fontWeight: 600 }}>
-          Show on Live Intel map
+          Show on Live OSINT map
         </button>
         <button onClick={onEdit} className="qd-btn">
           Edit

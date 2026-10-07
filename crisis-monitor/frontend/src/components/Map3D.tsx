@@ -98,7 +98,7 @@ interface Map3DProps {
   /** When given, the view frames the points once each time this changes
    *  (and never again until it does, so it does not fight the viewer's own
    *  zooming). Used where the map shows one set of items in a panel — the
-   *  query dashboard — rather than the whole Live Intel picture. */
+   *  query dashboard — rather than the whole Live OSINT picture. */
   fitKey?: string;
   paths: Map3DPath[];
   territoryChanges: Map3DTerritoryChange[];

@@ -11,7 +11,7 @@ import { Empty, Panel, TONE_COLOR, exactTime, timeAgo, toneOf } from "./shared";
 
 /**
  * The query's items on a map that zooms and pans, with the same choice of
- * maps as Live Intel: a 3D globe, a dark 2D map, a street map and satellite
+ * maps as Live OSINT: a 3D globe, a dark 2D map, a street map and satellite
  * imagery. Each item is placed where its own headline and text say it is;
  * an item that names nowhere is counted in the panel's note, never drawn in
  * a guessed position.

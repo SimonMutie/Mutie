@@ -125,7 +125,7 @@ export interface AlertItem {
   metric_snapshot?: { incidentId?: string; criteriaMet?: string[]; indicators?: string[]; sourceCount?: number; geoPrecision?: string } & Record<string, unknown>;
 }
 
-/** One monitoring-query match located for the Live Intel map — placed from
+/** One monitoring-query match located for the Live OSINT map — placed from
  *  the places its own headline/text names, never from where its publisher
  *  is based (see the backend's /api/events/located). */
 export interface LocatedMonitoringEvent {
@@ -1504,7 +1504,7 @@ export const api = {
   getDatasetDaily: (datasetId: string, field: string) =>
     req<{ date: string; count: number }[]>(`/api/datasets/${datasetId}/daily?field=${encodeURIComponent(field)}`),
 
-  // Live Intelligence layers — each backed by a cached, public upstream feed
+  // Live OSINT layers — each backed by a cached, public upstream feed
   // (USGS, NASA EONET, GDELT). Shared GeoJSON shape across all three so the
   // frontend layer renderer/popup is generic.
   getLiveEarthquakes: () => req<LiveLayerCollection>("/api/live-layers/earthquakes"),

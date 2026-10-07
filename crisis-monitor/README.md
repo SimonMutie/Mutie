@@ -121,7 +121,7 @@ Each monitoring query has a dashboard (`frontend/src/components/QueryDashboard.t
 and `components/query/`), fed by `backend/src/routes/queryInsights.ts`:
 
 - **Map** — the items placed where their own text says, on the same map
-  engines as Live Intel, switchable between a 3D globe, a dark 2D map, a
+  engines as Live OSINT, switchable between a 3D globe, a dark 2D map, a
   street map and satellite imagery.
 - **Events per day** — a line; clicking a day opens it: an AI summary of that
   day's headlines, the day at a glance (no AI), and its events and

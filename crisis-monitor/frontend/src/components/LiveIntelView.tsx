@@ -162,7 +162,7 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
 
 
 /**
- * "Live Intelligence" — a new, separate view rather than a restyle of the
+ * "Live OSINT" — a new, separate view rather than a restyle of the
  * existing (light) dashboards/choropleth. Modeled on OSIRIS's own dark HUD
  * aesthetic (osirisai.live): a grouped, toggleable layer panel on the left,
  * a rotating 3D globe (or a flat 2D/Map/Sat projection, switchable) with
@@ -766,7 +766,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  two active together would fight over the same click. */
 type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | "crypto" | null;
 
-/** What Live Intel needs from the app shell to host Live Monitoring: the
+/** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
  *  query editor (full pages of their own, which return here). */
 export interface LiveIntelViewProps {
@@ -857,7 +857,7 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `live-intel-${mode}-${Date.now()}.geojson`;
+  a.download = `live-osint-${mode}-${Date.now()}.geojson`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -3249,7 +3249,7 @@ function ToolPanelShell({ title, children }: { title: string; children: ReactNod
   );
 }
 
-/** Live Monitoring inside Live Intel: the user's monitoring queries, each
+/** Live Monitoring inside Live OSINT: the user's monitoring queries, each
  *  with a switch that draws its recent matches on the map, plus the ways
  *  into the rest of the feature — create a query, open a query's dashboard,
  *  edit, pause, delete. The dashboard and editor are full pages of their

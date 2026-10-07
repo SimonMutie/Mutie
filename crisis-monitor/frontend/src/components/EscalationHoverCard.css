@@ -1,6 +1,6 @@
 /* The hover card on escalation markers (EscalationHoverCard.tsx), and the
  * two map libraries' popup shells restyled to carry it: the same dark
- * glass as the rest of the Live Intel HUD instead of their white bubbles. */
+ * glass as the rest of the Live OSINT HUD instead of their white bubbles. */
 
 .esc-hover {
   width: 290px;

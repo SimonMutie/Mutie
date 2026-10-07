@@ -1,4 +1,4 @@
-/** Which monitoring queries are switched on as Live Intel map layers.
+/** Which monitoring queries are switched on as Live OSINT map layers.
  *  Kept in localStorage (per browser) so the choice survives moving between
  *  the map, a query's dashboard and the query editor, and a page reload. */
 const KEY = "lens.monitoring.mapLayers";

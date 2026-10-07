@@ -126,7 +126,7 @@ interface LocatedEvent {
   precision: EventLocationPrecision;
 }
 
-/** A monitoring query's recent matches, located for the Live Intel map.
+/** A monitoring query's recent matches, located for the Live OSINT map.
  *
  *  The events table's own geo_lat/geo_lng are NOT used here: for news they
  *  are the centroid of the PUBLISHER's country (GDELT's `sourcecountry`),
