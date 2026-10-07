@@ -1354,6 +1354,8 @@ export interface DdResult {
   companiesHouse: DdCheck<{ url: string; name: string; kind: string; status: string | null; incorporated: string | null; people: { name: string; role: string; resigned: boolean }[]; appointments: number | null; strength: string }>;
   offshore: DdCheck<{ url: string; name: string; type: string | null; strength: string }>;
   media: DdCheck<{ items: DdMediaItem[]; candidates: number; read: number; classified: boolean }>;
+  mediaCoverage: DdCheck<{ total: number; byMonth: { month: string; count: number }[]; topOutlets: { domain: string; count: number }[]; recent: { title: string; url: string; domain: string; published: string | null }[]; themes: string[]; tone: string; overview: string; aiWritten: boolean }>;
+  social: DdCheck<{ accounts: { platform: string; url: string; handle: string }[]; accountsFrom: string | null; posts: { network: string; author: string; text: string; url: string; published: string | null }[]; networksSearched: string[]; networksFailed: string[]; searchLinks: { label: string; url: string }[]; overview: string }>;
   registries: { label: string; url: string; note?: string }[];
   sources: { id: string; label: string; state: "ok" | "unavailable" | "not_configured"; note?: string; url?: string }[];
   summary: { text: string; keyPoints: string[]; nextSteps: string[]; aiWritten: boolean };

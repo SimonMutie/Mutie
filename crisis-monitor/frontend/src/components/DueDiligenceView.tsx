@@ -205,6 +205,65 @@ function Report({ c }: { c: DdCase }) {
       </div>
       <p style={{ ...muted, marginTop: 8, fontStyle: "italic" }}>{r.disclaimer}</p>
 
+      <Section title="Media coverage and online presence">
+        {(() => {
+          const mc = r.mediaCoverage?.hits[0];
+          const so = r.social?.hits[0];
+          const max = Math.max(1, ...(mc?.byMonth ?? []).map((b) => b.count));
+          return (
+            <div style={{ display: "grid", gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4 }}>Mainstream media, last three months</div>
+                {!mc ? <p style={muted}>Not checked: {r.mediaCoverage?.note ?? "unavailable"}</p> : (
+                  <>
+                    <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{mc.overview}</p>
+                    {r.mediaCoverage.note && <p style={{ ...muted, color: "var(--elevated)" }}>{r.mediaCoverage.note}</p>}
+                    {!!mc.total && (
+                      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 8, alignItems: "flex-end" }}>
+                        <div style={{ fontSize: 12.5 }}><strong style={{ fontSize: 20 }}>{mc.total}</strong> headlines · tone {mc.tone}</div>
+                        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 36 }} aria-label="Headlines per month">
+                          {mc.byMonth.map((b) => (
+                            <div key={b.month} title={`${b.month}: ${b.count}`} style={{ width: 22, height: Math.max(3, (b.count / max) * 32), background: "var(--signal)", opacity: 0.75, borderRadius: 2 }} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {!!mc.themes.length && <div style={{ ...muted, marginTop: 6 }}>Themes: {mc.themes.join(" · ")}</div>}
+                    {!!mc.topOutlets.length && <div style={muted}>Most coverage from: {mc.topOutlets.map((o) => `${o.domain} (${o.count})`).join(", ")}</div>}
+                    {!!mc.recent.length && (
+                      <ul style={{ margin: "8px 0 0 18px", padding: 0, fontSize: 12.5, lineHeight: 1.5 }}>
+                        {mc.recent.slice(0, 6).map((i, k) => <li key={k}><A href={i.url}>{i.title}</A> <span style={muted}>{i.domain}{i.published && ` · ${i.published}`}</span></li>)}
+                      </ul>
+                    )}
+                    <p style={muted}>{mc.aiWritten ? "Summary written by AI from headlines only." : "Counts only; no AI summary was available."}</p>
+                  </>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4 }}>Social media</div>
+                {!so ? <p style={muted}>Not checked: {r.social?.note ?? "unavailable"}</p> : (
+                  <>
+                    <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55 }}>{so.overview}</p>
+                    {!!so.accounts.length && (
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                        {so.accounts.map((a, k) => <a key={k} href={a.url} target="_blank" rel="noopener noreferrer" style={{ ...chip, textDecoration: "none" }}>{a.platform}: {a.handle.length > 28 ? a.handle.slice(0, 28) + "…" : a.handle}</a>)}
+                      </div>
+                    )}
+                    {!!so.accounts.length && <p style={muted}>From Wikidata{so.accountsFrom ? " (" : ""}{so.accountsFrom && <A href={so.accountsFrom}>entry</A>}{so.accountsFrom ? ")" : ""}. Confirm these are the subject's own accounts.</p>}
+                    {!!so.posts.length && (
+                      <ul style={{ margin: "8px 0 0 18px", padding: 0, fontSize: 12.5, lineHeight: 1.5 }}>
+                        {so.posts.slice(0, 5).map((x, k) => <li key={k}><span style={muted}>{x.network} {x.author} {x.published}</span> <A href={x.url}>{x.text.slice(0, 140)}</A></li>)}
+                      </ul>
+                    )}
+                    <div style={{ ...muted, marginTop: 8 }}>Search by hand: {so.searchLinks.map((l, k) => <span key={k}>{k > 0 && " · "}<A href={l.url}>{l.label}</A></span>)}</div>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </Section>
+
       <Section title="Sanctions lists">
         {!r.sanctions.hits.length ? <p style={muted}>No name matches in the lists that could be checked.</p> : (
           <table style={table}>

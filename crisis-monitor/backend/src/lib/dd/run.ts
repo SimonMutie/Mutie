@@ -3,6 +3,7 @@ import { callStructured } from "../llm";
 import { screenSanctions, type ListHit, type ListStatus } from "./sanctionsLists";
 import { checkCompaniesHouse, checkGleif, checkOffshoreLeaks, checkWikidata, registryLinks, type Check, type CompaniesHouseHit, type GleifHit, type Kind, type OffshoreHit, type RegistryLink, type WikidataHit } from "./sources";
 import { screenAdverseMedia, type MediaResult } from "./adverseMedia";
+import { checkMediaCoverage, checkSocial, type CoverageResult, type SocialResult } from "./presence";
 
 /**
  * One due-diligence screening of an organisation or a public figure.
@@ -38,6 +39,8 @@ export interface DdResult {
   companiesHouse: Check<CompaniesHouseHit>;
   offshore: Check<OffshoreHit>;
   media: Check<MediaResult>;
+  mediaCoverage: Check<CoverageResult>;
+  social: Check<SocialResult>;
   registries: RegistryLink[];
   sources: SourceStatus[];
   summary: { text: string; keyPoints: string[]; nextSteps: string[]; aiWritten: boolean };
@@ -130,6 +133,8 @@ async function synthesise(env: Env, r: DdResult): Promise<DdResult["summary"]> {
     office: r.office.hits.slice(0, 3).map((h) => ({ label: h.label, description: h.description, positions: h.positions.slice(0, 4), facts: h.facts.slice(0, 4), strength: h.strength })),
     offshore: r.offshore.hits.slice(0, 4).map((h) => ({ name: h.name, type: h.type, strength: h.strength })),
     corporate: r.gleif.hits.slice(0, 2).map((h) => ({ name: h.name, jurisdiction: h.jurisdiction, status: h.status, directParent: h.directParent, ultimateParent: h.ultimateParent })),
+    coverageOverview: r.mediaCoverage.hits[0]?.overview ?? null,
+    socialOverview: r.social.hits[0]?.overview ?? null,
     media: (r.media.hits[0]?.items ?? []).slice(0, 8).map((i) => ({ title: i.title, domain: i.domain, category: i.category, severity: i.severity, status: i.status, what: i.what, basis: i.basis })),
   };
   const res = await callStructured<{ text: string; keyPoints: string[]; nextSteps: string[] }>(env, {
@@ -150,18 +155,20 @@ export async function runDueDiligence(env: Env, input: DdInput): Promise<DdResul
   const names = [input.name, ...input.aliases].filter(Boolean).slice(0, 5);
   const context = [input.identifiers, input.country].filter(Boolean).join("; ") || null;
 
-  const [sanctions, office, gleif, ch, offshore, media] = await Promise.all([
+  const [sanctions, office, gleif, ch, offshore, media, mediaCoverage, social] = await Promise.all([
     screenSanctions(env, names, input.kind).catch((err) => ({ hits: [] as ListHit[], statuses: [{ id: "OFAC", label: "Sanctions lists", searchUrl: "", status: "unavailable", error: String(err) } as ListStatus] })),
     settled("wikidata", "Public office (Wikidata)", checkWikidata(input.name, input.kind)),
     input.kind === "entity" ? settled("gleif", "Corporate records (GLEIF)", checkGleif(input.name)) : Promise.resolve<Check<GleifHit>>({ id: "gleif", label: "Corporate records (GLEIF)", state: "ok", note: "Not applicable to individuals.", hits: [] }),
     settled("companies_house", "UK Companies House", checkCompaniesHouse(env, input.name, input.kind)),
     settled("offshore", "ICIJ Offshore Leaks", checkOffshoreLeaks(input.name, input.kind)),
     withDeadline(screenAdverseMedia(env, { names, kind: input.kind, country: input.country, context }), 50_000, "Adverse media").catch((err) => notRun("adverse_media", "Adverse media", err) as Check<MediaResult>),
+    settled("media_coverage", "Mainstream media coverage", checkMediaCoverage(env, { names, kind: input.kind, country: input.country })),
+    settled("social", "Social media presence", checkSocial(env, { names, kind: input.kind })),
   ]);
 
   const sources: SourceStatus[] = [
     ...sanctions.statuses.map((s) => ({ id: s.id, label: `${s.id} sanctions list`, state: s.status, note: s.error ?? (s.stale ? "Showing the last copy loaded; the latest refresh failed." : s.asOf ? `As of ${s.asOf}` : undefined), url: s.searchUrl })),
-    ...[office, gleif, ch, offshore, media].filter((c) => !(c.id === "gleif" && input.kind === "person")).map((c) => ({ id: c.id, label: c.label, state: c.state, note: c.note })),
+    ...[office, gleif, ch, offshore, media, mediaCoverage, social].filter((c) => !(c.id === "gleif" && input.kind === "person")).map((c) => ({ id: c.id, label: c.label, state: c.state, note: c.note })),
   ];
 
   const r: DdResult = {
@@ -173,6 +180,8 @@ export async function runDueDiligence(env: Env, input: DdInput): Promise<DdResul
     companiesHouse: ch,
     offshore,
     media,
+    mediaCoverage,
+    social,
     registries: registryLinks(input.name, countryCodeOf(input.country)),
     sources,
     summary: { text: "", keyPoints: [], nextSteps: [], aiWritten: false },

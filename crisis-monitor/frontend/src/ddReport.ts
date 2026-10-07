@@ -28,6 +28,28 @@ export function ddReportHtml(c: DdCase): string {
   if (r.summary.nextSteps.length) p.push(`<h3>Next steps</h3><ul>${r.summary.nextSteps.map((k) => `<li>${esc(k)}</li>`).join("")}</ul>`);
   p.push(`<p class="note">${r.summary.aiWritten ? "Summary drafted by AI from the findings below; check it against them." : "Summary generated from the findings below."}</p>`);
 
+  const mc = r.mediaCoverage?.hits[0];
+  const so = r.social?.hits[0];
+  p.push(`<h2>Media coverage and online presence</h2>`);
+  p.push(`<h3>Mainstream media (last three months)</h3>`);
+  if (!mc) p.push(`<p>Not checked: ${esc(r.mediaCoverage?.note ?? "unavailable")}</p>`);
+  else {
+    p.push(`<p>${esc(mc.overview)}${mc.total ? ` (${mc.total} headlines; tone: ${esc(mc.tone)})` : ""}</p>`);
+    if (r.mediaCoverage.note) p.push(`<p class="note">${esc(r.mediaCoverage.note)}</p>`);
+    if (mc.themes.length) p.push(`<p>Themes: ${esc(mc.themes.join("; "))}</p>`);
+    if (mc.topOutlets.length) p.push(`<p>Most coverage from: ${esc(mc.topOutlets.map((o) => `${o.domain} (${o.count})`).join(", "))}</p>`);
+    if (mc.recent.length) p.push(`<ul>${mc.recent.slice(0, 8).map((i) => `<li>${esc(i.published ?? "")} ${link(i.url, i.title)} <small>${esc(i.domain)}</small></li>`).join("")}</ul>`);
+    p.push(`<p class="note">${mc.aiWritten ? "Summary written by AI from headlines only." : "Counts only; no AI summary was available."}</p>`);
+  }
+  p.push(`<h3>Social media</h3>`);
+  if (!so) p.push(`<p>Not checked: ${esc(r.social?.note ?? "unavailable")}</p>`);
+  else {
+    p.push(`<p>${esc(so.overview)}</p>`);
+    if (so.accounts.length) p.push(`<ul>${so.accounts.map((a) => `<li>${esc(a.platform)}: ${link(a.url, a.handle)}</li>`).join("")}</ul><p class="note">Accounts as listed in Wikidata${so.accountsFrom ? ` (${link(so.accountsFrom, "entry")})` : ""}; confirm they are the subject's own.</p>`);
+    if (so.posts.length) p.push(`<ul>${so.posts.slice(0, 6).map((x) => `<li>${esc(x.published ?? "")} ${esc(x.network)} ${esc(x.author)}: ${link(x.url, x.text.slice(0, 160))}</li>`).join("")}</ul>`);
+    p.push(`<p>Search by hand: ${so.searchLinks.map((l) => link(l.url, l.label)).join(" · ")}</p>`);
+  }
+
   p.push(`<h2>Sanctions lists</h2>`);
   if (!r.sanctions.hits.length) p.push(`<p>No name matches in the lists that could be checked (see source status).</p>`);
   else

@@ -4,6 +4,7 @@ import { decideOutcome, runDueDiligence, countryCodeOf, coverageStatement } from
 import { excerptsAround } from "../src/lib/dd/adverseMedia";
 import { fakeD1 } from "./fakeD1";
 import { resetListTableCheck } from "../src/lib/dd/sanctionsLists";
+import { setCoverageDelay } from "../src/lib/dd/presence";
 import type { Env } from "../src/bindings";
 
 const entry = (list: ListId, name: string, kind: ListEntry["kind"] = "entity"): ListEntry => ({ list, ref: `${list}-1`, kind, name, aliases: [], countries: ["RU"], programs: ["TEST"], listedOn: "2024-01-01", remarks: null });
@@ -51,6 +52,7 @@ describe("helpers", () => {
 describe("full screening with every outside service unreachable", () => {
   let f: ReturnType<typeof fakeD1>;
   beforeEach(() => {
+    setCoverageDelay(0);
     f = fakeD1();
     resetListTableCheck();
     resetListCache();
@@ -95,6 +97,20 @@ describe("lists stored in D1", () => {
     const { hits, statuses } = await screenSanctions(env, ["Kharkov Shipping Co"], "entity");
     expect(hits[0]?.list).toBe("UN");
     expect(statuses.find((s) => s.id === "EU")?.status).toBe("unavailable");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("presence", () => {
+  it("builds search links and reports a missing social network instead of hiding it", async () => {
+    setCoverageDelay(0);
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("down");
+    });
+    const { checkSocial, socialSearchLinks } = await import("../src/lib/dd/presence");
+    expect(socialSearchLinks("Acme Ltd").length).toBeGreaterThanOrEqual(5);
+    const r = await checkSocial({} as Env, { names: ["Acme Ltd"], kind: "entity" });
+    expect(r.state).toBe("unavailable");
     vi.unstubAllGlobals();
   });
 });
