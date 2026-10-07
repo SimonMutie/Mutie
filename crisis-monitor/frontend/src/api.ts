@@ -1350,6 +1350,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export { ApiError };
 
+export type AlertChannel = "email" | "signal";
+export interface AlertSubscription {
+  id: string;
+  scope: "query" | "escalations";
+  query_id: string | null;
+  channel: AlertChannel;
+  destination: string;
+  min_level: "any" | "elevated" | "critical";
+  frequency_minutes: number;
+  enabled: boolean;
+  last_sent_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  created_at: string;
+}
+export interface AlertSubscriptionList {
+  /** Which delivery methods the platform has credentials for. */
+  channels: Record<AlertChannel, boolean>;
+  subscriptions: AlertSubscription[];
+}
+
 export const api = {
   health: () => req<{ status: string }>("/api/health"),
 
@@ -1476,6 +1497,15 @@ export const api = {
   updateQuery: (id: string, data: Partial<MonitoringQueryItem>) =>
     req<MonitoringQueryItem>(`/api/queries/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteQuery: (id: string) => req<void>(`/api/queries/${id}`, { method: "DELETE" }),
+
+  listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "query"; queryId: string }) =>
+    req<AlertSubscriptionList>(`/api/alert-subscriptions?scope=${target.scope}${target.scope === "query" ? `&query_id=${encodeURIComponent(target.queryId)}` : ""}`),
+  createAlertSubscription: (body: { scope: "query" | "escalations"; query_id?: string; channel: AlertChannel; destination: string; min_level?: string; frequency_minutes?: number }) =>
+    req<AlertSubscription>("/api/alert-subscriptions", { method: "POST", body: JSON.stringify(body) }),
+  updateAlertSubscription: (id: string, patch: { destination?: string; min_level?: string; frequency_minutes?: number; enabled?: boolean }) =>
+    req<AlertSubscription>(`/api/alert-subscriptions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteAlertSubscription: (id: string) => req<void>(`/api/alert-subscriptions/${id}`, { method: "DELETE" }),
+  testAlertSubscription: (id: string) => req<{ ok: boolean; note: string | null }>(`/api/alert-subscriptions/${id}/test`, { method: "POST" }),
   validateQuery: (boolean_query: string) =>
     req<{ valid: boolean; error: string | null }>("/api/queries/validate", {
       method: "POST",

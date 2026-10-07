@@ -4,6 +4,7 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, type AlertItem, type EventItem, type MonitoringQueryItem, type QueryInsights, type QueryNote, type QueryOverview, type QueryTopic, type QueryWatch } from "../api";
 import { changeWords, downloadBriefing } from "../queryBriefing";
+import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import CategoryBadge, { categoryMeta } from "./CategoryBadge";
 import MapPanel from "./query/MapPanel";
 import VolumeLine from "./query/VolumeLine";
@@ -111,6 +112,7 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [showQuery, setShowQuery] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
 
   const [overview, setOverview] = useState<QueryOverview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -346,10 +348,21 @@ export default function QueryDashboard({ query, liveMessage, onBack, onEdit, onS
         <button onClick={onEdit} className="qd-btn">
           Edit
         </button>
+        <button onClick={() => setShowAlerts((v) => !v)} className="qd-btn" aria-expanded={showAlerts}>
+          {showAlerts ? "Hide alerts ▴" : "Alerts ▾"}
+        </button>
         <button onClick={() => setShowQuery((v) => !v)} className="qd-btn" aria-expanded={showQuery}>
           {showQuery ? "Hide query syntax ▴" : "View query syntax ▾"}
         </button>
       </div>
+
+      {showAlerts && (
+        <div style={{ padding: "14px 24px", background: "var(--panel-raised)", borderBottom: "1px solid var(--border-soft)" }}>
+          <div style={{ maxWidth: 640 }}>
+            <AlertDeliveryPanel target={{ scope: "query", queryId: query.id }} />
+          </div>
+        </div>
+      )}
 
       {showQuery && (
         <div

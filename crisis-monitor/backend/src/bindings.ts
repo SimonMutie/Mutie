@@ -129,4 +129,20 @@ export interface Env {
    *  the daily AI budget; this keeps them from crowding out the escalation
    *  reader. "0" switches them off (the non-AI digest still shows). */
   DAY_SUMMARIES_PER_DAY?: string;
+  /** Alert delivery by email (lib/notify.ts), through Resend (resend.com).
+   *  Create an API key and verify the sending domain there, then set
+   *  RESEND_API_KEY as a secret and ALERT_EMAIL_FROM to an address on that
+   *  domain, e.g. "The Lens <alerts@afrilensconsulting.com>". Unset = the
+   *  email option shows as not set up. */
+  RESEND_API_KEY?: string;
+  ALERT_EMAIL_FROM?: string;
+  /** Alert delivery by Signal, through a signal-cli-rest-api server you run
+   *  (github.com/bbernhard/signal-cli-rest-api) with a Signal number
+   *  registered on it. SIGNAL_API_URL is that server's public https address,
+   *  SIGNAL_SENDER_NUMBER the registered number in +international form, and
+   *  SIGNAL_API_TOKEN an optional bearer token if a proxy in front of it
+   *  asks for one. Unset = the Signal option shows as not set up. */
+  SIGNAL_API_URL?: string;
+  SIGNAL_SENDER_NUMBER?: string;
+  SIGNAL_API_TOKEN?: string;
 }

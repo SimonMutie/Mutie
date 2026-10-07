@@ -21,6 +21,8 @@ import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { spotlightRouter, publicSpotlightRouter } from "./routes/spotlight";
+import { alertSubscriptionsRouter } from "./routes/alertSubscriptions";
+import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
 import { ensureSchema } from "./lib/schemaHeal";
 import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
@@ -102,6 +104,7 @@ app.route("/api/global-status", globalStatusRouter);
 app.route("/api/social-listening", socialListeningRouter);
 app.route("/api/listening-queries", listeningQueriesRouter);
 app.route("/api/spotlight", spotlightRouter);
+app.route("/api/alert-subscriptions", alertSubscriptionsRouter);
 app.route("/api/public/spotlight", publicSpotlightRouter);
 
 // Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off
@@ -189,7 +192,14 @@ export default {
     // them into located incidents and raises/updates/closes alerts. Bounded
     // per tick (ESCALATION_ARTICLES_PER_TICK) and self-locking, so a slow
     // tick never overlaps the next one.
-    ctx.waitUntil(runEscalationPipeline(env).catch((err) => console.error("[escalation] pipeline tick failed", err)));
+    // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
+    // newly flagged incident reaches email/Signal in the same tick.
+    ctx.waitUntil(
+      runEscalationPipeline(env)
+        .catch((err) => console.error("[escalation] pipeline tick failed", err))
+        .then(() => dispatchAlertSubscriptions(env))
+        .catch((err) => console.error("[alerts] dispatch failed", err))
+    );
 
     // The watch on each monitoring query (see queryWatch.ts): its last 24
     // hours against its own usual day, and a coverage-surge alert when the

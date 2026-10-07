@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type AuthUser, type EscalationPipelineStatus } from "../api";
+import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled } from "../intro";
 
 interface Props {
@@ -24,6 +25,11 @@ export default function SettingsPanel({ onBack, user }: Props) {
       </div>
 
       <ChangePasswordForm />
+
+      <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 8 }}>Conflict escalation alerts</div>
+        <AlertDeliveryPanel target={{ scope: "escalations" }} />
+      </div>
 
       <OpeningSequenceCard />
 
