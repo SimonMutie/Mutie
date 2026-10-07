@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type DdCase, type DdCaseRow } from "../api";
 import { downloadDdReport, OUTCOME_LABEL, printDdReport } from "../ddReport";
 import DownloadMenu from "./query/DownloadMenu";
+import ReportBuilder from "./ReportBuilder";
 
 /**
  * Due diligence: screen an organisation or a public figure against sanctions
@@ -157,7 +158,21 @@ export default function DueDiligenceView() {
         </div>
       </div>
 
-      <div>{open ? <Report c={open} /> : <div style={{ ...card, color: "var(--text-muted)", fontSize: 13.5 }}>Run a screening or open a saved one. The report shows what was found, how confident each match is, and which sources could not be checked.</div>}</div>
+      <div>{open ? <Tabs c={open} /> : <div style={{ ...card, color: "var(--text-muted)", fontSize: 13.5 }}>Run a screening or open a saved one. The report shows what was found, how confident each match is, and which sources could not be checked.</div>}</div>
+    </div>
+  );
+}
+
+function Tabs({ c }: { c: DdCase }) {
+  const [tab, setTab] = useState<"findings" | "report">("findings");
+  useEffect(() => setTab("findings"), [c.id]);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button type="button" onClick={() => setTab("findings")} style={{ ...chip, ...(tab === "findings" ? chipOn : {}) }}>Screening findings</button>
+        <button type="button" onClick={() => setTab("report")} style={{ ...chip, ...(tab === "report" ? chipOn : {}) }}>Commercial DD report</button>
+      </div>
+      {tab === "findings" ? <Report c={c} /> : <ReportBuilder c={c} />}
     </div>
   );
 }

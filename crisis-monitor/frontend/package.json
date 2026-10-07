@@ -29,6 +29,7 @@
     "@types/topojson-client": "^3.1.5",
     "d3-geo": "^3.1.1",
     "d3-hierarchy": "^3.1.2",
+    "docx": "^9.9.0",
     "gif.js": "^0.2.0",
     "html2canvas": "^1.4.1",
     "leaflet": "^1.9.4",

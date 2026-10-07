@@ -3,6 +3,7 @@ import { callStructured } from "../llm";
 import { screenSanctions, type ListHit, type ListStatus } from "./sanctionsLists";
 import { checkCompaniesHouse, checkGleif, checkOffshoreLeaks, checkWikidata, registryLinks, type Check, type CompaniesHouseHit, type GleifHit, type Kind, type OffshoreHit, type RegistryLink, type WikidataHit } from "./sources";
 import { screenAdverseMedia, type MediaResult } from "./adverseMedia";
+import { getFlaggedIncidents } from "../../escalationIncidents";
 import { checkMediaCoverage, checkSocial, type CoverageResult, type SocialResult } from "./presence";
 
 /**
@@ -30,6 +31,13 @@ export interface SourceStatus {
   url?: string;
 }
 
+export interface EnvironmentContext {
+  country: string | null;
+  /** Flagged conflict-escalation incidents in the subject's country, from this platform's own monitoring. */
+  incidents: { level: string; headline: string; location: string | null; summary: string; assessment: string; lastEventDate: string | null; reportCount: number }[];
+  note: string;
+}
+
 export interface DdResult {
   input: DdInput;
   outcome: Outcome;
@@ -41,6 +49,7 @@ export interface DdResult {
   media: Check<MediaResult>;
   mediaCoverage: Check<CoverageResult>;
   social: Check<SocialResult>;
+  environment: EnvironmentContext;
   registries: RegistryLink[];
   sources: SourceStatus[];
   summary: { text: string; keyPoints: string[]; nextSteps: string[]; aiWritten: boolean };
@@ -151,11 +160,26 @@ async function synthesise(env: Env, r: DdResult): Promise<DdResult["summary"]> {
   return { text: res.data.text, keyPoints: (res.data.keyPoints ?? []).slice(0, 6), nextSteps: (res.data.nextSteps ?? []).slice(0, 4), aiWritten: true };
 }
 
+async function operatingEnvironment(env: Env, country: string | null): Promise<EnvironmentContext> {
+  if (!country) return { country: null, incidents: [], note: "No country was given, so the operating environment was not assessed." };
+  try {
+    const want = country.trim().toLowerCase();
+    const all = await getFlaggedIncidents(env);
+    const incidents = all
+      .filter((i) => i.countryName.toLowerCase() === want || i.countryCode.toLowerCase() === want)
+      .slice(0, 8)
+      .map((i) => ({ level: i.level, headline: i.headline, location: i.locationLabel, summary: i.summary, assessment: i.assessment, lastEventDate: i.lastEventDate, reportCount: i.reportCount }));
+    return { country, incidents, note: incidents.length ? `${incidents.length} flagged conflict-escalation incident(s) currently active in ${country} on this platform.` : `No Elevated or Critical conflict-escalation incident is currently flagged in ${country} on this platform (this is not a country risk rating).` };
+  } catch (err) {
+    return { country, incidents: [], note: `The platform's conflict monitoring could not be read: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function runDueDiligence(env: Env, input: DdInput): Promise<DdResult> {
   const names = [input.name, ...input.aliases].filter(Boolean).slice(0, 5);
   const context = [input.identifiers, input.country].filter(Boolean).join("; ") || null;
 
-  const [sanctions, office, gleif, ch, offshore, media, mediaCoverage, social] = await Promise.all([
+  const [sanctions, office, gleif, ch, offshore, media, mediaCoverage, social, environment] = await Promise.all([
     screenSanctions(env, names, input.kind).catch((err) => ({ hits: [] as ListHit[], statuses: [{ id: "OFAC", label: "Sanctions lists", searchUrl: "", status: "unavailable", error: String(err) } as ListStatus] })),
     settled("wikidata", "Public office (Wikidata)", checkWikidata(input.name, input.kind)),
     input.kind === "entity" ? settled("gleif", "Corporate records (GLEIF)", checkGleif(input.name)) : Promise.resolve<Check<GleifHit>>({ id: "gleif", label: "Corporate records (GLEIF)", state: "ok", note: "Not applicable to individuals.", hits: [] }),
@@ -164,6 +188,7 @@ export async function runDueDiligence(env: Env, input: DdInput): Promise<DdResul
     withDeadline(screenAdverseMedia(env, { names, kind: input.kind, country: input.country, context }), 50_000, "Adverse media").catch((err) => notRun("adverse_media", "Adverse media", err) as Check<MediaResult>),
     settled("media_coverage", "Mainstream media coverage", checkMediaCoverage(env, { names, kind: input.kind, country: input.country })),
     settled("social", "Social media presence", checkSocial(env, { names, kind: input.kind })),
+    operatingEnvironment(env, input.country),
   ]);
 
   const sources: SourceStatus[] = [
@@ -182,6 +207,7 @@ export async function runDueDiligence(env: Env, input: DdInput): Promise<DdResul
     media,
     mediaCoverage,
     social,
+    environment,
     registries: registryLinks(input.name, countryCodeOf(input.country)),
     sources,
     summary: { text: "", keyPoints: [], nextSteps: [], aiWritten: false },

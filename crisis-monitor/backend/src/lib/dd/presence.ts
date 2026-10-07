@@ -32,6 +32,8 @@ export interface CoverageItem {
   url: string;
   domain: string;
   published: string | null;
+  /** Rated from the headline by the analyst model; absent when it could not be rated. */
+  sentiment?: "positive" | "neutral" | "negative";
 }
 export interface CoverageResult {
   total: number;
@@ -61,8 +63,13 @@ const COVERAGE_SCHEMA = {
     themes: { type: "array", items: { type: "string" }, description: "Up to 5 short themes the coverage is about" },
     tone: { type: "string", enum: ["positive", "neutral", "mixed", "negative", "unclear"] },
     overview: { type: "string", description: "Two or three plain sentences on how prominent the subject is in the news and what the coverage is about." },
+    headlines: {
+      type: "array",
+      description: "Sentiment toward the subject of each of the first 15 headlines, by number",
+      items: { type: "object", properties: { index: { type: "integer" }, sentiment: { type: "string", enum: ["positive", "neutral", "negative"] } }, required: ["index", "sentiment"] },
+    },
   },
-  required: ["themes", "tone", "overview"],
+  required: ["themes", "tone", "overview", "headlines"],
 };
 
 export async function checkMediaCoverage(env: Env, input: { names: string[]; kind: Kind; country: string | null }): Promise<Check<CoverageResult>> {
@@ -102,11 +109,11 @@ export async function checkMediaCoverage(env: Env, input: { names: string[]; kin
     let tone: CoverageResult["tone"] = "unclear";
     let overview = `${items.length} headlines naming the subject in the last three months, most from ${topOutlets.slice(0, 3).map((o) => o.domain).join(", ")}.`;
     let aiWritten = false;
-    const ai = await callStructured<{ themes: string[]; tone: CoverageResult["tone"]; overview: string }>(env, {
+    const ai = await callStructured<{ themes: string[]; tone: CoverageResult["tone"]; overview: string; headlines?: { index: number; sentiment: "positive" | "neutral" | "negative" }[] }>(env, {
       role: "analyst",
       system:
         "You summarise news coverage of a subject for a due-diligence analyst, from headlines only. Some headlines may concern a different person or company with a similar name; ignore those that clearly do. Be neutral and factual, never imply guilt, and say that this is based on headlines.",
-      user: `SUBJECT: ${primary} (${input.kind === "person" ? "public figure" : "organisation"}${input.country ? `, ${input.country}` : ""})\nARTICLES FOUND: ${items.length}\n\nHEADLINES (newest first):\n${items.slice(0, 40).map((i) => `- ${i.published ?? "undated"} ${i.domain}: ${i.title}`).join("\n")}`,
+      user: `SUBJECT: ${primary} (${input.kind === "person" ? "public figure" : "organisation"}${input.country ? `, ${input.country}` : ""})\nARTICLES FOUND: ${items.length}\n\nHEADLINES (newest first, numbered from 0):\n${items.slice(0, 40).map((i, n) => `[${n}] ${i.published ?? "undated"} ${i.domain}: ${i.title}`).join("\n")}`,
       schema: COVERAGE_SCHEMA,
       toolName: "summarise_coverage",
       toolDescription: "Summarise the news coverage.",
@@ -117,6 +124,7 @@ export async function checkMediaCoverage(env: Env, input: { names: string[]; kin
       tone = ai.data.tone ?? "unclear";
       overview = ai.data.overview;
       aiWritten = true;
+      for (const h of ai.data.headlines ?? []) if (items[h.index]) items[h.index].sentiment = h.sentiment;
     }
     return { id, label, state: "ok", hits: [{ total: items.length, byMonth, topOutlets, recent: items.slice(0, 10), themes, tone, overview, aiWritten }] };
   } catch (err) {

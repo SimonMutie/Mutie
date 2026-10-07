@@ -33,6 +33,13 @@ async function ensureTable(env: Env) {
   ready = true;
 }
 
+let reportReady = false;
+async function ensureReportTable(env: Env) {
+  if (reportReady) return;
+  await run(env.DB, "CREATE TABLE IF NOT EXISTS due_diligence_reports (case_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL)");
+  reportReady = true;
+}
+
 const runSchema = z.object({
   name: z.string().trim().min(2).max(200),
   subject_type: z.enum(["person", "entity"]),
@@ -109,8 +116,40 @@ dueDiligenceRouter.get("/:id", async (c) => {
   return c.json({ id: row.id, name: row.name, subject_type: row.subject_type, reference: row.reference, created_at: row.created_at, result: JSON.parse(row.result) as DdResult });
 });
 
+/** The editable commercial due-diligence report built on a screening. Stored as one JSON document; the screen owns its structure. */
+const MAX_REPORT_BYTES = 1_500_000;
+dueDiligenceRouter.get("/:id/report", async (c) => {
+  await ensureTable(c.env);
+  await ensureReportTable(c.env);
+  const own = await first<{ id: string }>(c.env.DB, "SELECT id FROM due_diligence_cases WHERE id = ? AND owner_id = ?", [c.req.param("id"), c.get("userId")]);
+  if (!own) return c.json({ error: "Not found" }, 404);
+  const row = await first<{ data: string; updated_at: string }>(c.env.DB, "SELECT data, updated_at FROM due_diligence_reports WHERE case_id = ?", [own.id]);
+  return c.json(row ? { report: JSON.parse(row.data), updated_at: row.updated_at } : { report: null, updated_at: null });
+});
+
+dueDiligenceRouter.put("/:id/report", async (c) => {
+  await ensureTable(c.env);
+  await ensureReportTable(c.env);
+  const own = await first<{ id: string }>(c.env.DB, "SELECT id FROM due_diligence_cases WHERE id = ? AND owner_id = ?", [c.req.param("id"), c.get("userId")]);
+  if (!own) return c.json({ error: "Not found" }, 404);
+  const text = await c.req.text();
+  if (text.length > MAX_REPORT_BYTES) return c.json({ error: "The report is too large to save." }, 413);
+  let body: { report?: unknown };
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return c.json({ error: "Invalid report" }, 400);
+  }
+  if (!body.report || typeof body.report !== "object" || !Array.isArray((body.report as { sections?: unknown }).sections)) return c.json({ error: "Invalid report" }, 400);
+  const now = nowIso();
+  await run(c.env.DB, "INSERT INTO due_diligence_reports (case_id, owner_id, data, updated_at) VALUES (?,?,?,?) ON CONFLICT(case_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at", [own.id, c.get("userId"), JSON.stringify(body.report), now]);
+  return c.json({ ok: true, updated_at: now });
+});
+
 dueDiligenceRouter.delete("/:id", async (c) => {
   await ensureTable(c.env);
+  await ensureReportTable(c.env);
+  await run(c.env.DB, "DELETE FROM due_diligence_reports WHERE case_id = ? AND owner_id = ?", [c.req.param("id"), c.get("userId")]);
   await run(c.env.DB, "DELETE FROM due_diligence_cases WHERE id = ? AND owner_id = ?", [c.req.param("id"), c.get("userId")]);
   return c.body(null, 204);
 });

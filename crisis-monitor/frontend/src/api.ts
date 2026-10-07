@@ -1348,14 +1348,15 @@ export interface DdMediaItem { url: string; title: string; domain: string; publi
 export interface DdResult {
   input: { name: string; kind: "person" | "entity"; country: string | null; aliases: string[]; identifiers: string | null };
   outcome: DdOutcome;
-  sanctions: { hits: DdListHit[] };
+  sanctions: { hits: DdListHit[]; lists: { id: string; label: string; status: string; entries?: number; asOf?: string; stale?: boolean; error?: string }[] };
   office: DdCheck<{ url: string; label: string; description: string | null; strength: string; isHuman: boolean; positions: { label: string; from: string | null; to: string | null; current: boolean }[]; facts: string[] }>;
   gleif: DdCheck<{ url: string; name: string; lei: string; status: string | null; jurisdiction: string | null; directParent: string | null; ultimateParent: string | null; strength: string }>;
   companiesHouse: DdCheck<{ url: string; name: string; kind: string; status: string | null; incorporated: string | null; people: { name: string; role: string; resigned: boolean }[]; appointments: number | null; strength: string }>;
   offshore: DdCheck<{ url: string; name: string; type: string | null; strength: string }>;
   media: DdCheck<{ items: DdMediaItem[]; candidates: number; read: number; classified: boolean }>;
-  mediaCoverage: DdCheck<{ total: number; byMonth: { month: string; count: number }[]; topOutlets: { domain: string; count: number }[]; recent: { title: string; url: string; domain: string; published: string | null }[]; themes: string[]; tone: string; overview: string; aiWritten: boolean }>;
+  mediaCoverage: DdCheck<{ total: number; byMonth: { month: string; count: number }[]; topOutlets: { domain: string; count: number }[]; recent: { title: string; url: string; domain: string; published: string | null; sentiment?: "positive" | "neutral" | "negative" }[]; themes: string[]; tone: string; overview: string; aiWritten: boolean }>;
   social: DdCheck<{ accounts: { platform: string; url: string; handle: string }[]; accountsFrom: string | null; posts: { network: string; author: string; text: string; url: string; published: string | null }[]; networksSearched: string[]; networksFailed: string[]; searchLinks: { label: string; url: string }[]; overview: string }>;
+  environment?: { country: string | null; incidents: { level: string; headline: string; location: string | null; summary: string; assessment: string; lastEventDate: string | null; reportCount: number }[]; note: string };
   registries: { label: string; url: string; note?: string }[];
   sources: { id: string; label: string; state: "ok" | "unavailable" | "not_configured"; note?: string; url?: string }[];
   summary: { text: string; keyPoints: string[]; nextSteps: string[]; aiWritten: boolean };
@@ -1548,6 +1549,8 @@ export const api = {
   listDueDiligence: () => req<{ cases: DdCaseRow[] }>("/api/due-diligence"),
   getDueDiligence: (id: string) => req<DdCase>(`/api/due-diligence/${id}`),
   runDueDiligence: (body: { name: string; subject_type: "person" | "entity"; country?: string; aliases?: string[]; identifiers?: string; reference?: string }) => req<DdCase>("/api/due-diligence", { method: "POST", body: JSON.stringify(body) }),
+  getDdReport: (id: string) => req<{ report: import("./report/model").Report | null; updated_at: string | null }>(`/api/due-diligence/${id}/report`),
+  saveDdReport: (id: string, report: import("./report/model").Report) => req<{ ok: boolean; updated_at: string }>(`/api/due-diligence/${id}/report`, { method: "PUT", body: JSON.stringify({ report }) }),
   deleteDueDiligence: (id: string) => req<void>(`/api/due-diligence/${id}`, { method: "DELETE" }),
   refreshDueDiligenceList: (list: string) => req<{ ok: boolean; entries?: number }>("/api/due-diligence/sources/refresh", { method: "POST", body: JSON.stringify({ list }) }),
   dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
