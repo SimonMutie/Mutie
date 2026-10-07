@@ -3,7 +3,7 @@ import { z } from "zod";
 import { all, first, run, nowIso } from "../db";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { runDueDiligence, type DdResult } from "../lib/dd/run";
-import { screenSanctions } from "../lib/dd/sanctionsLists";
+import { LIST_SOURCES, listStatuses, refreshList, type ListId } from "../lib/dd/sanctionsLists";
 import type { Env } from "../bindings";
 
 /**
@@ -45,11 +45,20 @@ const runSchema = z.object({
 const newId = () => `dd_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
 dueDiligenceRouter.get("/sources/status", async (c) => {
-  const { statuses } = await screenSanctions(["status check"], "entity").catch(() => ({ statuses: [] }));
-  return c.json({
-    sanctions: statuses,
-    companies_house: !!c.env.COMPANIES_HOUSE_API_KEY,
-  });
+  return c.json({ sanctions: await listStatuses(c.env), companies_house: !!c.env.COMPANIES_HOUSE_API_KEY });
+});
+
+/** Downloads one sanctions list now (one per request, so each stays within limits). The daily background run does this too. */
+dueDiligenceRouter.post("/sources/refresh", async (c) => {
+  const id = String((await c.req.json().catch(() => ({})) as { list?: string }).list ?? "");
+  const src = LIST_SOURCES.find((s) => s.id === id);
+  if (!src) return c.json({ error: "Unknown list" }, 400);
+  try {
+    const r = await refreshList(c.env, src.id as ListId);
+    return c.json({ ok: true, entries: r.entries });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 502);
+  }
 });
 
 dueDiligenceRouter.get("/", async (c) => {
@@ -72,13 +81,19 @@ dueDiligenceRouter.post("/", async (c) => {
   const today = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM due_diligence_cases WHERE created_at >= ?", [`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`]);
   if (Number(today?.n ?? 0) >= cap) return c.json({ error: `Today's ${cap} screenings have been used. More can be run after 03:00 Nairobi time.` }, 429);
 
-  const result = await runDueDiligence(c.env, {
-    name: d.name,
-    kind: d.subject_type,
-    country: d.country || null,
-    aliases: d.aliases ?? [],
-    identifiers: d.identifiers || null,
-  });
+  let result;
+  try {
+    result = await runDueDiligence(c.env, {
+      name: d.name,
+      kind: d.subject_type,
+      country: d.country || null,
+      aliases: d.aliases ?? [],
+      identifiers: d.identifiers || null,
+    });
+  } catch (err) {
+    console.error("[dd] screening failed:", err);
+    return c.json({ error: `The screening failed: ${err instanceof Error ? err.message : String(err)}` }, 500);
+  }
   const id = newId();
   const now = nowIso();
   await run(c.env.DB, "INSERT INTO due_diligence_cases (id, owner_id, name, subject_type, country, aliases, identifiers, reference, outcome, result, summary, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [

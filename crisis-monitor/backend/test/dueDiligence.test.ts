@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { primeList, resetListCache, type ListEntry, type ListId } from "../src/lib/dd/sanctionsLists";
 import { decideOutcome, runDueDiligence, countryCodeOf, coverageStatement } from "../src/lib/dd/run";
 import { excerptsAround } from "../src/lib/dd/adverseMedia";
+import { fakeD1 } from "./fakeD1";
+import { resetListTableCheck } from "../src/lib/dd/sanctionsLists";
 import type { Env } from "../src/bindings";
 
 const entry = (list: ListId, name: string, kind: ListEntry["kind"] = "entity"): ListEntry => ({ list, ref: `${list}-1`, kind, name, aliases: [], countries: ["RU"], programs: ["TEST"], listedOn: "2024-01-01", remarks: null });
@@ -47,7 +49,10 @@ describe("helpers", () => {
 });
 
 describe("full screening with every outside service unreachable", () => {
+  let f: ReturnType<typeof fakeD1>;
   beforeEach(() => {
+    f = fakeD1();
+    resetListTableCheck();
     resetListCache();
     primeList("OFAC", [...filler("OFAC"), entry("OFAC", "Volkov Trading Company Limited")]);
     vi.stubGlobal("fetch", async () => {
@@ -57,7 +62,7 @@ describe("full screening with every outside service unreachable", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("finds the sanctions match from the cached list and reports the other lists as unavailable", async () => {
-    const r = await runDueDiligence({} as Env, { name: "Volkov Trading Co", kind: "entity", country: "Kenya", aliases: [], identifiers: null });
+    const r = await runDueDiligence({ DB: f.DB } as unknown as Env, { name: "Volkov Trading Co", kind: "entity", country: "Kenya", aliases: [], identifiers: null });
     expect(r.outcome).toBe("potential_sanctions_match");
     expect(r.sanctions.hits[0].list).toBe("OFAC");
     const un = r.sources.find((s) => s.id === "UN");
@@ -70,7 +75,26 @@ describe("full screening with every outside service unreachable", () => {
   });
 
   it("does not report a clean result when sources are down", async () => {
-    const r = await runDueDiligence({} as Env, { name: "Zzyzx Quuxmore Partners", kind: "entity", country: null, aliases: [], identifiers: null });
+    const r = await runDueDiligence({ DB: f.DB } as unknown as Env, { name: "Zzyzx Quuxmore Partners", kind: "entity", country: null, aliases: [], identifiers: null });
     expect(r.outcome).toBe("incomplete");
+  });
+});
+
+describe("lists stored in D1", () => {
+  it("downloads a streamed XML list, stores it, and screens from the stored copy", async () => {
+    const f = fakeD1();
+    const env = { DB: f.DB } as unknown as Env;
+    resetListTableCheck();
+    resetListCache();
+    const ent = (i: number, n: string) => `<ENTITY><DATAID>${i}</DATAID><REFERENCE_NUMBER>QDe.${i}</REFERENCE_NUMBER><FIRST_NAME>${n}</FIRST_NAME><UN_LIST_TYPE>Test</UN_LIST_TYPE><LISTED_ON>2020-01-01</LISTED_ON></ENTITY>`;
+    const xml = `<CONSOLIDATED_LIST><ENTITIES>${Array.from({ length: 60 }, (_, i) => ent(i, `Filler Group Number${i}`)).join("")}${ent(99, "Kharkov Shipping Company")}</ENTITIES></CONSOLIDATED_LIST>`;
+    vi.stubGlobal("fetch", async () => new Response(xml, { status: 200 }));
+    const { refreshList, screenSanctions, listStatuses } = await import("../src/lib/dd/sanctionsLists");
+    expect((await refreshList(env, "UN")).entries).toBe(61);
+    expect((await listStatuses(env)).find((s) => s.id === "UN")?.status).toBe("ok");
+    const { hits, statuses } = await screenSanctions(env, ["Kharkov Shipping Co"], "entity");
+    expect(hits[0]?.list).toBe("UN");
+    expect(statuses.find((s) => s.id === "EU")?.status).toBe("unavailable");
+    vi.unstubAllGlobals();
   });
 });

@@ -1547,6 +1547,7 @@ export const api = {
   getDueDiligence: (id: string) => req<DdCase>(`/api/due-diligence/${id}`),
   runDueDiligence: (body: { name: string; subject_type: "person" | "entity"; country?: string; aliases?: string[]; identifiers?: string; reference?: string }) => req<DdCase>("/api/due-diligence", { method: "POST", body: JSON.stringify(body) }),
   deleteDueDiligence: (id: string) => req<void>(`/api/due-diligence/${id}`, { method: "DELETE" }),
+  refreshDueDiligenceList: (list: string) => req<{ ok: boolean; entries?: number }>("/api/due-diligence/sources/refresh", { method: "POST", body: JSON.stringify({ list }) }),
   dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
 
   listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "query"; queryId: string }) =>

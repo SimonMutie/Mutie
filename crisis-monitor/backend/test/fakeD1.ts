@@ -24,5 +24,5 @@ class Stmt {
 
 export function fakeD1() {
   const db = new DatabaseSync(":memory:");
-  return { db, DB: { prepare: (sql: string) => new Stmt(db, sql) } };
+  return { db, DB: { prepare: (sql: string) => new Stmt(db, sql), batch: async (stmts: Stmt[]) => Promise.all(stmts.map((x) => x.run())) } };
 }

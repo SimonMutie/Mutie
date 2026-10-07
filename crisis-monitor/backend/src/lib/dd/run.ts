@@ -58,9 +58,11 @@ export const countryCodeOf = (country: string | null): string | null => {
 };
 
 const notRun = (id: string, label: string, err: unknown): Check<never> => ({ id, label, state: "unavailable", note: err instanceof Error ? err.message : String(err), hits: [] });
+const withDeadline = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
+  Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error(`${what} took too long and was skipped`)), ms))]);
 const settled = async <T>(id: string, label: string, p: Promise<Check<T>>): Promise<Check<T>> => {
   try {
-    return await p;
+    return await withDeadline(p, 25_000, label);
   } catch (err) {
     return notRun(id, label, err) as Check<T>;
   }
@@ -148,12 +150,12 @@ export async function runDueDiligence(env: Env, input: DdInput): Promise<DdResul
   const context = [input.identifiers, input.country].filter(Boolean).join("; ") || null;
 
   const [sanctions, office, gleif, ch, offshore, media] = await Promise.all([
-    screenSanctions(names, input.kind).catch((err) => ({ hits: [] as ListHit[], statuses: [{ id: "OFAC", label: "Sanctions lists", searchUrl: "", status: "unavailable", error: String(err) } as ListStatus] })),
+    screenSanctions(env, names, input.kind).catch((err) => ({ hits: [] as ListHit[], statuses: [{ id: "OFAC", label: "Sanctions lists", searchUrl: "", status: "unavailable", error: String(err) } as ListStatus] })),
     settled("wikidata", "Public office (Wikidata)", checkWikidata(input.name, input.kind)),
     input.kind === "entity" ? settled("gleif", "Corporate records (GLEIF)", checkGleif(input.name)) : Promise.resolve<Check<GleifHit>>({ id: "gleif", label: "Corporate records (GLEIF)", state: "ok", note: "Not applicable to individuals.", hits: [] }),
     settled("companies_house", "UK Companies House", checkCompaniesHouse(env, input.name, input.kind)),
     settled("offshore", "ICIJ Offshore Leaks", checkOffshoreLeaks(input.name, input.kind)),
-    screenAdverseMedia(env, { names, kind: input.kind, country: input.country, context }).catch((err) => notRun("adverse_media", "Adverse media", err) as Check<MediaResult>),
+    withDeadline(screenAdverseMedia(env, { names, kind: input.kind, country: input.country, context }), 50_000, "Adverse media").catch((err) => notRun("adverse_media", "Adverse media", err) as Check<MediaResult>),
   ]);
 
   const sources: SourceStatus[] = [

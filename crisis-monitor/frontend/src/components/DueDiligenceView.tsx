@@ -34,6 +34,31 @@ export default function DueDiligenceView() {
   const [identifiers, setIdentifiers] = useState("");
   const [reference, setReference] = useState("");
 
+  type ListState = { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string };
+  const [lists, setLists] = useState<ListState[]>([]);
+  const [loadingList, setLoadingList] = useState<string | null>(null);
+
+  /** Sanctions lists are downloaded in the background; on first use (or after a failure) fetch whichever are missing, one request each. */
+  const prepareLists = useCallback(async () => {
+    try {
+      let current = (await api.dueDiligenceSources()).sanctions;
+      setLists(current);
+      for (const l of current.filter((x) => x.status !== "ok")) {
+        setLoadingList(l.id);
+        await api.refreshDueDiligenceList(l.id).catch(() => undefined);
+        current = (await api.dueDiligenceSources()).sanctions;
+        setLists(current);
+      }
+    } catch {
+      /* the screening itself reports any list it could not use */
+    } finally {
+      setLoadingList(null);
+    }
+  }, []);
+  useEffect(() => {
+    void prepareLists();
+  }, [prepareLists]);
+
   const load = useCallback(() => {
     api.listDueDiligence().then((d) => setCases(d.cases)).catch((e) => setError(errText(e, "Could not load saved screenings.")));
   }, []);
@@ -95,7 +120,17 @@ export default function DueDiligenceView() {
           <input value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="Other names or spellings (separate with ;)" style={field} aria-label="Aliases" />
           <input value={identifiers} onChange={(e) => setIdentifiers(e.target.value)} placeholder={kind === "entity" ? "Registration number, sector (helps rule out namesakes)" : "Role, nationality, year of birth"} style={field} aria-label="Identifiers" />
           <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Engagement reference (optional)" style={field} aria-label="Reference" />
-          <button type="submit" disabled={busy || name.trim().length < 2} style={primary}>
+          {!!lists.length && (
+            <div style={{ fontSize: 11.5, color: "var(--text-faint)", lineHeight: 1.5 }}>
+              {loadingList ? `Downloading the ${loadingList} sanctions list… (first use only)` : lists.every((l) => l.status === "ok") ? "Sanctions lists loaded: " + lists.map((l) => l.id).join(", ") + "." : "Not loaded: " + lists.filter((l) => l.status !== "ok").map((l) => `${l.id}${l.error ? ` (${l.error})` : ""}`).join("; ") + ". Screenings will say so."}
+              {!loadingList && lists.some((l) => l.status !== "ok") && (
+                <button type="button" onClick={() => void prepareLists()} style={{ ...chip, marginLeft: 6 }}>
+                  Try again
+                </button>
+              )}
+            </div>
+          )}
+          <button type="submit" disabled={busy || loadingList !== null || name.trim().length < 2} style={primary}>
             {busy ? "Screening… (up to a minute)" : "Run screening"}
           </button>
           {error && <div style={{ fontSize: 12.5, color: "var(--critical)" }}>{error}</div>}

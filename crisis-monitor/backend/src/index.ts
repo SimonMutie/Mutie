@@ -23,6 +23,7 @@ import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { spotlightRouter, publicSpotlightRouter } from "./routes/spotlight";
 import { alertSubscriptionsRouter } from "./routes/alertSubscriptions";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
+import { refreshStaleLists } from "./lib/dd/sanctionsLists";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
 import { ensureSchema } from "./lib/schemaHeal";
 import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
@@ -196,6 +197,8 @@ export default {
     // tick never overlaps the next one.
     // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
     // newly flagged incident reaches email/Signal in the same tick.
+    ctx.waitUntil(refreshStaleLists(env).catch((err) => console.error("[dd] list refresh failed", err)));
+
     ctx.waitUntil(
       runEscalationPipeline(env)
         .catch((err) => console.error("[escalation] pipeline tick failed", err))
