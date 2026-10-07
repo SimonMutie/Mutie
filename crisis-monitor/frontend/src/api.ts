@@ -1340,6 +1340,30 @@ class ApiError extends Error {
   }
 }
 
+
+export type DdOutcome = "potential_sanctions_match" | "pep_indicators" | "adverse_media" | "review" | "incomplete" | "no_adverse_indicators";
+export interface DdCheck<T> { id: string; label: string; state: "ok" | "unavailable" | "not_configured"; note?: string; hits: T[] }
+export interface DdListHit { list: string; ref: string; kind: string; name: string; matchedName: string; score: number; strength: "strong" | "possible"; countries: string[]; programs: string[]; listedOn: string | null; remarks: string | null }
+export interface DdMediaItem { url: string; title: string; domain: string; published: string | null; basis: "full_text" | "headline_only"; relevance: string; category: string; severity: "high" | "medium" | "low" | "none"; status: string; what: string }
+export interface DdResult {
+  input: { name: string; kind: "person" | "entity"; country: string | null; aliases: string[]; identifiers: string | null };
+  outcome: DdOutcome;
+  sanctions: { hits: DdListHit[] };
+  office: DdCheck<{ url: string; label: string; description: string | null; strength: string; isHuman: boolean; positions: { label: string; from: string | null; to: string | null; current: boolean }[]; facts: string[] }>;
+  gleif: DdCheck<{ url: string; name: string; lei: string; status: string | null; jurisdiction: string | null; directParent: string | null; ultimateParent: string | null; strength: string }>;
+  companiesHouse: DdCheck<{ url: string; name: string; kind: string; status: string | null; incorporated: string | null; people: { name: string; role: string; resigned: boolean }[]; appointments: number | null; strength: string }>;
+  offshore: DdCheck<{ url: string; name: string; type: string | null; strength: string }>;
+  media: DdCheck<{ items: DdMediaItem[]; candidates: number; read: number; classified: boolean }>;
+  registries: { label: string; url: string; note?: string }[];
+  sources: { id: string; label: string; state: "ok" | "unavailable" | "not_configured"; note?: string; url?: string }[];
+  summary: { text: string; keyPoints: string[]; nextSteps: string[]; aiWritten: boolean };
+  coverage: string;
+  disclaimer: string;
+  generatedAt: string;
+}
+export interface DdCaseRow { id: string; name: string; subject_type: string; country: string | null; reference: string | null; outcome: DdOutcome; summary: string | null; created_at: string }
+export interface DdCase { id: string; name: string; subject_type: "person" | "entity"; reference: string | null; created_at: string; result: DdResult }
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
@@ -1518,6 +1542,12 @@ export const api = {
   updateQuery: (id: string, data: Partial<MonitoringQueryItem>) =>
     req<MonitoringQueryItem>(`/api/queries/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteQuery: (id: string) => req<void>(`/api/queries/${id}`, { method: "DELETE" }),
+
+  listDueDiligence: () => req<{ cases: DdCaseRow[] }>("/api/due-diligence"),
+  getDueDiligence: (id: string) => req<DdCase>(`/api/due-diligence/${id}`),
+  runDueDiligence: (body: { name: string; subject_type: "person" | "entity"; country?: string; aliases?: string[]; identifiers?: string; reference?: string }) => req<DdCase>("/api/due-diligence", { method: "POST", body: JSON.stringify(body) }),
+  deleteDueDiligence: (id: string) => req<void>(`/api/due-diligence/${id}`, { method: "DELETE" }),
+  dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
 
   listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "query"; queryId: string }) =>
     req<AlertSubscriptionList>(`/api/alert-subscriptions?scope=${target.scope}${target.scope === "query" ? `&query_id=${encodeURIComponent(target.queryId)}` : ""}`),

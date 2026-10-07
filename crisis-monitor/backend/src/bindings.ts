@@ -150,4 +150,15 @@ export interface Env {
    *  platform. Default 30. They run inside the daily AI budget. "0" switches
    *  them off; analysts can still write and edit the text by hand. */
   NOTEBOOK_DRAFTS_PER_DAY?: string;
+  /** Free API key from developer.company-information.service.gov.uk, used
+   *  by the due-diligence check of the UK company register (lib/dd). Unset =
+   *  that check is reported as "not configured". */
+  COMPANIES_HOUSE_API_KEY?: string;
+  /** Optional OpenSanctions API key (opensanctions.org). Free for journalists,
+   *  NGOs and academics only; a consultancy working for clients needs their
+   *  paid licence. Leave unset unless you hold one. */
+  OPENSANCTIONS_API_KEY?: string;
+  /** How many due-diligence screenings may run per UTC day across the
+   *  platform. Default 40. Each makes up to two AI calls. */
+  DUE_DILIGENCE_RUNS_PER_DAY?: string;
 }

@@ -22,6 +22,7 @@ import { socialListeningRouter } from "./routes/socialListening";
 import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { spotlightRouter, publicSpotlightRouter } from "./routes/spotlight";
 import { alertSubscriptionsRouter } from "./routes/alertSubscriptions";
+import { dueDiligenceRouter } from "./routes/dueDiligence";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
 import { ensureSchema } from "./lib/schemaHeal";
 import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
@@ -105,6 +106,7 @@ app.route("/api/social-listening", socialListeningRouter);
 app.route("/api/listening-queries", listeningQueriesRouter);
 app.route("/api/spotlight", spotlightRouter);
 app.route("/api/alert-subscriptions", alertSubscriptionsRouter);
+app.route("/api/due-diligence", dueDiligenceRouter);
 app.route("/api/public/spotlight", publicSpotlightRouter);
 
 // Auth for the live feed happens inside LiveFeedHub itself (reads ?token= off

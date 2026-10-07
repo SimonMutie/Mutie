@@ -8,8 +8,8 @@ import type { SpotlightScope } from "../spotlightRegions";
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "monitoring" | "admin" | "settings" | "incidents" | "live-osint" | "spotlight";
-  onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint") => void;
+  view: "monitoring" | "admin" | "settings" | "incidents" | "live-osint" | "due-diligence" | "spotlight";
+  onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
   /** The Regional Spotlight region on screen, or null when another section is open. */
   spotlightScope: SpotlightScope | null;
   onOpenSpotlight: (scope: SpotlightScope) => void;
@@ -84,6 +84,9 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
           <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
             Trends & Patterns
           </button>
+          <button onClick={() => onNavigate("due-diligence")} style={navBtnStyle(view === "due-diligence")}>
+            Due Diligence
+          </button>
           {/* Publications by region. Hovering shows the regions; see SpotlightMenu. */}
           <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />
         </nav>
@@ -113,8 +116,8 @@ function AccountMenu({
   onLogout,
 }: {
   user: AuthUser;
-  view: "monitoring" | "admin" | "settings" | "incidents" | "live-osint" | "spotlight";
-  onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint") => void;
+  view: "monitoring" | "admin" | "settings" | "incidents" | "live-osint" | "due-diligence" | "spotlight";
+  onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
