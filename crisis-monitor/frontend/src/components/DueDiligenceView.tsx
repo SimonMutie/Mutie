@@ -24,15 +24,16 @@ const OUTCOME_COLOR: Record<string, string> = {
 
 const errText = (e: unknown, f: string) => (e instanceof Error && e.message ? e.message : f);
 
-export default function DueDiligenceView() {
+export default function DueDiligenceView({ kind }: { kind: "entity" | "person" }) {
   const [cases, setCases] = useState<DdCaseRow[]>([]);
   const [open, setOpen] = useState<DdCase | null>(null);
+  // Switching between commercial and individual from the menu closes a case of the other kind.
+  useEffect(() => setOpen((o) => (o && o.subject_type !== kind ? null : o)), [kind]);
   const [busy, setBusy] = useState(false);
   const [fresh, setFresh] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
-  const [kind, setKind] = useState<"entity" | "person">("entity");
   const [country, setCountry] = useState("");
   const [aliases, setAliases] = useState("");
   const [identifiers, setIdentifiers] = useState("");
@@ -111,15 +112,8 @@ export default function DueDiligenceView() {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 340px) 1fr", gap: 20, padding: 20, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <form onSubmit={submit} style={card}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>New screening</div>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>{kind === "entity" ? "New commercial due diligence" : "New individual / public-figure due diligence"}</div>
           <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>For organisations, public officials and counterparties: sanctions, public office, ownership and adverse media from public sources. Not for tracing private individuals.</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {(["entity", "person"] as const).map((k) => (
-              <button key={k} type="button" onClick={() => setKind(k)} style={{ ...chip, ...(kind === k ? chipOn : {}) }}>
-                {k === "entity" ? "Organisation" : "Public figure"}
-              </button>
-            ))}
-          </div>
           <input required value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === "entity" ? "Company or organisation name" : "Full name"} style={field} aria-label="Name" />
           <input value={country} onChange={(e) => setCountry(e.target.value)} placeholder="Country (e.g. Kenya)" style={field} aria-label="Country" />
           <input value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="Other names or spellings (separate with ;)" style={field} aria-label="Aliases" />
@@ -143,8 +137,8 @@ export default function DueDiligenceView() {
 
         <div style={card}>
           <div style={{ fontSize: 13, fontWeight: 700 }}>Saved screenings</div>
-          {!cases.length && <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>None yet.</div>}
-          {cases.map((c) => (
+          {!cases.some((c) => c.subject_type === kind) && <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>None yet.</div>}
+          {cases.filter((c) => c.subject_type === kind).map((c) => (
             <div key={c.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderTop: "1px solid var(--border-soft)" }}>
               <button type="button" onClick={() => openCase(c.id)} style={{ flex: 1, textAlign: "left", background: "transparent", border: 0, color: "inherit", cursor: "pointer", padding: 0, font: "inherit" }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>

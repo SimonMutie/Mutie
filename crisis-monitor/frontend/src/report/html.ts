@@ -1,3 +1,4 @@
+import { photoSize } from "./photo";
 import { EMPTY, isEmpty, shownRows, toneOf, type Block, type Report, type Tone } from "./model";
 import { COLORS, FONT, pieces, TONE } from "./theme";
 
@@ -52,6 +53,10 @@ function block(b: Block): string {
     }
     case "choice":
       return `<table class="kv"><tbody><tr><td class="k">${esc(b.label)}</td><td>${b.options.map((o) => `<div class="${o === b.value ? "sel" : ""}"><span class="box">${o === b.value ? "☒" : "☐"}</span> ${esc(o)}</div>`).join("")}</td></tr></tbody></table>${b.note ? `<p class="note">${esc(b.note)}</p>` : ""}`;
+    case "photo": {
+      const sz = photoSize(b);
+      return `${b.src ? `<img src="${b.src}" width="${sz.w}" height="${sz.h}" style="display:block;margin:4px 0;border:1px solid #${COLORS.rule}">` : ""}<p class="note">${esc(b.caption)}</p>`;
+    }
     case "callout": {
       const t = b.tone ?? "none";
       return `<div class="callout" style="border-left-color:#${t === "none" ? COLORS.blue : TONE[t].edge};background:#${t === "none" ? COLORS.tint : TONE[t].bg}"><div class="ct" style="color:#${t === "none" ? COLORS.navy : TONE[t].fg}">${esc(b.title)}</div>${rich(b.text)}</div>`;

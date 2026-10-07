@@ -3,6 +3,7 @@ import type { AuthUser } from "../api";
 import Logo from "./Logo";
 import Tagline from "./Tagline";
 import SpotlightMenu from "./SpotlightMenu";
+import DueDiligenceMenu, { type DdKind } from "./DueDiligenceMenu";
 import type { SpotlightScope } from "../spotlightRegions";
 
 interface Props {
@@ -12,11 +13,14 @@ interface Props {
   onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
   /** The Regional Spotlight region on screen, or null when another section is open. */
   spotlightScope: SpotlightScope | null;
+  /** The kind of due diligence on screen, and how to open one. */
+  ddKind: DdKind;
+  onOpenDueDiligence: (kind: DdKind) => void;
   onOpenSpotlight: (scope: SpotlightScope) => void;
   onLogout: () => void;
 }
 
-export default function TopBar({ connected, user, view, onNavigate, spotlightScope, onOpenSpotlight, onLogout }: Props) {
+export default function TopBar({ connected, user, view, onNavigate, spotlightScope, onOpenSpotlight, ddKind, onOpenDueDiligence, onLogout }: Props) {
   return (
     <header
       style={{
@@ -84,9 +88,8 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
           <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
             Trends & Patterns
           </button>
-          <button onClick={() => onNavigate("due-diligence")} style={navBtnStyle(view === "due-diligence")}>
-            Due Diligence
-          </button>
+          {/* Commercial and individual due diligence. Hovering shows both; see DueDiligenceMenu. */}
+          <DueDiligenceMenu current={view === "due-diligence" ? ddKind : null} onSelect={onOpenDueDiligence} buttonStyle={navBtnStyle(view === "due-diligence")} />
           {/* Publications by region. Hovering shows the regions; see SpotlightMenu. */}
           <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />
         </nav>

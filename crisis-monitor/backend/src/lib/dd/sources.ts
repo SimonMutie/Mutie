@@ -48,9 +48,9 @@ export interface WikidataHit {
   /** For organisations: what it is, and its parent or owner. */
   facts: string[];
   /** Descriptive record of an organisation, where Wikidata holds one. */
-  profile?: { inception: string | null; headquarters: string | null; employees: number | null; industry: string[]; leaders: string[]; website: string | null; founders: string[] };
+  profile?: { inception: string | null; headquarters: string | null; employees: number | null; industry: string[]; leaders: string[]; website: string | null; founders: string[]; image?: string | null };
   /** Descriptive record of a person: public-biography facts only (birth year, never address or family). */
-  person?: { born: string | null; died: string | null; occupations: string[]; education: { label: string; from: string | null; to: string | null }[]; employers: { label: string; from: string | null; to: string | null }[]; parties: string[]; memberships: string[]; awards: string[] };
+  person?: { born: string | null; died: string | null; occupations: string[]; education: { label: string; from: string | null; to: string | null }[]; employers: { label: string; from: string | null; to: string | null }[]; parties: string[]; memberships: string[]; awards: string[]; image: string | null };
 }
 
 type Claim = { mainsnak?: { datavalue?: { value?: unknown } }; qualifiers?: Record<string, { datavalue?: { value?: { time?: string } } }[]> };
@@ -112,6 +112,7 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
         const inc = (e.claims?.P571 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
         const emp = (e.claims?.P1128 ?? [])[0]?.mainsnak?.datavalue?.value as { amount?: string } | undefined;
         const site = (e.claims?.P856 ?? [])[0]?.mainsnak?.datavalue?.value;
+        const imageOf = (prop: string) => { const v = (e.claims?.[prop] ?? [])[0]?.mainsnak?.datavalue?.value; return typeof v === "string" && v ? v : null; };
         const born = (e.claims?.P569 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
         const died = (e.claims?.P570 ?? [])[0]?.mainsnak?.datavalue?.value as { time?: string } | undefined;
         const dated = (prop: string) => (e.claims?.[prop] ?? []).map((c) => ({ label: labels.get(qidOf(c) ?? "") ?? "", from: year(c, "P580"), to: year(c, "P582") })).filter((x) => x.label).slice(0, 6);
@@ -125,6 +126,7 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
               parties: lab("P102").slice(0, 3),
               memberships: lab("P463").slice(0, 5),
               awards: lab("P166").slice(0, 4),
+              image: imageOf("P18"),
             }
           : undefined;
         const profile = human
@@ -137,6 +139,7 @@ export async function checkWikidata(name: string, kind: Kind): Promise<Check<Wik
               leaders: [...lab("P169").map((n) => `${n} (chief executive)`), ...lab("P488").map((n) => `${n} (chair)`)].slice(0, 4),
               website: typeof site === "string" ? site : null,
               founders: lab("P112").slice(0, 3),
+              image: imageOf("P154") ?? imageOf("P18"),
             };
         return { qid: e.id, url: `https://www.wikidata.org/wiki/${e.id}`, label: e.labels?.en?.value ?? e.id, description: e.descriptions?.en?.value ?? null, score, strength: strengthOf(score) ?? ("possible" as Strength), isHuman: human, positions, countries, facts, profile, person };
       })

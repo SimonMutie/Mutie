@@ -3,6 +3,7 @@ import { api, type DdCase } from "../api";
 import { downloadReportDocx, printReport, reportHtml } from "../report/html";
 import { isCalcRow, shownRows, type Block, type Report, type Section } from "../report/model";
 import { buildReport } from "../report/template";
+import { photoFromFile, photoSize, resolvePhotos } from "../report/photo";
 import DownloadMenu from "./query/DownloadMenu";
 
 /**
@@ -30,8 +31,13 @@ export default function ReportBuilder({ c }: { c: DdCase }) {
       .getDdReport(c.id)
       .then(async (r) => {
         if (!live) return;
-        if (r.report) return setReport(r.report);
-        const fresh = buildReport(c);
+        if (r.report) {
+          setReport(r.report);
+          void resolvePhotos(r.report).then((x) => live && x !== r.report && setReport(x));
+          return;
+        }
+        const fresh = await resolvePhotos(buildReport(c));
+        if (!live) return;
         setReport(fresh);
         await api.saveDdReport(c.id, fresh).catch(() => undefined);
       })
@@ -286,6 +292,44 @@ function BlockEditor({ b, onChange }: { b: Block; onChange: (fn: (b: Block) => B
           {b.note && <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 4 }}>{b.note}</div>}
         </div>
       );
+    case "photo": {
+      const sz = photoSize(b);
+      return (
+        <div style={{ display: "flex", gap: 14, alignItems: "flex-start", border: "1px solid var(--border-soft)", borderRadius: 8, padding: 10 }}>
+          {b.src ? (
+            <img src={b.src} width={sz.w} height={sz.h} alt="" style={{ borderRadius: 4, border: "1px solid var(--border-soft)", objectFit: "contain" }} />
+          ) : (
+            <div style={{ width: sz.w || 120, height: b.shape === "logo" ? 70 : 150, display: "grid", placeItems: "center", border: "1px dashed var(--border)", borderRadius: 4, color: "var(--text-faint)", fontSize: 12, textAlign: "center" }}>No image</div>
+          )}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={lbl}>{b.shape === "logo" ? "Logo" : "Photograph"}</div>
+            <input value={b.caption} onChange={(e) => onChange((x) => ({ ...(x as typeof b), caption: e.target.value }))} style={field} aria-label="Caption and source" />
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={{ ...mini, cursor: "pointer" }}>
+                {b.src ? "Replace" : "Upload"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={async (e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!f) return;
+                    try {
+                      const p = await photoFromFile(f);
+                      onChange((x) => ({ ...(x as typeof b), ...p, url: undefined }));
+                    } catch {
+                      /* not an image the browser can read */
+                    }
+                  }}
+                />
+              </label>
+              {b.src && <button type="button" style={mini} onClick={() => onChange((x) => ({ ...(x as typeof b), src: null, url: undefined }))}>Remove</button>}
+            </div>
+          </div>
+        </div>
+      );
+    }
     case "callout":
       return (
         <div style={{ borderLeft: "4px solid var(--signal)", background: "var(--panel-raised)", padding: "8px 12px", borderRadius: 4, fontSize: 12.5, lineHeight: 1.5 }}>

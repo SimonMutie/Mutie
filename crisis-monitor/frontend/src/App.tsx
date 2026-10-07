@@ -161,6 +161,7 @@ export default function App() {
   const openQuery = typeof view === "object" && "queryId" in view ? queries.find((q) => q.id === view.queryId) : undefined;
   const editingQuery = typeof view === "object" && "editQueryId" in view ? queries.find((q) => q.id === view.editQueryId) : undefined;
 
+  const [ddKind, setDdKind] = useState<"entity" | "person">("entity");
   const spotlightScope = typeof view === "object" && "spotlight" in view ? view.spotlight : null;
 
   async function handleSaved(saved: MonitoringQueryItem, created: boolean) {
@@ -178,6 +179,12 @@ export default function App() {
         user={user}
         view={view === "admin" || view === "settings" || view === "incidents" || view === "live-osint" || view === "due-diligence" ? view : spotlightScope ? "spotlight" : "monitoring"}
         spotlightScope={spotlightScope}
+        ddKind={ddKind}
+        onOpenDueDiligence={(k) => {
+          setOpenMonitorTool(false);
+          setDdKind(k);
+          setView("due-diligence");
+        }}
         onOpenSpotlight={(scope) => {
           setOpenMonitorTool(false);
           setView({ spotlight: scope });
@@ -196,7 +203,7 @@ export default function App() {
 
         {view === "incidents" && <IncidentsDashboard user={user} />}
 
-        {view === "due-diligence" && <DueDiligenceView />}
+        {view === "due-diligence" && <DueDiligenceView kind={ddKind} />}
 
         {view === "live-osint" && (
           <LiveIntelView

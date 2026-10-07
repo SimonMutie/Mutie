@@ -1,5 +1,5 @@
 import type { DdCase, DdMediaItem, DdResult } from "../api";
-import { B, CALL, CH, CHOICE, H, KV, LISTS, LIST_NAME, P, TBL, choice, clip, day, pct, redFlags, resetIds, sec, severityRank, txt, type Flag } from "./kit";
+import { B, CALL, PHOTO, CH, CHOICE, H, KV, LISTS, LIST_NAME, P, TBL, choice, clip, day, pct, redFlags, resetIds, sec, severityRank, txt, type Flag } from "./kit";
 import type { Block, Col, Report, Section } from "./model";
 
 /**
@@ -307,6 +307,7 @@ export function buildPersonReport(c: DdCase): Report {
   sections.push(
     sec("2", "Subject Identification", "partly", [
       H("2.1 Core Identity"),
+      PHOTO(wd && per?.image && !namesakes ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(per.image)}?width=480` : null, wd && per?.image && !namesakes ? "Image from the subject's Wikidata entry (Wikimedia Commons). Confirm it shows the subject before use." : "Subject photograph (optional). Add an authenticated image of the subject, with its source."),
       KV(["Item", "Detail"], [
         ["Full name", c.name],
         ["Year of birth (only if publicly established and relevant)", wd && per?.born ? `${per.born} (Wikidata; confirm)` : ""],

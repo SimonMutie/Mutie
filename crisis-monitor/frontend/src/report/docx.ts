@@ -1,5 +1,6 @@
-import { LineRuleType, AlignmentType, BorderStyle, Document, ExternalHyperlink, Footer, Header, InternalHyperlink, Bookmark, LevelFormat, Packer, PageNumber, Paragraph, ShadingType, Table, TableCell, TableLayoutType, TableRow, TabStopType, TextRun, VerticalAlign, WidthType, type ParagraphChild } from "docx";
+import { LineRuleType, AlignmentType, BorderStyle, Document, ExternalHyperlink, Footer, Header, ImageRun, InternalHyperlink, Bookmark, LevelFormat, Packer, PageNumber, Paragraph, ShadingType, Table, TableCell, TableLayoutType, TableRow, TabStopType, TextRun, VerticalAlign, WidthType, type ParagraphChild } from "docx";
 import { EMPTY, isEmpty, shownRows, toneOf, type Block, type Report, type Tone } from "./model";
+import { photoSize } from "./photo";
 import { COLORS, FONT, pieces, TONE } from "./theme";
 
 const W = 9866; // content width in DXA on A4 with 18 mm side margins
@@ -199,6 +200,16 @@ function blockToDocx(b: Block): (Paragraph | Table)[] {
     }
     case "callout":
       return [callout(b.title, b.text, b.tone ?? "none"), spacer()];
+    case "photo": {
+      const sz = photoSize(b);
+      return [
+        ...(b.src
+          ? [new Paragraph({ spacing: { after: 60 }, children: [new ImageRun({ type: "jpg", data: Uint8Array.from(atob(b.src.split(",")[1]), (ch) => ch.charCodeAt(0)), transformation: { width: sz.w, height: sz.h } })] })]
+          : []),
+        ...para(b.caption, { size: 17, color: COLORS.muted, italics: true }),
+        spacer(),
+      ];
+    }
   }
 }
 

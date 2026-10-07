@@ -29,6 +29,7 @@ export const KV = (head: [string, string], rows: [string, string][]): Block => (
 export const CH = (items: string[], on: string[] = [], note?: string): Block => ({ t: "checks", id: nid("c"), items: items.map((label) => ({ label, on: on.includes(label) })), note });
 export const CALL = (title: string, text: string, tone: Extract<Block, { t: "callout" }>["tone"] = "none"): Block => ({ t: "callout", id: nid("co"), title, text, tone });
 export const CHOICE = (label: string, options: string[], value: string | null, note?: string): Block => ({ t: "choice", id: nid("ch"), label, options, value, note });
+export const PHOTO = (url: string | null, caption: string, shape: "portrait" | "logo" = "portrait"): Block => ({ t: "photo", id: nid("ph"), src: null, url: url ?? undefined, caption, shape });
 export const TBL = (cols: Col[], rows: string[][], o: { calc?: CalcRule[]; blank?: number; canAdd?: boolean; boldLast?: boolean; note?: string } = {}): Block => {
   const blanks = Array.from({ length: o.blank ?? 0 }, () => cols.map(() => ""));
   return { t: "table", id: nid("t"), cols, rows: [...rows, ...blanks], calc: o.calc, canAdd: o.canAdd ?? true, boldLast: o.boldLast, note: o.note };

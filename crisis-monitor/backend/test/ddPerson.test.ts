@@ -88,3 +88,22 @@ describe("individual / public-figure report", () => {
     expect((await reportToDocx(rep)).size).toBeGreaterThan(20000);
   });
 });
+
+describe("photo section", () => {
+  it("offers a Commons image only for an unambiguous match, and exports it", async () => {
+    const withImg = JSON.parse(JSON.stringify(base)) as DdCase;
+    withImg.result.office.hits[0].person!.image = "Jane Example.jpg";
+    withImg.result.office.hits = [withImg.result.office.hits[0]];
+    const rep = buildReport(withImg);
+    const ph = rep.sections[1].blocks.find((b) => b.t === "photo") as Extract<Block, { t: "photo" }>;
+    expect(ph.url).toContain("Special:FilePath/Jane%20Example.jpg");
+    // With a namesake in the results the picture is not offered; the slot stays open for an authenticated image.
+    const amb = buildReport({ ...withImg, result: { ...withImg.result, office: { ...withImg.result.office, hits: base.result.office.hits.map((h, i) => (i ? h : { ...h, person: { ...h.person!, image: "x.jpg" } })) } } } as DdCase);
+    expect((amb.sections[1].blocks.find((b) => b.t === "photo") as Extract<Block, { t: "photo" }>).url).toBeUndefined();
+    // A resolved picture is embedded in the Word file and the PDF page.
+    const png = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=";
+    ph.src = png; ph.w = 1; ph.h = 1;
+    expect(reportHtml(rep)).toContain("<img src=\"data:image/jpeg");
+    expect((await reportToDocx(rep)).size).toBeGreaterThan(20000);
+  });
+});

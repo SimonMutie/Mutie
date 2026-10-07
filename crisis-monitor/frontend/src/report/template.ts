@@ -1,5 +1,5 @@
 import type { DdCase, DdResult } from "../api";
-import { B, CALL, CH, CHOICE, H, KV, LISTS, LIST_NAME, P, TBL, choice, clip, day, nid, num, pct, redFlags, resetIds, sec, severityRank, sourceFor, txt, type Flag, type Severity } from "./kit";
+import { B, CALL, PHOTO, CH, CHOICE, H, KV, LISTS, LIST_NAME, P, TBL, choice, clip, day, nid, num, pct, redFlags, resetIds, sec, severityRank, sourceFor, txt, type Flag, type Severity } from "./kit";
 import { buildPersonReport } from "./personTemplate";
 import { LMH, RAG, RISK, SENTIMENT, STATUS_IN, type Block, type CalcRule, type Col, type Report, type Section } from "./model";
 
@@ -153,6 +153,7 @@ export function buildReport(c: DdCase): Report {
   // 3 ─ Target overview
   sections.push(
     sec("3", "Target Overview", "partly", [
+      PHOTO(prof?.image ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(prof.image)}?width=480` : null, prof?.image ? "Logo from the target's Wikidata entry (Wikimedia Commons)." : "Company logo (optional).", "logo"),
       ...(weakIdentity ? [CALL("Check the match", "Registry records with a name match below 90% were found but not used to fill this section, in case they belong to a different company. Review them in the screening findings.", "watch")] : []),
       KV(["Item", "Details"], [
         ["Legal name", sg[0]?.name ?? sch[0]?.name ?? c.name],

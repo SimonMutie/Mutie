@@ -37,7 +37,9 @@ export type Block =
   | { t: "table"; id: string; cols: Col[]; rows: string[][]; calc?: CalcRule[]; blank?: string[]; canAdd?: boolean; boldLast?: boolean; note?: string }
   | { t: "checks"; id: string; items: { label: string; on: boolean }[]; note?: string }
   | { t: "choice"; id: string; label: string; options: string[]; value: string | null; note?: string }
-  | { t: "callout"; id: string; title: string; text: string; tone?: Tone };
+  | { t: "callout"; id: string; title: string; text: string; tone?: Tone }
+  /** A picture (a subject photograph or an organisation logo). `url` is fetched into `src` when the report is opened or exported; the analyst can replace or remove it. */
+  | { t: "photo"; id: string; src: string | null; w?: number; h?: number; url?: string; caption: string; shape: "portrait" | "logo" };
 
 export interface Section {
   id: string;
