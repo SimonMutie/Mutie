@@ -66,6 +66,7 @@ export default function App() {
   // Set when coming back from a monitoring page, so the map reopens with
   // the Monitor tool showing instead of dropping the user on a bare map.
   const [openMonitorTool, setOpenMonitorTool] = useState(false);
+  const [ddKind, setDdKind] = useState<"entity" | "person">("entity");
 
   function backToMonitoring() {
     setOpenMonitorTool(true);
@@ -161,7 +162,6 @@ export default function App() {
   const openQuery = typeof view === "object" && "queryId" in view ? queries.find((q) => q.id === view.queryId) : undefined;
   const editingQuery = typeof view === "object" && "editQueryId" in view ? queries.find((q) => q.id === view.editQueryId) : undefined;
 
-  const [ddKind, setDdKind] = useState<"entity" | "person">("entity");
   const spotlightScope = typeof view === "object" && "spotlight" in view ? view.spotlight : null;
 
   async function handleSaved(saved: MonitoringQueryItem, created: boolean) {
