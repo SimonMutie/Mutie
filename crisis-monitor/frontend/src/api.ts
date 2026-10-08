@@ -326,13 +326,28 @@ export interface ShapeStyle {
   fillOpacity?: number;
   weight?: number;
   dashArray?: string | null;
+  strokeOpacity?: number;
+  /** Fill pattern key (see studio/patterns.ts); "solid" or unset is a plain fill. */
+  pattern?: string;
+  patternColor?: string;
+  patternSize?: number;
+  patternWeight?: number;
+  /** Icon marker (see studio/icons.ts). */
+  icon?: string;
+  iconColor?: string;
+  iconSize?: number;
+  label?: string;
+  labelOn?: boolean;
+  notes?: string;
 }
+
+export type ShapeSource = "drawn" | "shapefile" | "geojson" | "kml" | "gpx" | "csv" | "wkt" | "topojson" | "icon";
 
 export interface SavedShape {
   id: string;
   owner_id: string | null;
   name: string;
-  source: "drawn" | "shapefile" | "geojson";
+  source: ShapeSource;
   geometry: GeoJSON.Feature | GeoJSON.FeatureCollection;
   style: ShapeStyle;
   /** Persisted per-shape, per-owner — whether this shape shows on the map

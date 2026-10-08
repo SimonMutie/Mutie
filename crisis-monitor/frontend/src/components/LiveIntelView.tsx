@@ -2,6 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { StudioLayer } from "../studio/StudioLayer";
+import { StudioPanel } from "../studio/StudioPanel";
+import { studio, useStudio } from "../studio/store";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
@@ -1301,12 +1304,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // --- Shapes tool: persisted AOI overlays (map_shapes), drawn here and
   // shown on the map alongside every live layer and incident. ---
   const [savedShapes, setSavedShapes] = useState<SavedShape[]>([]);
-  const [shapeDrawing, setShapeDrawing] = useState(false);
-  const [shapeDrawPoints, setShapeDrawPoints] = useState<LatLng[]>([]);
-  const [shapeNameDraft, setShapeNameDraft] = useState("");
-  const [shapeColorDraft, setShapeColorDraft] = useState("#7dd3fc");
-  const [shapeSaving, setShapeSaving] = useState(false);
-  const [shapeError, setShapeError] = useState<string | null>(null);
 
   // --- Saved routes (map_routes) — the Route tool's planned routes can be
   // saved here, so they persist and overlay the map (and any incidents)
@@ -1332,6 +1329,21 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   function refreshShapes() {
     api.getMapShapes().then(setSavedShapes).catch(() => {});
   }
+  // Map Studio saves through its own store; it asks for a fresh list after each change.
+  const refreshShapesRef = useRef(refreshShapes);
+  refreshShapesRef.current = refreshShapes;
+  useEffect(() => {
+    studio.configure({ onChanged: () => refreshShapesRef.current() });
+  }, []);
+  // The rich drawing, patterns and icons run on the flat map: opening the Studio from the globe switches to it.
+  const studioState = useStudio();
+  useEffect(() => {
+    if (activeTool === "shapes" && mapMode === "3d") setMapMode("2d");
+  }, [activeTool, mapMode]);
+  // Files dropped on the map open the Studio's import tab.
+  useEffect(() => {
+    if (studioState.dropped?.length) setActiveTool("shapes");
+  }, [studioState.dropped]);
   function refreshRoutes() {
     api.getMapRoutes().then(setSavedRoutes).catch(() => {});
   }
@@ -1508,31 +1520,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         setRouteResult(null);
         setRouteError(null);
       }
-    } else if (activeTool === "shapes" && shapeDrawing) {
-      setShapeDrawPoints((prev) => [...prev, [lat, lng]]);
-    }
-  }
-
-  async function handleSaveShape() {
-    if (shapeDrawPoints.length < 3) return;
-    setShapeSaving(true);
-    setShapeError(null);
-    try {
-      const ring = [...shapeDrawPoints, shapeDrawPoints[0]].map(([lat, lng]) => [lng, lat]);
-      await api.createMapShape({
-        name: shapeNameDraft.trim() || "Untitled AOI",
-        source: "drawn",
-        geometry: { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } },
-        style: { color: shapeColorDraft, fillColor: shapeColorDraft, fillOpacity: 0.22, weight: 2 },
-      });
-      setShapeDrawPoints([]);
-      setShapeDrawing(false);
-      setShapeNameDraft("");
-      refreshShapes();
-    } catch (err) {
-      setShapeError(err instanceof Error ? err.message : "Couldn't save this AOI");
-    } finally {
-      setShapeSaving(false);
     }
   }
 
@@ -1730,11 +1717,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         extra.push({ id: `draw-${i}`, layerKey: "Drawing", lat, lng, color: "#ffd23f", size: 0.14, title: `Point ${i + 1}`, subtitle: "", time: null, url: null });
       });
     }
-    if (activeTool === "shapes") {
-      shapeDrawPoints.forEach(([lat, lng], i) => {
-        extra.push({ id: `shape-${i}`, layerKey: "AOI", lat, lng, color: shapeColorDraft, size: 0.14, title: `Vertex ${i + 1}`, subtitle: "", time: null, url: null });
-      });
-    }
     // The Listen tool's current ad-hoc search result — geocoded coverage
     // locations for whatever's in the query box right now, shown only
     // while the tool is open (a live preview, not a persisted layer; save
@@ -1757,7 +1739,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       }
     }
     return extra;
-  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints, shapeDrawPoints, shapeColorDraft, listenResult]);
+  }, [activeTool, issPos, routeOrigin, routeDestination, drawPoints, listenResult]);
 
   // Pinned, toggled-on saved listening queries — a persistent map layer
   // (unlike the ad-hoc search preview above), driven by the same polling
@@ -1808,10 +1790,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       routeResult && routeResult.coordinates.length >= 2
         ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
         : [];
-    const inProgressShape =
-      activeTool === "shapes" && shapeDrawPoints.length >= 2
-        ? [{ points: [...shapeDrawPoints, shapeDrawPoints[0]], label: shapeNameDraft || "New AOI", color: shapeColorDraft }]
-        : [];
     const shapeOverlays = savedShapes
       .filter((s) => s.visible)
       .map((s) => ({ points: shapeRingLatLng(s), label: s.name, color: s.style?.color || "#7dd3fc" }))
@@ -1820,7 +1798,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       .filter((r) => r.visible)
       .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
       .filter((p) => p.points.length >= 2);
-    return [...lanes, ...cables, ...drawPath, ...routePath, ...inProgressShape, ...shapeOverlays, ...routeOverlays];
+    return [...lanes, ...cables, ...drawPath, ...routePath, ...shapeOverlays, ...routeOverlays];
   }, [
     enabled["maritime-lines"],
     maritimeLanes,
@@ -1830,9 +1808,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     drawPoints,
     routeResult,
     activeTool,
-    shapeDrawPoints,
-    shapeNameDraft,
-    shapeColorDraft,
     savedShapes,
     savedRoutes,
   ]);
@@ -1880,15 +1855,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <FlatMap
             mode={mapMode}
             points={flatMapPoints}
-            onMapClick={activeTool === "draw" || activeTool === "route" || activeTool === "shapes" ? handleMapClick : undefined}
+            onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
+            studioActive={activeTool === "shapes"}
             drawMode={activeTool === "draw" ? drawMode : null}
             drawPoints={drawPoints}
             routeLine={activeTool === "route" ? routeLineForFlatMap : undefined}
             savedShapes={savedShapes}
             savedRoutes={savedRoutes}
-            shapeDrawPoints={activeTool === "shapes" ? shapeDrawPoints : undefined}
-            shapeDrawActive={activeTool === "shapes" && shapeDrawing}
-            shapeDraftColor={shapeColorDraft}
             incidentsOn={enabled["my-incidents"]}
             incidentRows={incidentRowsForFlatMap}
             incidentViewMode={incidentViewMode}
@@ -1981,11 +1954,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 setRouteResult(null);
                 setRouteError(null);
               }
-              if (next !== "shapes") {
-                setShapeDrawing(false);
-                setShapeDrawPoints([]);
-                setShapeError(null);
-              }
+              if (next !== "shapes") studio.set({ tool: "select", selectedId: null });
               return next;
             })
           }
@@ -2130,27 +2099,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             error={cryptoError}
           />
         )}
-        {activeTool === "shapes" && (
-          <ShapesToolPanel
-            drawing={shapeDrawing}
-            points={shapeDrawPoints}
-            name={shapeNameDraft}
-            color={shapeColorDraft}
-            saving={shapeSaving}
-            error={shapeError}
-            onToggleDrawing={() => {
-              setShapeDrawing((v) => !v);
-              setShapeDrawPoints([]);
-            }}
-            onNameChange={setShapeNameDraft}
-            onColorChange={setShapeColorDraft}
-            onClear={() => setShapeDrawPoints([])}
-            onSave={handleSaveShape}
-            savedShapes={savedShapes}
-            onToggleShape={(id, visible) => api.updateMapShape(id, { visible }).then(refreshShapes).catch(() => {})}
-            onDeleteShape={(id) => api.deleteMapShape(id).then(refreshShapes).catch(() => {})}
-          />
-        )}
+        {activeTool === "shapes" && <StudioPanel shapes={savedShapes} />}
       </div>
 
       {incidentModalTab && (
@@ -2180,9 +2129,7 @@ function FlatMap({
   routeLine,
   savedShapes,
   savedRoutes,
-  shapeDrawPoints,
-  shapeDrawActive,
-  shapeDraftColor,
+  studioActive,
   incidentsOn,
   incidentRows,
   incidentViewMode,
@@ -2208,9 +2155,8 @@ function FlatMap({
    *  tool panel happens to be open. */
   savedShapes?: SavedShape[];
   savedRoutes?: SavedRoute[];
-  shapeDrawPoints?: LatLng[];
-  shapeDrawActive?: boolean;
-  shapeDraftColor?: string;
+  /** True while the Map Studio tool is open: its shapes become clickable and its drawing tools run. */
+  studioActive?: boolean;
   /** "My Incidents", rendered rich (bullet icons, editable/pinnable popups,
    *  adjustable heatmap) instead of as generic GlobePoint dots — see the
    *  flatMapPoints/incidentRowsForFlatMap comments at the call site. */
@@ -2245,24 +2191,7 @@ function FlatMap({
         <Polygon positions={drawPoints} pathOptions={{ color: "#ffd23f", fillColor: "#ffd23f", fillOpacity: 0.25, weight: 2 }} />
       )}
       {routeLine && routeLine.length >= 2 && <Polyline positions={routeLine} pathOptions={{ color: "#4dff9e", weight: 3 }} />}
-      {shapeDrawActive && shapeDrawPoints && shapeDrawPoints.length >= 3 && (
-        <Polygon
-          positions={shapeDrawPoints}
-          pathOptions={{ color: shapeDraftColor ?? "#7dd3fc", fillColor: shapeDraftColor ?? "#7dd3fc", fillOpacity: 0.2, weight: 2, dashArray: "4 4" }}
-        />
-      )}
-      {savedShapes
-        ?.filter((s) => s.visible)
-        .map((s) => {
-          const ring = shapeRingLatLng(s);
-          if (ring.length < 3) return null;
-          const color = s.style?.color || "#7dd3fc";
-          return (
-            <Polygon key={s.id} positions={ring} pathOptions={{ color, fillColor: s.style?.fillColor || color, fillOpacity: s.style?.fillOpacity ?? 0.18, weight: s.style?.weight ?? 2 }}>
-              <LeafletTooltip direction="center">{s.name}</LeafletTooltip>
-            </Polygon>
-          );
-        })}
+      <StudioLayer shapes={savedShapes ?? []} active={!!studioActive} />
       {savedRoutes
         ?.filter((r) => r.visible)
         .map((r) => (
@@ -3196,7 +3125,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
   const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
     { key: "monitor", icon: Radar, label: "Monitor" },
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
-    { key: "shapes", icon: Hexagon, label: "AOI" },
+    { key: "shapes", icon: Hexagon, label: "Studio" },
     { key: "economy", icon: Landmark, label: "Economy" },
     { key: "listen", icon: Megaphone, label: "Listen" },
     { key: "draw", icon: Ruler, label: "Draw" },
@@ -3895,88 +3824,6 @@ function CryptoToolPanel({
             <div style={{ fontSize: 10, color: HUD.textMuted }}>{result.partial.join(" · ")}</div>
           )}
           <div style={{ fontSize: 10, color: HUD.textMuted }}>Sources: {result.sources.join(", ")}</div>
-        </div>
-      )}
-    </ToolPanelShell>
-  );
-}
-
-/** Shapes tool — draw-and-save persisted AOI overlays (map_shapes). Draw
- *  mode reuses the same map-click plumbing as Drawing Tools/Route, just
- *  writing to its own point buffer so the three don't collide. */
-function ShapesToolPanel({
-  drawing,
-  points,
-  name,
-  color,
-  saving,
-  error,
-  onToggleDrawing,
-  onNameChange,
-  onColorChange,
-  onClear,
-  onSave,
-  savedShapes,
-  onToggleShape,
-  onDeleteShape,
-}: {
-  drawing: boolean;
-  points: LatLng[];
-  name: string;
-  color: string;
-  saving: boolean;
-  error: string | null;
-  onToggleDrawing: () => void;
-  onNameChange: (v: string) => void;
-  onColorChange: (v: string) => void;
-  onClear: () => void;
-  onSave: () => void;
-  savedShapes: SavedShape[];
-  onToggleShape: (id: string, visible: boolean) => void;
-  onDeleteShape: (id: string) => void;
-}) {
-  return (
-    <ToolPanelShell title="Areas of Interest">
-      <ToolButton active={drawing} onClick={onToggleDrawing}>
-        {drawing ? "Drawing… click map to add vertices" : "Draw new AOI"}
-      </ToolButton>
-      {drawing && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ fontSize: 11, color: HUD.textSecondary }}>
-            {points.length} vertex{points.length === 1 ? "" : "es"} placed. Needs at least 3.
-          </div>
-          <input value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="Name this area…" style={hudInputStyle} />
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="color" value={color} onChange={(e) => onColorChange(e.target.value)} style={{ width: 32, height: 26, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
-            <span style={{ fontSize: 10, color: HUD.textMuted }}>Overlay color</span>
-          </div>
-          {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
-          <div style={{ display: "flex", gap: 6 }}>
-            <ToolButton onClick={onClear}>Clear points</ToolButton>
-            <ToolButton onClick={onSave}>{saving ? "Saving…" : "Save AOI"}</ToolButton>
-          </div>
-        </div>
-      )}
-
-      {savedShapes.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 8, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
-          <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: HUD.textMuted }}>
-            Saved areas ({savedShapes.length})
-          </div>
-          {savedShapes.map((s) => (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-              <input type="checkbox" checked={s.visible} onChange={(e) => onToggleShape(s.id, e.target.checked)} />
-              <span
-                style={{ width: 9, height: 9, borderRadius: 2, background: s.style?.color || "#7dd3fc", flexShrink: 0 }}
-              />
-              <span style={{ flex: 1, color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
-                {s.name}
-              </span>
-              <button onClick={() => onDeleteShape(s.id)} title="Delete" style={iconOnlyBtnStyle}>
-                <CloseGlyph size={11} color={HUD.textMuted} />
-              </button>
-            </div>
-          ))}
         </div>
       )}
     </ToolPanelShell>

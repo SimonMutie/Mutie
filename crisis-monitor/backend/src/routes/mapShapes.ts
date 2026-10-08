@@ -15,11 +15,24 @@ const styleSchema = z.object({
   fillOpacity: z.number().min(0).max(1).optional(),
   weight: z.number().optional(),
   dashArray: z.string().nullish(),
+  strokeOpacity: z.number().min(0).max(1).optional(),
+  // Fill pattern (stripes, criss-cross and so on), drawn on the map as an SVG pattern.
+  pattern: z.string().max(24).optional(),
+  patternColor: z.string().optional(),
+  patternSize: z.number().min(2).max(80).optional(),
+  patternWeight: z.number().min(0.5).max(12).optional(),
+  // Icon markers (airport, hotel, building and so on).
+  icon: z.string().max(40).optional(),
+  iconColor: z.string().optional(),
+  iconSize: z.number().min(16).max(72).optional(),
+  label: z.string().max(120).optional(),
+  labelOn: z.boolean().optional(),
+  notes: z.string().max(2000).optional(),
 });
 
 const createSchema = z.object({
   name: z.string().min(1),
-  source: z.enum(["drawn", "shapefile", "geojson"]),
+  source: z.enum(["drawn", "shapefile", "geojson", "kml", "gpx", "csv", "wkt", "topojson", "icon"]),
   // A single GeoJSON Feature or FeatureCollection — validated loosely (just that
   // it has a `type`) since fully validating arbitrary GeoJSON geometry trees
   // isn't worth the cost here; a malformed geometry just won't render on the map.

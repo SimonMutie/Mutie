@@ -15,7 +15,7 @@ import "leaflet/dist/leaflet.css";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape } from "../api";
+import { api, type IncidentFilters, type IncidentItem, type SavedRoute, type SavedShape, type ShapeSource } from "../api";
 import MapDefaultsPanel from "./MapDefaultsPanel";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
@@ -613,7 +613,7 @@ interface ShapeSim {
   id: string;
   backendId: string | null;
   name: string;
-  source: "drawn" | "shapefile" | "geojson";
+  source: ShapeSource;
   geometry: GeoJSON.Feature | GeoJSON.FeatureCollection;
   color: string;
   fillOpacity: number;

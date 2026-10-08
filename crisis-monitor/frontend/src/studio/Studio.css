@@ -1,0 +1,27 @@
+/* Map Studio: icon pins, labels, edit handles and the measuring tip on the map. */
+.studio-pin { position: relative; width: var(--s); height: calc(var(--s) + 10px); display: flex; flex-direction: column; align-items: center; pointer-events: auto; filter: drop-shadow(0 3px 5px rgba(0,0,0,.55)); }
+.studio-pin__badge { width: var(--s); height: var(--s); border-radius: 50%; background: var(--c); border: 2.5px solid #fff; display: flex; align-items: center; justify-content: center; box-sizing: border-box; transition: transform .12s; }
+.studio-pin__tip { width: 0; height: 0; margin-top: -2px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 10px solid var(--c); }
+.studio-pin.is-selected .studio-pin__badge { transform: scale(1.12); box-shadow: 0 0 0 3px rgba(240,208,96,.9), 0 0 18px rgba(240,208,96,.7); }
+.studio-pin__label { position: absolute; top: calc(var(--s) + 8px); left: 50%; transform: translateX(-50%); white-space: nowrap; font: 600 11px/1.2 ui-sans-serif, system-ui, sans-serif; color: #fff; background: rgba(8,10,20,.82); border: 1px solid rgba(212,175,55,.35); padding: 2px 6px; border-radius: 5px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.leaflet-div-icon.studio-icon, .studio-icon { background: none !important; border: none !important; }
+
+.studio-selected { filter: drop-shadow(0 0 5px rgba(240,208,96,.9)); }
+
+.studio-vh { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 2.5px solid #D4AF37; box-sizing: border-box; box-shadow: 0 1px 4px rgba(0,0,0,.6); cursor: grab; }
+.studio-vh:hover { background: #F0D060; transform: scale(1.25); }
+.studio-mh { width: 9px; height: 9px; border-radius: 50%; background: rgba(212,175,55,.55); border: 1.5px solid #fff; box-sizing: border-box; cursor: copy; opacity: .8; }
+.studio-mh:hover { opacity: 1; background: #F0D060; }
+.studio-dot { width: 10px; height: 10px; border-radius: 50%; background: #F0D060; border: 2px solid #0b1020; box-sizing: border-box; }
+.studio-dot.first { width: 14px; height: 14px; background: #fff; border-color: #D4AF37; cursor: pointer; }
+
+.leaflet-tooltip.studio-measure { background: rgba(8,10,20,.92); color: #F0D060; border: 1px solid rgba(212,175,55,.45); border-radius: 6px; font: 600 11px/1.3 ui-monospace, monospace; padding: 3px 7px; box-shadow: 0 2px 10px rgba(0,0,0,.5); pointer-events: none; }
+.leaflet-tooltip.studio-measure::before { display: none; }
+.leaflet-tooltip.studio-label { background: rgba(8,10,20,.78); color: #fff; border: 1px solid rgba(212,175,55,.3); border-radius: 5px; font: 600 11px/1.2 ui-sans-serif, system-ui, sans-serif; padding: 2px 6px; box-shadow: none; }
+.leaflet-tooltip.studio-label::before { display: none; }
+.studio-drawing, .studio-drawing .leaflet-interactive { cursor: crosshair !important; }
+
+.studio-panel input[type=range] { accent-color: #D4AF37; width: 100%; }
+.studio-panel button { font-family: inherit; }
+.studio-panel ::-webkit-scrollbar { width: 6px; }
+.studio-panel ::-webkit-scrollbar-thumb { background: rgba(212,175,55,.25); border-radius: 3px; }
