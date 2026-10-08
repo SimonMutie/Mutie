@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AlertItem } from "../api";
+import RealisticEye from "./RealisticEye";
 import { alertsPaused, setAlertsPaused, useAlertsPaused } from "../alertPrefs";
 
 /**
@@ -21,7 +22,7 @@ const soundOn = () => {
 
 let audio: AudioContext | null = null;
 /** Plays the tone for a level. Fails silently when the browser has not yet allowed audio. */
-function beep(level: AlertItem["level"]) {
+function beep(level: AlertItem["level"], onNote?: () => void) {
   const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!Ctx) return;
   try {
@@ -42,11 +43,18 @@ function beep(level: AlertItem["level"]) {
       osc.connect(gain).connect(ctx.destination);
       osc.start(t);
       osc.stop(t + gap);
+      if (onNote) setTimeout(onNote, i * gap * 1000);
     });
   } catch {
     /* audio not available */
   }
 }
+
+const IRIS: Record<string, { gold: string; light: string; mid: string; dark: string; rim: string }> = {
+  critical: { gold: "#ffcf6b", light: "#ff8a5c", mid: "#d6261f", dark: "#6d0f10", rim: "#2a0405" },
+  elevated: { gold: "#ffe08a", light: "#ffc24d", mid: "#e08a00", dark: "#7a4300", rim: "#2c1700" },
+  info: { gold: "#d6b45c", light: "#7fd1c0", mid: "#139c94", dark: "#0a4a5a", rim: "#04202a" },
+};
 
 const LEVEL_STYLE: Record<string, { color: string; label: string }> = {
   critical: { color: "#ff3d3d", label: "CRITICAL" },
@@ -68,6 +76,7 @@ export default function AlertPopups({
   const seen = useRef(new Set<string>());
   const [silenced, setSilenced] = useState<Set<string>>(new Set());
   const paused = useAlertsPaused();
+  const [pulse, setPulse] = useState(0); // bumped on every note of the alarm, so the eyes blink with it
 
   useEffect(() => {
     if (!liveMessage || liveMessage.type !== "alert") return;
@@ -84,8 +93,9 @@ export default function AlertPopups({
   const loudestLevel = loudest?.level;
   useEffect(() => {
     if (!loudestId || !loudestLevel || paused || !sound) return;
-    beep(loudestLevel);
-    const t = setInterval(() => beep(loudestLevel), loudestLevel === "critical" ? 2600 : 3200);
+    const blink = () => setPulse((n) => n + 1);
+    beep(loudestLevel, blink);
+    const t = setInterval(() => beep(loudestLevel, blink), loudestLevel === "critical" ? 2600 : 3200);
     return () => clearInterval(t);
   }, [loudestId, loudestLevel, paused, sound]);
   // Pausing alerts closes whatever is open.
@@ -107,13 +117,23 @@ export default function AlertPopups({
   };
 
   return (
-    <div style={{ position: "fixed", top: 64, right: 16, zIndex: 3000, width: 360, maxWidth: "calc(100vw - 32px)", display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ position: "fixed", top: 64, right: 16, zIndex: 3000, width: 430, maxWidth: "calc(100vw - 32px)", display: "flex", flexDirection: "column", gap: 10 }}>
+      <style>{`
+        .alert-eye .intro__lids { transform: none; animation: none; }
+        .alert-eye .intro__ball { animation: none; transform: none; }
+        .alert-eye .intro__iris { opacity: 1; transform: none; animation: none; }
+        .alert-eye .intro__pupil { animation: none; }
+        .alert-eye--blink .intro__ball { animation: alert-eye-blink 0.2s ease-in-out; }
+        @keyframes alert-eye-blink { 0%, 100% { transform: scaleY(1); } 45% { transform: scaleY(0.06); } }
+      `}</style>
       {cards.map((al) => {
         const st = LEVEL_STYLE[al.level] ?? LEVEL_STYLE.info;
         const snap = al.metric_snapshot;
         const headlines = snap?.headlines?.slice(0, 3) ?? [];
         return (
           <div key={al.id} style={{ background: "rgba(10,12,22,0.97)", border: `1px solid ${st.color}`, borderLeft: `5px solid ${st.color}`, borderRadius: 8, padding: 12, color: "#e8e6e0", font: "13px/1.45 system-ui, sans-serif", boxShadow: `0 6px 30px rgba(0,0,0,0.6), 0 0 18px ${st.color}55` }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
               <span style={{ background: st.color, color: "#000", fontWeight: 800, fontSize: 10.5, letterSpacing: "0.08em", padding: "2px 7px", borderRadius: 4 }}>{st.label}</span>
               <span style={{ opacity: 0.6, fontSize: 11 }}>{al.query_name ? `Monitoring: ${al.query_name}` : "Conflict escalation"}</span>
@@ -150,6 +170,16 @@ export default function AlertPopups({
               )}
               <span style={{ flex: 1 }} />
               <span style={{ opacity: 0.5, fontSize: 11 }}>{new Date(al.created_at).toLocaleTimeString()}</span>
+            </div>
+            </div>
+            <div
+              key={silenced.has(al.id) ? "still" : pulse}
+              className={`alert-eye${silenced.has(al.id) ? "" : " alert-eye--blink"}`}
+              style={{ width: 92, flexShrink: 0, marginTop: 22, filter: `drop-shadow(0 0 8px ${st.color}88)` }}
+              aria-hidden="true"
+            >
+              <RealisticEye id={`alert-eye-${al.id}`} iris={IRIS[al.level] ?? IRIS.info} />
+            </div>
             </div>
           </div>
         );
