@@ -3806,18 +3806,24 @@ function IncidentsToolPanel({
           Date of occurrence
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <input
-            type="date"
-            value={draft.from ?? ""}
-            onChange={(e) => onDraftChange({ ...draft, from: e.target.value || undefined })}
-            style={{ ...hudInputStyle, flex: 1 }}
-          />
-          <input
-            type="date"
-            value={draft.to ?? ""}
-            onChange={(e) => onDraftChange({ ...draft, to: e.target.value || undefined })}
-            style={{ ...hudInputStyle, flex: 1 }}
-          />
+          <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, fontSize: 10.5, color: HUD.textSecondary }}>
+            Start date
+            <input
+              type="date"
+              value={draft.from ?? ""}
+              onChange={(e) => onDraftChange({ ...draft, from: e.target.value || undefined })}
+              style={{ ...hudInputStyle, width: "100%" }}
+            />
+          </label>
+          <label style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, fontSize: 10.5, color: HUD.textSecondary }}>
+            End date
+            <input
+              type="date"
+              value={draft.to ?? ""}
+              onChange={(e) => onDraftChange({ ...draft, to: e.target.value || undefined })}
+              style={{ ...hudInputStyle, width: "100%" }}
+            />
+          </label>
         </div>
         <MonthQuickFilter onPick={(bounds) => onDraftChange({ ...draft, ...bounds })} />
 

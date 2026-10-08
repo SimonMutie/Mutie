@@ -231,12 +231,13 @@ incidentsRouter.get("/", async (c) => {
     }
   }
   if (from) {
-    conditions.push("occurred_at >= ?");
-    params.push(from);
+    // Day-level comparison, so an end date includes that whole day.
+    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) >= ?");
+    params.push(from.slice(0, 10));
   }
   if (to) {
-    conditions.push("occurred_at <= ?");
-    params.push(to);
+    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) <= ?");
+    params.push(to.slice(0, 10));
   }
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -385,12 +386,12 @@ export function buildScopeClause(
     params.push(...ownerIds);
   }
   if (dateFrom) {
-    conditions.push("occurred_at >= ?");
-    params.push(dateFrom);
+    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) >= ?");
+    params.push(dateFrom.slice(0, 10));
   }
   if (dateTo) {
-    conditions.push("occurred_at <= ?");
-    params.push(dateTo);
+    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) <= ?");
+    params.push(dateTo.slice(0, 10));
   }
   if (countries && countries.length > 0) {
     conditions.push(`LOWER(country) IN (${countries.map(() => "LOWER(?)").join(",")})`);
