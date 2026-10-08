@@ -1,5 +1,5 @@
 import L from "leaflet";
-import { classifyActor, pinSvg } from "./actorTheme";
+import { classifyIncident, pinSvg } from "./actorTheme";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -1271,7 +1271,7 @@ export default function DashboardWidgetCard({
                 <HeatmapLayer points={(incidents ?? []).slice(0, 5000).map((i) => [i.latitude, i.longitude, 1] as [number, number, number])} />
               ) : (
                 (incidents ?? []).slice(0, 3000).map((i, idx) => (
-                  <LeafletMarker key={idx} position={[i.latitude, i.longitude]} icon={dashboardPin(classifyActor(i.actor).color)}>
+                  <LeafletMarker key={idx} position={[i.latitude, i.longitude]} icon={dashboardPin(classifyIncident(i).color)}>
                     <LeafletTooltip direction="top" offset={[0, -2]} opacity={0.95}>
                       <div style={{ fontSize: 12, lineHeight: 1.5 }}>
                         <div style={{ fontWeight: 700 }}>{[i.city, i.province].filter(Boolean).join(", ") || "Unknown location"}</div>

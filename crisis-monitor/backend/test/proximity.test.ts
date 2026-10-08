@@ -40,3 +40,26 @@ describe("actor theme", () => {
     expect(classifyActor("Tribal clash").label).toBe("Tribal");
   });
 });
+
+import { classifyIncident } from "../../frontend/src/components/actorTheme";
+describe("incident colours for real-world actor names", () => {
+  const c = (actor: string | null, more: Record<string, string | null> = {}) => classifyIncident({ actor, ...more }).color;
+  it("AOG and terrorism red", () => {
+    expect(c("SPLA-IO")).toBe("#dc2626");
+    expect(c("Al-Shabaab")).toBe("#dc2626");
+    expect(c("White Army")).toBe("#dc2626");
+  });
+  it("security forces dark green, state SPLA included", () => {
+    expect(c("SSPDF")).toBe("#166534");
+    expect(c("SPLA")).toBe("#166534");
+    expect(c("National Police Service")).toBe("#166534");
+  });
+  it("criminal blue and tribal yellow", () => {
+    expect(c("Armed robbers")).toBe("#2563eb");
+    expect(c("Murle youth")).toBe("#eab308");
+    expect(c("Lou Nuer community")).toBe("#eab308");
+  });
+  it("falls back to the other columns when the actor is blank", () => {
+    expect(c(null, { interest_group: "Criminal gang" })).toBe("#2563eb");
+  });
+});

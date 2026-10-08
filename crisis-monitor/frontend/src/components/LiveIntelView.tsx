@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
-import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
 import { Studio3D } from "../studio/Studio3D";
@@ -16,6 +16,7 @@ import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { IncidentMarker, classifyActor, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
+import { classifyIncident } from "./actorTheme";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
 import { useHiddenIncidents, HiddenIncidentsControl, type HiddenIncidents } from "./hiddenIncidents";
@@ -725,7 +726,7 @@ function incidentRowToPoint(r: IncidentItem): GlobePoint | null {
     layerKey: "My Incidents",
     lat: r.latitude,
     lng: r.longitude,
-    color: classifyActor(r.actor).color,
+    color: classifyIncident(r).color,
     size: 0.16,
     title: [r.city, r.province].filter(Boolean).join(", ") || r.district || r.precise_location || r.country || "Incident",
     subtitle: [r.sector, r.tactic].filter(Boolean).join(" · "),
@@ -1274,6 +1275,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // Display options for the rich incident layer — mirrors IncidentsMap.tsx/
   // IncidentSearch.tsx's own view-mode + heatmap controls, session-only.
   const [incidentViewMode, setIncidentViewMode] = useState<"markers" | "heatmap">("markers");
+  /** Icons by default; true groups nearby icons into numbered count bubbles. */
+  const [incidentBubbles, setIncidentBubbles] = useState(false);
   const [incidentIconMode, setIncidentIconMode] = useState<"actor" | "tactic">("actor");
   const [incidentHeatmapStyle, setIncidentHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
   const [incidentAnnotations, setIncidentAnnotations] = useState<Record<string, PopupAnnotation>>({});
@@ -1953,6 +1956,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             incidentsOn={enabled["my-incidents"]}
             incidentRows={incidentRowsForFlatMap}
             incidentViewMode={incidentViewMode}
+            incidentBubbles={incidentBubbles}
             incidentIconMode={incidentIconMode}
             incidentHeatmapStyle={incidentHeatmapStyle}
             incidentAnnotations={incidentAnnotations}
@@ -2141,6 +2145,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             exporting={incidentExporting}
             viewMode={incidentViewMode}
             onViewModeChange={setIncidentViewMode}
+            bubbles={incidentBubbles}
+            onBubbles={setIncidentBubbles}
             iconMode={incidentIconMode}
             onIconModeChange={setIncidentIconMode}
             heatmapStyle={incidentHeatmapStyle}
@@ -2244,6 +2250,7 @@ function FlatMap({
   incidentsOn,
   incidentRows,
   incidentViewMode,
+  incidentBubbles,
   incidentIconMode,
   incidentHeatmapStyle,
   incidentAnnotations,
@@ -2278,6 +2285,7 @@ function FlatMap({
   incidentsOn?: boolean;
   incidentRows?: IncidentItem[];
   incidentViewMode?: "markers" | "heatmap";
+  incidentBubbles?: boolean;
   incidentIconMode?: "actor" | "tactic";
   incidentHeatmapStyle?: HeatmapStyle;
   incidentAnnotations?: Record<string, PopupAnnotation>;
@@ -2296,7 +2304,8 @@ function FlatMap({
   );
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
-    <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump style={{ height: "100%", width: "100%", background: "#000308" }}>
+    <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump zoomControl={false} style={{ height: "100%", width: "100%", background: "#000308" }}>
+      <MapNavPad />
       <TileLayer url={tile.url} attribution={tile.attribution} />
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
@@ -2344,22 +2353,21 @@ function FlatMap({
         </CircleMarker>
         )
       )}
-      {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (
-        <MarkerClusterGroup chunkedLoading>
-          {visibleIncidentRows.map((i) => (
-            <IncidentMarker
-              key={i.id}
-              incident={i}
-              highlighted
-              iconMode={incidentIconMode ?? "actor"}
-              annotation={incidentAnnotations?.[i.id]}
-              onUpdateAnnotation={onUpdateIncidentAnnotation ?? (() => {})}
-              onHide={hiddenIncidents?.hide}
-              onDeleted={onIncidentDeleted}
-            />
-          ))}
-        </MarkerClusterGroup>
-      )}
+      {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (() => {
+        const markers = visibleIncidentRows.map((i) => (
+          <IncidentMarker
+            key={i.id}
+            incident={i}
+            highlighted
+            iconMode={incidentIconMode ?? "actor"}
+            annotation={incidentAnnotations?.[i.id]}
+            onUpdateAnnotation={onUpdateIncidentAnnotation ?? (() => {})}
+            onHide={hiddenIncidents?.hide}
+            onDeleted={onIncidentDeleted}
+          />
+        ));
+        return incidentBubbles ? <MarkerClusterGroup chunkedLoading>{markers}</MarkerClusterGroup> : <>{markers}</>;
+      })()}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "heatmap" && (
         <HeatmapLayer
           points={visibleIncidentHeatPoints}
@@ -2368,6 +2376,36 @@ function FlatMap({
       )}
       {incidentsOn && incidentRows && hiddenIncidents && <HiddenIncidentsControl incidents={incidentRows} hidden={hiddenIncidents} />}
     </MapContainer>
+  );
+}
+
+/** Zoom and pan buttons for the flat maps, bottom-right and away from the left panel. */
+function MapNavPad() {
+  const map = useMap();
+  const btn: React.CSSProperties = { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: HUD.textSecondary, cursor: "pointer", fontSize: 16, fontFamily: "inherit", padding: 0 };
+  const pan = (dx: number, dy: number) => map.panBy([dx, dy]);
+  return (
+    <div
+      style={{ ...glassPanel(), position: "absolute", right: 12, bottom: 30, zIndex: 1000, display: "flex", alignItems: "center", padding: "6px 8px", gap: 8 }}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ display: "flex", flexDirection: "column", borderRight: `1px solid ${HUD.borderPrimaryHover}`, paddingRight: 6 }}>
+        <button style={btn} title="Zoom in" onClick={() => map.zoomIn()}>+</button>
+        <button style={btn} title="Zoom out" onClick={() => map.zoomOut()}>−</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "28px 28px 28px", gridTemplateRows: "24px 24px 24px" }}>
+        <span />
+        <button style={btn} title="Pan up" onClick={() => pan(0, -200)}>⌃</button>
+        <span />
+        <button style={btn} title="Pan left" onClick={() => pan(-200, 0)}>‹</button>
+        <span />
+        <button style={btn} title="Pan right" onClick={() => pan(200, 0)}>›</button>
+        <span />
+        <button style={btn} title="Pan down" onClick={() => pan(0, 200)}>⌄</button>
+        <span />
+      </div>
+    </div>
   );
 }
 
@@ -2503,7 +2541,7 @@ function LayerPanel({
           />
         </div>
       ))}
-      {pinnedListeningQueries.length > 0 && (
+      {false && pinnedListeningQueries.length > 0 && (
         <div style={{ borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 }}>
           <ListeningRailButton
             queries={pinnedListeningQueries}
@@ -3245,10 +3283,10 @@ function GlobalStatusTicker() {
 function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void }) {
   const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
     { key: "monitor", icon: Radar, label: "Monitor" },
+    { key: "listen", icon: Megaphone, label: "Listen" },
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
     { key: "shapes", icon: Hexagon, label: "Studio" },
     { key: "economy", icon: Landmark, label: "Economy" },
-    { key: "listen", icon: Megaphone, label: "Listen" },
     { key: "draw", icon: Ruler, label: "Draw" },
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
@@ -3738,6 +3776,8 @@ function IncidentsToolPanel({
   exporting,
   viewMode,
   onViewModeChange,
+  bubbles,
+  onBubbles,
   iconMode,
   onIconModeChange,
   heatmapStyle,
@@ -3762,6 +3802,8 @@ function IncidentsToolPanel({
   onExport: (format: "xlsx" | "csv") => void;
   exporting: "xlsx" | "csv" | null;
   viewMode: "markers" | "heatmap";
+  bubbles: boolean;
+  onBubbles: (v: boolean) => void;
   onViewModeChange: (m: "markers" | "heatmap") => void;
   iconMode: "actor" | "tactic";
   onIconModeChange: (m: "actor" | "tactic") => void;
@@ -3854,7 +3896,8 @@ function IncidentsToolPanel({
           Display on map (2D / Map / Sat)
         </div>
         <div style={{ display: "flex", gap: 6 }}>
-          <ToolButton active={viewMode === "markers"} onClick={() => onViewModeChange("markers")}>Icons</ToolButton>
+          <ToolButton active={viewMode === "markers" && !bubbles} onClick={() => { onViewModeChange("markers"); onBubbles(false); }}>Icons</ToolButton>
+          <ToolButton active={viewMode === "markers" && bubbles} onClick={() => { onViewModeChange("markers"); onBubbles(true); }}>Count bubbles</ToolButton>
           <ToolButton active={viewMode === "heatmap"} onClick={() => onViewModeChange("heatmap")}>Heatmap</ToolButton>
         </div>
         {viewMode === "markers" && (

@@ -1,7 +1,7 @@
 import { useMemo, useState, type CSSProperties } from "react";
 import { Flame, MapPinned, Search, Waypoints, X } from "lucide-react";
 import type { IncidentItem } from "../api";
-import { classifyActor } from "../components/actorTheme";
+import { classifyIncident } from "../components/actorTheme";
 import { fmtLength } from "./geo";
 import { HUD, inputStyle } from "./hud";
 import { incidentsNear } from "./proximity";
@@ -51,7 +51,7 @@ export function NearbySearch({
   const byActor = useMemo(() => {
     const m = new Map<string, { color: string; n: number }>();
     for (const f of found ?? []) {
-      const c = classifyActor(f.row.actor);
+      const c = classifyIncident(f.row);
       const e = m.get(c.label) ?? { color: c.color, n: 0 };
       e.n++;
       m.set(c.label, e);

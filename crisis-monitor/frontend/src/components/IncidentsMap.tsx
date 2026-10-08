@@ -62,7 +62,7 @@ interface Props {
 // this file itself a usable local binding.
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
 import { Tooltip as LeafletTooltip } from "react-leaflet";
-import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, pinSvg as basePinSvg, type ActorCategory, type ActorShape } from "./actorTheme";
+import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, classifyIncident, pinSvg as basePinSvg, type ActorCategory, type ActorShape } from "./actorTheme";
 export { classifyActor, ACTOR_THEME, type ActorCategory, type ActorShape };
 export { BASEMAPS, type BasemapKey };
 
@@ -286,7 +286,7 @@ export const IncidentMarker = memo(function IncidentMarker({
       setDeleting(false);
     }
   }
-  const actorCategory = classifyActor(incident.actor);
+  const actorCategory = classifyIncident(incident);
   const displayCategory = iconMode === "tactic" ? { color: actorCategory.color, shape: classifyTactic(incident.tactic).glyph } : actorCategory;
   const casualties = totalCasualties(incident);
 
