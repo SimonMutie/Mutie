@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -17,6 +17,7 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { IncidentMarker, classifyActor, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { classifyIncident } from "./actorTheme";
+import { setAlertsPaused, useAlertsPaused } from "../alertPrefs";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
 import { useHiddenIncidents, HiddenIncidentsControl, type HiddenIncidents } from "./hiddenIncidents";
@@ -35,6 +36,7 @@ import {
   Landmark,
   MapPin,
   Megaphone,
+  BellOff,
   Mountain,
   Navigation,
   Network,
@@ -3293,11 +3295,24 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
+  const alertsPaused = useAlertsPaused();
+  const alertsSwitch = (
+    <button
+      key="alerts-switch"
+      onClick={() => setAlertsPaused(!alertsPaused)}
+      title={alertsPaused ? "Alert pop-ups and sound are paused — click to turn them back on" : "Alert pop-ups and sound are on — click to pause them (peace of mind)"}
+      style={{ width: 54, display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px", background: alertsPaused ? "rgba(255,61,61,0.16)" : "transparent", border: "none", borderRadius: 8, color: alertsPaused ? HUD.alertRed : HUD.alertGreen, cursor: "pointer", fontFamily: "inherit" }}
+    >
+      {alertsPaused ? <BellOff size={16} color={HUD.alertRed} /> : <Bell size={16} color={HUD.alertGreen} />}
+      <span style={{ fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700 }}>{alertsPaused ? "Paused" : "Pop-ups"}</span>
+    </button>
+  );
   return (
     <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 4, padding: 4 }}>
       {tools.map((t) => (
+        <Fragment key={t.key}>
+        {t.key === "incidents" && alertsSwitch}
         <button
-          key={t.key}
           onClick={() => onSelect(t.key)}
           title={t.label}
           style={{
@@ -3319,6 +3334,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
           <t.icon size={16} color={active === t.key ? HUD.gold : HUD.textMuted} />
           <span style={{ fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 700 }}>{t.label}</span>
         </button>
+        </Fragment>
       ))}
     </div>
   );
