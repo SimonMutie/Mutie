@@ -187,7 +187,7 @@ export function incidentIcon(category: { color: string; shape: IconGlyph }, high
   const cached = iconCache.get(cacheKey);
   if (cached) return cached;
 
-  const w = highlighted ? 18 : 14;
+  const w = highlighted ? 14 : 11;
   const h = Math.round(w * (32 / 24));
   const icon = L.divIcon({
     html: pinFor(category, w, 1, showGlyph),

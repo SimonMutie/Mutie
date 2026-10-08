@@ -452,7 +452,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         layout: {
           "icon-image": ["concat", "incident-pin-", ["get", "color"]],
           "icon-anchor": "bottom",
-          "icon-size": 0.5,
+          "icon-size": 0.4,
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },

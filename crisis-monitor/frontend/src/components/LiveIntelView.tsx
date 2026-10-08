@@ -707,7 +707,7 @@ const LAYER_DEFS: LayerDef[] = [
     color: "#ff9de2",
     icon: MapPin,
     fetcher: async () => {
-      const rows = await api.getIncidents({ limit: 2000 });
+      const rows = await api.getIncidents({ limit: myIncidentsLimit });
       return rows.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null);
     },
   },
@@ -770,6 +770,10 @@ const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Networ
  *  routes, which is worse than not showing them there at all. */
 
 const POLL_MS = 60_000;
+/** Incidents fetched for the map: the latest 2,000 by default (fast), or everything on demand. */
+const INCIDENT_DEFAULT_LIMIT = 2000;
+const INCIDENT_ALL_LIMIT = 250000;
+let myIncidentsLimit = INCIDENT_DEFAULT_LIMIT;
 
 type LayerState = { data: GlobePoint[] | null; loading: boolean; error: string | null };
 type MapMode = "3d" | "2d" | "map" | "sat";
@@ -1193,6 +1197,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [incidentFilterDraft, setIncidentFilterDraft] = useState<IncidentFilterState>({});
   const [incidentSearchResults, setIncidentSearchResults] = useState<IncidentItem[] | null>(null);
   const [incidentSearchLoading, setIncidentSearchLoading] = useState(false);
+  const refreshMyIncidentsRef = useRef<(() => void) | null>(null);
+  const [loadAllIncidents, setLoadAllIncidents] = useState(false);
+  useEffect(() => {
+    myIncidentsLimit = loadAllIncidents ? INCIDENT_ALL_LIMIT : INCIDENT_DEFAULT_LIMIT;
+    refreshMyIncidentsRef.current?.();
+  }, [loadAllIncidents]);
   const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
   const [incidentBulkDeleting, setIncidentBulkDeleting] = useState(false);
 
@@ -1206,7 +1216,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   useEffect(() => {
     let cancelled = false;
     function load() {
-      api.getIncidents({ limit: 2000 }).then((rows) => !cancelled && setMyIncidentRows(rows)).catch(() => {});
+      api.getIncidents({ limit: myIncidentsLimit }).then((rows) => !cancelled && setMyIncidentRows(rows)).catch(() => {});
     }
     load();
     const interval = setInterval(load, POLL_MS);
@@ -1418,8 +1428,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // Bulk-upload save so a freshly-entered incident appears immediately
   // instead of waiting for the next 60s poll.
   function refreshMyIncidents() {
+    refreshMyIncidentsRef.current = refreshMyIncidents;
     api
-      .getIncidents({ limit: 2000 })
+      .getIncidents({ limit: myIncidentsLimit })
       .then((rows) => {
         setLayers((prev) => ({
           ...prev,
@@ -1429,7 +1440,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       })
       .catch(() => {});
     if (Object.values(incidentFilters).some(Boolean)) {
-      api.getIncidents({ ...incidentFilters, limit: 2000 }).then(setIncidentSearchResults).catch(() => {});
+      api.getIncidents({ ...incidentFilters, limit: INCIDENT_ALL_LIMIT }).then(setIncidentSearchResults).catch(() => {});
     }
   }
 
@@ -1463,8 +1474,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
   // Fires only when the applied filters change — i.e. when Search or Clear
   // is clicked below, not on every dropdown/date edit (the draft holds
-  // those in between). The map view is capped at 2000 rendered points for
-  // performance; export (below) is never capped.
+  // those in between). Searches are not capped: every matching incident is
+  // fetched and shown.
   useEffect(() => {
     const hasFilter = Object.values(incidentFilters).some(Boolean);
     if (!hasFilter) {
@@ -1474,7 +1485,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     let cancelled = false;
     setIncidentSearchLoading(true);
     api
-      .getIncidents({ ...incidentFilters, limit: 2000 })
+      .getIncidents({ ...incidentFilters, limit: INCIDENT_ALL_LIMIT })
       .then((rows) => {
         if (!cancelled) setIncidentSearchResults(rows);
       })
@@ -2115,6 +2126,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             appliedCount={Object.values(incidentFilters).filter(Boolean).length}
             resultCount={incidentSearchResults?.length ?? null}
             loading={incidentSearchLoading}
+            loadAll={loadAllIncidents}
+            onLoadAll={setLoadAllIncidents}
+            loadedCount={myIncidentRows.length}
             onSearch={handleIncidentSearch}
             onClear={handleIncidentClearFilters}
             onAdd={() => setIncidentModalTab("add")}
@@ -3708,6 +3722,9 @@ function IncidentsToolPanel({
   appliedCount,
   resultCount,
   loading,
+  loadAll,
+  onLoadAll,
+  loadedCount,
   onSearch,
   onClear,
   onAdd,
@@ -3729,6 +3746,9 @@ function IncidentsToolPanel({
   appliedCount: number;
   resultCount: number | null;
   loading: boolean;
+  loadAll: boolean;
+  onLoadAll: (v: boolean) => void;
+  loadedCount: number;
   onSearch: () => void;
   onClear: () => void;
   onAdd: () => void;
@@ -3808,9 +3828,13 @@ function IncidentsToolPanel({
         {loading
           ? "Searching…"
           : hasApplied
-          ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — shown on the map (capped at 2,000 points on-screen; export has the full set)`
-          : "Enable \"My Incidents\" (under My Data, left rail) to see every uploaded/logged incident on the map. Set filters above and press Search to narrow that down."}
+          ? `${(resultCount ?? 0).toLocaleString()} incident${resultCount === 1 ? "" : "s"} match — all shown on the map`
+          : "Enable \"My Incidents\" (under My Data, left rail) to see your incidents on the map. Set filters above and press Search to narrow that down. A search always shows every match."}
       </div>
+      <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11.5, color: HUD.textSecondary, cursor: "pointer" }}>
+        <input type="checkbox" checked={loadAll} onChange={(e) => onLoadAll(e.target.checked)} />
+        <span>Load all incidents on the map (default is the latest 2,000){loadAll ? ` — ${loadedCount.toLocaleString()} loaded; use Heatmap if it feels slow` : ""}</span>
+      </label>
 
       {/* 2D/map/sat modes only — Map3D keeps the generic colored-dot
           rendering, since these bullet icons/popups/heatmap are Leaflet-only. */}
