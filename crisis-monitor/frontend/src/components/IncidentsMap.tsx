@@ -61,6 +61,7 @@ interface Props {
 // the app keeps working unchanged — a plain re-export alone wouldn't give
 // this file itself a usable local binding.
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
+import { Tooltip as LeafletTooltip } from "react-leaflet";
 import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, pinSvg as basePinSvg, type ActorCategory, type ActorShape } from "./actorTheme";
 export { classifyActor, ACTOR_THEME, type ActorCategory, type ActorShape };
 export { BASEMAPS, type BasemapKey };
@@ -186,14 +187,15 @@ export function incidentIcon(category: { color: string; shape: IconGlyph }, high
   const cached = iconCache.get(cacheKey);
   if (cached) return cached;
 
-  const w = highlighted ? 30 : 24;
+  const w = highlighted ? 18 : 14;
   const h = Math.round(w * (32 / 24));
   const icon = L.divIcon({
     html: pinFor(category, w, 1, showGlyph),
     className: "incident-marker-icon",
     iconSize: [w, h],
     iconAnchor: [w / 2, h - 1], // the pin's tip marks the location
-    popupAnchor: [0, -h + 4],
+    popupAnchor: [0, -h + 2],
+    tooltipAnchor: [0, -h + 2],
   });
   iconCache.set(cacheKey, icon);
   return icon;
@@ -223,6 +225,14 @@ export function totalCasualties(i: IncidentItem): number {
  *  default shallow prop comparison means a given marker now only
  *  actually re-renders when its own incident, highlighted state, or
  *  iconMode genuinely changes — not on every render of its parent. */
+function FactRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 8, fontSize: 12.5, lineHeight: 1.5 }}>
+      <span style={{ width: 48, flexShrink: 0, color: "#888" }}>{label}</span>
+      <span style={{ flex: 1 }}>{value}</span>
+    </div>
+  );
+}
 const popupToolBtnStyle: React.CSSProperties = {
   fontSize: 10.5,
   padding: "2px 6px",
@@ -285,12 +295,25 @@ export const IncidentMarker = memo(function IncidentMarker({
   const displayLocation = annotation?.locationOverride ?? realLocation;
   const displayDate = annotation?.dateOverride ?? incident.occurred_date ?? "";
   const displayCategoryLine = annotation?.categoryOverride ?? realCategoryLine;
+  const typeLine = annotation?.categoryOverride ?? [incident.sector, incident.tactic].filter(Boolean).join(" · ");
   const displayDetails = annotation?.detailsOverride ?? incident.details ?? "";
   const pinned = annotation?.pinned ?? false;
   const patch = (p: Partial<PopupAnnotation>) => onUpdateAnnotation(incident.id, p);
 
   return (
     <Marker position={[incident.latitude!, incident.longitude!]} icon={incidentIcon(displayCategory, highlighted, iconMode === "tactic")}>
+      <LeafletTooltip direction="top" opacity={0.97}>
+        <div style={{ width: 230, whiteSpace: "normal", fontSize: 12, lineHeight: 1.4 }}>
+          <div style={{ fontWeight: 700 }}>{displayLocation}</div>
+          <div style={{ color: "#666" }}>{displayDate || "Date not recorded"}</div>
+          <div>
+            <span style={{ color: actorCategory.color, fontWeight: 700 }}>{typeLine || actorCategory.label}</span>
+            {incident.actor && <span style={{ color: "#666" }}> · {incident.actor}</span>}
+          </div>
+          {displayDetails && <div style={{ marginTop: 3, color: "#333" }}>{displayDetails.length > 150 ? `${displayDetails.slice(0, 150)}…` : displayDetails}</div>}
+          <div style={{ marginTop: 3, color: "#999", fontSize: 10.5 }}>Click for full details</div>
+        </div>
+      </LeafletTooltip>
       {/* autoClose/closeOnClick off once pinned — otherwise Leaflet closes
           this the moment another popup opens or the map itself is
           clicked, which would defeat the whole point of pinning several
@@ -375,17 +398,22 @@ export const IncidentMarker = memo(function IncidentMarker({
           ) : (
             <>
               <div style={{ background: annotation?.headerBg, padding: annotation?.headerBg ? "4px 6px" : 0, borderRadius: 4 }}>
-                <div style={{ fontWeight: 700, marginBottom: 2 }}>{displayLocation}</div>
-                <div style={{ color: "#666", marginBottom: 4 }}>{displayDate}</div>
-                <div>
-                  <span style={{ color: actorCategory.color, fontWeight: 600 }}>{actorCategory.label}</span>
-                  {displayCategoryLine && " · "}
-                  {displayCategoryLine}
-                </div>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{displayLocation}</div>
+                <FactRow label="Date" value={displayDate || "Not recorded"} />
+                <FactRow label="Type" value={typeLine || "Not recorded"} />
+                <FactRow label="Actor" value={<span style={{ color: actorCategory.color, fontWeight: 600 }}>{incident.actor || actorCategory.label}</span>} />
+                {incident.severity && <FactRow label="Severity" value={incident.severity} />}
               </div>
-              <div style={{ background: annotation?.detailsBg, padding: annotation?.detailsBg ? "4px 6px" : 0, borderRadius: 4, marginTop: 4 }}>
-                {casualties > 0 && <div style={{ color: "#d1352b" }}>{casualties} civilian casualties</div>}
-                {displayDetails && <div style={{ marginTop: 4, color: "#444" }}>{displayDetails.slice(0, 200)}</div>}
+              <div style={{ background: annotation?.detailsBg, padding: annotation?.detailsBg ? "4px 6px" : 0, borderRadius: 4, marginTop: 6 }}>
+                {casualties > 0 && <div style={{ color: "#d1352b", marginBottom: 3 }}>{casualties} civilian casualties</div>}
+                {displayDetails ? (
+                  <div style={{ color: "#333", maxHeight: 140, overflowY: "auto", lineHeight: 1.45 }}>
+                    <span style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>Details</span>
+                    <div>{displayDetails}</div>
+                  </div>
+                ) : (
+                  <div style={{ color: "#888", fontSize: 12 }}>No details recorded.</div>
+                )}
               </div>
             </>
           )}
@@ -2522,7 +2550,7 @@ function ActorLegend({ iconMode }: { iconMode: "actor" | "tactic" }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {entries.map((c) => (
           <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 16, height: 21, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: pinSvg(c, 16, 1) }} />
+            <span style={{ width: 12, height: 16, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: pinSvg(c, 12, 1) }} />
             <span style={{ color: "var(--text-muted)" }}>{c.label}</span>
           </div>
         ))}

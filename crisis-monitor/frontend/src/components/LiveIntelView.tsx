@@ -266,6 +266,8 @@ interface GlobePoint {
   subtitle: string;
   time: string | null;
   url: string | null;
+  actor?: string;
+  details?: string;
   /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
    *  Undefined on every other layer. */
   escalationLevel?: "elevated" | "critical";
@@ -724,10 +726,12 @@ function incidentRowToPoint(r: IncidentItem): GlobePoint | null {
     lng: r.longitude,
     color: classifyActor(r.actor).color,
     size: 0.16,
-    title: r.city || r.district || r.country || "Incident",
-    subtitle: [r.sector, r.tactic].filter(Boolean).join(" — "),
-    time: r.occurred_at,
+    title: [r.city, r.province].filter(Boolean).join(", ") || r.district || r.precise_location || r.country || "Incident",
+    subtitle: [r.sector, r.tactic].filter(Boolean).join(" · "),
+    time: r.occurred_date ?? r.occurred_at ?? null,
     url: null,
+    actor: r.actor ?? undefined,
+    details: r.details ?? undefined,
   };
 }
 

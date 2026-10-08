@@ -59,6 +59,9 @@ export interface Map3DPoint {
   subtitle: string;
   time: string | null;
   url: string | null;
+  /** Uploaded incidents only: who was involved and what happened. */
+  actor?: string;
+  details?: string;
   /** Conflict Escalation only — draws a warning-triangle label above the
    *  point instead of just the plain colored dot every other layer gets,
    *  colored by level. Undefined on every other layer. */
@@ -144,6 +147,8 @@ export type Map3DSelectedFeature =
       subtitle: string;
       time: string | null;
       url: string | null;
+      actor?: string;
+      details?: string;
       lat: number;
       lng: number;
       escalationLevel?: "elevated" | "critical";
@@ -228,6 +233,8 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
         // Setting it unconditionally made every single layer's points (every
         // earthquake, every GDELT event, every aircraft...) sprout a
         // permanent floating title label across the whole map.
+        ...(p.actor ? { actor: p.actor } : {}),
+        ...(p.details ? { details: p.details } : {}),
         ...(p.escalationLevel ? { escalationLevel: p.escalationLevel } : {}),
         ...(p.countryCode ? { countryCode: p.countryCode } : {}),
         ...(p.evidenceCount != null ? { evidenceCount: p.evidenceCount } : {}),
@@ -445,7 +452,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         layout: {
           "icon-image": ["concat", "incident-pin-", ["get", "color"]],
           "icon-anchor": "bottom",
-          "icon-size": 0.85,
+          "icon-size": 0.5,
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },
@@ -620,6 +627,27 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         window.setTimeout(() => hoverRoot.unmount(), 0);
       };
 
+      // Hovering a pin shows the incident's date, place, type and details.
+      const incidentHover = new Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: [0, -22], maxWidth: "260px", className: "osiris-hover-popup" });
+      const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+      map.on("mousemove", "osiris-incident-pins", (e) => {
+        const f = e.features?.[0];
+        if (!f || f.geometry.type !== "Point") return;
+        const p = f.properties as { title?: string; subtitle?: string; time?: string; actor?: string; details?: string };
+        const d = p.details ? (p.details.length > 150 ? `${p.details.slice(0, 150)}…` : p.details) : "";
+        incidentHover
+          .setLngLat((f.geometry as GeoJSON.Point).coordinates as [number, number])
+          .setHTML(
+            `<div style="font:12px/1.4 system-ui,sans-serif;color:#e8e6e0;max-width:240px"><div style="font-weight:700">${esc(p.title)}</div>` +
+              `<div style="opacity:.7">${esc(p.time ? formatIncidentDate(p.time) : "Date not recorded")}</div>` +
+              `<div style="color:#F0D060">${esc(p.subtitle || "Type not recorded")}${p.actor ? ` <span style="color:#9B978E">· ${esc(p.actor)}</span>` : ""}</div>` +
+              (d ? `<div style="margin-top:3px">${esc(d)}</div>` : "") +
+              `<div style="margin-top:3px;opacity:.5;font-size:10.5px">Click for full details</div></div>`
+          )
+          .addTo(map);
+      });
+      map.on("mouseleave", "osiris-incident-pins", () => incidentHover.remove());
+
       for (const layerId of POINT_LAYERS) {
         map.on("mousemove", layerId, (e) => {
           const f = e.features?.[0];
@@ -663,6 +691,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
             escalationLevel: "elevated" | "critical" | null;
             countryCode?: string;
             evidenceCount?: number;
+            actor?: string;
+            details?: string;
           };
           const [lng, lat] = (f.geometry as GeoJSON.Point).coordinates as [number, number];
           const incident = props.escalationLevel ? pointsRef.current.find((p) => p.id === props.id)?.incident : undefined;
@@ -682,6 +712,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
             subtitle: props.subtitle ?? "",
             time: props.time,
             url: props.url,
+            actor: props.actor,
+            details: props.details,
             lat,
             lng,
             escalationLevel: props.escalationLevel ?? undefined,
@@ -919,8 +951,22 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
         <div className="osiris-popup-card">
           <div className="osiris-popup-title">{title}</div>
           <div className="osiris-popup-layer">{feature.layerKey}</div>
-          <div className="osiris-popup-desc">{feature.subtitle}</div>
-          {feature.time && <div className="osiris-popup-time">{new Date(feature.time).toLocaleString()}</div>}
+          {feature.layerKey === "My Incidents" ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, lineHeight: 1.45 }}>
+              <div><span style={{ opacity: 0.6 }}>Date </span>{feature.time ? formatIncidentDate(feature.time) : "Not recorded"}</div>
+              <div><span style={{ opacity: 0.6 }}>Type </span>{feature.subtitle || "Not recorded"}</div>
+              {feature.actor && <div><span style={{ opacity: 0.6 }}>Actor </span>{feature.actor}</div>}
+              <div style={{ marginTop: 4 }}>
+                <span style={{ opacity: 0.6 }}>Details </span>
+                {feature.details || "No details recorded."}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="osiris-popup-desc">{feature.subtitle}</div>
+              {feature.time && <div className="osiris-popup-time">{new Date(feature.time).toLocaleString()}</div>}
+            </>
+          )}
           {url && (
             <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
               [ OPEN SOURCE ↗ ]
@@ -930,6 +976,13 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
       )}
     </div>
   );
+}
+
+/** A date for an incident: date-only values stay date-only (no invented midnight time). */
+function formatIncidentDate(t: string): string {
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return t;
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : d.toLocaleString();
 }
 
 const PRECISION_NOTE: Record<EscalationIncident["geoPrecision"], string> = {
