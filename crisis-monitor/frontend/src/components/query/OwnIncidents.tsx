@@ -4,7 +4,7 @@ import { ACTOR_CATEGORIES, OTHER_CATEGORY, classifyActor } from "../actorTheme";
 import { Empty, Panel } from "./shared";
 
 /**
- * "Live incidents": what this query is collecting right now from open sources,
+ * "Live incident picture": what this query is collecting right now from open sources,
  * read as incidents. Nothing here comes from your own recorded incidents or
  * from any historical table: every figure is drawn from the news reports the
  * query collected in the period shown, with the report behind each line.
@@ -60,6 +60,45 @@ function Bars({ items, color }: { items: [string, number][]; color: string }) {
   );
 }
 
+type Inc = { item: QueryStreamItem; actor: { label: string; color: string }; tactic: string | null; deaths: number; harm: boolean };
+
+/** Incident reports gathered by place: the busiest places first, each with who is named and what is reported. */
+function hotspotsOf(incidents: Inc[]) {
+  const by = new Map<string, Inc[]>();
+  for (const x of incidents) {
+    const p = x.item.place?.trim();
+    if (p) by.set(p, [...(by.get(p) ?? []), x]);
+  }
+  return [...by.entries()]
+    .map(([place, rows]) => {
+      const actors = topN(rows.filter((r) => r.actor !== OTHER_CATEGORY).map((r) => r.actor.label), 1)[0];
+      const color = rows.find((r) => r.actor.label === actors?.[0])?.actor.color ?? OTHER_CATEGORY.color;
+      return {
+        place,
+        n: rows.length,
+        outlets: new Set(rows.map((r) => r.item.source).filter(Boolean)).size,
+        actor: actors?.[0] ?? null,
+        color,
+        tactic: topN(rows.map((r) => r.tactic ?? ""), 1)[0]?.[0] ?? null,
+        deaths: rows.reduce((a, r) => a + r.deaths, 0),
+        last: rows.reduce((a, r) => (r.item.published_at > a ? r.item.published_at : a), ""),
+      };
+    })
+    .sort((a, b) => b.n - a.n || b.last.localeCompare(a.last))
+    .slice(0, 8);
+}
+
+/** How many incident reports arrived in each hour (short periods) or day (longer ones). */
+function pulseOf(incidents: Inc[], bucket: "day" | "hour") {
+  const len = bucket === "hour" ? 13 : 10;
+  const m = new Map<string, number>();
+  for (const x of incidents) {
+    const k = x.item.published_at.slice(0, len);
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, n]) => ({ k, n }));
+}
+
 const ago = (iso: string) => {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (mins < 60) return `${mins}m ago`;
@@ -108,12 +147,13 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
     return {
       breakdown: ALL_CATEGORIES.map((c) => ({ label: c.label, color: c.color, n: cats.get(c.label)?.n ?? 0 })).filter((c) => c.n > 0),
       tactics: topN(incidents.map((x) => x.tactic ?? "")),
-      places: topN(incidents.map((x) => x.item.place ?? "")),
+      hotspots: hotspotsOf(incidents),
+      pulse: pulseOf(incidents, overview?.bucket ?? "day"),
       outlets: new Set(incidents.map((x) => x.item.source).filter(Boolean)).size,
       located: new Set(incidents.filter((x) => x.item.place).map((x) => x.item.place)).size,
       reportedDead: incidents.reduce((a, x) => a + x.deaths, 0),
     };
-  }, [incidents]);
+  }, [incidents, overview?.bucket]);
 
   const tile = (label: string, value: string) => (
     <div style={{ background: "var(--panel-raised)", borderRadius: 8, padding: "8px 12px", minWidth: 96 }}>
@@ -124,7 +164,7 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
   const head = (t: string) => <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-faint)", margin: "14px 0 6px" }}>{t}</div>;
 
   return (
-    <Panel title="Live incidents" note={incidents && items ? `${incidents.length.toLocaleString()} of ${items.length.toLocaleString()} reports read as incidents` : undefined}>
+    <Panel title="Live incident picture" note={incidents && items ? `${incidents.length.toLocaleString()} of ${items.length.toLocaleString()} reports read as incidents` : undefined}>
       {!overview || !incidents ? (
         <Empty>Loading…</Empty>
       ) : error ? (
@@ -155,35 +195,42 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
             ))}
           </div>
 
+          {head(overview?.bucket === "hour" ? "Pulse — incident reports per hour" : "Pulse — incident reports per day")}
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 44 }}>
+            {stats.pulse.map((p) => {
+              const max = Math.max(...stats.pulse.map((q) => q.n));
+              return <div key={p.k} title={`${p.k.replace("T", " ")}${overview?.bucket === "hour" ? ":00" : ""} — ${p.n}`} style={{ flex: 1, minWidth: 2, height: `${Math.max(8, (p.n / max) * 100)}%`, background: "#e34948", opacity: 0.75, borderRadius: 2 }} />;
+            })}
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 18 }}>
-            <div>
-              {head("Where it is happening")}
-              {stats.places.length > 0 ? <Bars items={stats.places} color="#2a78d6" /> : <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No place named yet.</div>}
-            </div>
             <div>
               {head("What is being reported")}
               {stats.tactics.length > 0 ? <Bars items={stats.tactics} color="#e34948" /> : <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No clear event type.</div>}
             </div>
           </div>
 
-          {head("Latest from open sources")}
-          <div style={{ display: "grid", gap: 7 }}>
-            {incidents.slice(0, 12).map((x) => (
-              <div key={x.item.id} style={{ display: "grid", gridTemplateColumns: "10px minmax(0,1fr)", gap: 9, fontSize: 12.5, lineHeight: 1.4 }}>
-                <i style={{ width: 10, height: 10, borderRadius: "50%", background: x.actor.color, marginTop: 4 }} title={x.actor.label} />
-                <div>
-                  {x.item.url ? (
-                    <a href={x.item.url} target="_blank" rel="noreferrer" style={{ fontWeight: 600, color: "inherit" }}>{x.item.title}</a>
-                  ) : (
-                    <b>{x.item.title}</b>
-                  )}
+          {head("Hotspots")}
+          {stats.hotspots.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No place named in these reports yet.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
+              {stats.hotspots.map((h) => (
+                <div key={h.place} style={{ background: "var(--panel-raised)", borderRadius: 8, padding: "8px 10px", borderLeft: `4px solid ${h.color}`, fontSize: 12.5, lineHeight: 1.4 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.place}</b>
+                    <b>{h.n}</b>
+                  </div>
                   <div style={{ color: "var(--text-faint)" }}>
-                    {[x.item.place, x.tactic, x.item.source, ago(x.item.published_at)].filter(Boolean).join(" · ")}
+                    {[h.actor, h.tactic].filter(Boolean).join(" · ") || "Actor and type unclear"}
+                  </div>
+                  <div style={{ color: "var(--text-faint)" }}>
+                    {h.outlets} outlet{h.outlets === 1 ? "" : "s"}{h.deaths ? ` · ${h.deaths} dead reported` : ""} · {ago(h.last)}
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Panel>
