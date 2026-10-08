@@ -32,10 +32,10 @@ describe("incidentsNear", () => {
 import { classifyActor } from "../../frontend/src/components/actorTheme";
 describe("actor theme", () => {
   it("uses the chosen colours", () => {
-    expect(classifyActor("AOG").color).toBe("#991b1b"); // dark red
+    expect(classifyActor("AOG").color).toBe("#dc2626"); // red
     expect(classifyActor("Criminal gang").color).toBe("#2563eb"); // blue
     expect(classifyActor("Security Forces").color).toBe("#166534"); // dark green
-    expect(classifyActor("Tribal clash").color).toBe("#9d174d"); // dark pink
+    expect(classifyActor("Tribal clash").color).toBe("#eab308"); // yellow
     expect(classifyActor("Tribal clash").label).toBe("Tribal");
   });
 });

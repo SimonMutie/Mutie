@@ -1,4 +1,5 @@
-import { classifyActor } from "./actorTheme";
+import L from "leaflet";
+import { classifyActor, pinSvg } from "./actorTheme";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -26,7 +27,7 @@ import {
   Sankey,
 } from "recharts";
 import { hierarchy, pack } from "d3-hierarchy";
-import { MapContainer, TileLayer, CircleMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Marker as LeafletMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
 import { HeatmapLayer } from "./HeatmapLayer";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
@@ -50,6 +51,16 @@ import { detectColumnType } from "./DatasetsPanel";
 
 const TOOLTIP_STYLE = { background: "var(--panel-raised)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 };
 const PIE_COLORS = ["#0d9488", "#2f66f0", "#b3690b", "#d1352b", "#7c3aed", "#0891b2", "#65a30d", "#db2777", "#ea580c", "#4d7c0f"];
+
+const dashboardPins = new Map<string, L.DivIcon>();
+function dashboardPin(color: string): L.DivIcon {
+  let ic = dashboardPins.get(color);
+  if (!ic) {
+    ic = L.divIcon({ html: pinSvg(color, 16), className: "incident-marker-icon", iconSize: [16, 21], iconAnchor: [8, 20] });
+    dashboardPins.set(color, ic);
+  }
+  return ic;
+}
 
 /** Curated starting points, Tableau/Power-BI-style — each just a normal
  *  palette (array of colors), same shape as a fully custom one. Picking a
@@ -1260,7 +1271,7 @@ export default function DashboardWidgetCard({
                 <HeatmapLayer points={(incidents ?? []).slice(0, 5000).map((i) => [i.latitude, i.longitude, 1] as [number, number, number])} />
               ) : (
                 (incidents ?? []).slice(0, 3000).map((i, idx) => (
-                  <CircleMarker key={idx} center={[i.latitude, i.longitude]} radius={3.5} pathOptions={{ color: "#fff", fillColor: classifyActor(i.actor).color, fillOpacity: 0.9, weight: 0.8 }}>
+                  <LeafletMarker key={idx} position={[i.latitude, i.longitude]} icon={dashboardPin(classifyActor(i.actor).color)}>
                     <LeafletTooltip direction="top" offset={[0, -2]} opacity={0.95}>
                       <div style={{ fontSize: 12, lineHeight: 1.5 }}>
                         <div style={{ fontWeight: 700 }}>{[i.city, i.province].filter(Boolean).join(", ") || "Unknown location"}</div>
@@ -1271,7 +1282,7 @@ export default function DashboardWidgetCard({
                         {i.occurred_date && <div style={{ color: "#888" }}>{i.occurred_date}</div>}
                       </div>
                     </LeafletTooltip>
-                  </CircleMarker>
+                  </LeafletMarker>
                 ))
               )}
               {onUpdate && (

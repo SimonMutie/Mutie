@@ -61,7 +61,7 @@ interface Props {
 // the app keeps working unchanged — a plain re-export alone wouldn't give
 // this file itself a usable local binding.
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
-import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, type ActorCategory, type ActorShape } from "./actorTheme";
+import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, pinSvg as basePinSvg, type ActorCategory, type ActorShape } from "./actorTheme";
 export { classifyActor, ACTOR_THEME, type ActorCategory, type ActorShape };
 export { BASEMAPS, type BasemapKey };
 
@@ -137,29 +137,14 @@ function shapePathD(shape: IconGlyph): string | null {
   }
 }
 
-// Small flat 2D "bullet" marker — a plain filled circle, not a teardrop pin.
-// Simon asked specifically for small, flat, color-themed bullet icons (not
-// the taller pin-with-glyph look most mapping tools default to), so the
-// category color alone carries the meaning; a tiny glyph is kept inside only
-// in Tactic icon mode, where color alone (still the actor's color) isn't
-// what's being distinguished.
-function bulletSvg(category: { color: string; shape: IconGlyph }, size: number, opacity: number, showGlyph: boolean): string {
-  const r = size / 2;
-  const glyphD = showGlyph ? shapePathD(category.shape) : null;
-  // Glyph paths are authored in a 0-24 box; scale+center them into the
-  // smaller bullet circle rather than drawing at native size.
-  const glyph = glyphD
-    ? `<g transform="translate(${r - r * 0.62},${r - r * 0.62}) scale(${(size * 0.62) / 24})"><path d="${glyphD}" fill="#fff" /></g>`
-    : "";
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg" style="opacity:${opacity}">
-    <circle cx="${r}" cy="${r}" r="${r - 1}" fill="${category.color}" stroke="#fff" stroke-width="1.4" />
-    ${glyph}
-  </svg>`;
+// Teardrop pin markers, coloured by actor category (see actorTheme.ts). In Tactic icon mode a small symbol
+// for the tactic sits in the head of the pin; otherwise it is a plain white dot.
+function pinFor(category: { color: string; shape: IconGlyph }, width: number, opacity: number, showGlyph: boolean): string {
+  return basePinSvg(category.color, width, { glyphD: showGlyph ? shapePathD(category.shape) : null, opacity });
 }
-// Kept for the legend, which always shows the category's plain color bullet
-// regardless of icon mode.
+// Kept for the legend, which always shows the category's plain pin regardless of icon mode.
 function pinSvg(category: { color: string; shape: IconGlyph }, size: number, opacity: number): string {
-  return bulletSvg(category, size, opacity, false);
+  return pinFor(category, size, opacity, false);
 }
 
 /** "2026-09" -> the ISO from/to dates spanning that whole calendar month,
@@ -201,15 +186,14 @@ export function incidentIcon(category: { color: string; shape: IconGlyph }, high
   const cached = iconCache.get(cacheKey);
   if (cached) return cached;
 
-  // Deliberately small — "small 2D bullet icons", not the bigger pin scale
-  // this used before.
-  const size = highlighted ? 13 : 9;
+  const w = highlighted ? 30 : 24;
+  const h = Math.round(w * (32 / 24));
   const icon = L.divIcon({
-    html: bulletSvg(category, size, highlighted ? 1 : 0.65, showGlyph),
+    html: pinFor(category, w, 1, showGlyph),
     className: "incident-marker-icon",
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2], // a bullet marks its location at its own center, not a tip
-    popupAnchor: [0, -size * 0.7],
+    iconSize: [w, h],
+    iconAnchor: [w / 2, h - 1], // the pin's tip marks the location
+    popupAnchor: [0, -h + 4],
   });
   iconCache.set(cacheKey, icon);
   return icon;
@@ -2538,7 +2522,7 @@ function ActorLegend({ iconMode }: { iconMode: "actor" | "tactic" }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {entries.map((c) => (
           <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 14, height: 19, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: pinSvg(c, 14, 1) }} />
+            <span style={{ width: 16, height: 21, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: pinSvg(c, 16, 1) }} />
             <span style={{ color: "var(--text-muted)" }}>{c.label}</span>
           </div>
         ))}

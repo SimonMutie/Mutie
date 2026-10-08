@@ -6,6 +6,7 @@ import "./Map3D.css";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
 import { api, type EscalationIncident } from "../api";
 import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
+import { pinSvg } from "./actorTheme";
 import EscalationHoverCard from "./EscalationHoverCard";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
@@ -424,16 +425,43 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         // Conflict Escalation points get the dedicated warning-icon layer
         // below instead — excluded here so a country isn't marked with both
         // a plain dot AND the triangle icon stacked on top of each other.
-        filter: ["!", ["has", "escalationLevel"]],
+        filter: ["all", ["!", ["has", "escalationLevel"]], ["!=", ["get", "layerKey"], "My Incidents"]],
         paint: {
           "circle-color": ["get", "color"],
-          // The user's uploaded incidents are flat bullet markers in the actor theme colours
-          // (white ring, fixed size); every other layer keeps its sized dot.
-          "circle-radius": ["case", ["==", ["get", "layerKey"], "My Incidents"], 5.5, ["+", 3, ["*", ["get", "size"], 14]]],
-          "circle-opacity": ["case", ["==", ["get", "layerKey"], "My Incidents"], 1, 0.9],
-          "circle-stroke-width": ["case", ["==", ["get", "layerKey"], "My Incidents"], 1.6, 1],
-          "circle-stroke-color": ["case", ["==", ["get", "layerKey"], "My Incidents"], "#ffffff", "rgba(0,0,0,0.4)"],
+          "circle-radius": ["+", 3, ["*", ["get", "size"], 14]],
+          "circle-opacity": 0.9,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "rgba(0,0,0,0.4)",
         },
+      });
+
+      // The user's uploaded incidents: teardrop pins in the actor theme colours. One image per colour,
+      // drawn on demand (see the styleimagemissing handler below).
+      map.addLayer({
+        id: "osiris-incident-pins",
+        type: "symbol",
+        source: "osiris-points",
+        filter: ["==", ["get", "layerKey"], "My Incidents"],
+        layout: {
+          "icon-image": ["concat", "incident-pin-", ["get", "color"]],
+          "icon-anchor": "bottom",
+          "icon-size": 0.85,
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+      });
+      map.on("styleimagemissing", (e) => {
+        if (!e.id.startsWith("incident-pin-") || map.hasImage(e.id)) return;
+        const svg = pinSvg(e.id.slice("incident-pin-".length), 28);
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement("canvas");
+          c.width = 56;
+          c.height = 75;
+          c.getContext("2d")?.drawImage(img, 0, 0, 56, 75);
+          if (!map.hasImage(e.id)) map.addImage(e.id, c.getContext("2d")!.getImageData(0, 0, 56, 75), { pixelRatio: 2 });
+        };
+        img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
       });
 
       // Conflict Escalation's danger-icon treatment: a real triangle-and-
@@ -542,7 +570,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
 
       map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
-      const POINT_LAYERS = ["osiris-points-circle", "osiris-points-warning-icon"];
+      const POINT_LAYERS = ["osiris-points-circle", "osiris-incident-pins", "osiris-points-warning-icon"];
       const TERRITORY_LAYER = "osiris-territory-changes-fill";
 
       map.on("click", (e) => {
