@@ -105,6 +105,8 @@ interface Map3DProps {
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
+  /** Hands the loaded map to whatever draws on top of it (the Map Studio), and null when it is torn down. */
+  onMapReady?: (map: MapLibreMap | null) => void;
   /** Fired whenever a point or territory-change shape is clicked (the
    *  feature's full detail, to be rendered by the caller — see
    *  Map3DDetailPanel below), or with null when the selection should clear
@@ -295,12 +297,14 @@ function nightHemisphereRing(date: Date): [number, number][] {
   return ring;
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, drawAreaRing, onMapClick, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, drawAreaRing, onMapClick, onMapReady, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
   const onClickRef = useRef(onMapClick);
   onClickRef.current = onMapClick;
+  const onReadyRef = useRef(onMapReady);
+  onReadyRef.current = onMapReady;
   const onFeatureSelectRef = useRef(onFeatureSelect);
   onFeatureSelectRef.current = onFeatureSelect;
   // The click handler is registered once, at map load; this keeps the
@@ -616,10 +620,12 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
 
       readyRef.current = true;
       fitRef.current();
+      onReadyRef.current?.(map);
     });
 
     return () => {
       readyRef.current = false;
+      onReadyRef.current?.(null);
       hoverCleanupRef.current?.();
       map.remove();
       mapRef.current = null;

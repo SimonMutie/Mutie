@@ -3,6 +3,8 @@ import type { CircleMarker as LeafletCircleMarker } from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
+import { Studio3D } from "../studio/Studio3D";
+import type { Map as MapLibreMap } from "maplibre-gl";
 import { StudioPanel } from "../studio/StudioPanel";
 import { studio, useStudio } from "../studio/store";
 import MarkerClusterGroup from "react-leaflet-cluster";
@@ -1335,11 +1337,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   useEffect(() => {
     studio.configure({ onChanged: () => refreshShapesRef.current() });
   }, []);
-  // The rich drawing, patterns and icons run on the flat map: opening the Studio from the globe switches to it.
+  // The globe hands over its MapLibre map so the Studio can draw on it.
+  const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
   const studioState = useStudio();
-  useEffect(() => {
-    if (activeTool === "shapes" && mapMode === "3d") setMapMode("2d");
-  }, [activeTool, mapMode]);
   // Files dropped on the map open the Studio's import tab.
   useEffect(() => {
     if (studioState.dropped?.length) setActiveTool("shapes");
@@ -1790,15 +1790,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       routeResult && routeResult.coordinates.length >= 2
         ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
         : [];
-    const shapeOverlays = savedShapes
-      .filter((s) => s.visible)
-      .map((s) => ({ points: shapeRingLatLng(s), label: s.name, color: s.style?.color || "#7dd3fc" }))
-      .filter((p) => p.points.length >= 3);
     const routeOverlays = savedRoutes
       .filter((r) => r.visible)
       .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
       .filter((p) => p.points.length >= 2);
-    return [...lanes, ...cables, ...drawPath, ...routePath, ...shapeOverlays, ...routeOverlays];
+    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays];
   }, [
     enabled["maritime-lines"],
     maritimeLanes,
@@ -1808,7 +1804,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     drawPoints,
     routeResult,
     activeTool,
-    savedShapes,
     savedRoutes,
   ]);
 
@@ -1846,6 +1841,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             territoryChanges={territoryChangePolygons}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
+            onMapReady={setGlobeMap}
             onFeatureSelect={setMap3DSelectedFeature}
             showDayNight={showDayNight}
             showBuildings={showBuildings}
@@ -1873,6 +1869,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onIncidentDeleted={handleIncidentDeleted}
           />
         )}
+
+        {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
         {mapMode === "3d" && (
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
