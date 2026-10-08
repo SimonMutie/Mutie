@@ -35,9 +35,11 @@ interface State {
   dropped: File[] | null;
   /** The last message from a map action. */
   notice: string | null;
+  /** Whether edits to the selected shape are saved yet. */
+  saveState: "idle" | "saving" | "saved";
 }
 
-let state: State = { tool: "select", selectedId: null, draft: DEFAULT_STYLE, iconDraft: DEFAULT_ICON, overrides: {}, zoom: null, dropped: null, notice: null };
+let state: State = { tool: "select", selectedId: null, draft: DEFAULT_STYLE, iconDraft: DEFAULT_ICON, overrides: {}, zoom: null, dropped: null, notice: null, saveState: "idle" };
 const listeners = new Set<() => void>();
 let onChanged: () => void = () => {};
 
@@ -70,40 +72,65 @@ export function useStudio(): State {
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 const pending = new Map<string, Override>();
 
+async function flush(id: string): Promise<void> {
+  clearTimeout(timers.get(id));
+  timers.delete(id);
+  const p = pending.get(id);
+  pending.delete(id);
+  if (!p) return;
+  const { name, ...style } = p;
+  try {
+    await api.updateMapShape(id, { ...(name !== undefined ? { name } : {}), ...(Object.keys(style).length ? { style } : {}) });
+    onChanged();
+    if (!pending.size) {
+      studio.set({ saveState: "saved" });
+      setTimeout(() => state.saveState === "saved" && !pending.size && studio.set({ saveState: "idle" }), 2500);
+    }
+  } catch (e) {
+    studio.set({ saveState: "idle", notice: e instanceof Error ? e.message : "Could not save that change." });
+  } finally {
+    // The refreshed list now carries the change; drop the stand-in once it has arrived.
+    setTimeout(() => {
+      const { [id]: _gone, ...rest } = studio.get().overrides;
+      if (!pending.has(id)) studio.set({ overrides: rest });
+    }, 800);
+  }
+}
+
 /** Shows a style or name change at once and saves it a moment after the last change. */
 export function editShape(id: string, patch: Override): void {
   const merged = { ...state.overrides[id], ...patch };
-  studio.set({ overrides: { ...state.overrides, [id]: merged } });
+  studio.set({ overrides: { ...state.overrides, [id]: merged }, saveState: "saving" });
   pending.set(id, { ...pending.get(id), ...patch });
   clearTimeout(timers.get(id));
-  timers.set(
-    id,
-    setTimeout(async () => {
-      const p = pending.get(id);
-      pending.delete(id);
-      if (!p) return;
-      const { name, ...style } = p;
-      try {
-        await api.updateMapShape(id, { ...(name !== undefined ? { name } : {}), ...(Object.keys(style).length ? { style } : {}) });
-        onChanged();
-      } catch (e) {
-        studio.set({ notice: e instanceof Error ? e.message : "Could not save that change." });
-      } finally {
-        // The refreshed list now carries the change; drop the stand-in once it has arrived.
-        setTimeout(() => {
-          const { [id]: _gone, ...rest } = studio.get().overrides;
-          if (!pending.has(id)) studio.set({ overrides: rest });
-        }, 800);
-      }
-    }, 450)
-  );
+  timers.set(id, setTimeout(() => void flush(id), 900));
+}
+
+/** Saves any edits still waiting, now. */
+export async function saveNow(): Promise<void> {
+  await Promise.all([...pending.keys()].map(flush));
+}
+
+export async function removeShapes(ids: string[]): Promise<void> {
+  try {
+    await Promise.all(ids.map((id) => api.deleteMapShape(id)));
+    if (state.selectedId && ids.includes(state.selectedId)) studio.select(null);
+    onChanged();
+  } catch (e) {
+    studio.set({ notice: e instanceof Error ? e.message : "Could not delete those." });
+    onChanged();
+  }
 }
 
 export async function saveGeometry(id: string, geometry: GeoJSON.Feature | GeoJSON.FeatureCollection): Promise<void> {
+  studio.set({ saveState: "saving" });
   try {
     await api.updateMapShape(id, { geometry });
     onChanged();
+    studio.set({ saveState: "saved" });
+    setTimeout(() => state.saveState === "saved" && studio.set({ saveState: "idle" }), 2500);
   } catch (e) {
+    studio.set({ saveState: "idle" });
     studio.set({ notice: e instanceof Error ? e.message : "Could not save that edit." });
   }
 }

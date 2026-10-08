@@ -7,7 +7,7 @@ import { Studio3D } from "../studio/Studio3D";
 import { EditablePoints, EditablePoints3D, type EditPoint } from "../studio/EditablePoints";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { StudioPanel } from "../studio/StudioPanel";
-import { studio, useStudio } from "../studio/store";
+import { createShape, DEFAULT_STYLE, studio, useStudio } from "../studio/store";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
@@ -1351,6 +1351,20 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             ...(routeDestination ? [{ id: "d", lat: routeDestination[0], lng: routeDestination[1], color: "#ff6b6b", label: "End: drag to move" }] : []),
           ]
         : [];
+  // Keeps a measured line or area as a Map Studio layer, which is saved and can be styled and edited.
+  async function saveDrawingAsLayer() {
+    if (!drawMode) return;
+    const ll = drawPoints.map(([lat, lng]) => [lng, lat]);
+    const geometry: GeoJSON.Geometry | null =
+      drawMode === "distance" && ll.length >= 2 ? { type: "LineString", coordinates: ll } : drawMode === "area" && ll.length >= 3 ? { type: "Polygon", coordinates: [[...ll, ll[0]]] } : null;
+    if (!geometry) return;
+    const row = await createShape({ type: "Feature", properties: {}, geometry }, { name: drawMode === "distance" ? "Measured line" : "Measured area", style: { ...DEFAULT_STYLE, color: "#ffd23f", fillColor: "#ffd23f" }, source: "drawn" });
+    if (row) {
+      setDrawPoints([]);
+      setActiveTool("shapes");
+      studio.set({ tool: "select", selectedId: row.id });
+    }
+  }
   function moveEditPoint(id: string, lat: number, lng: number) {
     if (id === "o") setRouteOrigin([lat, lng]);
     else if (id === "d" && activeTool === "route") setRouteDestination([lat, lng]);
@@ -2009,6 +2023,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             }}
             onClear={() => setDrawPoints([])}
             onExport={() => downloadDrawingAsGeoJson(drawPoints, drawMode)}
+            onSaveLayer={saveDrawingAsLayer}
           />
         )}
         {activeTool === "route" && (
@@ -3332,12 +3347,14 @@ function DrawingToolPanel({
   onSetMode,
   onClear,
   onExport,
+  onSaveLayer,
 }: {
   mode: DrawMode;
   points: LatLng[];
   onSetMode: (m: DrawMode) => void;
   onClear: () => void;
   onExport: () => void;
+  onSaveLayer: () => void;
 }) {
   const distanceKm = mode === "distance" ? pathDistanceKm(points) : 0;
   const areaKm2 = mode === "area" ? sphericalPolygonAreaKm2(points) : 0;
@@ -3377,6 +3394,7 @@ function DrawingToolPanel({
         <ToolButton onClick={onClear}>Clear</ToolButton>
         <ToolButton onClick={onExport}>{canExport ? "Export GeoJSON" : "Export"}</ToolButton>
       </div>
+      {canExport && <ToolButton onClick={onSaveLayer}>Save as layer in Map Studio</ToolButton>}
     </ToolPanelShell>
   );
 }

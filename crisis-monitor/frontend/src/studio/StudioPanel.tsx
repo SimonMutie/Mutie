@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Circle, Copy, Download, Eye, EyeOff, FileUp, Layers, MapPin, MousePointer2, Pencil, PenLine, Spline, Square, Trash2, Upload, Waypoints, ZoomIn } from "lucide-react";
+import { Check, Circle, Copy, Download, Eye, EyeOff, FileUp, Layers, MapPin, MousePointer2, Pencil, PenLine, Spline, Square, Trash2, Upload, Waypoints, ZoomIn } from "lucide-react";
 import type { SavedShape, ShapeSource, ShapeStyle } from "../api";
 import { downloadText, fitLayerToSize, fmtArea, fmtLength, measure, toKml } from "./geo";
 import { HUD, DASHES, SWATCHES, glass, inputStyle } from "./hud";
 import { ICONS, ICON_CATEGORIES, iconDef, iconSvg } from "./icons";
 import { ACCEPT, FORMATS, importGeoFiles, type Imported } from "./importers";
 import { PATTERNS, hasPattern, previewSvg, type PatternKey } from "./patterns";
-import { DEFAULT_STYLE, bufferShape, createShape, duplicateShape, editShape, removeShape, setVisible, studio, useStudio, type Tool } from "./store";
+import { DEFAULT_STYLE, bufferShape, createShape, duplicateShape, editShape, removeShape, removeShapes, saveNow, setVisible, studio, useStudio, type Tool } from "./store";
 
 const TOOLS: { key: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { key: "select", label: "Select", icon: <MousePointer2 size={16} />, hint: "Click a shape to style or reshape it. Drag its corners; click a small dot to add a corner; double-click a corner to remove it." },
@@ -273,7 +273,12 @@ function Selected({ shape }: { shape: SavedShape }) {
 
   return (
     <div style={{ ...glass({ borderRadius: 10 }), padding: 10, display: "flex", flexDirection: "column", gap: 9 }}>
-      <input value={name} onChange={(e) => editShape(shape.id, { name: e.target.value })} style={{ ...inputStyle, fontWeight: 600, fontSize: 13 }} />
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input value={name} onChange={(e) => editShape(shape.id, { name: e.target.value })} style={{ ...inputStyle, fontWeight: 600, fontSize: 13 }} />
+        <button style={{ ...btn(st.saveState === "saving"), whiteSpace: "nowrap" }} onClick={() => void saveNow()} title="Changes also save by themselves a moment after you stop">
+          {st.saveState === "saved" ? <><Check size={12} /> Saved</> : st.saveState === "saving" ? "Saving…" : "Save"}
+        </button>
+      </div>
       <div style={{ fontSize: 11, color: HUD.textSecondary, display: "flex", flexWrap: "wrap", gap: "2px 12px" }}>
         {m.areaM2 != null && <span>Area {fmtArea(m.areaM2)}</span>}
         {m.perimeterM != null && <span>Perimeter {fmtLength(m.perimeterM)}</span>}
@@ -323,10 +328,14 @@ function Swatch({ s }: { s: SavedShape }) {
   return <span style={{ lineHeight: 0, flexShrink: 0 }} dangerouslySetInnerHTML={{ __html: previewSvg({ key: (st.pattern as PatternKey) ?? "solid", color: st.patternColor ?? st.color ?? "#38BDF8", size: 6, weight: 1.2, bg: st.fillColor ?? st.color ?? "#38BDF8", bgOpacity: Math.max(0.35, st.fillOpacity ?? 0.3) }, 28, 20) }} />;
 }
 
-function LayersTab({ shapes }: { shapes: SavedShape[] }) {
+function LayersTab({ shapes, onEdit }: { shapes: SavedShape[]; onEdit: () => void }) {
   const st = useStudio();
   const [q, setQ] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [confirm, setConfirm] = useState<string | null>(null); // an id, or "picked"
   const list = shapes.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
+  const ids = [...picked].filter((id) => shapes.some((s) => s.id === id));
+  const toggle = (id: string) => setPicked((p) => (p.has(id) ? new Set([...p].filter((x) => x !== id)) : new Set([...p, id])));
   const exportAll = (kind: "geojson" | "kml") => {
     const vis = shapes.filter((s) => s.visible);
     const pick = vis.length ? vis : shapes;
@@ -337,22 +346,51 @@ function LayersTab({ shapes }: { shapes: SavedShape[] }) {
       downloadText("map-studio.kml", toKml("Map Studio", pick.map((s) => ({ name: s.name, geometry: s.geometry, style: { ...DEFAULT_STYLE, ...s.style } }))), "application/vnd.google-earth.kml+xml");
     }
   };
+  const ghost: CSSProperties = { ...btn(), padding: 3, border: "none", background: "none" };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${shapes.length} item${shapes.length === 1 ? "" : "s"}…`} style={inputStyle} />
-      {!list.length && <div style={{ fontSize: 11, color: HUD.textMuted }}>{shapes.length ? "Nothing matches." : "Nothing drawn yet. Pick a tool on the Draw tab, or import a file."}</div>}
+      {shapes.length > 0 && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11, color: HUD.textSecondary }}>
+          <label style={{ display: "flex", gap: 5, alignItems: "center", cursor: "pointer" }}>
+            <input type="checkbox" checked={ids.length > 0 && ids.length === list.length} onChange={(e) => setPicked(e.target.checked ? new Set(list.map((s) => s.id)) : new Set())} />
+            {ids.length ? `${ids.length} chosen` : "Choose all"}
+          </label>
+          {ids.length > 0 && (confirm === "picked" ? (
+            <>
+              <button style={btn(false, true)} onClick={() => (void removeShapes(ids), setPicked(new Set()), setConfirm(null))}>Delete {ids.length}?</button>
+              <button style={btn()} onClick={() => setConfirm(null)}>Keep</button>
+            </>
+          ) : (
+            <button style={btn(false, true)} onClick={() => setConfirm("picked")}><Trash2 size={12} /> Delete chosen</button>
+          ))}
+        </div>
+      )}
+      {!list.length && <div style={{ fontSize: 11, color: HUD.textMuted }}>{shapes.length ? "Nothing matches." : "Nothing drawn yet. Pick a tool on the Draw tab, or import a file. Everything you draw is saved automatically."}</div>}
       {list.map((s) => (
         <div
           key={s.id}
           onClick={() => (studio.select(s.id), studio.set({ tool: "select" }))}
-          style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 6px", borderRadius: 8, cursor: "pointer", background: st.selectedId === s.id ? "rgba(212,175,55,.14)" : "transparent", border: `1px solid ${st.selectedId === s.id ? HUD.borderStrong : "transparent"}` }}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 6px", borderRadius: 8, cursor: "pointer", background: st.selectedId === s.id ? "rgba(212,175,55,.14)" : "transparent", border: `1px solid ${st.selectedId === s.id ? HUD.borderStrong : "transparent"}` }}
         >
+          <input type="checkbox" checked={picked.has(s.id)} onClick={(e) => e.stopPropagation()} onChange={() => toggle(s.id)} />
           <Swatch s={s} />
           <span style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: s.visible ? HUD.text : HUD.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>
             {st.overrides[s.id]?.name ?? s.name}
           </span>
-          <button title="Zoom to" style={{ ...btn(), padding: 3, border: "none", background: "none" }} onClick={(e) => (e.stopPropagation(), studio.select(s.id), studio.zoomTo(s.id))}><ZoomIn size={13} /></button>
-          <button title={s.visible ? "Hide" : "Show"} style={{ ...btn(), padding: 3, border: "none", background: "none" }} onClick={(e) => (e.stopPropagation(), void setVisible(s.id, !s.visible))}>{s.visible ? <Eye size={13} /> : <EyeOff size={13} />}</button>
+          {confirm === s.id ? (
+            <>
+              <button style={btn(false, true)} onClick={(e) => (e.stopPropagation(), void removeShape(s.id), setConfirm(null))}>Delete?</button>
+              <button style={btn()} onClick={(e) => (e.stopPropagation(), setConfirm(null))}>No</button>
+            </>
+          ) : (
+            <>
+              <button title="Edit" style={ghost} onClick={(e) => (e.stopPropagation(), studio.select(s.id), studio.set({ tool: "select" }), onEdit())}><Pencil size={13} /></button>
+              <button title="Zoom to" style={ghost} onClick={(e) => (e.stopPropagation(), studio.select(s.id), studio.zoomTo(s.id))}><ZoomIn size={13} /></button>
+              <button title={s.visible ? "Hide" : "Show"} style={ghost} onClick={(e) => (e.stopPropagation(), void setVisible(s.id, !s.visible))}>{s.visible ? <Eye size={13} /> : <EyeOff size={13} />}</button>
+              <button title="Delete" style={{ ...ghost, color: HUD.red }} onClick={(e) => (e.stopPropagation(), setConfirm(s.id))}><Trash2 size={13} /></button>
+            </>
+          )}
         </div>
       ))}
       {shapes.length > 0 && (
@@ -430,7 +468,7 @@ export function StudioPanel({ shapes }: { shapes: SavedShape[] }) {
         </>
       )}
 
-      {tab === "layers" && <LayersTab shapes={shapes} />}
+      {tab === "layers" && <LayersTab shapes={shapes} onEdit={() => setTab("draw")} />}
       {tab === "import" && <ImportTab files={st.dropped} onDone={() => setTab("layers")} />}
 
       {st.notice && <div style={{ fontSize: 11, color: HUD.red, border: "1px solid rgba(255,61,61,.35)", borderRadius: 8, padding: "6px 8px" }}>{st.notice}</div>}
