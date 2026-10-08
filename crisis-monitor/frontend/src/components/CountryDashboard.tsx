@@ -1,68 +1,126 @@
 import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, type IncidentItem, type IncidentStats } from "../api";
-import { classifyActor } from "./actorTheme";
+import { MapContainer, Marker, TileLayer, Tooltip as LTooltip, useMap } from "react-leaflet";
+import * as L from "leaflet";
+import { api, type CrosstabRow, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats } from "../api";
+import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor } from "./DashboardWidgetCard";
+import { HeatmapLayer } from "./HeatmapLayer";
+import { classifyActor, classifyIncident, pinSvg } from "./actorTheme";
 
 /**
- * Country dashboard: the headline picture of the incidents you hold for ONE country,
- * with a switch to move between countries. Everything comes from the incidents table
- * (the same data as the Auto Dashboard), filtered to the chosen country and period.
+ * Country dashboard: one country's incidents at a glance — headline figures, a live map
+ * (icons in your actor colours, or a heatmap), the trend, who/what/where, the calendar,
+ * and the relationships between actors, tactics and places. It is built from the same
+ * widgets as the Auto Dashboard, locked to the chosen country, so switching country or
+ * period redraws everything. No incident listing: the map and charts are the view.
  */
 
 const PERIODS: { id: string; label: string; days: number | null }[] = [
   { id: "all", label: "All time", days: null },
-  { id: "365", label: "Last 12 months", days: 365 },
-  { id: "180", label: "Last 6 months", days: 180 },
-  { id: "90", label: "Last 90 days", days: 90 },
-  { id: "30", label: "Last 30 days", days: 30 },
+  { id: "365", label: "12 months", days: 365 },
+  { id: "180", label: "6 months", days: 180 },
+  { id: "90", label: "90 days", days: 90 },
+  { id: "30", label: "30 days", days: 30 },
 ];
 const DEFAULT_COUNTRY = "Kenya";
-
-const sum = (o: Record<string, number>, prefix: string) => Object.entries(o).filter(([k]) => k.startsWith(prefix)).reduce((a, [, v]) => a + (v || 0), 0);
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-function Bars({ items, color, colorOf, total }: { items: { value: string; count: number }[]; color?: string; colorOf?: (v: string) => string; total?: number }) {
-  const max = Math.max(1, ...items.map((i) => i.count));
+function normalize(s: IncidentStats): NormalizedDashboardStats {
+  const sum = (p: string) => Object.entries(s.casualties).filter(([k]) => k.startsWith(p)).reduce((a, [, v]) => a + (v ?? 0), 0);
+  return { total: s.total, by_sector: s.by_sector, by_actor: s.by_actor, by_tactic: s.by_tactic, by_severity: s.by_severity, by_province: s.by_province, by_country: s.by_country, time_series: s.time_series, daily: s.daily, actor_tactic: s.actor_tactic, deaths: sum("deaths_"), injuries: sum("injuries_"), kidnappings_ngo: s.casualties.kidnappings_ngo ?? 0 };
+}
+
+type Located = IncidentItem & { latitude: number; longitude: number };
+
+/* ── the map: icons in the actor colours, or a heatmap, framed on the country's own incidents ── */
+
+const pins = new Map<string, L.DivIcon>();
+const pin = (color: string) => {
+  let ic = pins.get(color);
+  if (!ic) {
+    ic = L.divIcon({ html: pinSvg(color, 12), className: "incident-marker-icon", iconSize: [12, 16], iconAnchor: [6, 15], tooltipAnchor: [0, -14] });
+    pins.set(color, ic);
+  }
+  return ic;
+};
+
+function FitTo({ points }: { points: [number, number][] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length === 0) return;
+    map.invalidateSize();
+    try {
+      map.fitBounds(L.latLngBounds(points), { padding: [30, 30], maxZoom: 8, animate: false });
+    } catch {
+      /* the map was removed while this ran */
+    }
+  }, [map, points]);
+  return null;
+}
+
+function CountryMap({ incidents, country }: { incidents: Located[]; country: string }) {
+  const [mode, setMode] = useState<"icons" | "heat">("icons");
+  const points = useMemo(() => incidents.map((i) => [i.latitude, i.longitude] as [number, number]), [incidents]);
+  const seg = (on: boolean): React.CSSProperties => ({ fontSize: 12, padding: "4px 12px", cursor: "pointer", border: "none", background: on ? "var(--signal)" : "var(--panel)", color: on ? "#fff" : "var(--text-muted)" });
   return (
-    <div style={{ display: "grid", gap: 5 }}>
-      {items.map((i) => (
-        <div key={i.value} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 64px", gap: 8, alignItems: "center", fontSize: 12.5 }}>
-          <div style={{ position: "relative", background: "var(--panel-raised)", borderRadius: 4, overflow: "hidden", height: 22 }}>
-            <div style={{ position: "absolute", inset: 0, width: `${(i.count / max) * 100}%`, background: colorOf?.(i.value) ?? color ?? "#2a78d6", opacity: 0.35 }} />
-            <span style={{ position: "relative", padding: "0 8px", lineHeight: "22px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }} title={i.value}>
-              {i.value}
-            </span>
-          </div>
-          <span style={{ textAlign: "right" }}>
-            <b>{i.count.toLocaleString()}</b>
-            {total ? <span style={{ color: "var(--text-faint)" }}> {Math.round((i.count / total) * 100)}%</span> : null}
-          </span>
-        </div>
-      ))}
+    <div style={{ position: "relative", height: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid var(--border-soft)" }}>
+      <MapContainer center={[1, 38]} zoom={5} style={{ width: "100%", height: "100%" }} scrollWheelZoom zoomControl>
+        <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" attribution="&copy; OpenStreetMap, &copy; CARTO" />
+        <FitTo points={points} />
+        {mode === "heat" ? (
+          <HeatmapLayer points={points.slice(0, 8000).map(([a, b]) => [a, b, 1] as [number, number, number])} />
+        ) : (
+          incidents.slice(0, 4000).map((i) => (
+            <Marker key={i.id} position={[i.latitude, i.longitude]} icon={pin(classifyIncident(i).color)}>
+              <LTooltip direction="top" opacity={0.95}>
+                <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+                  <b>{[i.city, i.province].filter(Boolean).join(", ") || country}</b>
+                  <div>{[i.occurred_date, i.tactic, i.actor].filter(Boolean).join(" · ")}</div>
+                </div>
+              </LTooltip>
+            </Marker>
+          ))
+        )}
+      </MapContainer>
+      <div style={{ position: "absolute", top: 10, left: 54, zIndex: 500, display: "flex", borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)", boxShadow: "0 2px 8px #0004" }}>
+        <button type="button" style={seg(mode === "icons")} onClick={() => setMode("icons")}>Icons</button>
+        <button type="button" style={seg(mode === "heat")} onClick={() => setMode("heat")}>Heatmap</button>
+      </div>
+      <div style={{ position: "absolute", left: 10, bottom: 10, zIndex: 500, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 9px", fontSize: 11.5 }}>
+        <b>{incidents.length.toLocaleString()}</b> mapped incidents
+      </div>
     </div>
   );
 }
 
-function Card({ title, children, wide }: { title: string; children: React.ReactNode; wide?: boolean }) {
-  return (
-    <section style={{ background: "var(--panel)", border: "1px solid var(--border-soft)", borderRadius: 10, padding: "12px 14px", gridColumn: wide ? "1 / -1" : undefined, minWidth: 0 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 10 }}>{title}</div>
-      {children}
-    </section>
-  );
-}
+const W = (id: string, type: DashboardWidget["type"], title: string, extra: Partial<DashboardWidget> = {}): DashboardWidget => ({ id, type, title, size: "medium", ...extra });
+/** The widgets, all drawn by the same cards as the Auto Dashboard. Fixed, so a change of country only refetches the data. */
+const WIDGETS = {
+  trend: W("trend", "line", "Incidents over time", { dataField: "time_series", color: "#e34948" }),
+  severity: W("severity", "pie", "Severity", { dataField: "by_severity", showLegend: true }),
+  province: W("province", "bar", "Where — by province / county", { dataField: "by_province", topN: 12, color: "#2a78d6", showDataLabels: true }),
+  actor: W("actor", "bar", "Who — actors involved", { dataField: "by_actor", topN: 10, showDataLabels: true }),
+  tactic: W("tactic", "pie", "What — tactics", { dataField: "by_tactic", topN: 8, showLegend: true }),
+  calendar: W("calendar", "calendar", "Daily activity calendar", { color: "#e34948" }),
+  sankey: W("sankey", "sankey", "Who does what — actor → tactic", { dataField: "by_actor", secondaryField: "tactic", topN: 8 }),
+  network: W("network", "network", "Where each actor operates — actor ↔ province", { dataField: "by_actor", secondaryField: "province", topN: 8 }),
+  bubble: W("bubble", "bubble", "Sectors affected", { dataField: "by_sector", topN: 14 }),
+  table: W("table", "heatmap_table", "Province × tactic", { dataField: "by_province", secondaryField: "tactic", topN: 10 }),
+  radar: W("radar", "radar", "Tactic profile", { dataField: "by_tactic", topN: 8, color: "#7c3aed" }),
+  funnel: W("funnel", "bar", "Hotspot towns", { dataField: "by_city", topN: 10, color: "#0d9488", showDataLabels: true }),
+};
 
-const Empty = ({ children }: { children: React.ReactNode }) => <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>{children}</div>;
+/* ── the page ── */
 
 export default function CountryDashboard() {
   const [countries, setCountries] = useState<{ value: string; count: number }[] | null>(null);
-  const [country, setCountry] = useState<string>(DEFAULT_COUNTRY);
+  const [country, setCountry] = useState(DEFAULT_COUNTRY);
   const [period, setPeriod] = useState("all");
-  const [stats, setStats] = useState<IncidentStats | null>(null);
-  const [recent, setRecent] = useState<IncidentItem[]>([]);
+  const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
+  const [incidents, setIncidents] = useState<Located[]>([]);
+  const [crosstabs, setCrosstabs] = useState<Record<string, CrosstabRow[]>>({});
+  const [breakdowns, setBreakdowns] = useState<Record<string, { value: string; count: number }[]>>({});
   const [error, setError] = useState<string | null>(null);
 
-  // The countries the data covers, busiest first. Kenya is the starting view when it is there.
   useEffect(() => {
     let live = true;
     api
@@ -70,11 +128,8 @@ export default function CountryDashboard() {
       .then((s) => {
         if (!live) return;
         setCountries(s.by_country);
-        if (s.by_country.length && !s.by_country.some((c) => c.value.toLowerCase() === DEFAULT_COUNTRY.toLowerCase())) setCountry(s.by_country[0].value);
-        else {
-          const k = s.by_country.find((c) => c.value.toLowerCase() === DEFAULT_COUNTRY.toLowerCase());
-          if (k) setCountry(k.value);
-        }
+        const kenya = s.by_country.find((c) => c.value.toLowerCase() === DEFAULT_COUNTRY.toLowerCase());
+        setCountry(kenya?.value ?? s.by_country[0]?.value ?? DEFAULT_COUNTRY);
       })
       .catch(() => live && setCountries([]));
     return () => {
@@ -84,49 +139,70 @@ export default function CountryDashboard() {
 
   const range = useMemo(() => {
     const days = PERIODS.find((p) => p.id === period)?.days;
-    if (!days) return {};
-    return { from: iso(new Date(Date.now() - days * 86_400_000)), to: iso(new Date()) };
+    return days ? { from: iso(new Date(Date.now() - days * 86_400_000)), to: iso(new Date()) } : {};
   }, [period]);
 
   useEffect(() => {
-    if (!country) return;
     let live = true;
     setStats(null);
     setError(null);
+    setCrosstabs({});
+    setBreakdowns({});
+    const filters = { ...range, country };
     api
-      .getIncidentStats({ ...range, country })
-      .then((s) => live && setStats(s))
+      .getIncidentStats(filters)
+      .then((s) => live && setStats(normalize(s)))
       .catch((e) => live && setError(e instanceof Error ? e.message : "The figures could not be read."));
     api
-      .getIncidents({ ...range, country, limit: 12 })
-      .then((r) => live && setRecent(r))
-      .catch(() => live && setRecent([]));
+      .getIncidents({ ...filters, limit: 5000 })
+      .then((r) => live && setIncidents(r.filter((i): i is Located => i.latitude != null && i.longitude != null)))
+      .catch(() => live && setIncidents([]));
+    for (const w of Object.values(WIDGETS)) {
+      const ck = crosstabKeyFor(w);
+      if (ck) {
+        const [p, s] = ck.split("|") as [never, never];
+        api.getCrosstab(p, s, filters).then((rows) => live && setCrosstabs((prev) => ({ ...prev, [ck]: rows }))).catch(() => {});
+      }
+      const bk = breakdownKeyFor(w);
+      if (bk) api.getBreakdown(bk as never, filters).then((rows) => live && setBreakdowns((prev) => ({ ...prev, [bk]: rows }))).catch(() => {});
+    }
     return () => {
       live = false;
     };
   }, [country, range]);
 
-  const deaths = stats ? sum(stats.casualties, "deaths_") : 0;
-  const injuries = stats ? sum(stats.casualties, "injuries_") : 0;
-  const last = recent[0]?.occurred_date ?? recent[0]?.occurred_at?.slice(0, 10) ?? null;
-  const actorColor = (v: string) => classifyActor(v).color;
-  const tile = (label: string, value: string) => (
-    <div style={{ background: "var(--panel)", border: "1px solid var(--border-soft)", borderRadius: 10, padding: "10px 14px", minWidth: 130 }}>
-      <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
-      <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 3 }}>{label}</div>
+  const actorPalette = (stats?.by_actor ?? []).map((a) => classifyActor(a.value).color);
+  const card = (w0: DashboardWidget, h: number, cols: string) => {
+    const w = w0.id === "actor" && actorPalette.length ? { ...w0, palette: actorPalette } : w0;
+    return (
+    stats && (
+      <div key={w.id} style={{ gridColumn: cols, height: h, minWidth: 0 }}>
+        <DashboardWidgetCard widget={w} stats={stats} incidents={incidents} crosstabs={crosstabs} breakdowns={breakdowns} />
+      </div>
+    )
+    );
+  };
+
+  const top = (rows: { value: string; count: number }[] | undefined) => rows?.[0]?.value ?? "—";
+  const sel: React.CSSProperties = { fontSize: 13, padding: "7px 10px", background: "var(--panel)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8 };
+  const kpi = (label: string, value: string, tint: string, sub?: string) => (
+    <div style={{ background: "var(--panel)", border: "1px solid var(--border-soft)", borderTop: `3px solid ${tint}`, borderRadius: 10, padding: "12px 16px", minWidth: 0 }}>
+      <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-faint)" }}>{label}</div>
+      <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>}
     </div>
   );
-  const select: React.CSSProperties = { fontSize: 13, padding: "6px 10px", background: "var(--panel)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 6 };
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px 32px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>{country}</h2>
-        <span style={{ color: "var(--text-faint)", fontSize: 13 }}>country dashboard</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <label style={{ fontSize: 12, color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 6 }}>
-            Country
-            <select value={country} onChange={(e) => setCountry(e.target.value)} style={select} aria-label="Country">
+    <div style={{ flex: 1, overflowY: "auto" }}>
+      <div style={{ background: "linear-gradient(120deg, var(--signal-dim), transparent 70%)", borderBottom: "1px solid var(--border-soft)", padding: "20px 24px 16px" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-faint)" }}>Country dashboard</div>
+            <h2 style={{ margin: "2px 0 0", fontSize: 34, letterSpacing: "-0.02em" }}>{country}</h2>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <select value={country} onChange={(e) => setCountry(e.target.value)} style={sel} aria-label="Country">
               {(countries ?? []).some((c) => c.value === country) ? null : <option value={country}>{country}</option>}
               {(countries ?? []).map((c) => (
                 <option key={c.value} value={c.value}>
@@ -134,133 +210,64 @@ export default function CountryDashboard() {
                 </option>
               ))}
             </select>
-          </label>
-          <label style={{ fontSize: 12, color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 6 }}>
-            Period
-            <select value={period} onChange={(e) => setPeriod(e.target.value)} style={select} aria-label="Period">
+            <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }} role="group" aria-label="Period">
               {PERIODS.map((p) => (
-                <option key={p.id} value={p.id}>
+                <button key={p.id} type="button" onClick={() => setPeriod(p.id)} style={{ fontSize: 12.5, padding: "7px 12px", cursor: "pointer", border: "none", background: period === p.id ? "var(--signal)" : "var(--panel)", color: period === p.id ? "#fff" : "var(--text-muted)" }}>
                   {p.label}
-                </option>
+                </button>
               ))}
-            </select>
-          </label>
+            </div>
+          </div>
         </div>
+        {countries && countries.length > 1 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
+            {countries.slice(0, 12).map((c) => (
+              <button key={c.value} type="button" onClick={() => setCountry(c.value)} style={{ fontSize: 12, padding: "4px 11px", borderRadius: 999, cursor: "pointer", border: `1px solid ${c.value === country ? "var(--signal)" : "var(--border)"}`, background: c.value === country ? "var(--signal-dim)" : "var(--panel)", color: c.value === country ? "var(--text-primary)" : "var(--text-muted)" }}>
+                {c.value}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {countries && countries.length > 1 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-          {countries.slice(0, 10).map((c) => (
-            <button
-              key={c.value}
-              type="button"
-              onClick={() => setCountry(c.value)}
-              style={{ fontSize: 12, padding: "4px 10px", borderRadius: 999, cursor: "pointer", border: `1px solid ${c.value === country ? "var(--signal)" : "var(--border)"}`, background: c.value === country ? "var(--signal-dim)" : "transparent", color: c.value === country ? "var(--text-primary)" : "var(--text-muted)" }}
-            >
-              {c.value}
-            </button>
-          ))}
-        </div>
-      )}
+      <div style={{ padding: "16px 24px 36px" }}>
+        {error ? (
+          <div style={{ color: "var(--text-faint)" }}>{error}</div>
+        ) : !stats ? (
+          <div style={{ color: "var(--text-faint)" }}>Loading…</div>
+        ) : stats.total === 0 ? (
+          <div style={{ color: "var(--text-faint)" }}>No incidents are recorded for {country} in this period. Upload data, push approved rows from Daily review, or pick another country or period.</div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 14 }}>
+              {kpi("Incidents", stats.total.toLocaleString(), "#e34948")}
+              {kpi("Civilian deaths", (stats.deaths ?? 0).toLocaleString(), "#7c3aed")}
+              {kpi("Civilian injuries", (stats.injuries ?? 0).toLocaleString(), "#ea580c")}
+              {kpi("Most affected", top(stats.by_province), "#2a78d6", stats.by_province[0] ? `${stats.by_province[0].count.toLocaleString()} incidents` : undefined)}
+              {kpi("Leading actor", top(stats.by_actor), "#166534", stats.by_actor[0] ? `${stats.by_actor[0].count.toLocaleString()} incidents` : undefined)}
+              {kpi("Main tactic", top(stats.by_tactic), "#eab308", stats.by_tactic[0] ? `${stats.by_tactic[0].count.toLocaleString()} incidents` : undefined)}
+            </div>
 
-      {error ? (
-        <Empty>{error}</Empty>
-      ) : !stats ? (
-        <Empty>Loading…</Empty>
-      ) : stats.total === 0 ? (
-        <Empty>
-          No incidents are recorded for {country} in this period. Upload data under Upload, push approved rows from Daily review, or pick another country or a longer period.
-        </Empty>
-      ) : (
-        <>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
-            {tile("incidents", stats.total.toLocaleString())}
-            {tile("civilian deaths", deaths.toLocaleString())}
-            {tile("civilian injuries", injuries.toLocaleString())}
-            {tile("provinces affected", stats.by_province.length.toLocaleString())}
-            {tile("armed actors named", stats.by_actor.length.toLocaleString())}
-            {last && tile("latest incident", last)}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 12 }}>
-            <Card title="Incidents over time" wide>
-              <div style={{ height: 210 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={stats.time_series} margin={{ top: 6, right: 10, bottom: 0, left: -14 }}>
-                    <CartesianGrid stroke="var(--border-soft, #8884)" strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "var(--text-faint)" }} minTickGap={30} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--text-faint)" }} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
-                    <Line type="monotone" dataKey="count" name="Incidents per month" stroke="#e34948" strokeWidth={2} dot={false} isAnimationActive={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
+              <div style={{ gridColumn: "span 12", height: 480 }}>
+                <CountryMap key={`${country}-${period}`} incidents={incidents} country={country} />
               </div>
-            </Card>
-
-            <Card title="By province / county">
-              {stats.by_province.length ? <Bars items={stats.by_province.slice(0, 12)} color="#2a78d6" total={stats.total} /> : <Empty>No province recorded on these rows.</Empty>}
-            </Card>
-
-            <Card title="Who is involved (actor)">
-              {stats.by_actor.length ? <Bars items={stats.by_actor.slice(0, 12)} colorOf={actorColor} total={stats.total} /> : <Empty>No actor recorded.</Empty>}
-            </Card>
-
-            <Card title="What happened (tactic)">
-              {stats.by_tactic.length ? <Bars items={stats.by_tactic.slice(0, 12)} color="#e34948" total={stats.total} /> : <Empty>No tactic recorded.</Empty>}
-            </Card>
-
-            <Card title="Severity">
-              {stats.by_severity.length ? (
-                <div style={{ height: 190 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={stats.by_severity} margin={{ top: 6, right: 10, bottom: 0, left: -14 }}>
-                      <CartesianGrid stroke="var(--border-soft, #8884)" strokeDasharray="3 3" vertical={false} />
-                      <XAxis dataKey="value" tick={{ fontSize: 10, fill: "var(--text-faint)" }} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--text-faint)" }} />
-                      <Tooltip contentStyle={{ fontSize: 12 }} />
-                      <Bar dataKey="count" name="Incidents" fill="#7c3aed" isAnimationActive={false} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <Empty>No severity recorded.</Empty>
-              )}
-            </Card>
-
-            <Card title="Sector">
-              {stats.by_sector.length ? <Bars items={stats.by_sector.slice(0, 10)} color="#0d9488" total={stats.total} /> : <Empty>No sector recorded.</Empty>}
-            </Card>
-
-            <Card title="Who did what (most common actor + tactic)">
-              {stats.actor_tactic.length ? (
-                <Bars items={stats.actor_tactic.slice(0, 8).map((p) => ({ value: `${p.actor} — ${p.tactic}`, count: p.count }))} colorOf={(v) => actorColor(v.split(" — ")[0])} />
-              ) : (
-                <Empty>No rows have both an actor and a tactic.</Empty>
-              )}
-            </Card>
-
-            <Card title="Latest incidents" wide>
-              <div style={{ display: "grid", gap: 7 }}>
-                {recent.map((i) => (
-                  <div key={i.id} style={{ display: "grid", gridTemplateColumns: "10px minmax(0,1fr)", gap: 9, fontSize: 12.5, lineHeight: 1.4 }}>
-                    <i style={{ width: 10, height: 10, borderRadius: "50%", background: actorColor(i.actor ?? ""), marginTop: 4 }} />
-                    <div>
-                      <b>{[i.city, i.province].filter(Boolean).join(", ") || i.precise_location || country}</b>
-                      <span style={{ color: "var(--text-faint)" }}>
-                        {" "}
-                        · {i.occurred_date ?? i.occurred_at?.slice(0, 10) ?? "no date"}
-                        {i.tactic ? ` · ${i.tactic}` : ""}
-                        {i.actor ? ` · ${i.actor}` : ""}
-                      </span>
-                      {i.details && <div style={{ opacity: 0.8 }}>{i.details.length > 200 ? `${i.details.slice(0, 200)}…` : i.details}</div>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
-          </div>
-        </>
-      )}
+              {card(WIDGETS.trend, 300, "span 8")}
+              {card(WIDGETS.severity, 300, "span 4")}
+              {card(WIDGETS.province, 380, "span 4")}
+              {card(WIDGETS.actor, 380, "span 4")}
+              {card(WIDGETS.tactic, 380, "span 4")}
+              {card(WIDGETS.calendar, 250, "span 12")}
+              {card(WIDGETS.sankey, 420, "span 6")}
+              {card(WIDGETS.network, 420, "span 6")}
+              {card(WIDGETS.table, 400, "span 6")}
+              {card(WIDGETS.bubble, 400, "span 3")}
+              {card(WIDGETS.radar, 400, "span 3")}
+              {stats && card(WIDGETS.funnel, 340, "span 12")}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
