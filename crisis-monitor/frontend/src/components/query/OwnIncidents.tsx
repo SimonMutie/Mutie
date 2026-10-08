@@ -63,6 +63,71 @@ function Bars({ items, color }: { items: [string, number][]; color: string }) {
 
 type Inc = { item: QueryStreamItem; actor: { label: string; color: string }; tactic: string | null; deaths: number; harm: boolean };
 
+/** Incident reports gathered by place: the busiest first, each with who is named, what is reported and the reports behind it. */
+function hotspotsOf(incidents: Inc[]) {
+  const by = new Map<string, Inc[]>();
+  for (const x of incidents) {
+    const p = x.item.place?.trim();
+    if (p) by.set(p, [...(by.get(p) ?? []), x]);
+  }
+  return [...by.entries()]
+    .map(([place, rows]) => {
+      const actor = topN(rows.filter((r) => r.actor !== OTHER_CATEGORY).map((r) => r.actor.label), 1)[0]?.[0] ?? null;
+      return {
+        place,
+        rows: [...rows].sort((a, b) => b.item.published_at.localeCompare(a.item.published_at)),
+        outlets: new Set(rows.map((r) => r.item.source).filter(Boolean)).size,
+        actor,
+        color: rows.find((r) => r.actor.label === actor)?.actor.color ?? OTHER_CATEGORY.color,
+        tactic: topN(rows.map((r) => r.tactic ?? ""), 1)[0]?.[0] ?? null,
+        deaths: rows.reduce((a, r) => a + r.deaths, 0),
+        last: rows.reduce((a, r) => (r.item.published_at > a ? r.item.published_at : a), ""),
+      };
+    })
+    .sort((a, b) => b.rows.length - a.rows.length || b.last.localeCompare(a.last))
+    .slice(0, 12);
+}
+
+const ago = (iso: string) => {
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 2880) return `${Math.round(mins / 60)}h ago`;
+  return `${Math.round(mins / 1440)}d ago`;
+};
+
+function HotspotCard({ h }: { h: ReturnType<typeof hotspotsOf>[number] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ background: "var(--panel-raised)", borderRadius: 8, padding: "8px 10px", borderLeft: `4px solid ${h.color}`, fontSize: 12.5, lineHeight: 1.4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+        <b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.place}</b>
+        <b>{h.rows.length}</b>
+      </div>
+      <div style={{ color: "var(--text-faint)" }}>{[h.actor, h.tactic].filter(Boolean).join(" · ") || "Actor and type unclear"}</div>
+      <div style={{ color: "var(--text-faint)" }}>
+        {h.outlets} outlet{h.outlets === 1 ? "" : "s"}{h.deaths ? ` · ${h.deaths} dead reported` : ""} · {ago(h.last)}
+      </div>
+      <button type="button" className="qd-link" aria-expanded={open} onClick={() => setOpen((v) => !v)} style={{ marginTop: 3 }}>
+        {open ? "Hide links" : `${h.rows.length} link${h.rows.length === 1 ? "" : "s"}`}
+      </button>
+      {open && (
+        <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+          {h.rows.map((r) => (
+            <li key={r.item.id}>
+              {r.item.url && /^https?:\/\//i.test(r.item.url) ? (
+                <a href={r.item.url} target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>{r.item.title} ↗</a>
+              ) : (
+                r.item.title
+              )}
+              <span style={{ color: "var(--text-faint)" }}> {r.item.source} · {ago(r.item.published_at)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** Incident reports per hour across the period, with empty hours counted as zero so the line is honest. Capped at the
  *  most recent 14 days of hours. */
 function hourlyOf(incidents: Inc[], from?: string, to?: string) {
@@ -128,6 +193,7 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
     return {
       breakdown: ALL_CATEGORIES.map((c) => ({ label: c.label, color: c.color, n: cats.get(c.label)?.n ?? 0 })).filter((c) => c.n > 0),
       tactics: topN(incidents.map((x) => x.tactic ?? "")),
+      hotspots: hotspotsOf(incidents),
       provinces: topN(incidents.map((x) => x.item.province ?? ""), 12),
       noProvince: incidents.filter((x) => !x.item.province).length,
       hourly: hourlyOf(incidents, overview?.from, overview?.to),
@@ -203,6 +269,17 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
               </LineChart>
             </ResponsiveContainer>
           </div>
+
+          {head("Hotspots")}
+          {stats.hotspots.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No place named in these reports yet.</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 8 }}>
+              {stats.hotspots.map((h) => (
+                <HotspotCard key={h.place} h={h} />
+              ))}
+            </div>
+          )}
 
           {head("What is being reported")}
           {stats.tactics.length > 0 ? <Bars items={stats.tactics} color="#e34948" /> : <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No clear event type.</div>}
