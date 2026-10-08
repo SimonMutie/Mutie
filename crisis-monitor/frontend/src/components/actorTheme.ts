@@ -18,7 +18,7 @@ export const ACTOR_CATEGORIES: { pattern: RegExp; color: string; label: string; 
   { pattern: /\b(tribal|tribe|tribes|clan|clans|clan-?based|intercommunal|inter-?communal|communal violence|inter-?ethnic|ethnic clash\w*|farmer-?herder|pastoralist.?(farmer)?|cattle rustl\w*)\b/i, color: ACTOR_THEME.tribal, label: "Tribal", shape: "intercommunal" },
   { pattern: /\b(criminal|crime|gang|organi[sz]ed crime|bandit\w*)\b/i, color: ACTOR_THEME.crime, label: "Crime", shape: "criminal" },
   { pattern: /\b(security forces?|police|military|army|state forces?|law enforcement)\b/i, color: ACTOR_THEME.security, label: "Security Forces", shape: "security" },
-  { pattern: /\b(terroris\w*|extremis\w*)\b/i, color: "#ea580c", label: "Terrorist / Extremist", shape: "terrorist" },
+  { pattern: /\b(terroris\w*|extremis\w*)\b/i, color: ACTOR_THEME.aog, label: "Terrorism / Extremist", shape: "terrorist" },
   { pattern: /\b(militia|self-?defen[cs]e|community defense|vigilante)\b/i, color: "#7c3aed", label: "Militia", shape: "militia" },
 ];
 export const OTHER_CATEGORY: ActorCategory = { color: "#64748b", label: "Other / Unspecified", shape: "other" };

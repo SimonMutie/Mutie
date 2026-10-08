@@ -36,6 +36,7 @@ describe("actor theme", () => {
     expect(classifyActor("Criminal gang").color).toBe("#2563eb"); // blue
     expect(classifyActor("Security Forces").color).toBe("#166534"); // dark green
     expect(classifyActor("Tribal clash").color).toBe("#eab308"); // yellow
+    expect(classifyActor("Terrorist group").color).toBe("#dc2626"); // terrorism is red too
     expect(classifyActor("Tribal clash").label).toBe("Tribal");
   });
 });
