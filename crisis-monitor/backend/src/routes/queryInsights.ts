@@ -106,6 +106,7 @@ function locate(r: Row): { item: DayItem; lat: number | null; lon: number | null
     published_at: r.published_at,
     sentiment: sentimentFor(r.sentiment, title, rest.slice(0, 500)),
     place: loc?.place ?? null,
+    province: loc?.province ? `${loc.province}, ${loc.place.split(", ").pop()}` : null,
   };
   return { item, lat: loc?.lat ?? null, lon: loc?.lon ?? null, precision: loc?.precision ?? null };
 }

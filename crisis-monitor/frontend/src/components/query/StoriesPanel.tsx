@@ -22,7 +22,7 @@ function span(s: QueryStory): string {
 }
 
 function Story({ story, most }: { story: QueryStory; most: number }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true); // every report's link is listed by default
   const tone = toneOf(story.tone);
   return (
     <li className="qd-story">
@@ -52,7 +52,7 @@ function Story({ story, most }: { story: QueryStory; most: number }) {
           </span>
           {story.items > 1 && (
             <button type="button" className="qd-link" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-              {open ? "Hide reports" : `${story.items} reports`}
+              {open ? "Hide links" : `Show all ${story.items} links`}
             </button>
           )}
         </div>

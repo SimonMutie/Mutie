@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, type QueryOverview, type QueryStreamItem } from "../../api";
 import { ACTOR_CATEGORIES, OTHER_CATEGORY, classifyActor } from "../actorTheme";
 import { Empty, Panel } from "./shared";
@@ -62,49 +63,29 @@ function Bars({ items, color }: { items: [string, number][]; color: string }) {
 
 type Inc = { item: QueryStreamItem; actor: { label: string; color: string }; tactic: string | null; deaths: number; harm: boolean };
 
-/** Incident reports gathered by place: the busiest places first, each with who is named and what is reported. */
-function hotspotsOf(incidents: Inc[]) {
-  const by = new Map<string, Inc[]>();
+/** Incident reports per hour across the period, with empty hours counted as zero so the line is honest. Capped at the
+ *  most recent 14 days of hours. */
+function hourlyOf(incidents: Inc[], from?: string, to?: string) {
+  const HOUR = 3_600_000;
+  const end = Math.floor(Math.min(Date.parse(to ?? "") || Date.now(), Date.now()) / HOUR) * HOUR;
+  const start = Math.max(Math.floor((Date.parse(from ?? "") || end - 24 * HOUR) / HOUR) * HOUR, end - 14 * 24 * HOUR);
+  const counts = new Map<number, number>();
   for (const x of incidents) {
-    const p = x.item.place?.trim();
-    if (p) by.set(p, [...(by.get(p) ?? []), x]);
+    const h = Math.floor(Date.parse(x.item.published_at) / HOUR) * HOUR;
+    if (h >= start && h <= end) counts.set(h, (counts.get(h) ?? 0) + 1);
   }
-  return [...by.entries()]
-    .map(([place, rows]) => {
-      const actors = topN(rows.filter((r) => r.actor !== OTHER_CATEGORY).map((r) => r.actor.label), 1)[0];
-      const color = rows.find((r) => r.actor.label === actors?.[0])?.actor.color ?? OTHER_CATEGORY.color;
-      return {
-        place,
-        n: rows.length,
-        outlets: new Set(rows.map((r) => r.item.source).filter(Boolean)).size,
-        actor: actors?.[0] ?? null,
-        color,
-        tactic: topN(rows.map((r) => r.tactic ?? ""), 1)[0]?.[0] ?? null,
-        deaths: rows.reduce((a, r) => a + r.deaths, 0),
-        last: rows.reduce((a, r) => (r.item.published_at > a ? r.item.published_at : a), ""),
-      };
-    })
-    .sort((a, b) => b.n - a.n || b.last.localeCompare(a.last))
-    .slice(0, 8);
-}
-
-/** How many incident reports arrived in each hour (short periods) or day (longer ones). */
-function pulseOf(incidents: Inc[], bucket: "day" | "hour") {
-  const len = bucket === "hour" ? 13 : 10;
-  const m = new Map<string, number>();
-  for (const x of incidents) {
-    const k = x.item.published_at.slice(0, len);
-    m.set(k, (m.get(k) ?? 0) + 1);
+  const rows: { t: number; label: string; n: number; trend: number }[] = [];
+  for (let t = start; t <= end; t += HOUR) {
+    const d = new Date(t);
+    rows.push({ t, label: `${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${String(d.getHours()).padStart(2, "0")}:00`, n: counts.get(t) ?? 0, trend: 0 });
   }
-  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([k, n]) => ({ k, n }));
+  // Trendline: a centred moving average over 5 hours, so the hour-on-hour direction shows through the noise.
+  rows.forEach((r, i) => {
+    const w = rows.slice(Math.max(0, i - 2), i + 3);
+    r.trend = Math.round((w.reduce((a, q) => a + q.n, 0) / w.length) * 100) / 100;
+  });
+  return rows;
 }
-
-const ago = (iso: string) => {
-  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
-  if (mins < 60) return `${mins}m ago`;
-  if (mins < 2880) return `${Math.round(mins / 60)}h ago`;
-  return `${Math.round(mins / 1440)}d ago`;
-};
 
 export default function OwnIncidents({ overview }: { overview: QueryOverview | null }) {
   const [items, setItems] = useState<QueryStreamItem[] | null>(null);
@@ -119,7 +100,7 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
     let live = true;
     setError(null);
     api
-      .getQueryStream(queryId, { from, to, tz, kind: "event", limit: 300 })
+      .getQueryStream(queryId, { from, to, tz, kind: "event", limit: 500 })
       .then((r) => live && setItems(r.items))
       .catch((err) => live && (setItems([]), setError(err instanceof Error ? err.message : "The live reports could not be read.")));
     return () => {
@@ -147,13 +128,14 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
     return {
       breakdown: ALL_CATEGORIES.map((c) => ({ label: c.label, color: c.color, n: cats.get(c.label)?.n ?? 0 })).filter((c) => c.n > 0),
       tactics: topN(incidents.map((x) => x.tactic ?? "")),
-      hotspots: hotspotsOf(incidents),
-      pulse: pulseOf(incidents, overview?.bucket ?? "day"),
+      provinces: topN(incidents.map((x) => x.item.province ?? ""), 12),
+      noProvince: incidents.filter((x) => !x.item.province).length,
+      hourly: hourlyOf(incidents, overview?.from, overview?.to),
       outlets: new Set(incidents.map((x) => x.item.source).filter(Boolean)).size,
       located: new Set(incidents.filter((x) => x.item.place).map((x) => x.item.place)).size,
       reportedDead: incidents.reduce((a, x) => a + x.deaths, 0),
     };
-  }, [incidents, overview?.bucket]);
+  }, [incidents, overview?.from, overview?.to]);
 
   const tile = (label: string, value: string) => (
     <div style={{ background: "var(--panel-raised)", borderRadius: 8, padding: "8px 12px", minWidth: 96 }}>
@@ -195,42 +177,35 @@ export default function OwnIncidents({ overview }: { overview: QueryOverview | n
             ))}
           </div>
 
-          {head(overview?.bucket === "hour" ? "Pulse — incident reports per hour" : "Pulse — incident reports per day")}
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 44 }}>
-            {stats.pulse.map((p) => {
-              const max = Math.max(...stats.pulse.map((q) => q.n));
-              return <div key={p.k} title={`${p.k.replace("T", " ")}${overview?.bucket === "hour" ? ":00" : ""} — ${p.n}`} style={{ flex: 1, minWidth: 2, height: `${Math.max(8, (p.n / max) * 100)}%`, background: "#e34948", opacity: 0.75, borderRadius: 2 }} />;
-            })}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 18 }}>
-            <div>
-              {head("What is being reported")}
-              {stats.tactics.length > 0 ? <Bars items={stats.tactics} color="#e34948" /> : <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No clear event type.</div>}
-            </div>
-          </div>
-
-          {head("Hotspots")}
-          {stats.hotspots.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No place named in these reports yet.</div>
+          {head("Incidents by province")}
+          {stats.provinces.length > 0 ? (
+            <>
+              <Bars items={stats.provinces} color="#2a78d6" />
+              <div style={{ fontSize: 11.5, color: "var(--text-faint)", marginTop: 5 }}>
+                {stats.noProvince > 0 ? `${stats.noProvince} incident report${stats.noProvince === 1 ? "" : "s"} could not be placed in a province (the report names only a country, or a place with no listed province nearby). ` : ""}
+                The province is the nearest listed one to the place named, so it is approximate near borders.
+              </div>
+            </>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 8 }}>
-              {stats.hotspots.map((h) => (
-                <div key={h.place} style={{ background: "var(--panel-raised)", borderRadius: 8, padding: "8px 10px", borderLeft: `4px solid ${h.color}`, fontSize: 12.5, lineHeight: 1.4 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                    <b style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{h.place}</b>
-                    <b>{h.n}</b>
-                  </div>
-                  <div style={{ color: "var(--text-faint)" }}>
-                    {[h.actor, h.tactic].filter(Boolean).join(" · ") || "Actor and type unclear"}
-                  </div>
-                  <div style={{ color: "var(--text-faint)" }}>
-                    {h.outlets} outlet{h.outlets === 1 ? "" : "s"}{h.deaths ? ` · ${h.deaths} dead reported` : ""} · {ago(h.last)}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No report names a place that can be placed in a province yet.</div>
           )}
+
+          {head("Incidents by hour")}
+          <div style={{ height: 170 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={stats.hourly} margin={{ top: 6, right: 10, bottom: 0, left: -18 }}>
+                <CartesianGrid stroke="var(--border, #8884)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--text-faint)" }} interval="preserveStartEnd" minTickGap={40} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--text-faint)" }} />
+                <Tooltip contentStyle={{ fontSize: 12 }} />
+                <Line type="monotone" dataKey="n" name="Incident reports" stroke="#e34948" strokeWidth={1.6} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="trend" name="Trend (5-hour average)" stroke="#2a78d6" strokeWidth={2.2} strokeDasharray="5 3" dot={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {head("What is being reported")}
+          {stats.tactics.length > 0 ? <Bars items={stats.tactics} color="#e34948" /> : <div style={{ fontSize: 12.5, color: "var(--text-faint)" }}>No clear event type.</div>}
         </div>
       )}
     </Panel>

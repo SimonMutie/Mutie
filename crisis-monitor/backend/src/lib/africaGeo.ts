@@ -574,3 +574,29 @@ export function regionNamedIn(text: string | null | undefined, countryCode: stri
   }
   return best?.label ?? null;
 }
+
+
+const REGIONS_BY_COUNTRY = new Map<string, GazetteerPlace[]>();
+for (const g of CONFLICT_GAZETTEER as GazetteerPlace[]) {
+  if (g.kind !== "region") continue;
+  const list = REGIONS_BY_COUNTRY.get(g.country) ?? [];
+  list.push(g);
+  REGIONS_BY_COUNTRY.set(g.country, list);
+}
+
+/** The state/province/region a point belongs to, as far as the curated gazetteer knows it: the region itself when
+ *  that is what was named, otherwise the nearest listed region of the same country within 300 km. There are no
+ *  province boundaries bundled, so this is the nearest listed one, and null where none is close. */
+export function provinceFor(countryCode: string, lat: number, lon: number, precision: "place" | "region" | "country", label: string): string | null {
+  if (precision === "country") return null;
+  if (precision === "region") return label;
+  let best: { name: string; km: number } | null = null;
+  for (const r of REGIONS_BY_COUNTRY.get(countryCode) ?? []) {
+    const dLat = ((r.lat - lat) * Math.PI) / 180;
+    const dLon = ((r.lon - lon) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat * Math.PI) / 180) * Math.cos((r.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    const km = 12742 * Math.asin(Math.sqrt(a));
+    if (!best || km < best.km) best = { name: r.name, km };
+  }
+  return best && best.km <= 300 ? best.name : null;
+}

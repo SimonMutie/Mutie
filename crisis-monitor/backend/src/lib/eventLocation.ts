@@ -1,4 +1,4 @@
-import { countryName, locateText } from "./africaGeo";
+import { countryName, locateText, provinceFor } from "./africaGeo";
 import { findCoords } from "./osintFeed";
 
 /**
@@ -21,6 +21,8 @@ export interface EventLocation {
   /** "Mekelle, Ethiopia" / "Tigray, Ethiopia" / "Ethiopia". */
   place: string;
   precision: EventLocationPrecision;
+  /** The state/province it is in, where the gazetteer knows one near enough. */
+  province?: string | null;
 }
 
 /** Anchors in osintFeed's keyword table that are not a country. */
@@ -30,7 +32,7 @@ function fromAfrica(text: string | null | undefined): EventLocation | null {
   const hit = locateText(text);
   if (!hit) return null;
   const place = hit.precision === "country" ? hit.label : `${hit.label}, ${countryName(hit.countryCode)}`;
-  return { lat: hit.lat, lon: hit.lon, place, precision: hit.precision };
+  return { lat: hit.lat, lon: hit.lon, place, precision: hit.precision, province: provinceFor(hit.countryCode, hit.lat, hit.lon, hit.precision, hit.label) };
 }
 
 function fromWorld(text: string | null | undefined): EventLocation | null {

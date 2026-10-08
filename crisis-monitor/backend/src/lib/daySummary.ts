@@ -33,6 +33,8 @@ export interface DayItem {
   published_at: string;
   sentiment: number;
   place: string | null;
+  /** State/province the place is in, "Jonglei, South Sudan"; null where none is known. */
+  province?: string | null;
 }
 
 export interface DayDigest {

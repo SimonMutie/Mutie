@@ -709,6 +709,8 @@ export interface QueryStreamItem {
   sentiment: number;
   tone?: "negative" | "neutral" | "positive";
   place: string | null;
+  /** State/province, "Jonglei, South Sudan"; null where none is known. */
+  province?: string | null;
 }
 
 export interface QueryTopic {

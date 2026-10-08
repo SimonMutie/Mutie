@@ -53,7 +53,7 @@ const GAP_MS = 2 * 86_400_000;
 /** … and this long of its first. Without the second limit, a headline that recurs day after day
  *  ("Shelling hits market in El Fasher") would chain weeks of separate events into one story. */
 const SPAN_MS = 5 * 86_400_000;
-const MEMBERS_SHOWN = 8;
+const MEMBERS_SHOWN = Infinity; // every report is listed, each with its link
 
 /** The meaningful words of a headline. */
 export function headlineWords(title: string): string[] {
@@ -97,7 +97,7 @@ function likeness(words: string[], c: Cluster): number {
   return Math.max(jaccard, shared >= 4 ? contained * 0.75 : 0);
 }
 
-export function groupStories(docs: StoryDoc[], limit = 12): Story[] {
+export function groupStories(docs: StoryDoc[], limit = 100): Story[] {
   const ordered = docs.filter((d) => d.title.trim().length > 0).sort((a, b) => a.published_at.localeCompare(b.published_at));
   const clusters: Cluster[] = [];
   const byWord = new Map<string, Set<number>>();
