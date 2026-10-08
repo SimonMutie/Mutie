@@ -7,16 +7,17 @@ import IncidentManualEntry from "./IncidentManualEntry";
 import IncidentManageTable from "./IncidentManageTable";
 import CustomDashboardBuilder from "./CustomDashboardBuilder";
 import DashboardEditor from "./DashboardEditor";
+import CountryDashboard from "./CountryDashboard";
 
 // Loaded only when the Datasets tab is opened — it is a sizeable page that
 // most visits to Trends & Patterns never use.
 const DatasetsPanel = lazy(() => import("./DatasetsPanel"));
 
-type Tab = "search" | "manual" | "dashboard" | "map" | "upload" | "manage" | "datasets";
+type Tab = "country" | "search" | "manual" | "dashboard" | "map" | "upload" | "manage" | "datasets";
 type DashboardMode = "auto" | "bespoke";
 
 export default function IncidentsDashboard({ user }: { user: AuthUser }) {
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>("country");
   const [dashboardMode, setDashboardMode] = useState<DashboardMode>("auto");
   const [stats, setStats] = useState<IncidentStats | null>(null);
   const [manageRefreshKey, setManageRefreshKey] = useState(0);
@@ -33,6 +34,9 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
+        <button onClick={() => setTab("country")} style={tabBtnStyle(tab === "country")}>
+          Country Dashboard
+        </button>
         <button onClick={() => setTab("dashboard")} style={tabBtnStyle(tab === "dashboard")}>
           Dashboard
         </button>
@@ -58,6 +62,8 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
+
+      {tab === "country" && <CountryDashboard />}
 
       {tab === "search" && <IncidentSearch />}
 
