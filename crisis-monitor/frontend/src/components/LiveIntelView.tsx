@@ -4,6 +4,10 @@ import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as Leaf
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
 import { Studio3D } from "../studio/Studio3D";
+import { NearbySearch, type NearbyState } from "../studio/NearbySearch";
+import { RouteStyleControls } from "../studio/RouteStyleControls";
+import { DEFAULT_ROUTE_STYLE, type RouteStyle } from "../studio/hud";
+import { bufferFeature } from "../studio/store";
 import { EditablePoints, EditablePoints3D, type EditPoint } from "../studio/EditablePoints";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { StudioPanel } from "../studio/StudioPanel";
@@ -11,7 +15,7 @@ import { createShape, DEFAULT_STYLE, studio, useStudio } from "../studio/store";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-import { IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
+import { IncidentMarker, classifyActor, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
 import { useHiddenIncidents, HiddenIncidentsControl, type HiddenIncidents } from "./hiddenIncidents";
@@ -718,7 +722,7 @@ function incidentRowToPoint(r: IncidentItem): GlobePoint | null {
     layerKey: "My Incidents",
     lat: r.latitude,
     lng: r.longitude,
-    color: "#ff9de2",
+    color: classifyActor(r.actor).color,
     size: 0.16,
     title: r.city || r.district || r.country || "Incident",
     subtitle: [r.sector, r.tactic].filter(Boolean).join(" — "),
@@ -1351,6 +1355,33 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             ...(routeDestination ? [{ id: "d", lat: routeDestination[0], lng: routeDestination[1], color: "#ff6b6b", label: "End: drag to move" }] : []),
           ]
         : [];
+  // A radius search around a route or layer: it narrows the map's incidents to the matches, and can show them as a heatmap.
+  const [nearby, setNearby] = useState<NearbyState | null>(null);
+  const [routeStyle, setRouteStyle] = useState<RouteStyle>(DEFAULT_ROUTE_STYLE);
+  function applyNearby(rows: IncidentItem[] | null, s: NearbyState | null) {
+    setIncidentSearchResults(rows);
+    setNearby(s);
+    if (rows) setEnabled((prev) => ({ ...prev, "my-incidents": true }));
+  }
+  function showNearbyAs(m: "markers" | "heatmap") {
+    setIncidentViewMode(m);
+    setEnabled((prev) => ({ ...prev, "my-incidents": true }));
+  }
+  const routeFeature: GeoJSON.Feature | null =
+    routeResult && routeResult.coordinates.length >= 2 ? { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: routeResult.coordinates } } : null;
+  async function saveRouteAsLayer() {
+    if (!routeFeature) return;
+    const row = await createShape(routeFeature, {
+      name: routeNameDraft.trim() || "Route",
+      style: { ...DEFAULT_STYLE, color: routeStyle.color, weight: routeStyle.weight, strokeOpacity: routeStyle.opacity, dashArray: routeStyle.dash },
+      source: "drawn",
+    });
+    if (row) {
+      setRouteNameDraft("");
+      setActiveTool("shapes");
+      studio.set({ tool: "select", selectedId: row.id });
+    }
+  }
   // Keeps a measured line or area as a Map Studio layer, which is saved and can be styled and edited.
   async function saveDrawingAsLayer() {
     if (!drawMode) return;
@@ -1566,7 +1597,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         geometry,
         distance_km: routeResult.distanceMeters / 1000,
         duration_min: routeResult.durationSeconds / 60,
-        color: "#4dff9e",
+        color: routeStyle.color,
       });
       setRouteNameDraft("");
       refreshRoutes();
@@ -1703,6 +1734,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         const rows = incidentSearchResults
           ? incidentSearchResults.map(incidentRowToPoint).filter((p): p is GlobePoint => p !== null)
           : layers[def.key]?.data ?? [];
+        // In heatmap view the globe shows the heat layer instead of the bullets.
+        if (incidentViewMode === "heatmap") continue;
         // Hidden incidents stay off the 3D globe too, not just the flat map.
         all.push(...(hiddenIncidents.hiddenIds.size ? rows.filter((p) => !hiddenIncidents.hiddenIds.has(p.id)) : rows));
         continue;
@@ -1711,7 +1744,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       if (data) all.push(...data);
     }
     return all;
-  }, [layers, enabled, incidentSearchResults, hiddenIncidents.hiddenIds]);
+  }, [layers, enabled, incidentSearchResults, hiddenIncidents.hiddenIds, incidentViewMode]);
 
   // Tool overlays rendered as ordinary GlobePoints — the marker rendering
   // (both the 3D pointsData layer and the flat CircleMarker map) is already
@@ -1818,7 +1851,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       drawMode === "distance" && drawPoints.length >= 2 ? [{ points: drawPoints, label: "Measured distance", color: "#ffd23f" }] : [];
     const routePath =
       routeResult && routeResult.coordinates.length >= 2
-        ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: "#4dff9e" }]
+        ? [{ points: routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng), label: "Route", color: routeStyle.color, width: routeStyle.weight }]
         : [];
     const routeOverlays = savedRoutes
       .filter((r) => r.visible)
@@ -1833,6 +1866,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     drawMode,
     drawPoints,
     routeResult,
+    routeStyle,
     activeTool,
     savedRoutes,
   ]);
@@ -1845,6 +1879,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     if (drawMode !== "area" || drawPoints.length < 3) return null;
     return [...drawPoints, drawPoints[0]];
   }, [drawMode, drawPoints]);
+
+  // The same incidents as a heatmap on the 3D globe (the flat maps draw theirs themselves).
+  const globeHeatPoints = useMemo(() => {
+    if (!enabled["my-incidents"] || incidentViewMode !== "heatmap") return null;
+    const rows = hiddenIncidents.hiddenIds.size ? incidentRowsForFlatMap.filter((r) => !hiddenIncidents.hiddenIds.has(r.id)) : incidentRowsForFlatMap;
+    return incidentHeatPoints(rows, incidentHeatmapStyle);
+  }, [enabled["my-incidents"], incidentViewMode, incidentRowsForFlatMap, hiddenIncidents.hiddenIds, incidentHeatmapStyle]);
 
   const routeLineForFlatMap = useMemo<LatLng[] | undefined>(
     () => (routeResult ? routeResult.coordinates.map(([lng, lat]) => [lat, lng] as LatLng) : undefined),
@@ -1872,6 +1913,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
             onMapReady={setGlobeMap}
+            heatPoints={globeHeatPoints}
+            heatStyle={incidentHeatmapStyle}
             onFeatureSelect={setMap3DSelectedFeature}
             showDayNight={showDayNight}
             showBuildings={showBuildings}
@@ -1888,6 +1931,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             drawMode={activeTool === "draw" ? drawMode : null}
             drawPoints={drawPoints}
             routeLine={activeTool === "route" ? routeLineForFlatMap : undefined}
+            routeStyle={routeStyle}
             savedShapes={savedShapes}
             savedRoutes={savedRoutes}
             incidentsOn={enabled["my-incidents"]}
@@ -2048,6 +2092,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onSaveRoute={handleSaveRoute}
             onToggleRoute={(id, visible) => api.updateMapRoute(id, { visible }).then(refreshRoutes).catch(() => {})}
             onDeleteRoute={(id) => api.deleteMapRoute(id).then(refreshRoutes).catch(() => {})}
+            onRecolourRoute={(id, color) => api.updateMapRoute(id, { color }).then(refreshRoutes).catch(() => {})}
+            routeStyle={routeStyle}
+            onRouteStyle={(p) => setRouteStyle((prev) => ({ ...prev, ...p }))}
+            onSaveRouteAsLayer={saveRouteAsLayer}
+            nearby={{ incidents: myIncidentRows, state: nearby, viewMode: incidentViewMode, onResults: applyNearby, onViewMode: showNearbyAs }}
+            routeFeature={routeFeature}
+            onRouteBand={(km) => routeFeature && void bufferFeature(routeFeature, km, `${routeNameDraft.trim() || "Route"}: ${km} km band`)}
           />
         )}
         {activeTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
@@ -2131,7 +2182,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             error={cryptoError}
           />
         )}
-        {activeTool === "shapes" && <StudioPanel shapes={savedShapes} />}
+        {activeTool === "shapes" && (
+          <StudioPanel
+            shapes={savedShapes}
+            nearby={{ incidents: myIncidentRows, state: nearby, viewMode: incidentViewMode, onResults: applyNearby, onViewMode: showNearbyAs }}
+          />
+        )}
       </div>
 
       {incidentModalTab && (
@@ -2159,6 +2215,7 @@ function FlatMap({
   drawMode,
   drawPoints,
   routeLine,
+  routeStyle,
   savedShapes,
   savedRoutes,
   studioActive,
@@ -2183,6 +2240,7 @@ function FlatMap({
   drawMode?: DrawMode;
   drawPoints?: LatLng[];
   routeLine?: LatLng[];
+  routeStyle?: RouteStyle;
   /** Persisted overlays (map_shapes/map_routes) — shown regardless of which
    *  right-side tool is open, same as the live data layers, so a saved AOI
    *  or route stays visible while browsing rather than only while its own
@@ -2227,7 +2285,12 @@ function FlatMap({
       {drawMode === "area" && drawPoints && drawPoints.length >= 3 && (
         <Polygon positions={drawPoints} pathOptions={{ color: "#ffd23f", fillColor: "#ffd23f", fillOpacity: 0.25, weight: 2 }} />
       )}
-      {routeLine && routeLine.length >= 2 && <Polyline positions={routeLine} pathOptions={{ color: "#4dff9e", weight: 3 }} />}
+      {routeLine && routeLine.length >= 2 && (
+        <>
+          {(routeStyle?.glow ?? true) && <Polyline positions={routeLine} pathOptions={{ color: routeStyle?.color ?? "#4dff9e", weight: (routeStyle?.weight ?? 5) + 8, opacity: 0.22, lineCap: "round" }} interactive={false} />}
+          <Polyline positions={routeLine} pathOptions={{ color: routeStyle?.color ?? "#4dff9e", weight: routeStyle?.weight ?? 5, opacity: routeStyle?.opacity ?? 0.95, dashArray: routeStyle?.dash ?? undefined, lineCap: "round", lineJoin: "round" }} />
+        </>
+      )}
       <StudioLayer shapes={savedShapes ?? []} active={!!studioActive} />
       {editPoints && onEditPoint && <EditablePoints items={editPoints} onMove={onEditPoint} />}
       {savedRoutes
@@ -3415,6 +3478,13 @@ function RoutePlannerPanel({
   onSaveRoute,
   onToggleRoute,
   onDeleteRoute,
+  onRecolourRoute,
+  routeStyle,
+  onRouteStyle,
+  onSaveRouteAsLayer,
+  nearby,
+  routeFeature,
+  onRouteBand,
 }: {
   mode: RouteProfile;
   onModeChange: (m: RouteProfile) => void;
@@ -3431,6 +3501,13 @@ function RoutePlannerPanel({
   onSaveRoute: () => void;
   onToggleRoute: (id: string, visible: boolean) => void;
   onDeleteRoute: (id: string) => void;
+  onRecolourRoute: (id: string, color: string) => void;
+  routeStyle: RouteStyle;
+  onRouteStyle: (p: Partial<RouteStyle>) => void;
+  onSaveRouteAsLayer: () => void;
+  nearby: { incidents: IncidentItem[]; state: NearbyState | null; viewMode: "markers" | "heatmap"; onResults: (rows: IncidentItem[] | null, s: NearbyState | null) => void; onViewMode: (m: "markers" | "heatmap") => void };
+  routeFeature: GeoJSON.Feature | null;
+  onRouteBand: (km: number) => void;
 }) {
   const profiles: { key: RouteProfile; label: string }[] = [
     { key: "driving", label: "Drive" },
@@ -3460,6 +3537,20 @@ function RoutePlannerPanel({
           Duration: <b style={{ color: HUD.textPrimary }}>{formatDuration(result.durationSeconds)}</b>
         </div>
       )}
+      <RouteStyleControls style={routeStyle} onChange={onRouteStyle} />
+      {routeFeature && (
+        <NearbySearch
+          title="Incidents along this route"
+          geometry={routeFeature}
+          label="route"
+          incidents={nearby.incidents}
+          state={nearby.state}
+          viewMode={nearby.viewMode}
+          onResults={nearby.onResults}
+          onViewMode={nearby.onViewMode}
+          onCorridor={onRouteBand}
+        />
+      )}
       <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
         Routed via OSRM's free public demo server — fine for occasional use, not a guaranteed production service.
       </div>
@@ -3472,6 +3563,7 @@ function RoutePlannerPanel({
             style={hudInputStyle}
           />
           <ToolButton onClick={onSaveRoute}>{routeSaving ? "Saving…" : "Save route (overlays the map)"}</ToolButton>
+          <ToolButton onClick={onSaveRouteAsLayer}>Save as editable layer in Map Studio</ToolButton>
         </div>
       )}
       <ToolButton onClick={onClear}>Clear</ToolButton>
@@ -3487,6 +3579,7 @@ function RoutePlannerPanel({
               <span style={{ flex: 1, color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.name}>
                 {r.name}
               </span>
+              <input type="color" value={/^#[0-9a-f]{6}$/i.test(r.color ?? "") ? (r.color as string) : "#4dff9e"} onChange={(e) => onRecolourRoute(r.id, e.target.value)} title="Route colour" style={{ width: 20, height: 18, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
               <span style={{ color: HUD.textMuted, fontSize: 10 }}>{r.distance_km ? `${r.distance_km.toFixed(0)}km` : ""}</span>
               <button onClick={() => onDeleteRoute(r.id)} title="Delete" style={iconOnlyBtnStyle}>
                 <CloseGlyph size={11} color={HUD.textMuted} />

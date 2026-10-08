@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
 import { api, type EscalationIncident } from "../api";
+import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
 import EscalationHoverCard from "./EscalationHoverCard";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
@@ -77,6 +78,8 @@ export interface Map3DPath {
   points: [number, number][]; // [lat, lng]
   label: string;
   color?: string;
+  /** Line thickness in px (default 2). */
+  width?: number;
 }
 
 /** Approximate territory-change circle — see the backend's
@@ -107,6 +110,9 @@ interface Map3DProps {
   onMapClick?: (lat: number, lng: number) => void;
   /** Hands the loaded map to whatever draws on top of it (the Map Studio), and null when it is torn down. */
   onMapReady?: (map: MapLibreMap | null) => void;
+  /** [lat, lng, weight] points to draw as a heatmap, or null for none. */
+  heatPoints?: [number, number, number][] | null;
+  heatStyle?: HeatmapStyle;
   /** Fired whenever a point or territory-change shape is clicked (the
    *  feature's full detail, to be rendered by the caller — see
    *  Map3DDetailPanel below), or with null when the selection should clear
@@ -246,7 +252,7 @@ function toGeoJsonPaths(paths: Map3DPath[]): GeoJSON.FeatureCollection {
     features: paths.map((p) => ({
       type: "Feature",
       geometry: { type: "LineString", coordinates: p.points.map(([lat, lng]) => [lng, lat]) },
-      properties: { label: p.label, color: p.color ?? "#3fd0ff" },
+      properties: { label: p.label, color: p.color ?? "#3fd0ff", width: p.width ?? 2 },
     })),
   };
 }
@@ -297,12 +303,48 @@ function nightHemisphereRing(date: Date): [number, number][] {
   return ring;
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, drawAreaRing, onMapClick, onMapReady, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+function heatColorRamp(gradient: string): unknown[] {
+  const stops = Object.entries((HEATMAP_GRADIENTS[gradient] ?? HEATMAP_GRADIENTS.redFade).stops)
+    .map(([k, c]) => [Number(k), c] as [number, string])
+    .sort((a, b) => a[0] - b[0]);
+  const ramp: unknown[] = ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)"];
+  let last = 0;
+  for (const [k, c] of stops) {
+    const at = Math.max(k, last + 0.01);
+    ramp.push(Math.min(at, 1), c);
+    last = at;
+    if (at >= 1) break;
+  }
+  return ramp;
+}
+
+export function heatPaint(style: HeatmapStyle | undefined) {
+  const st = style ?? { radius: 25, blur: 20, max: 1.5, gradient: "redFade", fade: 0.05 };
+  const scale = 1.5 / Math.max(0.2, st.max);
+  return {
+    "heatmap-weight": ["get", "w"],
+    "heatmap-intensity": ["interpolate", ["linear"], ["zoom"], 0, 0.5 * scale, 9, 2 * scale],
+    "heatmap-color": heatColorRamp(st.gradient),
+    "heatmap-radius": ["interpolate", ["linear"], ["zoom"], 0, st.radius * 0.5, 9, st.radius * 2.2],
+    "heatmap-opacity": 0.88,
+  };
+}
+
+function toGeoJsonHeat(points: [number, number, number][] | null | undefined): GeoJSON.FeatureCollection {
+  return {
+    type: "FeatureCollection",
+    features: (points ?? []).map(([lat, lng, w]) => ({ type: "Feature", geometry: { type: "Point", coordinates: [lng, lat] }, properties: { w } })),
+  };
+}
+
+export default function Map3D({ points, fitKey, paths, territoryChanges, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
   const onClickRef = useRef(onMapClick);
   onClickRef.current = onMapClick;
+  const heatRef = useRef({ points: heatPoints, style: heatStyle });
+  heatRef.current = { points: heatPoints, style: heatStyle };
   const onReadyRef = useRef(onMapReady);
   onReadyRef.current = onMapReady;
   const onFeatureSelectRef = useRef(onFeatureSelect);
@@ -372,6 +414,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
       // The points already in hand, not an empty set: data that arrived
       // before the style finished loading would otherwise stay undrawn
       // until the next time it changed.
+      map.addSource("osiris-heat", { type: "geojson", data: toGeoJsonHeat(heatRef.current.points) });
+      map.addLayer({ id: "osiris-heat-layer", type: "heatmap", source: "osiris-heat", paint: heatPaint(heatRef.current.style) as never });
       map.addSource("osiris-points", { type: "geojson", data: toGeoJsonPoints(pointsRef.current) });
       map.addLayer({
         id: "osiris-points-circle",
@@ -383,10 +427,12 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         filter: ["!", ["has", "escalationLevel"]],
         paint: {
           "circle-color": ["get", "color"],
-          "circle-radius": ["+", 3, ["*", ["get", "size"], 14]],
-          "circle-opacity": 0.9,
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "rgba(0,0,0,0.4)",
+          // The user's uploaded incidents are flat bullet markers in the actor theme colours
+          // (white ring, fixed size); every other layer keeps its sized dot.
+          "circle-radius": ["case", ["==", ["get", "layerKey"], "My Incidents"], 5.5, ["+", 3, ["*", ["get", "size"], 14]]],
+          "circle-opacity": ["case", ["==", ["get", "layerKey"], "My Incidents"], 1, 0.9],
+          "circle-stroke-width": ["case", ["==", ["get", "layerKey"], "My Incidents"], 1.6, 1],
+          "circle-stroke-color": ["case", ["==", ["get", "layerKey"], "My Incidents"], "#ffffff", "rgba(0,0,0,0.4)"],
         },
       });
 
@@ -443,7 +489,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         id: "osiris-paths-line",
         type: "line",
         source: "osiris-paths",
-        paint: { "line-color": ["get", "color"], "line-width": 2, "line-opacity": 0.85 },
+        paint: { "line-color": ["get", "color"], "line-width": ["coalesce", ["get", "width"], 2], "line-opacity": 0.9 },
       });
 
       map.addSource("osiris-draw-area", { type: "geojson", data: toGeoJsonRing(null) });
@@ -634,6 +680,20 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
     // setData/setLayoutProperty on the same map instead of re-creating it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const heatKey = JSON.stringify([heatStyle?.gradient, heatStyle?.radius, heatStyle?.max]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    (map.getSource("osiris-heat") as GeoJSONSource | undefined)?.setData(toGeoJsonHeat(heatPoints));
+  }, [heatPoints]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current || !map.getLayer("osiris-heat-layer")) return;
+    const p = heatPaint(heatStyle) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(p)) map.setPaintProperty("osiris-heat-layer", k as never, v as never);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatKey]);
 
   useEffect(() => {
     const map = mapRef.current;

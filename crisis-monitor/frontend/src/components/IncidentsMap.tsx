@@ -61,6 +61,8 @@ interface Props {
 // the app keeps working unchanged — a plain re-export alone wouldn't give
 // this file itself a usable local binding.
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
+import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, type ActorCategory, type ActorShape } from "./actorTheme";
+export { classifyActor, ACTOR_THEME, type ActorCategory, type ActorShape };
 export { BASEMAPS, type BasemapKey };
 
 const ROUTE_COLORS = [
@@ -74,41 +76,11 @@ const ROUTE_COLORS = [
  *  reads green. Pattern-matched (case-insensitive) against common real-world
  *  labels rather than requiring an exact match, since source data is rarely
  *  perfectly consistent. Order matters: first matching pattern wins. */
-export type ActorShape = "aog" | "criminal" | "security" | "terrorist" | "militia" | "intercommunal" | "other";
 /** Conflict-specific icons keyed to the incident's Tactic field — an
  *  alternative to shape-by-actor-category, selectable via the map's icon
  *  mode toggle. Actor-driven color is kept either way; only the glyph swaps. */
 export type TacticGlyph = "gun" | "tank" | "aircraft" | "ship" | "explosion" | "people" | "other";
 export type IconGlyph = ActorShape | TacticGlyph;
-export interface ActorCategory {
-  color: string;
-  label: string;
-  shape: ActorShape;
-}
-// Color theme fixed per Simon's spec: Crime = green, AOG = red, Security
-// Forces = blue, Intercommunal Violence = pink. Order matters — first
-// matching pattern wins, so more specific patterns (intercommunal) are
-// checked before the generic militia/terrorist catch-alls they could
-// otherwise overlap with (e.g. "ethnic militia").
-const ACTOR_CATEGORIES: { pattern: RegExp; color: string; label: string; shape: ActorShape }[] = [
-  { pattern: /\b(aog|armed opposition|non-?state armed|nsag)\b/i, color: "#dc2626", label: "Armed Opposition Group (AOG)", shape: "aog" },
-  { pattern: /\b(intercommunal|inter-?communal|communal violence|inter-?ethnic|ethnic clash\w*|farmer-?herder|pastoralist.?(farmer)?)\b/i, color: "#ec4899", label: "Intercommunal Violence", shape: "intercommunal" },
-  { pattern: /\b(criminal|crime|gang|organi[sz]ed crime)\b/i, color: "#16a34a", label: "Crime", shape: "criminal" },
-  { pattern: /\b(security forces?|police|military|army|state forces?|law enforcement)\b/i, color: "#2563eb", label: "Security Forces", shape: "security" },
-  { pattern: /\b(terroris\w*|extremis\w*)\b/i, color: "#ea580c", label: "Terrorist / Extremist", shape: "terrorist" },
-  { pattern: /\b(militia|self-?defen[cs]e|community defense|vigilante)\b/i, color: "#7c3aed", label: "Militia", shape: "militia" },
-];
-const OTHER_CATEGORY: ActorCategory = { color: "#64748b", label: "Other / Unspecified", shape: "other" };
-
-export function classifyActor(actor: string | null | undefined): ActorCategory {
-  const value = (actor ?? "").trim();
-  if (!value) return OTHER_CATEGORY;
-  for (const cat of ACTOR_CATEGORIES) {
-    if (cat.pattern.test(value)) return cat;
-  }
-  return OTHER_CATEGORY;
-}
-
 export interface TacticCategory {
   label: string;
   glyph: TacticGlyph;

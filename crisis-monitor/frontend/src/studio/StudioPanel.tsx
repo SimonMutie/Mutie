@@ -3,6 +3,8 @@ import { Check, Circle, Copy, Download, Eye, EyeOff, FileUp, Layers, MapPin, Mou
 import type { SavedShape, ShapeSource, ShapeStyle } from "../api";
 import { downloadText, fitLayerToSize, fmtArea, fmtLength, measure, toKml } from "./geo";
 import { HUD, DASHES, SWATCHES, glass, inputStyle } from "./hud";
+import { NearbySearch, type NearbyState } from "./NearbySearch";
+import type { IncidentItem } from "../api";
 import { ICONS, ICON_CATEGORIES, iconDef, iconSvg } from "./icons";
 import { ACCEPT, FORMATS, importGeoFiles, type Imported } from "./importers";
 import { PATTERNS, hasPattern, previewSvg, type PatternKey } from "./patterns";
@@ -255,7 +257,7 @@ function ImportTab({ files, onDone }: { files: File[] | null; onDone: () => void
 
 // ── Selected shape ──────────────────────────────────────────────────────
 
-function Selected({ shape }: { shape: SavedShape }) {
+function Selected({ shape, nearby }: { shape: SavedShape; nearby: NearbyProps }) {
   const st = useStudio();
   const over = st.overrides[shape.id] ?? {};
   const style: ShapeStyle = { ...DEFAULT_STYLE, ...shape.style, ...over };
@@ -299,6 +301,17 @@ function Selected({ shape }: { shape: SavedShape }) {
           <span style={{ fontSize: 11, color: HUD.textMuted }}>km around it</span>
         </div>
       )}
+      <NearbySearch
+        title={isIcon ? "Incidents around this place" : isLine ? "Incidents along this line" : "Incidents in and around this area"}
+        geometry={shape.geometry}
+        label={`shape:${shape.id}`}
+        incidents={nearby.incidents}
+        state={nearby.state}
+        viewMode={nearby.viewMode}
+        onResults={nearby.onResults}
+        onViewMode={nearby.onViewMode}
+        onCorridor={isIcon ? (km) => void bufferShape(shape, km) : (km) => void bufferShape(shape, km)}
+      />
       {isIcon ? <IconPicker style={style} onChange={(p) => editShape(shape.id, p)} /> : <StyleEditor style={style} isIcon={false} isLine={isLine} onChange={(p) => editShape(shape.id, p)} />}
       {collection && <div style={{ fontSize: 10, color: HUD.textMuted }}>The style applies to every feature in this imported layer.</div>}
       <Row title="Notes">
@@ -405,7 +418,15 @@ function LayersTab({ shapes, onEdit }: { shapes: SavedShape[]; onEdit: () => voi
 
 // ── Panel ───────────────────────────────────────────────────────────────
 
-export function StudioPanel({ shapes }: { shapes: SavedShape[] }) {
+export interface NearbyProps {
+  incidents: IncidentItem[];
+  state: NearbyState | null;
+  viewMode: "markers" | "heatmap";
+  onResults: (rows: IncidentItem[] | null, s: NearbyState | null) => void;
+  onViewMode: (m: "markers" | "heatmap") => void;
+}
+
+export function StudioPanel({ shapes, nearby }: { shapes: SavedShape[]; nearby: NearbyProps }) {
   const st = useStudio();
   const [tab, setTab] = useState<"draw" | "layers" | "import">("draw");
   const selected = shapes.find((s) => s.id === st.selectedId);
@@ -454,7 +475,7 @@ export function StudioPanel({ shapes }: { shapes: SavedShape[] }) {
           <div style={{ fontSize: 11, color: HUD.textSecondary, lineHeight: 1.45 }}>{tool.hint}</div>
 
           {st.tool === "select" && selected ? (
-            <Selected shape={selected} />
+            <Selected shape={selected} nearby={nearby} />
           ) : draftIsIcon ? (
             <IconPicker style={st.iconDraft} onChange={(p) => studio.set({ iconDraft: { ...st.iconDraft, ...p } })} />
           ) : st.tool === "select" ? (

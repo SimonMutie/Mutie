@@ -1,3 +1,4 @@
+import { classifyActor } from "./actorTheme";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -1259,7 +1260,7 @@ export default function DashboardWidgetCard({
                 <HeatmapLayer points={(incidents ?? []).slice(0, 5000).map((i) => [i.latitude, i.longitude, 1] as [number, number, number])} />
               ) : (
                 (incidents ?? []).slice(0, 3000).map((i, idx) => (
-                  <CircleMarker key={idx} center={[i.latitude, i.longitude]} radius={2.5} pathOptions={{ color, fillColor: color, fillOpacity: 0.7, weight: 0.5 }}>
+                  <CircleMarker key={idx} center={[i.latitude, i.longitude]} radius={3.5} pathOptions={{ color: "#fff", fillColor: classifyActor(i.actor).color, fillOpacity: 0.9, weight: 0.8 }}>
                     <LeafletTooltip direction="top" offset={[0, -2]} opacity={0.95}>
                       <div style={{ fontSize: 12, lineHeight: 1.5 }}>
                         <div style={{ fontWeight: 700 }}>{[i.city, i.province].filter(Boolean).join(", ") || "Unknown location"}</div>

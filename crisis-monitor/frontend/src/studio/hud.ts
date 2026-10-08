@@ -42,3 +42,20 @@ export const DASHES: { label: string; value: string | null }[] = [
   { label: "Dotted", value: "2 6" },
   { label: "Dash-dot", value: "12 6 2 6" },
 ];
+
+/** A wide palette for routes and lines: bright and deep tones that read on dark, light and satellite maps. */
+export const ROUTE_PALETTE = [
+  "#4dff9e", "#22d3ee", "#38bdf8", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899",
+  "#f43f5e", "#ef4444", "#f97316", "#f59e0b", "#eab308", "#a3e635", "#22c55e", "#14b8a6",
+  "#ffffff", "#cbd5e1", "#94a3b8", "#0f172a", "#7f1d1d", "#9d174d", "#166534", "#1e3a8a",
+];
+
+export interface RouteStyle {
+  color: string;
+  weight: number;
+  dash: string | null;
+  opacity: number;
+  /** A soft halo under the line, so it stands out on busy maps. */
+  glow: boolean;
+}
+export const DEFAULT_ROUTE_STYLE: RouteStyle = { color: "#4dff9e", weight: 5, dash: null, opacity: 0.95, glow: true };

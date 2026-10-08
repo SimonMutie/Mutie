@@ -172,17 +172,23 @@ export async function duplicateShape(s: SavedShape): Promise<void> {
   if (row) studio.select(row.id);
 }
 
-/** A new polygon covering everything within `km` of the shape. */
-export async function bufferShape(s: SavedShape, km: number): Promise<void> {
+/** A new polygon covering everything within `km` of a feature. Used for buffers and for search bands around routes. */
+export async function bufferFeature(feature: GeoJSON.Feature, km: number, name: string, style?: ShapeStyle): Promise<void> {
   try {
-    const out = buffer(s.geometry as GeoJSON.Feature, km, { units: "kilometers" });
+    const out = buffer(feature, km, { units: "kilometers" });
     if (!out) throw new Error("That shape cannot be buffered.");
     const f = out as GeoJSON.Feature;
-    const row = await createShape({ type: "Feature", properties: { buffer_km: km }, geometry: f.geometry }, { name: `${s.name}: ${km} km buffer`, style: { ...DEFAULT_STYLE, ...s.style, ...state.overrides[s.id], icon: undefined, pattern: "stripes-d1", fillOpacity: 0.2 }, source: "drawn" });
+    const row = await createShape({ type: "Feature", properties: { buffer_km: km }, geometry: f.geometry }, { name, style: style ?? { ...DEFAULT_STYLE, pattern: "stripes-d1", fillOpacity: 0.2 }, source: "drawn" });
     if (row) studio.select(row.id);
   } catch (e) {
     studio.set({ notice: e instanceof Error ? e.message : "Could not buffer that shape." });
   }
+}
+
+/** A new polygon covering everything within `km` of the shape. */
+export async function bufferShape(s: SavedShape, km: number): Promise<void> {
+  const f: GeoJSON.Feature = s.geometry.type === "Feature" ? s.geometry : { type: "Feature", properties: {}, geometry: { type: "GeometryCollection", geometries: s.geometry.features.map((x) => x.geometry) } };
+  await bufferFeature(f, km, `${s.name}: ${km} km band`, { ...DEFAULT_STYLE, ...s.style, ...state.overrides[s.id], icon: undefined, pattern: "stripes-d1", fillOpacity: 0.2 });
 }
 
 export async function placeIcon(lng: number, lat: number): Promise<void> {
