@@ -28,7 +28,7 @@ import "./query/QueryDashboard.css";
  * One monitoring query's dashboard: where its items are, how many a day and
  * how that compares with the period before, what is open against it, its
  * top stories, the names and places in it and where its outlets are based,
- * your own recorded incidents beside it, your notes, the items themselves,
+ * the incidents it reads from live open-source reports, your notes, the items themselves,
  * and — from a click on any day — that day in detail.
  *
  * The panels sit on a grid: each can be dragged by its header and resized
