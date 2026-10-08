@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, Marker, TileLayer, Tooltip as LTooltip, useMap } from "react-leaflet";
+import { MapContainer, Marker, Tooltip as LTooltip, useMap } from "react-leaflet";
+import { feature } from "topojson-client";
+import worldTopology from "world-atlas/countries-50m.json?url";
+import { findGeoHierarchy, getGeoLevel } from "../registry";
 import * as L from "leaflet";
 import { api, type CrosstabRow, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor } from "./DashboardWidgetCard";
@@ -43,6 +46,60 @@ const pin = (color: string) => {
   return ic;
 };
 
+/** The basemap, drawn from boundary files that ship with the app (country outlines from world-atlas, and state
+ *  boundaries where the app holds them): no tile server, no key, no outside request. */
+const NAME_ALIASES: Record<string, string> = { "south sudan": "s. sudan", "democratic republic of the congo": "dem. rep. congo", "dr congo": "dem. rep. congo", drc: "dem. rep. congo", "central african republic": "central african rep.", "ivory coast": "côte d'ivoire", "cote d'ivoire": "côte d'ivoire", eswatini: "eswatini", "western sahara": "w. sahara", "equatorial guinea": "eq. guinea" };
+const norm = (v: string) => v.toLowerCase().trim();
+
+function Basemap({ country }: { country: string }) {
+  const map = useMap();
+  useEffect(() => {
+    let dead = false;
+    const layers: L.Layer[] = [];
+    const wanted = NAME_ALIASES[norm(country)] ?? norm(country);
+    fetch(worldTopology)
+      .then((r) => r.json())
+      .then((topo) => {
+        if (dead) return;
+        const fc = feature(topo, topo.objects.countries) as unknown as GeoJSON.FeatureCollection;
+        const land = L.geoJSON(fc, {
+          style: (f) => {
+            const mine = norm(String((f?.properties as { name?: string })?.name ?? "")) === wanted;
+            return { color: mine ? "#0f766e" : "#a8b3bd", weight: mine ? 1.6 : 0.8, fillColor: mine ? "#e6f4ef" : "#f3f1ea", fillOpacity: 1 };
+          },
+          onEachFeature: (f, layer) => layer.bindTooltip(String((f.properties as { name?: string })?.name ?? ""), { sticky: true, direction: "top" }),
+        }).addTo(map);
+        land.bringToBack();
+        layers.push(land);
+      })
+      .catch(() => {});
+    // State boundaries, where the app holds them for this country.
+    const lvl = (() => {
+      const h = findGeoHierarchy(country);
+      return h ? getGeoLevel(h, 1) : undefined;
+    })();
+    if (lvl) {
+      fetch(lvl.boundaryUrl)
+        .then((r) => r.json())
+        .then((data) => {
+          if (dead) return;
+          const fc = (data.type === "Topology" ? feature(data, data.objects[Object.keys(data.objects)[0]]) : data) as GeoJSON.FeatureCollection;
+          const states = L.geoJSON(fc, {
+            style: { color: "#0f766e", weight: 1, fillOpacity: 0, dashArray: "3 3" },
+            onEachFeature: (f, layer) => layer.bindTooltip(String((f.properties as Record<string, string>)?.[lvl.namePropertyKey] ?? ""), { sticky: true }),
+          }).addTo(map);
+          layers.push(states);
+        })
+        .catch(() => {});
+    }
+    return () => {
+      dead = true;
+      layers.forEach((l) => l.remove());
+    };
+  }, [map, country]);
+  return null;
+}
+
 function FitTo({ points }: { points: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
@@ -63,8 +120,8 @@ function CountryMap({ incidents, country }: { incidents: Located[]; country: str
   const seg = (on: boolean): React.CSSProperties => ({ fontSize: 12, padding: "4px 12px", cursor: "pointer", border: "none", background: on ? "var(--signal)" : "var(--panel)", color: on ? "#fff" : "var(--text-muted)" });
   return (
     <div style={{ position: "relative", height: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid var(--border-soft)" }}>
-      <MapContainer center={[1, 38]} zoom={5} style={{ width: "100%", height: "100%" }} scrollWheelZoom zoomControl>
-        <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" attribution="&copy; OpenStreetMap, &copy; CARTO" />
+      <MapContainer center={[1, 38]} zoom={5} style={{ width: "100%", height: "100%", background: "#d6e6f2" }} scrollWheelZoom zoomControl attributionControl={false}>
+        <Basemap country={country} />
         <FitTo points={points} />
         {mode === "heat" ? (
           <HeatmapLayer points={points.slice(0, 8000).map(([a, b]) => [a, b, 1] as [number, number, number])} />
@@ -102,7 +159,7 @@ const WIDGETS = {
   tactic: W("tactic", "pie", "What — tactics", { dataField: "by_tactic", topN: 8, showLegend: true }),
   calendar: W("calendar", "calendar", "Daily activity calendar", { color: "#e34948" }),
   sankey: W("sankey", "sankey", "Who does what — actor → tactic", { dataField: "by_actor", secondaryField: "tactic", topN: 8 }),
-  network: W("network", "network", "Where each actor operates — actor ↔ province", { dataField: "by_actor", secondaryField: "province", topN: 8 }),
+  network: W("network", "network", "Where each sector is hit — sector ↔ province", { dataField: "by_sector", secondaryField: "province", topN: 8 }),
   bubble: W("bubble", "bubble", "Sectors affected", { dataField: "by_sector", topN: 14 }),
   table: W("table", "heatmap_table", "Province × tactic", { dataField: "by_province", secondaryField: "tactic", topN: 10 }),
   radar: W("radar", "radar", "Tactic profile", { dataField: "by_tactic", topN: 8, color: "#7c3aed" }),
