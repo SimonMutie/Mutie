@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AlertItem } from "../api";
+import { alertsPaused, setAlertsPaused, useAlertsPaused } from "../alertPrefs";
 
 /**
  * Live alert pop-ups with sound. Whenever the server announces an alert over the live feed — a new Elevated or
@@ -65,18 +66,32 @@ export default function AlertPopups({
   const [cards, setCards] = useState<AlertItem[]>([]);
   const [sound, setSound] = useState(soundOn);
   const seen = useRef(new Set<string>());
+  const [silenced, setSilenced] = useState<Set<string>>(new Set());
+  const paused = useAlertsPaused();
 
   useEffect(() => {
     if (!liveMessage || liveMessage.type !== "alert") return;
     const al = liveMessage.payload as AlertItem;
     if (!al?.id || seen.current.has(al.id)) return;
     seen.current.add(al.id);
+    if (alertsPaused()) return; // peace of mind: nothing opens, nothing sounds
     setCards((prev) => [al, ...prev].slice(0, 4));
-    if (soundOn()) beep(al.level);
-    if (al.level !== "critical") {
-      setTimeout(() => setCards((prev) => prev.filter((c) => c.id !== al.id)), 45_000);
-    }
   }, [liveMessage]);
+
+  // The sound repeats until every open card has been silenced or dismissed.
+  const loudest = cards.filter((c) => !silenced.has(c.id)).sort((a, b) => (a.level === "critical" ? -1 : 1) - (b.level === "critical" ? -1 : 1))[0];
+  const loudestId = loudest?.id;
+  const loudestLevel = loudest?.level;
+  useEffect(() => {
+    if (!loudestId || !loudestLevel || paused || !sound) return;
+    beep(loudestLevel);
+    const t = setInterval(() => beep(loudestLevel), loudestLevel === "critical" ? 2600 : 3200);
+    return () => clearInterval(t);
+  }, [loudestId, loudestLevel, paused, sound]);
+  // Pausing alerts closes whatever is open.
+  useEffect(() => {
+    if (paused) setCards([]);
+  }, [paused]);
 
   if (cards.length === 0) return null;
   const dismiss = (id: string) => setCards((prev) => prev.filter((c) => c.id !== id));
@@ -130,13 +145,19 @@ export default function AlertPopups({
                 <button onClick={() => { onShowOnMap(); dismiss(al.id); }} style={btn}>View on map</button>
               )}
               <button onClick={() => dismiss(al.id)} style={btn}>Dismiss</button>
+              {sound && !silenced.has(al.id) && (
+                <button onClick={() => setSilenced((p) => new Set(p).add(al.id))} style={{ ...btn, borderColor: st.color }}>🔇 Stop sound</button>
+              )}
               <span style={{ flex: 1 }} />
               <span style={{ opacity: 0.5, fontSize: 11 }}>{new Date(al.created_at).toLocaleTimeString()}</span>
             </div>
           </div>
         );
       })}
-      <button onClick={toggleSound} style={{ ...btn, alignSelf: "flex-end" }}>{sound ? "🔔 Sound on — click to mute" : "🔕 Sound muted — click to unmute"}</button>
+      <div style={{ display: "flex", gap: 8, alignSelf: "flex-end" }}>
+        <button onClick={() => setAlertsPaused(true)} style={btn} title="Close these and stop all alert pop-ups until you turn them back on (button in the top bar)">Pause all alerts</button>
+        <button onClick={toggleSound} style={btn}>{sound ? "🔔 Sound on — click to mute" : "🔕 Sound muted — click to unmute"}</button>
+      </div>
     </div>
   );
 }

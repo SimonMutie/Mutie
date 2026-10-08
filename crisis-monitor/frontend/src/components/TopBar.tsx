@@ -5,6 +5,7 @@ import Tagline from "./Tagline";
 import SpotlightMenu from "./SpotlightMenu";
 import DueDiligenceMenu, { type DdKind } from "./DueDiligenceMenu";
 import type { SpotlightScope } from "../spotlightRegions";
+import { setAlertsPaused, useAlertsPaused } from "../alertPrefs";
 
 interface Props {
   connected: boolean;
@@ -94,6 +95,7 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
           <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />
         </nav>
 
+        <AlertsSwitch />
         <AccountMenu user={user} view={view} onNavigate={onNavigate} onLogout={onLogout} />
       </div>
 
@@ -232,4 +234,28 @@ function menuItemStyle(active: boolean): React.CSSProperties {
     fontWeight: active ? 600 : 400,
     cursor: "pointer",
   };
+}
+
+/** The "peace of mind" switch: pauses all live alert pop-ups and sound until switched back on. */
+function AlertsSwitch() {
+  const paused = useAlertsPaused();
+  return (
+    <button
+      onClick={() => setAlertsPaused(!paused)}
+      title={paused ? "Alert pop-ups are paused — click to turn them back on" : "Alert pop-ups are on — click to pause them (peace of mind)"}
+      style={{
+        marginRight: 10,
+        padding: "5px 11px",
+        fontSize: 12,
+        cursor: "pointer",
+        borderRadius: 6,
+        border: `1px solid ${paused ? "var(--critical, #ff3d3d)" : "var(--border, rgba(255,255,255,0.2))"}`,
+        background: paused ? "rgba(255,61,61,0.14)" : "transparent",
+        color: paused ? "var(--critical, #ff3d3d)" : "inherit",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {paused ? "🔕 Alerts paused" : "🔔 Alerts on"}
+    </button>
+  );
 }
