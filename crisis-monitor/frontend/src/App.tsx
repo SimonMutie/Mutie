@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import AlertPopups from "./components/AlertPopups";
 import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
 import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
@@ -213,6 +214,8 @@ export default function App() {
         }}
         onLogout={handleLogout}
       />
+
+      <AlertPopups liveMessage={liveMessage} onOpenQuery={(queryId) => setView({ queryId })} onShowOnMap={() => { setOpenMonitorTool(false); setView("live-osint"); }} />
 
       <Suspense fallback={viewLoadingFallback}>
         {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-osint")} />}
