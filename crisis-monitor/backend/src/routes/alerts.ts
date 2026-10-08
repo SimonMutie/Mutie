@@ -2,12 +2,43 @@ import { Hono } from "hono";
 import { all, nowIso } from "../db";
 import { rowToAlert } from "../mappers";
 import { canAccessQuery, canAccessAlert } from "../ownership";
+import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 
 export const alertsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 
 alertsRouter.use("*", requireAuth);
+
+/** Sends a made-up alert over the live socket (nothing is stored) so the pop-up and sound can be tried. Admins only. */
+alertsRouter.post("/test", async (c) => {
+  if (c.get("role") !== "admin") return c.json({ error: "Admin access required" }, 403);
+  const body = await c.req.json().catch(() => ({}));
+  const level = body?.level === "critical" ? "critical" : "elevated";
+  const payload = {
+    id: `test-${newId()}`,
+    query_id: null,
+    level,
+    title: `TEST — ${level === "critical" ? "Critical" : "Elevated"} escalation: armed opposition attack near Nasir, Upper Nile`,
+    description: "This is a test alert from The Lens. SPLA-IO fighters reportedly attacked an army position; fighting is continuing and several people are reported killed.",
+    geo_label: "Nasir, Upper Nile, South Sudan",
+    geo_lat: 8.6,
+    geo_lng: 33.06,
+    created_at: nowIso(),
+    acknowledged_at: null,
+    resolved_at: null,
+    metric_snapshot: {
+      criteriaMet: ["Armed opposition activity reported (2 sources).", "8 deaths reported in a single event."],
+      headlines: [
+        { title: "Fighting erupts in Nasir as SPLA-IO attacks army base", url: null, source: "Test source", published_at: nowIso() },
+        { title: "Dozens flee Nasir after clashes", url: null, source: "Test source", published_at: nowIso() },
+      ],
+    },
+  };
+  const id = c.env.LIVE_FEED.idFromName("global");
+  await c.env.LIVE_FEED.get(id).fetch("http://live-feed/broadcast", { method: "POST", body: JSON.stringify({ type: "alert", payload, ownerIds: [c.get("userId")] }) });
+  return c.json({ ok: true, level });
+});
 
 alertsRouter.get("/", async (c) => {
   const status = c.req.query("status") ?? "open";

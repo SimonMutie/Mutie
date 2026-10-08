@@ -1547,6 +1547,7 @@ export const api = {
     const qs = new URLSearchParams({ status: "open", ...params } as Record<string, string>).toString();
     return req<AlertItem[]>(`/api/alerts?${qs}`);
   },
+  sendTestAlert: (level: "elevated" | "critical") => req<{ ok: boolean }>("/api/alerts/test", { method: "POST", body: JSON.stringify({ level }) }),
   acknowledgeAlert: (id: string) => req<AlertItem>(`/api/alerts/${id}/acknowledge`, { method: "PATCH" }),
   resolveAlert: (id: string) => req<AlertItem>(`/api/alerts/${id}/resolve`, { method: "PATCH" }),
   getSpotlightRegions: () => req<SpotlightRegionCount[]>("/api/spotlight/regions"),

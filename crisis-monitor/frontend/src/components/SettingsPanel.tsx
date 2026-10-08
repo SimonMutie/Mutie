@@ -31,6 +31,17 @@ export default function SettingsPanel({ onBack, user }: Props) {
         <AlertDeliveryPanel target={{ scope: "escalations" }} />
       </div>
 
+      {user.role === "admin" && (
+        <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>Test the alert pop-up and sound</div>
+          <div style={{ fontSize: 12.5, opacity: 0.7, marginBottom: 10 }}>Sends a made-up alert to this browser only. Nothing is saved.</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => api.sendTestAlert("elevated").catch(() => {})}>Send Elevated test</button>
+            <button onClick={() => api.sendTestAlert("critical").catch(() => {})}>Send Critical test</button>
+          </div>
+        </div>
+      )}
+
       <OpeningSequenceCard />
 
       {user.role === "admin" && <AiUsageCard />}
