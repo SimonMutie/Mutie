@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as Leaf
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
 import { Studio3D } from "../studio/Studio3D";
+import { EditablePoints, EditablePoints3D, type EditPoint } from "../studio/EditablePoints";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import { StudioPanel } from "../studio/StudioPanel";
 import { studio, useStudio } from "../studio/store";
@@ -1340,6 +1341,21 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
   const studioState = useStudio();
+  // Corners of a measured line or area, and a route's start and end, can be dragged to adjust them.
+  const editPoints: EditPoint[] =
+    activeTool === "draw" && drawMode
+      ? drawPoints.map((p, i) => ({ id: `d${i}`, lat: p[0], lng: p[1], color: "#ffd23f", label: `Point ${i + 1}: drag to move` }))
+      : activeTool === "route"
+        ? [
+            ...(routeOrigin ? [{ id: "o", lat: routeOrigin[0], lng: routeOrigin[1], color: "#4dff9e", label: "Start: drag to move" }] : []),
+            ...(routeDestination ? [{ id: "d", lat: routeDestination[0], lng: routeDestination[1], color: "#ff6b6b", label: "End: drag to move" }] : []),
+          ]
+        : [];
+  function moveEditPoint(id: string, lat: number, lng: number) {
+    if (id === "o") setRouteOrigin([lat, lng]);
+    else if (id === "d" && activeTool === "route") setRouteDestination([lat, lng]);
+    else if (id.startsWith("d")) setDrawPoints((prev) => prev.map((p, i) => (i === Number(id.slice(1)) ? ([lat, lng] as LatLng) : p)));
+  }
   // Files dropped on the map open the Studio's import tab.
   useEffect(() => {
     if (studioState.dropped?.length) setActiveTool("shapes");
@@ -1853,6 +1869,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             points={flatMapPoints}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
+            editPoints={editPoints}
+            onEditPoint={moveEditPoint}
             drawMode={activeTool === "draw" ? drawMode : null}
             drawPoints={drawPoints}
             routeLine={activeTool === "route" ? routeLineForFlatMap : undefined}
@@ -1870,6 +1888,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
 
+        {mapMode === "3d" && <EditablePoints3D map={globeMap} items={editPoints} onMove={moveEditPoint} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
         {mapMode === "3d" && (
@@ -2128,6 +2147,8 @@ function FlatMap({
   savedShapes,
   savedRoutes,
   studioActive,
+  editPoints,
+  onEditPoint,
   incidentsOn,
   incidentRows,
   incidentViewMode,
@@ -2155,6 +2176,9 @@ function FlatMap({
   savedRoutes?: SavedRoute[];
   /** True while the Map Studio tool is open: its shapes become clickable and its drawing tools run. */
   studioActive?: boolean;
+  /** Draggable handles for Drawing Tools points and a route's ends. */
+  editPoints?: EditPoint[];
+  onEditPoint?: (id: string, lat: number, lng: number) => void;
   /** "My Incidents", rendered rich (bullet icons, editable/pinnable popups,
    *  adjustable heatmap) instead of as generic GlobePoint dots — see the
    *  flatMapPoints/incidentRowsForFlatMap comments at the call site. */
@@ -2190,6 +2214,7 @@ function FlatMap({
       )}
       {routeLine && routeLine.length >= 2 && <Polyline positions={routeLine} pathOptions={{ color: "#4dff9e", weight: 3 }} />}
       <StudioLayer shapes={savedShapes ?? []} active={!!studioActive} />
+      {editPoints && onEditPoint && <EditablePoints items={editPoints} onMove={onEditPoint} />}
       {savedRoutes
         ?.filter((r) => r.visible)
         .map((r) => (

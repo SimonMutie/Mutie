@@ -459,15 +459,15 @@ export function StudioLayer({ shapes, active }: { shapes: SavedShape[]; active: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [st.tool, active, map]);
 
-  return <VertexEditor active={active} entries={entries} />;
+  return <VertexEditor active={active} entries={entries} shapes={shapes} />;
 }
 
 // ── Reshape the selected polygon or line by dragging its corners ─────────
 
-function VertexEditor({ active, entries }: { active: boolean; entries: React.MutableRefObject<Map<string, Entry>> }) {
+function VertexEditor({ active, entries, shapes }: { active: boolean; entries: React.MutableRefObject<Map<string, Entry>>; shapes: SavedShape[] }) {
   const map = useMap();
   const st = useStudio();
-  const shape = active && st.tool === "select" && st.selectedId ? entries.current.get(st.selectedId)?.shape : undefined;
+  const shape = active && st.tool === "select" && st.selectedId ? shapes.find((x) => x.id === st.selectedId) : undefined;
   const sig = shape ? `${shape.id}|${shape.updated_at}` : "";
 
   useEffect(() => {
@@ -482,12 +482,13 @@ function VertexEditor({ active, entries }: { active: boolean; entries: React.Mut
     if (rings.reduce((a, r) => a + r.length, 0) > 600) return;
 
     const group = L.layerGroup().addTo(map);
-    const entry = entries.current.get(shape.id);
-    const target: L.Polyline | undefined = (() => {
+    // Found when needed: this effect can run before the parent has created the layer.
+    const findTarget = (): L.Polyline | undefined => {
+      const entry = entries.current.get(shape.id);
       let found: L.Polyline | undefined;
       if (entry && !(entry.layer instanceof L.Marker)) entry.layer.eachLayer((l) => { if (!found && l instanceof L.Polyline) found = l; });
       return found;
-    })();
+    };
 
     const shown = () => rings.map((r) => r.map(toLL));
     const persist = () => {
@@ -504,7 +505,7 @@ function VertexEditor({ active, entries }: { active: boolean; entries: React.Mut
           const m = L.marker(toLL(p), { icon: vIcon, draggable: true, zIndexOffset: 900, bubblingMouseEvents: false }).addTo(group);
           m.on("drag", () => {
             ring[i] = toPos(m.getLatLng());
-            target?.setLatLngs(isPoly ? (shown() as L.LatLngTuple[][]) : (shown()[0] as L.LatLngTuple[]));
+            findTarget()?.setLatLngs(isPoly ? (shown() as L.LatLngTuple[][]) : (shown()[0] as L.LatLngTuple[]));
           });
           m.on("dragend", () => {
             persist();
@@ -513,7 +514,7 @@ function VertexEditor({ active, entries }: { active: boolean; entries: React.Mut
           const remove = () => {
             if (ring.length <= min) return;
             ring.splice(i, 1);
-            target?.setLatLngs(isPoly ? (shown() as L.LatLngTuple[][]) : (shown()[0] as L.LatLngTuple[]));
+            findTarget()?.setLatLngs(isPoly ? (shown() as L.LatLngTuple[][]) : (shown()[0] as L.LatLngTuple[]));
             persist();
             render();
           };
