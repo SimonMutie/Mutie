@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
+import MapNavPad from "./MapNavPad";
+import { Map as MapLibreMap, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
@@ -406,7 +407,6 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
       attributionControl: { compact: true },
     });
     mapRef.current = map;
-    map.addControl(new NavigationControl({ showCompass: true }), "bottom-right");
 
     map.on("load", () => {
       map.setProjection({ type: "globe" });
@@ -814,7 +814,16 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
     }
   }, [showTerrain]);
 
-  return <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />;
+  return (
+    <>
+      <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+      <MapNavPad
+        onZoomIn={() => mapRef.current?.zoomIn()}
+        onZoomOut={() => mapRef.current?.zoomOut()}
+        onPan={(dx, dy) => mapRef.current?.panBy([dx, dy])}
+      />
+    </>
+  );
 }
 
 const LEVEL_LABEL: Record<"elevated" | "critical", string> = { elevated: "ELEVATED", critical: "CRITICAL" };

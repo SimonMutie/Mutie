@@ -17,6 +17,7 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { IncidentMarker, classifyActor, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { classifyIncident } from "./actorTheme";
+import NavPad from "./MapNavPad";
 import { setAlertsPaused, useAlertsPaused } from "../alertPrefs";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
@@ -2384,31 +2385,7 @@ function FlatMap({
 /** Zoom and pan buttons for the flat maps, bottom-right and away from the left panel. */
 function MapNavPad() {
   const map = useMap();
-  const btn: React.CSSProperties = { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: HUD.textSecondary, cursor: "pointer", fontSize: 16, fontFamily: "inherit", padding: 0 };
-  const pan = (dx: number, dy: number) => map.panBy([dx, dy]);
-  return (
-    <div
-      style={{ ...glassPanel(), position: "absolute", right: 12, bottom: 30, zIndex: 1000, display: "flex", alignItems: "center", padding: "6px 8px", gap: 8 }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
-    >
-      <div style={{ display: "flex", flexDirection: "column", borderRight: `1px solid ${HUD.borderPrimaryHover}`, paddingRight: 6 }}>
-        <button style={btn} title="Zoom in" onClick={() => map.zoomIn()}>+</button>
-        <button style={btn} title="Zoom out" onClick={() => map.zoomOut()}>−</button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "28px 28px 28px", gridTemplateRows: "24px 24px 24px" }}>
-        <span />
-        <button style={btn} title="Pan up" onClick={() => pan(0, -200)}>⌃</button>
-        <span />
-        <button style={btn} title="Pan left" onClick={() => pan(-200, 0)}>‹</button>
-        <span />
-        <button style={btn} title="Pan right" onClick={() => pan(200, 0)}>›</button>
-        <span />
-        <button style={btn} title="Pan down" onClick={() => pan(0, 200)}>⌄</button>
-        <span />
-      </div>
-    </div>
-  );
+  return <NavPad onZoomIn={() => map.zoomIn()} onZoomOut={() => map.zoomOut()} onPan={(dx, dy) => map.panBy([dx, dy])} />;
 }
 
 /** Bridges Leaflet's own click event to this view's tool click-handling —
