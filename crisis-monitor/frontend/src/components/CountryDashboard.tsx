@@ -7,6 +7,11 @@ import * as L from "leaflet";
 import { api, type CrosstabRow, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor } from "./DashboardWidgetCard";
 import { HeatmapLayer } from "./HeatmapLayer";
+import VizCard from "./viz/VizCard";
+import { VizProvider } from "./viz/context";
+import { THEMES, themeStyle } from "./viz/themes";
+import type { VizSpec } from "./viz/types";
+import "./viz/viz.css";
 import { classifyActor, classifyIncident, pinSvg } from "./actorTheme";
 
 /**
@@ -166,6 +171,24 @@ const WIDGETS = {
   funnel: W("funnel", "bar", "Hotspot towns", { dataField: "by_city", topN: 10, color: "#0d9488", showDataLabels: true }),
 };
 
+/** The "deep dive" visuals, built on the any-data engine and locked to the chosen country. */
+const FIELD_LABELS = {
+  deaths_men: { label: "Deaths: men", type: "number" as const },
+  deaths_women: { label: "Deaths: women", type: "number" as const },
+  deaths_children: { label: "Deaths: children", type: "number" as const },
+  province: { label: "Province", type: "text" as const },
+  sector: { label: "Sector", type: "text" as const },
+};
+const vizWidget = (id: string, title: string, viz: Omit<VizSpec, "source" | "columns" | "filters"> & Partial<Pick<VizSpec, "columns">>, country: string): DashboardWidget => ({
+  id,
+  type: "viz",
+  title,
+  size: "medium",
+  viz: { source: "incidents", columns: [], filters: [{ field: "country", op: "in", values: [country] }], ...viz, options: { ...viz.options, fields: FIELD_LABELS } },
+});
+const hemicycle = (field: keyof typeof FIELD_LABELS) => ({ kind: "parliament" as const, rows: [{ field }], values: [{ agg: "count" as const }], options: { topN: 7 } });
+const SITUATION = THEMES.find((t) => t.key === "situation") ?? THEMES[0];
+
 /* ── the page ── */
 
 export default function CountryDashboard() {
@@ -315,6 +338,27 @@ export default function CountryDashboard() {
               {card(WIDGETS.actor, 380, "span 4")}
               {card(WIDGETS.tactic, 380, "span 4")}
               {card(WIDGETS.calendar, 250, "span 12")}
+              <div style={{ gridColumn: "span 12", borderRadius: 12, overflow: "hidden" }}>
+                <VizProvider mode="edit" theme={SITUATION} dateFrom={range.from ?? null} dateTo={range.to ?? null}>
+                  <div data-viz-theme={SITUATION.key} style={{ ...themeStyle(SITUATION), padding: 14, display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
+                    <div style={{ gridColumn: "span 4", height: 360 }}>
+                      <VizCard widget={vizWidget("hc-men", "Incidents by deaths: men", hemicycle("deaths_men"), country)} editable={false} />
+                    </div>
+                    <div style={{ gridColumn: "span 4", height: 360 }}>
+                      <VizCard widget={vizWidget("hc-women", "Incidents by deaths: women", hemicycle("deaths_women"), country)} editable={false} />
+                    </div>
+                    <div style={{ gridColumn: "span 4", height: 360 }}>
+                      <VizCard widget={vizWidget("hc-children", "Incidents by deaths: children", hemicycle("deaths_children"), country)} editable={false} />
+                    </div>
+                    <div style={{ gridColumn: "span 12", height: 420 }}>
+                      <VizCard
+                        widget={vizWidget("province-sector", "Rows by province and sector", { kind: "bar", rows: [{ field: "province" }], columns: [{ field: "sector" }], values: [{ agg: "count" }], options: { stack: "stacked", orientation: "horizontal", topN: 14, labels: true } }, country)}
+                        editable={false}
+                      />
+                    </div>
+                  </div>
+                </VizProvider>
+              </div>
               {card(WIDGETS.sankey, 420, "span 6")}
               {card(WIDGETS.network, 420, "span 6")}
               {card(WIDGETS.table, 400, "span 6")}
