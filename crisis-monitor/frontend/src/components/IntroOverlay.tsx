@@ -19,7 +19,7 @@ type Phase = "playing" | "leaving" | "skipped" | "gone";
 // waits long enough after that for it to be read at an unhurried pace
 // (roughly five seconds); anyone who has seen it can click to skip.
 const HOLD_MS = 6500;
-const LEAVE_MS = 2000; // the zoom through the pupil, then the fade (see IntroOverlay.css)
+const LEAVE_MS = 2300; // the zoom through the pupil, then the fade (see IntroOverlay.css)
 const SKIP_MS = 240;
 const REDUCED_HOLD_MS = 6000;
 
@@ -88,7 +88,14 @@ export default function IntroOverlay() {
             const cy = r.top + r.height / 2;
             const farthest = Math.max(Math.hypot(cx, cy), Math.hypot(window.innerWidth - cx, cy), Math.hypot(cx, window.innerHeight - cy), Math.hypot(window.innerWidth - cx, window.innerHeight - cy));
             eye.style.setProperty("--intro-flood-scale", String(Math.ceil((farthest / (r.width * 0.085)) * 1.05)));
+            // The opening in the screen starts at the pupil and grows to cover the farthest corner.
+            const root = eye.closest(".intro") as HTMLElement | null;
+            root?.style.setProperty("--intro-cx", `${cx}px`);
+            root?.style.setProperty("--intro-cy", `${cy}px`);
+            root?.style.setProperty("--intro-hole-max", `${Math.ceil(farthest * 1.05)}px`);
           }
+          // The 3D map listens for this and zooms in from far out while the screen opens.
+          window.dispatchEvent(new Event("lens:intro-reveal"));
           setPhase("leaving");
           timers.current.push(setTimeout(() => setPhase("gone"), reduced ? 420 : LEAVE_MS));
         },

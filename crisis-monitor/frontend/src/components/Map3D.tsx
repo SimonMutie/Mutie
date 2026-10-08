@@ -742,6 +742,18 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
   }, []);
 
   const heatKey = JSON.stringify([heatStyle?.gradient, heatStyle?.radius, heatStyle?.max]);
+  // The opening sequence: the screen opens from a point while the globe zooms in from far out to the working view.
+  useEffect(() => {
+    const onReveal = () => {
+      const map = mapRef.current;
+      if (!map) return;
+      map.jumpTo({ zoom: 0.4, center: [20, 10], pitch: 0, bearing: 0 });
+      map.easeTo({ zoom: 3.4, center: [40, 12], duration: 2600, easing: (t) => 1 - Math.pow(1 - t, 3) });
+    };
+    window.addEventListener("lens:intro-reveal", onReveal);
+    return () => window.removeEventListener("lens:intro-reveal", onReveal);
+  }, []);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;

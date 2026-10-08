@@ -96,14 +96,24 @@
 /* ── leaving: through the pupil ── */
 /* Unhurried: the pupil takes about a second and a half to fill the screen,
    then the screen clears to show the site. */
+/* No coloured flood any more: the screen opens like an iris from the pupil, and the 3D map underneath
+   (see Map3D's intro-reveal) grows from a point to fill the whole screen. */
+@property --intro-hole {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
 .intro--leaving .intro__flood {
-  animation: intro-flood 1.5s cubic-bezier(0.55, 0, 0.75, 0.35) forwards;
+  display: none;
 }
 .intro--leaving .intro__words {
   animation: intro-fade 0.7s ease-in forwards;
 }
 .intro--leaving {
-  animation: intro-fade 0.6s ease-out 1.35s forwards;
+  background: #050a12;
+  -webkit-mask-image: radial-gradient(circle at var(--intro-cx, 50%) var(--intro-cy, 50%), transparent var(--intro-hole), #000 calc(var(--intro-hole) + 2px));
+  mask-image: radial-gradient(circle at var(--intro-cx, 50%) var(--intro-cy, 50%), transparent var(--intro-hole), #000 calc(var(--intro-hole) + 2px));
+  animation: intro-hole 2.2s cubic-bezier(0.45, 0, 0.25, 1) forwards;
 }
 .intro--leaving .intro__controls {
   animation: none; /* back to hidden, so the buttons do not float over the zoom */
@@ -173,6 +183,11 @@
     transform: none;
   }
 }
+@keyframes intro-hole {
+  to {
+    --intro-hole: var(--intro-hole-max, 150vmax);
+  }
+}
 @keyframes intro-flood {
   to {
     transform: scale(var(--intro-flood-scale, 30));
@@ -202,6 +217,8 @@
   }
   .intro--leaving,
   .intro--leaving .intro__words {
+    -webkit-mask-image: none;
+    mask-image: none;
     animation: intro-fade 0.4s ease-out forwards;
   }
 }
