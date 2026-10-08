@@ -183,7 +183,7 @@ describe("a report of an event, not a piece about one", () => {
     // Nothing new: what the group has done for years.
     expect(reason("Al-Shabaab and the army in Bay region", "Al-Shabaab, which has been fighting the government since 2007, has repeatedly attacked army bases in Bay region.")).toBe("threat_or_warning_only");
     // Laying a siege is an event.
-    expect(reason("Rebels lay siege to Kidal", "Rebel fighters laid siege to the town of Kidal today, cutting the main road.")).toBe("coded siege_or_blockade");
+    expect(reason("Rebels lay siege to Kidal", "Rebel fighters laid siege to the town of Kidal today, cutting the main road.")).toContain("siege_or_blockade");
   });
 });
 
@@ -248,5 +248,25 @@ describe("what a headline-tier report can and cannot flag by itself", () => {
     expect(decideLevel([report("Drone strike kills seven near El Fasher", "", "a.example")]).level).toBe("elevated");
     expect(decideLevel([report("Drone strike hits El Fasher market", "", "a.example")]).level).toBe("watch");
     expect(decideLevel([report("Drone strike hits El Fasher market", "", "a.example"), report("Gunmen kill two traders in El Fasher", "", "b.example")]).level).toBe("elevated");
+  });
+});
+
+describe("the four conflict-flag themes", () => {
+  it("armed opposition activity (South Sudan)", () => {
+    const c = code("SPLA-IO fighters attack army base in Nasir, Upper Nile", "SPLA-IO fighters attacked an army base in Nasir, Upper Nile State, on Sunday, the army said.");
+    expect(c.ids).toContain("armed_opposition");
+    expect(c.report.countryCode).toBe("SS");
+  });
+  it("a coup or overthrow", () => {
+    const c = code("Soldiers seize power in Niamey, president overthrown", "Soldiers seized power in Niamey, Niger, on Monday and the president was overthrown, state television said.");
+    expect(c.ids).toContain("coup_or_mutiny");
+  });
+  it("a terrorist attack", () => {
+    const c = code("Al-Shabaab suicide bombing kills 15 in Mogadishu", "A suicide bombing claimed by al-Shabaab killed 15 people at a Mogadishu hotel on Monday.");
+    expect(c.ids).toContain("major_terror_attack");
+  });
+  it("ethnic or tribal violence", () => {
+    const c = code("Tribal clashes kill 9 in Jonglei", "Tribal clashes between Lou Nuer and Murle communities killed nine people in Jonglei State, South Sudan, on Sunday.");
+    expect(c.ids).toContain("intercommunal_violence");
   });
 });

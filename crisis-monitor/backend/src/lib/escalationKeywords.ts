@@ -184,6 +184,9 @@ const STANDALONE_ACTION_PATTERNS: { label: string; rx: RegExp }[] = [
   { label: "ethnic cleansing", rx: /\bethnic\s+cleansing\b/i },
   { label: "coup", rx: /\b(?:military\s+)?coup\b/i },
   { label: "mutiny", rx: /\bmutin(?:y|ies|ous|ied)\b/i },
+  { label: "putsch / overthrow", rx: /\b(?:putsch|overthr(?:ow|ew|own)|ous(?:t|ted|ting)\s+(?:the\s+)?(?:president|government|junta|leader))\b/i },
+  { label: "ethnic / tribal violence", rx: /\b(?:ethnic|tribal|clan|intercommunal|inter-communal|communal)\s+(?:clash\w*|violence|attack\w*|fighting|killings?)\b/i },
+  { label: "cattle raid", rx: /\bcattle\s+(?:raid\w*|rustl\w*)\b/i },
 ];
 
 /**

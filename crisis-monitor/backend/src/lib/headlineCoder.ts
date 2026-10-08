@@ -193,8 +193,24 @@ const RULES: IndicatorRule[] = [
   },
   {
     id: "coup_or_mutiny",
-    rx: [/\b(attempted coup|coup attempt|coup (?:is )?under ?way|soldiers (?:announce|declare|seize)\w*|mutin(?:y|ied|eers?)|seiz(?:ed|es) power|overthr(?:ew|own|ows)|toppled|tentative de coup|mutinerie)\b/i],
+    rx: [/\b(attempted coup|coup attempt|foiled coup|coup (?:is )?under ?way|(?:military|army|soldiers?) (?:coup|takeover|take over|takes? over|seiz\w+ power)|soldiers (?:announce|declare|seize)\w*|putsch|mutin(?:y|ied|eers?)|seiz(?:ed|es) power|overthr(?:ew|own|ows)|ous?ted (?:by|in)|toppled|tentative de coup|coup d['’ ][ée]tat|mutinerie|renvers[ée])\b/i],
     unless: /\b(since|after|following|post-coup|coup leaders?|plotters?|accused|suspects?|arrest\w*)\b/i,
+  },
+  {
+    id: "armed_opposition",
+    rx: [
+      /\b(?:rebels?|armed opposition|opposition (?:forces|fighters|troops|gunmen)|SPLA-?IO|SPLM-?IO|white army|insurgents?|separatists?|breakaway (?:faction|forces?)|m23|rebel (?:group|forces|fighters)|forces loyal to|rebelles?)\b[^.!?]{0,70}\b(?:attack\w*|ambush\w*|clash\w*|fight\w*|battle\w*|captur\w+|seiz\w+|raid\w*|storm\w*|overr[au]n\w*|launch\w*|shell\w*|kill\w*|defect\w*|offensive|attaqu\w+|affront\w+)\b/i,
+      /\b(?:attack\w*|ambush\w*|clash\w*|fight\w*|captur\w+|offensive|attaqu\w+)\b[^.!?]{0,40}\b(?:by|between|with|against|contre|par)\b[^.!?]{0,40}\b(?:rebels?|armed opposition|opposition forces|SPLA-?IO|SPLM-?IO|white army|insurgents?|m23|rebelles?)\b/i,
+    ],
+    unless: new RegExp(`${BACKGROUND_RX.source}|\\b(talks|negotiat\\w+|peace deal|dialogue|trial|court|arrest\\w*|accus\\w+)\\b`, "i"),
+  },
+  {
+    id: "major_terror_attack",
+    rx: [
+      /\b(?:boko haram|iswap|islamic state|isis|isil|daesh|al-?shabaa?b|jnim|aqim|al-?qaeda|ansar\w*|adf|allied democratic forces|jihadists?|terrorists?|extremists?|islamists?|djihadistes?|terroristes?)\b[^.!?]{0,70}\b(?:attack\w*|assault\w*|bomb\w*|massacre\w*|storm\w*|raid\w*|kidnap\w*|abduct\w*|hostages?|kill\w*|blast|suicide|overr[au]n\w*|attaqu\w+|enl[èe]v\w+)\b/i,
+      /\b(?:suicide|car) (?:bomb\w*|attack\w*)\b[^.!?]{0,60}\b(?:claimed|blamed)\b/i,
+    ],
+    unless: new RegExp(`${BACKGROUND_RX.source}|\\b(trial|court|convicted|sentenced|arrest\\w*|surrender\\w*|deradicali[sz]\\w*)\\b`, "i"),
   },
   {
     id: "ied_or_bombing",

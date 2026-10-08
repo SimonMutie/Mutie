@@ -32,6 +32,8 @@ export type IndicatorId =
   | "mobilisation_or_reinforcement"
   | "siege_or_blockade"
   | "ceasefire_violation"
+  | "armed_opposition"
+  | "major_terror_attack"
   // Contextual tier
   | "attack_on_civilians"
   | "attack_on_security_forces"
@@ -69,7 +71,8 @@ export const INDICATORS: IndicatorDef[] = [
     id: "coup_or_mutiny",
     label: "Coup or mutiny",
     tier: "critical",
-    definition: "A coup, attempted coup, mutiny, or other seizure or attempted seizure of power by armed actors.",
+    definition:
+      "A coup, attempted coup, putsch, mutiny, overthrow or ousting of a government or head of state by force, soldiers or a junta taking over the capital, state broadcaster or presidential palace, or any other hostile or unconstitutional seizure or attempted seizure of power by armed actors.",
   },
   {
     id: "interstate_hostilities",
@@ -128,6 +131,20 @@ export const INDICATORS: IndicatorDef[] = [
     definition: "A town, camp or area placed under or held under siege or blockade by an armed actor, or a supply route cut by armed action.",
   },
   {
+    id: "armed_opposition",
+    label: "Armed opposition activity",
+    tier: "posture",
+    definition:
+      "Hostile action by an armed political opposition, rebel, insurgent or breakaway force against a government or its forces: an attack, ambush, offensive, capture of a position, defection of a unit that takes up arms, or fighting between government forces and a named opposition armed group (for example SPLA-IO or the White Army in South Sudan, M23, RSF, TPLF-aligned forces, FLEC or Ambazonian fighters). Political statements, talks or arrests with no armed action are not this.",
+  },
+  {
+    id: "major_terror_attack",
+    label: "Major terrorist attack",
+    tier: "posture",
+    definition:
+      "A significant attack by a jihadist or terrorist group (for example al-Shabaab, Boko Haram / ISWAP, JNIM, Islamic State affiliates, the ADF): a suicide or car bombing, a mass-casualty assault (10 or more killed), an attack on a town, base, hotel, market or place of worship, or a hostage-taking / mass abduction.",
+  },
+  {
     id: "ceasefire_violation",
     label: "Ceasefire violation",
     tier: "posture",
@@ -153,9 +170,10 @@ export const INDICATORS: IndicatorDef[] = [
   },
   {
     id: "intercommunal_violence",
-    label: "Intercommunal violence",
-    tier: "contextual",
-    definition: "Armed violence between communities, ethnic militias or herder/farmer groups with reported deaths.",
+    label: "Major ethnic / intercommunal violence",
+    tier: "posture",
+    definition:
+      "Armed violence between ethnic, clan, tribal or religious communities, ethnic militias or herder/farmer groups (including cattle raiding, reprisal and revenge attacks) in which at least 5 people are reported killed, or a large-scale attack on a village or camp.",
   },
   {
     id: "mass_displacement",
