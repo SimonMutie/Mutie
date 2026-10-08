@@ -231,6 +231,14 @@ export interface PreviewResult {
   /** Present only when the request asked for the live search. */
   live?: LivePreview | null;
 }
+export type StagingStatus = "pending" | "approved" | "rejected" | "pushed";
+export interface StagingBatch { batch_date: string; pending: number; approved: number; rejected: number; pushed: number; total: number }
+export interface StagedIncident {
+  id: string; batch_date: string; status: StagingStatus; row: IncidentRow;
+  source_url: string | null; source_title: string | null; source_domain: string | null;
+  confidence: string | null; geo_precision: string | null; quote: string | null;
+}
+
 export interface IncidentRow {
   date?: string | null;
   time?: string | null;
@@ -1600,6 +1608,15 @@ export const api = {
   },
   getEscalationHistory: (queryId: string) =>
     req<{ window_end: string; escalation_score: number; volume: number }[]>(`/api/stats/escalation/${queryId}`),
+
+  stagingBatches: () => req<StagingBatch[]>("/api/incident-staging/batches"),
+  stagingList: (date: string) => req<StagedIncident[]>(`/api/incident-staging?date=${encodeURIComponent(date)}`),
+  stagingCollect: (hours = 24) => req<{ staged: number; batchDate: string }>("/api/incident-staging/collect", { method: "POST", body: JSON.stringify({ hours }) }),
+  stagingPatch: (id: string, patch: { status?: StagingStatus; row?: Partial<IncidentRow> }) =>
+    req<{ ok: boolean }>(`/api/incident-staging/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  stagingSetStatus: (ids: string[], status: StagingStatus) =>
+    req<{ ok: boolean }>("/api/incident-staging/set-status", { method: "POST", body: JSON.stringify({ ids, status }) }),
+  stagingPush: (date?: string) => req<{ pushed: number; batch_id?: string }>("/api/incident-staging/push", { method: "POST", body: JSON.stringify({ date }) }),
 
   uploadIncidentsBulk: (rows: IncidentRow[], batchLabel?: string, batchId?: string) =>
     req<{ inserted: number; batch_id: string; batch_label: string | null }>("/api/incidents/bulk", {

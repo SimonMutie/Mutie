@@ -100,6 +100,7 @@ import { BASEMAPS } from "./mapConstants";
 // RouteDrawingGlobe/LabelDrawingGlobe).
 const IncidentManualEntry = lazy(() => import("./IncidentManualEntry"));
 const IncidentUpload = lazy(() => import("./IncidentUpload"));
+const IncidentReview = lazy(() => import("./IncidentReview"));
 
 /**
  * OSIRIS's real visual language — checked directly against its open-source
@@ -1203,7 +1204,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     myIncidentsLimit = loadAllIncidents ? INCIDENT_ALL_LIMIT : INCIDENT_DEFAULT_LIMIT;
     refreshMyIncidentsRef.current?.();
   }, [loadAllIncidents]);
-  const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | null>(null);
+  const [incidentModalTab, setIncidentModalTab] = useState<"add" | "bulk" | "review" | null>(null);
   const [incidentBulkDeleting, setIncidentBulkDeleting] = useState(false);
 
   // Raw incident rows backing the "My Incidents" layer on the FLAT map only
@@ -2133,6 +2134,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onClear={handleIncidentClearFilters}
             onAdd={() => setIncidentModalTab("add")}
             onBulkUpload={() => setIncidentModalTab("bulk")}
+            onDailyReview={() => setIncidentModalTab("review")}
             onBulkDelete={handleBulkDeleteFilteredIncidents}
             bulkDeleting={incidentBulkDeleting}
             onExport={handleIncidentExport}
@@ -3729,6 +3731,7 @@ function IncidentsToolPanel({
   onClear,
   onAdd,
   onBulkUpload,
+  onDailyReview,
   onBulkDelete,
   bulkDeleting,
   onExport,
@@ -3753,6 +3756,7 @@ function IncidentsToolPanel({
   onClear: () => void;
   onAdd: () => void;
   onBulkUpload: () => void;
+  onDailyReview: () => void;
   onBulkDelete: () => void;
   bulkDeleting: boolean;
   onExport: (format: "xlsx" | "csv") => void;
@@ -3788,6 +3792,7 @@ function IncidentsToolPanel({
       <div style={{ display: "flex", gap: 6 }}>
         <ToolButton onClick={onAdd}>+ Add one</ToolButton>
         <ToolButton onClick={onBulkUpload}>Bulk upload</ToolButton>
+        <ToolButton onClick={onDailyReview}>Daily review</ToolButton>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
@@ -4532,8 +4537,8 @@ function IncidentIntakeModal({
   onClose,
   onSaved,
 }: {
-  tab: "add" | "bulk";
-  onTabChange: (t: "add" | "bulk") => void;
+  tab: "add" | "bulk" | "review";
+  onTabChange: (t: "add" | "bulk" | "review") => void;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -4554,7 +4559,7 @@ function IncidentIntakeModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div style={{ ...glassPanel(), width: "min(820px, 100%)", padding: 20, background: "rgba(10,12,22,0.97)" }}>
+      <div style={{ ...glassPanel(), width: tab === "review" ? "min(1280px, 100%)" : "min(820px, 100%)", padding: 20, background: "rgba(10,12,22,0.97)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <div style={{ display: "flex", gap: 6 }}>
             <ToolButton active={tab === "add"} onClick={() => onTabChange("add")}>
@@ -4563,6 +4568,9 @@ function IncidentIntakeModal({
             <ToolButton active={tab === "bulk"} onClick={() => onTabChange("bulk")}>
               Bulk upload
             </ToolButton>
+            <ToolButton active={tab === "review"} onClick={() => onTabChange("review")}>
+              Daily review
+            </ToolButton>
           </div>
           <button onClick={onClose} title="Close" style={iconOnlyBtnStyle}>
             <CloseGlyph size={18} color={HUD.textSecondary} />
@@ -4570,7 +4578,7 @@ function IncidentIntakeModal({
         </div>
         <div style={{ color: "#111", background: "#fff", borderRadius: 8, padding: 16 }}>
           <Suspense fallback={<div style={{ padding: 20, color: "var(--text-muted)", fontSize: 13 }}>Loading…</div>}>
-            {tab === "add" ? <IncidentManualEntry onSaved={onSaved} /> : <IncidentUpload onUploaded={onSaved} />}
+            {tab === "add" ? <IncidentManualEntry onSaved={onSaved} /> : tab === "bulk" ? <IncidentUpload onUploaded={onSaved} /> : <IncidentReview onPushed={onSaved} />}
           </Suspense>
         </div>
       </div>

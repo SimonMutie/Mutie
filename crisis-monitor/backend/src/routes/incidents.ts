@@ -72,6 +72,61 @@ function combineDateTime(date: string | null | undefined, time: string | null | 
   return null;
 }
 
+export type IncidentRowInput = z.infer<typeof incidentRowSchema>;
+
+/** The INSERT for one incident row — shared by the bulk upload and by the daily-review queue's push. */
+export function incidentInsertStatement(row: IncidentRowInput, ownerId: string, batchId: string, now: string): { sql: string; params: unknown[] } {
+  const occurredAt = combineDateTime(row.date, row.time);
+  return {
+    sql: `INSERT INTO incidents (
+      id, owner_id, occurred_date, occurred_time, occurred_at,
+      country, province, county, district, city, suburb, precise_location, latitude, longitude,
+      sector, actor, operation, tactic, severity, details, target, interest_group,
+      actual_main_victim, intended_primary_target,
+      civilian_death_child, civilian_death_female, civilian_death_male, civilian_death_unknown,
+      civilian_injury_female, civilian_injury_male, civilian_injury_unknown, kidnappings_ngo,
+      raw_row, upload_batch_id, created_at
+    ) VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`,
+    params: [
+      newId(),
+      ownerId,
+      row.date ?? null,
+      row.time ?? null,
+      occurredAt,
+      row.country ?? null,
+      row.province ?? null,
+      row.county ?? null,
+      row.district ?? null,
+      row.city ?? null,
+      row.suburb ?? null,
+      row.precise_location ?? null,
+      row.latitude ?? null,
+      row.longitude ?? null,
+      row.sector ?? null,
+      row.actor ?? null,
+      row.operation ?? null,
+      row.tactic ?? null,
+      row.severity ?? null,
+      row.details ?? null,
+      row.target ?? null,
+      row.interest_group ?? null,
+      row.actual_main_victim ?? null,
+      row.intended_primary_target ?? null,
+      row.civilian_death_child ?? null,
+      row.civilian_death_female ?? null,
+      row.civilian_death_male ?? null,
+      row.civilian_death_unknown ?? null,
+      row.civilian_injury_female ?? null,
+      row.civilian_injury_male ?? null,
+      row.civilian_injury_unknown ?? null,
+      row.kidnappings_ngo ?? null,
+      JSON.stringify(row.raw ?? {}),
+      batchId,
+      now,
+    ],
+  };
+}
+
 incidentsRouter.post("/bulk", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = bulkUploadSchema.safeParse(body);
@@ -110,57 +165,7 @@ incidentsRouter.post("/bulk", async (c) => {
   const batchId = parsed.data.batch_id ?? newId();
   const now = nowIso();
 
-  const statements = parsed.data.rows.map((row) => {
-    const occurredAt = combineDateTime(row.date, row.time);
-    return {
-      sql: `INSERT INTO incidents (
-        id, owner_id, occurred_date, occurred_time, occurred_at,
-        country, province, county, district, city, suburb, precise_location, latitude, longitude,
-        sector, actor, operation, tactic, severity, details, target, interest_group,
-        actual_main_victim, intended_primary_target,
-        civilian_death_child, civilian_death_female, civilian_death_male, civilian_death_unknown,
-        civilian_injury_female, civilian_injury_male, civilian_injury_unknown, kidnappings_ngo,
-        raw_row, upload_batch_id, created_at
-      ) VALUES (?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?, ?,?,?,?, ?,?,?,?, ?,?,?)`,
-      params: [
-        newId(),
-        ownerId,
-        row.date ?? null,
-        row.time ?? null,
-        occurredAt,
-        row.country ?? null,
-        row.province ?? null,
-        row.county ?? null,
-        row.district ?? null,
-        row.city ?? null,
-        row.suburb ?? null,
-        row.precise_location ?? null,
-        row.latitude ?? null,
-        row.longitude ?? null,
-        row.sector ?? null,
-        row.actor ?? null,
-        row.operation ?? null,
-        row.tactic ?? null,
-        row.severity ?? null,
-        row.details ?? null,
-        row.target ?? null,
-        row.interest_group ?? null,
-        row.actual_main_victim ?? null,
-        row.intended_primary_target ?? null,
-        row.civilian_death_child ?? null,
-        row.civilian_death_female ?? null,
-        row.civilian_death_male ?? null,
-        row.civilian_death_unknown ?? null,
-        row.civilian_injury_female ?? null,
-        row.civilian_injury_male ?? null,
-        row.civilian_injury_unknown ?? null,
-        row.kidnappings_ngo ?? null,
-        JSON.stringify(row.raw ?? {}),
-        batchId,
-        now,
-      ],
-    };
-  });
+  const statements = parsed.data.rows.map((row) => incidentInsertStatement(row, ownerId, batchId, now));
 
   // A single D1 batch() call is atomic (all statements succeed or none do);
   // *separate* batch() calls are not atomic with each other — if this were

@@ -31,6 +31,8 @@ import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
 import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
 import { runEscalationPipeline } from "./escalationIncidents";
+import { stageDailyIfDue } from "./incidentStaging";
+import { incidentStagingRouter } from "./routes/incidentStaging";
 import { isWatchTick, runQueryWatch } from "./queryWatch";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
@@ -93,6 +95,7 @@ app.route("/api/stats", statsRouter);
 app.route("/api/query-insights", queryInsightsRouter);
 app.route("/api/analytics", analyticsRouter);
 app.route("/api/public/dashboards-viz", publicAnalyticsRouter);
+app.route("/api/incident-staging", incidentStagingRouter);
 app.route("/api/incidents", incidentsRouter);
 app.route("/api/map-routes", mapRoutesRouter);
 app.route("/api/map-shapes", mapShapesRouter);
@@ -197,6 +200,7 @@ export default {
     // tick never overlaps the next one.
     // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
     // newly flagged incident reaches email/Signal in the same tick.
+    ctx.waitUntil(stageDailyIfDue(env, controller.scheduledTime).catch((err) => console.error("[staging] daily collection failed", err)));
     ctx.waitUntil(refreshStaleLists(env).catch((err) => console.error("[dd] list refresh failed", err)));
 
     ctx.waitUntil(
