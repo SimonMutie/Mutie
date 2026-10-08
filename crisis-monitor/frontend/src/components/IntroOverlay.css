@@ -27,8 +27,9 @@
 /* ── the eye ── */
 .intro__eye {
   position: relative;
-  width: clamp(132px, 22vmin, 220px);
-  aspect-ratio: 1;
+  width: clamp(240px, 46vmin, 460px);
+  aspect-ratio: 400 / 220;
+  transform-origin: 50% 50%; /* the pupil is the centre of the eye */
 }
 .intro__eye svg {
   display: block;
@@ -37,21 +38,30 @@
   overflow: visible;
 }
 /* The lids part from a closed line. */
+.intro__lids,
+.intro__ball {
+  transform-box: view-box;
+  transform-origin: 200px 112px;
+}
 .intro__lids {
-  transform-origin: 20px 20px;
   transform: scaleY(0.02);
   animation: intro-open 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
 }
-.intro__iris {
-  opacity: 0;
-  transform-origin: 20px 20px;
-  transform: scale(0.7);
-  animation: intro-iris 0.6s ease-out 0.45s forwards;
+/* After it has opened the eye blinks three times, then the look settles on the viewer. */
+.intro__ball {
+  animation: intro-blink 4.6s linear 1.5s 1 both;
 }
-/* The globe in the iris turns once: its meridian sweeps across. */
-.intro__meridian {
-  transform-origin: 20px 20px;
-  animation: intro-turn 2.2s ease-in-out 0.6s forwards;
+.intro__iris {
+  transform-box: view-box;
+  transform-origin: 200px 110px;
+  opacity: 0;
+  transform: scale(0.85);
+  animation: intro-iris 0.6s ease-out 0.45s forwards, intro-glance 4.6s ease-in-out 1.6s 1 both;
+}
+.intro__pupil {
+  transform-box: view-box;
+  transform-origin: 200px 110px;
+  animation: intro-pupil 4.6s ease-in-out 1.6s 1 both;
 }
 /* The flood: a disc the size of the pupil that grows to cover the screen. */
 .intro__flood {
@@ -105,6 +115,17 @@
 }
 .intro--leaving .intro__flood {
   display: none;
+}
+/* Leaving: the eye stops blinking and the view moves in through the pupil while the map opens from it. */
+.intro--leaving .intro__ball,
+.intro--leaving .intro__iris,
+.intro--leaving .intro__pupil {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+.intro--leaving .intro__eye {
+  animation: intro-dolly 2.2s cubic-bezier(0.55, 0, 0.8, 0.45) forwards;
 }
 .intro--leaving .intro__words {
   animation: intro-fade 0.7s ease-in forwards;
@@ -166,16 +187,30 @@
     transform: scale(1);
   }
 }
-@keyframes intro-turn {
-  0% {
-    transform: scaleX(1);
-  }
-  50% {
-    transform: scaleX(2.3);
-  }
-  100% {
-    transform: scaleX(1);
-  }
+@keyframes intro-blink {
+  0%, 100% { transform: scaleY(1); }
+  3% { transform: scaleY(0.05); }
+  7% { transform: scaleY(1); }
+  36% { transform: scaleY(1); }
+  39% { transform: scaleY(0.05); }
+  43% { transform: scaleY(1); }
+  68% { transform: scaleY(1); }
+  71% { transform: scaleY(0.05); }
+  76% { transform: scaleY(1); }
+}
+@keyframes intro-glance {
+  0%, 12% { transform: translate(0, 0) scale(1); }
+  30% { transform: translate(-16px, -3px) scale(1); }
+  52% { transform: translate(14px, 2px) scale(1); }
+  80%, 100% { transform: translate(0, 0) scale(1); }
+}
+@keyframes intro-pupil {
+  0%, 20% { transform: scale(1); }
+  55% { transform: scale(1.18); }
+  100% { transform: scale(0.95); }
+}
+@keyframes intro-dolly {
+  to { transform: scale(var(--intro-dolly, 14)); }
 }
 @keyframes intro-rise {
   to {
@@ -203,8 +238,9 @@
    shown and removed with a fade — nothing opens, turns or zooms. */
 @media (prefers-reduced-motion: reduce) {
   .intro__lids,
+  .intro__ball,
   .intro__iris,
-  .intro__meridian,
+  .intro__pupil,
   .intro__words h1,
   .intro__words p,
   .intro__controls {
@@ -212,7 +248,8 @@
     opacity: 1;
     transform: none;
   }
-  .intro--leaving .intro__flood {
+  .intro--leaving .intro__flood,
+  .intro--leaving .intro__eye {
     animation: none;
   }
   .intro--leaving,
