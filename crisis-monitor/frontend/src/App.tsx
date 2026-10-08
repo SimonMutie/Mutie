@@ -61,6 +61,8 @@ export default function App() {
   // Either public path skips the whole sign-in flow below.
   const shareToken = sharedDashboardToken ?? publicSpotlightId;
   const [bootState, setBootState] = useState<BootState>("checking");
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [bootTry, setBootTry] = useState(0);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [view, setView] = useState<View>("live-osint");
   // Set when coming back from a monitoring page, so the map reopens with
@@ -91,10 +93,15 @@ export default function App() {
           setToken(null); // stale/expired token
         }
       }
-      const { bootstrapNeeded } = await api.authStatus();
-      setBootState(bootstrapNeeded ? "bootstrap" : "login");
+      try {
+        const { bootstrapNeeded } = await api.authStatus();
+        setBootState(bootstrapNeeded ? "bootstrap" : "login");
+      } catch (e) {
+        // The server couldn't be reached (or errored) — show that instead of a blank page.
+        setBootError(e instanceof Error ? e.message : String(e));
+      }
     })();
-  }, []);
+  }, [bootTry]);
 
   const loadQueries = useCallback(async () => {
     setQueries(await api.getQueries());
@@ -150,6 +157,17 @@ export default function App() {
   }
 
   if (bootState === "checking") {
+    if (bootError) {
+      return (
+        <div style={{ height: "100vh", display: "grid", placeItems: "center", color: "#e8e6e0", font: "14px system-ui, sans-serif", padding: 24, textAlign: "center" }}>
+          <div style={{ maxWidth: 420 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>The Lens can't reach its server</div>
+            <div style={{ opacity: 0.7, marginBottom: 14 }}>{bootError}</div>
+            <button onClick={() => { setBootError(null); setBootTry((n) => n + 1); }} style={{ padding: "8px 18px", cursor: "pointer" }}>Try again</button>
+          </div>
+        </div>
+      );
+    }
     return <div style={{ height: "100vh" }} />;
   }
 
