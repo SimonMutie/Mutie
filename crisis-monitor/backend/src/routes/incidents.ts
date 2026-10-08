@@ -386,12 +386,12 @@ export function buildScopeClause(
     params.push(...ownerIds);
   }
   if (dateFrom) {
-    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) >= ?");
-    params.push(dateFrom.slice(0, 10));
+    conditions.push("occurred_at >= ?");
+    params.push(dateFrom);
   }
   if (dateTo) {
-    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) <= ?");
-    params.push(dateTo.slice(0, 10));
+    conditions.push("occurred_at <= ?");
+    params.push(/^\d{4}-\d{2}-\d{2}$/.test(dateTo) ? `${dateTo}T23:59:59.999Z` : dateTo); // a plain end date includes that whole day
   }
   if (countries && countries.length > 0) {
     conditions.push(`LOWER(country) IN (${countries.map(() => "LOWER(?)").join(",")})`);
