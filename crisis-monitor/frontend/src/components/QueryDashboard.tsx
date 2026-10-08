@@ -85,7 +85,7 @@ const DEFAULT_LAYOUT: Layout[] = [
   { i: "stories", x: 0, y: 23, w: 7, h: 13, minW: 4, minH: 8 },
   { i: "names", x: 7, y: 23, w: 5, h: 13, minW: 3, minH: 8 },
   { i: "places", x: 0, y: 36, w: 6, h: 10, minW: 4, minH: 7 },
-  { i: "incidents", x: 6, y: 36, w: 6, h: 10, minW: 3, minH: 8 },
+  { i: "incidents", x: 6, y: 36, w: 6, h: 14, minW: 3, minH: 8 },
   { i: "notes", x: 0, y: 46, w: 7, h: 18, minW: 4, minH: 10 },
   { i: "topics", x: 7, y: 46, w: 5, h: 18, minW: 3, minH: 8 },
   { i: "stream", x: 0, y: 64, w: 12, h: 13, minW: 4, minH: 8 },
