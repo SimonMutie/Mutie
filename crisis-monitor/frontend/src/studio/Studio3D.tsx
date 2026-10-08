@@ -61,6 +61,8 @@ export function Studio3D({ map, shapes, active }: { map: MapLibreMap | null; sha
   activeRef.current = active;
   const toolRef = useRef<Tool>(st.tool);
   toolRef.current = st.tool;
+  const finishRef = useRef<() => void>(() => {});
+  const cancelRef = useRef<() => void>(() => {});
   const shapeCount = useRef(0);
   shapeCount.current = shapes.length;
   const specs = useRef(new Map<string, PatternSpec>());
@@ -225,6 +227,13 @@ export function Studio3D({ map, shapes, active }: { map: MapLibreMap | null; sha
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [st.zoom]);
 
+  useEffect(() => {
+    if (!st.command) return;
+    if (st.command.kind === "finish") finishRef.current();
+    else cancelRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st.command]);
+
   // ── Selecting by click, and files dropped on the map ─────────────────
   useEffect(() => {
     if (!map || !active) return;
@@ -316,6 +325,8 @@ export function Studio3D({ map, shapes, active }: { map: MapLibreMap | null; sha
       if (tool === "line" && pts.length >= 2) void done({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: pts } }, "Line");
       else if (tool === "polygon" && pts.length >= 3) void done({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[...pts, pts[0]]] } }, "Area");
     };
+    finishRef.current = finishPath;
+    cancelRef.current = clear;
     const at = (e: MapMouseEvent): Pos => [r6(e.lngLat.lng), r6(e.lngLat.lat)];
     const dist = (a: Pos, b: Pos) => lineLengthM([a, b]);
 

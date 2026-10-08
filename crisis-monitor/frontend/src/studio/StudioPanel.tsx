@@ -6,7 +6,7 @@ import { HUD, DASHES, SWATCHES, glass, inputStyle } from "./hud";
 import { ICONS, ICON_CATEGORIES, iconDef, iconSvg } from "./icons";
 import { ACCEPT, FORMATS, importGeoFiles, type Imported } from "./importers";
 import { PATTERNS, hasPattern, previewSvg, type PatternKey } from "./patterns";
-import { DEFAULT_STYLE, bufferShape, createShape, duplicateShape, editShape, removeShape, removeShapes, saveNow, setVisible, studio, useStudio, type Tool } from "./store";
+import { DEFAULT_STYLE, bufferShape, createShape, duplicateShape, editShape, removeShape, removeShapes, saveNow, sendCommand, setVisible, studio, useStudio, type Tool } from "./store";
 
 const TOOLS: { key: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { key: "select", label: "Select", icon: <MousePointer2 size={16} />, hint: "Click a shape to style or reshape it. Drag its corners; click a small dot to add a corner; double-click a corner to remove it." },
@@ -472,6 +472,21 @@ export function StudioPanel({ shapes }: { shapes: SavedShape[] }) {
       {tab === "import" && <ImportTab files={st.dropped} onDone={() => setTab("layers")} />}
 
       {st.notice && <div style={{ fontSize: 11, color: HUD.red, border: "1px solid rgba(255,61,61,.35)", borderRadius: 8, padding: "6px 8px" }}>{st.notice}</div>}
+      <div style={{ position: "sticky", bottom: -12, margin: "0 -12px -12px", padding: "10px 12px", background: "rgba(8,10,20,.98)", borderTop: `1px solid ${HUD.borderStrong}`, display: "flex", gap: 6, alignItems: "center", borderRadius: "0 0 14px 14px" }}>
+        {st.tool === "polygon" || st.tool === "line" ? (
+          <>
+            <button style={{ ...btn(true), flex: 1, padding: "8px 10px", fontSize: 12 }} onClick={() => sendCommand("finish")}><Check size={14} /> Finish and save</button>
+            <button style={{ ...btn(), padding: "8px 10px", fontSize: 12 }} onClick={() => sendCommand("cancel")}>Cancel</button>
+          </>
+        ) : (
+          <>
+            <span style={{ flex: 1, fontSize: 11, color: st.saveState === "saving" ? HUD.goldLight : HUD.green }}>
+              {st.saveState === "saving" ? "Saving…" : st.saveState === "saved" ? "Saved ✓" : "All changes saved"}
+            </span>
+            <button style={{ ...btn(true), padding: "8px 14px", fontSize: 12 }} onClick={() => void saveNow()}><Check size={14} /> Save</button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

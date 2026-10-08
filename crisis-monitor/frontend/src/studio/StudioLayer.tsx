@@ -48,6 +48,8 @@ export function StudioLayer({ shapes, active }: { shapes: SavedShape[]; active: 
   const toolRef = useRef<Tool>(st.tool);
   toolRef.current = st.tool;
   const rendererRef = useRef<L.SVG | null>(null);
+  const finishRef = useRef<() => void>(() => {});
+  const cancelRef = useRef<() => void>(() => {});
   const shapeCount = useRef(0);
   shapeCount.current = shapes.length;
 
@@ -216,6 +218,14 @@ export function StudioLayer({ shapes, active }: { shapes: SavedShape[]; active: 
     }
   }, [st.zoom, map]);
 
+  // The panel's Finish and Cancel buttons.
+  useEffect(() => {
+    if (!st.command) return;
+    if (st.command.kind === "finish") finishRef.current();
+    else cancelRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st.command]);
+
   // ── Click on empty map clears the selection; files dropped on the map are imported ──
   useEffect(() => {
     if (!active) return;
@@ -319,6 +329,8 @@ export function StudioLayer({ shapes, active }: { shapes: SavedShape[]; active: 
       }
     };
 
+    finishRef.current = finishPath;
+    cancelRef.current = clear;
     const onClick = (e: L.LeafletMouseEvent) => {
       if (tool === "icon") {
         void placeIcon(e.latlng.lng, e.latlng.lat);

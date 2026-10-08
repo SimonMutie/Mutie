@@ -37,9 +37,11 @@ interface State {
   notice: string | null;
   /** Whether edits to the selected shape are saved yet. */
   saveState: "idle" | "saving" | "saved";
+  /** A button press for the drawing tool in progress. */
+  command: { kind: "finish" | "cancel"; n: number } | null;
 }
 
-let state: State = { tool: "select", selectedId: null, draft: DEFAULT_STYLE, iconDraft: DEFAULT_ICON, overrides: {}, zoom: null, dropped: null, notice: null, saveState: "idle" };
+let state: State = { tool: "select", selectedId: null, draft: DEFAULT_STYLE, iconDraft: DEFAULT_ICON, overrides: {}, zoom: null, dropped: null, notice: null, saveState: "idle", command: null };
 const listeners = new Set<() => void>();
 let onChanged: () => void = () => {};
 
@@ -59,6 +61,10 @@ export const studio = {
     studio.set({ zoom: { id, n: (state.zoom?.n ?? 0) + 1 } });
   },
 };
+
+export function sendCommand(kind: "finish" | "cancel") {
+  studio.set({ command: { kind, n: (state.command?.n ?? 0) + 1 } });
+}
 
 export function useStudio(): State {
   return useSyncExternalStore(
