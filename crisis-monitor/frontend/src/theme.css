@@ -161,3 +161,14 @@ details[open] > summary::before {
   border-radius: 0 0 4px 4px;
   box-shadow: 0 4px 16px rgba(19, 23, 34, 0.12);
 }
+
+/* Every map keeps its own stacking order: its zoom pad, compass, layer switches and pins sit above the map but below
+   any panel, menu, drawer or dialog that opens over it (they are given a z-index of 1000 inside the map otherwise,
+   which let them show through other panels). */
+.leaflet-container,
+.maplibregl-map,
+.mapboxgl-map,
+*:has(> .leaflet-container),
+*:has(> .maplibregl-map) {
+  isolation: isolate;
+}
