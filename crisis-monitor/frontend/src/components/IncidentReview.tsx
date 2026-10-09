@@ -107,7 +107,8 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
   async function saveEdits(edits: SheetEdit[]) {
     const byId = new Map<string, Record<string, string | number | null>>();
     for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
-    await Promise.all([...byId].map(([id, row]) => api.stagingPatch(id, { row: row as Partial<IncidentRow> })));
+    const entries = [...byId];
+    for (let i = 0; i < entries.length; i += 10) await Promise.all(entries.slice(i, i + 10).map(([id, row]) => api.stagingPatch(id, { row: row as Partial<IncidentRow> })));
   }
   const pendingIds = items.filter((i) => i.status === "pending").map((i) => i.id);
 

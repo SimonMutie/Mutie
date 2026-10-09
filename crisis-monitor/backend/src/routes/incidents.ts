@@ -836,6 +836,74 @@ incidentsRouter.patch("/:id", async (c) => {
   return c.json({ ...row, raw_row: JSON.parse(String(row?.raw_row ?? "{}")) });
 });
 
+/** Many cell edits at once (a fill-down, a paste): one request, applied in database batches. */
+const bulkUpdateSchema = z.object({
+  updates: z.array(z.object({ id: z.string() }).passthrough()).min(1).max(5000),
+});
+incidentsRouter.post("/bulk-update", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const parsedBody = bulkUpdateSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsedBody.success) return c.json({ error: parsedBody.error.flatten() }, 400);
+
+  const items: { id: string; data: Record<string, unknown> }[] = [];
+  for (const u of parsedBody.data.updates) {
+    const { id, ...rest } = u as Record<string, unknown> & { id: string };
+    const parsed = updateIncidentSchema.safeParse(rest);
+    if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+    items.push({ id, data: parsed.data as Record<string, unknown> });
+  }
+
+  const countryEdit = items.some((i) => "country" in i.data);
+  if (countryEdit) {
+    const allowed = await effectiveCountryScope(c.env.DB, c.get("role"), ownerId);
+    if (allowed) {
+      const ok = new Set(allowed.map((x) => x.toLowerCase()));
+      for (const i of items) {
+        if (!("country" in i.data)) continue;
+        const v = String(i.data.country ?? "").trim().toLowerCase();
+        if (!v || !ok.has(v)) return c.json({ error: `Your account is restricted to: ${allowed.join(", ")}.` }, 403);
+      }
+    }
+  }
+
+  // A date or time edit recomputes occurred_at from both parts, so the untouched part is read first.
+  const existing = new Map<string, { occurred_date: string | null; occurred_time: string | null }>();
+  const needDt = items.filter((i) => i.data.date !== undefined || i.data.time !== undefined).map((i) => i.id);
+  for (let k = 0; k < needDt.length; k += 90) {
+    const part = needDt.slice(k, k + 90);
+    const found = await all<{ id: string; occurred_date: string | null; occurred_time: string | null }>(
+      c.env.DB,
+      `SELECT id, occurred_date, occurred_time FROM incidents WHERE id IN (${part.map(() => "?").join(",")})`,
+      part
+    );
+    for (const f of found) existing.set(f.id, f);
+  }
+
+  const statements: { sql: string; params: unknown[] }[] = [];
+  for (const { id, data } of items) {
+    const sets: string[] = [];
+    const ps: unknown[] = [];
+    for (const f of SIMPLE_INCIDENT_FIELDS) if (data[f] !== undefined) { sets.push(`${f} = ?`); ps.push(data[f]); }
+    if (data.date !== undefined || data.time !== undefined) {
+      const ex = existing.get(id);
+      const d = data.date !== undefined ? (data.date as string | null) : ex?.occurred_date;
+      const t = data.time !== undefined ? (data.time as string | null) : ex?.occurred_time;
+      if (data.date !== undefined) { sets.push("occurred_date = ?"); ps.push(data.date); }
+      if (data.time !== undefined) { sets.push("occurred_time = ?"); ps.push(data.time); }
+      sets.push("occurred_at = ?");
+      ps.push(combineDateTime(d, t));
+    }
+    if (!sets.length) continue;
+    ps.push(id);
+    let sql = `UPDATE incidents SET ${sets.join(", ")} WHERE id = ?`;
+    if (!isAdmin) { sql += " AND owner_id = ?"; ps.push(ownerId); }
+    statements.push({ sql, params: ps });
+  }
+  for (let k = 0; k < statements.length; k += 500) await batchRun(c.env.DB, statements.slice(k, k + 500));
+  return c.json({ ok: true, updated: statements.length });
+});
+
 /** Lists past uploads (real files, not manual single-row entries) so the user
  *  can see and delete a whole file in one click, regardless of how many rows
  *  it contained or how many chunk calls it took to insert. */

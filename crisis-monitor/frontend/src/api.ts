@@ -1689,6 +1689,8 @@ export const api = {
   getIncidentFull: (id: string) => req<IncidentItem>(`/api/incidents/one/${encodeURIComponent(id)}`),
   updateIncident: (id: string, data: Partial<IncidentRow>) =>
     req<IncidentItem>(`/api/incidents/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  bulkUpdateIncidents: (updates: ({ id: string } & Partial<IncidentRow>)[]) =>
+    req<{ ok: boolean; updated: number }>("/api/incidents/bulk-update", { method: "POST", body: JSON.stringify({ updates }) }),
   bulkDeleteIncidents: (ids: string[]) =>
     req<{ ok: boolean; deleted: number }>("/api/incidents/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }),
 

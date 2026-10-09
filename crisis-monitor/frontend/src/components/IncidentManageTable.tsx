@@ -99,10 +99,9 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   async function saveEdits(edits: SheetEdit[]) {
     const byId = new Map<string, Record<string, string | number | null>>();
     for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
-    const entries = [...byId.entries()];
-    for (let i = 0; i < entries.length; i += 8) {
-      await Promise.all(entries.slice(i, i + 8).map(([id, patch]) => api.updateIncident(id, patch as never)));
-    }
+    const entries = [...byId.entries()].map(([id, patch]) => ({ id, ...patch }));
+    // One request per few thousand rows, not one per row, so a long fill-down saves in moments.
+    for (let i = 0; i < entries.length; i += 2000) await api.bulkUpdateIncidents(entries.slice(i, i + 2000) as never);
     skipReload.current = true;
     onChanged();
   }
