@@ -529,6 +529,7 @@ export interface DashboardWidget {
   mapBasemap?: string;
   /** Victims widget: the actor group whose victims are shown ("Criminal"); empty or absent means everyone. */
   victimGroup?: string;
+  calendarGroup?: string;
   /** Globe only — free-standing labeled points (checkpoints, ports,
    *  chokepoints, or any of the LABEL_TYPE_META categories) at a country
    *  name or precise "lat,lng", independent of country shading and routes. */
@@ -672,10 +673,16 @@ export interface VictimGroupRow {
   incidents: number; women: number; men: number; children: number; unknown: number;
 }
 
+/** Incidents per day, per combination of the columns that name who was involved. */
+export interface DailyGroupRow {
+  date: string; actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number;
+}
+
 export interface PublicDashboardData {
   name: string;
   country?: string | null;
   victimGroups?: VictimGroupRow[];
+  dailyGroups?: DailyGroupRow[];
   widgets: DashboardWidget[];
   stats: NormalizedDashboardStats;
   /** The date range this dashboard's owner set, if any — for display only;
@@ -1746,6 +1753,8 @@ export const api = {
   // Public — no auth token needed, works for anyone with the share link.
   getVictimGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
     req<VictimGroupRow[]>(`/api/incidents/victim-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
+  getDailyGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
+    req<DailyGroupRow[]>(`/api/incidents/daily-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
   getPublicDashboard: (token: string) => req<PublicDashboardData>(`/api/public/dashboards/${token}`),
 
   // General-purpose datasets — any schema, not tied to incidents at all.

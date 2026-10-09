@@ -32,7 +32,7 @@ import { HeatmapLayer } from "./HeatmapLayer";
 import { FastMarkers, type FastPoint } from "./FastMarkers";
 import LeafletMapControls from "./LeafletMapControls";
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
-import VictimsWidget from "./VictimsWidget";
+import VictimsWidget, { groupOfVictimRow } from "./VictimsWidget";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
 import worldTopology from "world-atlas/countries-50m.json?url";
@@ -508,6 +508,8 @@ interface Props {
   datasetSummaries?: Record<string, DatasetSummary>;
   /** Who was killed, per group of actors — for the victims hemicycle. */
   victimGroups?: import("../api").VictimGroupRow[];
+  /** Per-day rows by kind of actor, for a calendar limited to one kind (widget.calendarGroup). */
+  dailyGroups?: import("../api").DailyGroupRow[];
   /** The user's uploaded datasets, for the "Data source" selector in the
    *  edit popover — only needed where editing happens, so undefined/empty
    *  on the read-only public view is fine. */
@@ -560,6 +562,7 @@ export default function DashboardWidgetCard({
   dailyBreakdowns,
   datasetSummaries,
   victimGroups,
+  dailyGroups,
   datasets,
   onDatasetCreated,
   activeCrossFilters,
@@ -1187,7 +1190,7 @@ export default function DashboardWidgetCard({
 
         {widget.type === "calendar" && (
           <CalendarHeatmap
-            daily={widget.datasetId ? (dailyBreakdowns?.[dailyKeyFor(widget) ?? ""] ?? []) : stats.daily}
+            daily={widget.datasetId ? (dailyBreakdowns?.[dailyKeyFor(widget) ?? ""] ?? []) : widget.calendarGroup ? dailyOfGroup(dailyGroups, widget.calendarGroup) : stats.daily}
             baseColor={widget.color || "#0d9488"}
           />
         )}
@@ -1408,6 +1411,7 @@ function WidgetEditPopover({
   }
 
   const [victimGroup, setVictimGroup] = useState<string>(widget.victimGroup ?? "");
+  const [calendarGroup, setCalendarGroup] = useState<string>(widget.calendarGroup ?? "");
   const [field, setField] = useState<string>(widget.dataField ?? (widget.datasetId ? "" : FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [geoProvinceColumn, setGeoProvinceColumn] = useState<string | undefined>(widget.geoProvinceColumn);
@@ -1528,6 +1532,7 @@ function WidgetEditPopover({
       type,
       datasetId: manualActive ? undefined : datasetId,
       victimGroup: type === "victims" ? victimGroup || undefined : undefined,
+      calendarGroup: type === "calendar" && !datasetId ? calendarGroup || undefined : undefined,
       dataField: type === "map" || type === "victims" || manualActive ? undefined : field || undefined,
       // secondaryField ("SHOW") is offered for choropleth/globe with a
       // dataset too, via a separate UI block below that isn't gated by
@@ -1583,6 +1588,18 @@ function WidgetEditPopover({
       }}
     >
       <div className="eyebrow">EDIT THIS WIDGET</div>
+
+      {type === "calendar" && !datasetId && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>WHICH INCIDENTS</div>
+          <select value={calendarGroup} onChange={(e) => setCalendarGroup(e.target.value)} style={selectStyle}>
+            <option value="">All incidents</option>
+            {[...new Set(ACTOR_CATEGORIES.map((c) => c.label))].map((l) => (
+              <option key={l} value={l}>Only {l}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {type === "victims" && (
         <div>
@@ -3250,6 +3267,16 @@ function ChoroplethLegend({ breaks, maxValue, baseColor, colorScheme }: { breaks
  *  to fit, since 52 columns compressed into a narrow widget just becomes
  *  illegible; native SVG <title> elements give per-day tooltips with no extra
  *  dependency. */
+/** Per-day counts for one kind of actor only, from the per-day rows (the same sorting the map colours use). */
+function dailyOfGroup(rows: import("../api").DailyGroupRow[] | undefined, group: string): { date: string; count: number }[] {
+  const by = new Map<string, number>();
+  for (const r of rows ?? []) {
+    if (groupOfVictimRow(r as never) !== group) continue;
+    by.set(r.date, (by.get(r.date) ?? 0) + r.incidents);
+  }
+  return [...by.entries()].map(([date, count]) => ({ date, count }));
+}
+
 function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: number }[]; baseColor: string }) {
   const countByDate = new Map(daily.map((d) => [d.date, d.count]));
   const maxCount = Math.max(1, ...daily.map((d) => d.count));

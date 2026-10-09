@@ -96,6 +96,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   const [toolsOpen, setToolsOpen] = useState(false);
   // A dashboard tied to one country (the Country Dashboard): every figure is limited to it.
   const [dashCountry, setDashCountry] = useState<string | null>(null);
+  const [dailyGroups, setDailyGroups] = useState<import("../api").DailyGroupRow[] | undefined>(undefined);
   const [victimGroups, setVictimGroups] = useState<VictimGroupRow[] | undefined>(undefined);
   const [dateRangeFrom, setDateRangeFrom] = useState<string | undefined>(undefined);
   const [dateRangeTo, setDateRangeTo] = useState<string | undefined>(undefined);
@@ -288,6 +289,16 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasVictims, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+
+  const hasGroupCalendar = widgets.some((w) => w.type === "calendar" && w.calendarGroup);
+  useEffect(() => {
+    if (!hasGroupCalendar) return;
+    let live = true;
+    setDailyGroups(undefined);
+    api.getDailyGroups({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters } as Record<string, string | undefined>).then((r) => live && setDailyGroups(r)).catch(() => live && setDailyGroups([]));
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasGroupCalendar, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
   // A changed date range or category filter invalidates every previously-
   // fetched breakdown and crosstab (they were computed under the old
@@ -1267,6 +1278,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
                     stats={stats}
                     incidents={located}
                     victimGroups={victimGroups}
+                    dailyGroups={dailyGroups}
                     crosstabs={crosstabs}
                     breakdowns={breakdowns}
                     valueMaps={valueMaps}

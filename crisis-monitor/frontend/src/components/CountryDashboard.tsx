@@ -71,7 +71,7 @@ function templateFor(): DashboardWidget[] {
     W("province", "bar", "Where — by province / county", { x: 0, y: 24, w: 4, h: 9 }, { dataField: "by_province", topN: 12, color: "#2a78d6", showDataLabels: true }),
     W("actor", "bar", "Who — actors involved", { x: 4, y: 24, w: 4, h: 9 }, { dataField: "by_actor", topN: 10, showDataLabels: true }),
     tacticSunburst({ x: 8, y: 24, w: 4, h: 9 }),
-    W("calendar", "calendar", "Daily activity calendar", { x: 0, y: 33, w: 12, h: 6 }, { color: "#e34948" }),
+    W("calendar", "calendar", "Daily terrorism calendar", { x: 0, y: 33, w: 12, h: 6 }, { color: "#e34948", calendarGroup: "Terrorism / Extremist" }),
     W("victims", "victims", "Women, men and children killed in criminal incidents", { x: 0, y: 39, w: 5, h: 11 }, { victimGroup: "Criminal" }),
     {
       id: "province-sector",
@@ -117,6 +117,8 @@ function dashboardFor(country: string): Promise<string> {
         const oldFlow = found.widgets.find((w) => w.id === "sankey" && w.type === "sankey");
         const next = found.widgets.map((w) =>
           withQuery(
+            w.id === "calendar" && w.type === "calendar" && !w.datasetId && w.calendarGroup === undefined && w.title === "Daily activity calendar"
+              ? { ...w, title: "Daily terrorism calendar", calendarGroup: "Terrorism / Extremist" } :
             w === old ? { ...tacticSunburst(old.layout ?? { x: 8, y: 24, w: 4, h: 9 }), locked: old.locked }
             : w === oldFlow ? { ...actorsOverTime(oldFlow.layout ?? { x: 0, y: 50, w: 6, h: 10 }), locked: oldFlow.locked }
             : w,

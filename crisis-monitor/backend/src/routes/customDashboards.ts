@@ -4,7 +4,7 @@ import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, teamOwnerIds } from "./incidents";
+import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, fetchDailyGroups, teamOwnerIds } from "./incidents";
 import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -129,6 +129,8 @@ const widgetSchema = z.object({
   mapBasemap: z.string().max(30).optional(),
   /** Victims widget: the group whose victims are shown ("Criminal", "Security Forces"…); empty means everyone. */
   victimGroup: z.string().max(60).optional(),
+  /** Calendar widget: count only incidents by this kind of actor ("Terrorism / Extremist"…); empty means all. */
+  calendarGroup: z.string().max(60).optional(),
   /** Globe only — free-standing text labels (checkpoints, ports, chokepoints,
    *  anything worth naming directly on the map) at a country name or precise
    *  "lat,lng", independent of country shading and routes. */
@@ -480,7 +482,7 @@ publicDashboardsRouter.get("/:token", async (c) => {
 
   // Only fetched if a map widget is actually present — no point pulling
   // thousands of rows for a purely chart-based dashboard.
-  const widgets = JSON.parse(String(dashboard.widgets ?? "[]")) as { type?: string; dataField?: string; secondaryField?: string; datasetId?: string }[];
+  const widgets = JSON.parse(String(dashboard.widgets ?? "[]")) as { type?: string; dataField?: string; secondaryField?: string; datasetId?: string; calendarGroup?: string }[];
   const hasMapWidget = Array.isArray(widgets) && widgets.some((w) => w.type === "map");
   let incidents: Record<string, unknown>[] = [];
   if (hasMapWidget) {
@@ -549,10 +551,15 @@ publicDashboardsRouter.get("/:token", async (c) => {
     ? await fetchVictimGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
     : [];
 
+  const dailyGroups = widgets.some((w) => w.type === "calendar" && w.calendarGroup)
+    ? await fetchDailyGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
+    : [];
+
   return c.json({
     name: dashboard.name,
     country,
     victimGroups,
+    dailyGroups,
     widgets,
     stats,
     date_range_from: dateFrom,
