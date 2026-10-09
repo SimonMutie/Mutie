@@ -1942,7 +1942,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
       }}
     >
-      <div style={{ position: "relative", flex: 1 }}>
+      <div
+        // The zoom pad keeps clear of the tool rail, and of a tool's own panel when one is open beside it.
+        style={{ position: "relative", flex: 1, ["--lens-pad-right" as string]: rightOpen ? (rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
+      >
         {mapMode === "3d" ? (
           <Map3D
             points={mapPoints}

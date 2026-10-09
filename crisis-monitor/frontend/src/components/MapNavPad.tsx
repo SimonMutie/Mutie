@@ -17,7 +17,7 @@ export default function MapNavPad({
     <div
       className="lens-navpad"
       style={{
-        position: "absolute", right: 12, bottom: 30, zIndex: 1000, display: "flex", alignItems: "center", padding: "6px 8px", gap: 8,
+        position: "absolute", right: "var(--lens-pad-right, 12px)", transition: "right 0.2s", bottom: 30, zIndex: 1000, display: "flex", alignItems: "center", padding: "6px 8px", gap: 8,
         background: "rgba(8, 10, 20, 0.88)", backdropFilter: "blur(24px) saturate(1.3)", WebkitBackdropFilter: "blur(24px) saturate(1.3)",
         border: "1px solid rgba(212, 175, 55, 0.15)", borderRadius: 14, boxShadow: "0 4px 30px rgba(0,0,0,0.5)",
         ...style,
