@@ -1,12 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { api, type AuthUser, type IncidentStats } from "../api";
-import IncidentsMap from "./IncidentsMap";
-import IncidentSearch from "./IncidentSearch";
-import IncidentUpload from "./IncidentUpload";
-import IncidentManualEntry from "./IncidentManualEntry";
-import IncidentManageTable from "./IncidentManageTable";
-import CustomDashboardBuilder from "./CustomDashboardBuilder";
-import DashboardEditor from "./DashboardEditor";
+const IncidentsMap = lazy(() => import("./IncidentsMap"));
+const IncidentSearch = lazy(() => import("./IncidentSearch"));
+const IncidentUpload = lazy(() => import("./IncidentUpload"));
+const IncidentManualEntry = lazy(() => import("./IncidentManualEntry"));
+const IncidentManageTable = lazy(() => import("./IncidentManageTable"));
+const CustomDashboardBuilder = lazy(() => import("./CustomDashboardBuilder"));
+const DashboardEditor = lazy(() => import("./DashboardEditor"));
 import CountryDashboard from "./CountryDashboard";
 
 // Loaded only when the Datasets tab is opened — it is a sizeable page that
@@ -32,6 +32,7 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
   }, []);
 
   return (
+    <Suspense fallback={<div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>}>
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
         <button onClick={() => setTab("country")} style={tabBtnStyle(tab === "country")}>
@@ -130,6 +131,7 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
         </div>
       )}
     </div>
+    </Suspense>
   );
 }
 

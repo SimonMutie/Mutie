@@ -264,6 +264,9 @@ function CriminalVictims({ country, rows, done }: { country: string; rows: Incid
 
 /** One country's incidents as lean rows (no bulky original upload), a page at a time. */
 const rowsCache = new Map<string, IncidentItem[]>();
+type Snap = { stats: NormalizedDashboardStats; crosstabs: Record<string, CrosstabRow[]>; breakdowns: Record<string, { value: string; count: number }[]> };
+/** The last figures seen per country and period: shown at once on a revisit while fresh ones load. */
+const snapCache = new Map<string, Snap>();
 
 async function readCountryRows(country: string, range: { from?: string; to?: string }, isLive: () => boolean, onRows: (rows: IncidentItem[]) => void) {
   const key = `${country}|${range.from ?? ""}|${range.to ?? ""}`;
@@ -340,14 +343,21 @@ export default function CountryDashboard() {
 
   useEffect(() => {
     let live = true;
-    setStats(null);
+    const snapKey = `${country}|${range.from ?? ""}`;
+    const snap = snapCache.get(snapKey);
+    setStats(snap?.stats ?? null);
     setError(null);
-    setCrosstabs({});
-    setBreakdowns({});
+    setCrosstabs(snap?.crosstabs ?? {});
+    setBreakdowns(snap?.breakdowns ?? {});
     const filters = { ...range, country };
     api
       .getIncidentStats(filters)
-      .then((s) => live && setStats(normalize(s)))
+      .then((s) => {
+        if (!live) return;
+        const n = normalize(s);
+        setStats(n);
+        snapCache.set(snapKey, { ...(snapCache.get(snapKey) ?? { crosstabs: {}, breakdowns: {} }), stats: n });
+      })
       .catch((e) => live && setError(e instanceof Error ? e.message : "The figures could not be read."));
     setRows(null);
     setRowsDone(false);
@@ -358,10 +368,10 @@ export default function CountryDashboard() {
       const ck = crosstabKeyFor(w);
       if (ck) {
         const [p, s] = ck.split("|") as [never, never];
-        api.getCrosstab(p, s, filters).then((rows) => live && setCrosstabs((prev) => ({ ...prev, [ck]: rows }))).catch(() => {});
+        api.getCrosstab(p, s, filters).then((rows) => { if (!live) return; setCrosstabs((prev) => ({ ...prev, [ck]: rows })); const o = snapCache.get(snapKey); if (o) o.crosstabs[ck] = rows; }).catch(() => {});
       }
       const bk = breakdownKeyFor(w);
-      if (bk) api.getBreakdown(bk as never, filters).then((rows) => live && setBreakdowns((prev) => ({ ...prev, [bk]: rows }))).catch(() => {});
+      if (bk) api.getBreakdown(bk as never, filters).then((rows) => { if (!live) return; setBreakdowns((prev) => ({ ...prev, [bk]: rows })); const o = snapCache.get(snapKey); if (o) o.breakdowns[bk] = rows; }).catch(() => {});
     }
     return () => {
       live = false;
@@ -431,7 +441,12 @@ export default function CountryDashboard() {
         {error ? (
           <div style={{ color: "var(--text-faint)" }}>{error}</div>
         ) : !stats ? (
-          <div style={{ color: "var(--text-faint)" }}>Loading…</div>
+          <div aria-busy="true" style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+              {[0, 1, 2, 3, 4].map((i) => <div key={i} style={{ height: 74, borderRadius: 10, background: "var(--panel)", border: "1px solid var(--border)", opacity: 0.6 }} />)}
+            </div>
+            <div style={{ height: 420, borderRadius: 12, background: "#d6e6f2", opacity: 0.5 }} />
+          </div>
         ) : stats.total === 0 ? (
           <div style={{ color: "var(--text-faint)" }}>No incidents are recorded for {country} in this period. Upload data, push approved rows from Daily review, or pick another country or period.</div>
         ) : (
