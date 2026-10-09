@@ -46,7 +46,7 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<IncidentItem | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [limit, setLimit] = useState(500);
+  const [limit, setLimit] = useState(250000);
   const [visibleRows, setVisibleRows] = useState<IncidentItem[]>([]);
 
   async function load() {
@@ -195,7 +195,7 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-          {loading ? "Loading…" : `${incidents.length.toLocaleString()} incidents${incidents.length === limit ? " (showing most recent — increase below to see more)" : ""}`}
+          {loading ? "Loading every incident…" : `${incidents.length.toLocaleString()} incidents loaded`}
         </div>
         {selected.size > 0 && (
           <button onClick={deleteSelected} disabled={bulkDeleting} style={dangerBtnStyle}>
@@ -236,16 +236,6 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
         }}
       />
 
-      {incidents.length === limit && (
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button onClick={() => setLimit((l) => l + 500)} style={smallBtnStyle}>
-            Load 500 more
-          </button>
-          <button onClick={() => setLimit(250000)} style={smallBtnStyle} title="Filters only see the rows loaded, so load everything to filter across all of it">
-            Load all
-          </button>
-        </div>
-      )}
     </div>
   );
 }

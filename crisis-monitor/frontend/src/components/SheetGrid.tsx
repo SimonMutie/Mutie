@@ -55,6 +55,9 @@ interface Props<T> {
 }
 
 const BLANK = "(Blanks)";
+/** Every row is this tall, so only the rows on screen need drawing — tens of thousands of rows stay smooth. */
+const ROW_H = 30;
+const OVERSCAN = 12;
 const text = (v: string | number | null | undefined) => (v === null || v === undefined ? "" : String(v));
 const parse = (raw: string, num?: boolean): string | number | null => {
   if (raw.trim() === "") return null;
@@ -85,6 +88,9 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
   const [showLog, setShowLog] = useState(false);
   const [autoSave, setAutoSave] = useState(false);
   const counter = useRef(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewH, setViewH] = useState(600);
+  const lastY = useRef(0);
   const byId = useMemo(() => new Map(rows.map((r) => [rowId(r), r])), [rows, rowId]);
   const current = (id: string, key: string) => {
     const r = byId.get(id);
@@ -167,6 +173,9 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
     return out;
   }, [rows, filters, sort, columns, getValue]);
   useEffect(() => onVisible?.(visible), [visible, onVisible]);
+  useEffect(() => {
+    if (wrap.current) wrap.current.scrollTop = 0;
+  }, [filters, sort]);
   // A selection that no longer exists (rows filtered away) is dropped.
   useEffect(() => setSel((s) => (s && s.to < visible.length ? s : null)), [visible.length]);
 
@@ -235,12 +244,21 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
 
   function onKey(e: React.KeyboardEvent<HTMLInputElement>, col: number, row: number) {
     const move = (dr: number) => {
-      const next = wrap.current?.querySelector<HTMLInputElement>(`input[data-cell="${col}:${row + dr}"]`);
-      if (next) {
-        e.preventDefault();
-        next.focus();
-        next.select();
-      }
+      const target = row + dr;
+      if (target < 0 || target >= visible.length) return;
+      e.preventDefault();
+      const focusIt = () => {
+        const el = wrap.current?.querySelector<HTMLInputElement>(`input[data-cell="${col}:${target}"]`);
+        if (el) {
+          el.focus();
+          el.select();
+        }
+      };
+      const box = wrap.current;
+      if (box && (target * ROW_H < box.scrollTop || (target + 2) * ROW_H > box.scrollTop + box.clientHeight)) {
+        box.scrollTop = Math.max(0, target * ROW_H - box.clientHeight / 2);
+        setTimeout(focusIt, 30);
+      } else focusIt();
     };
     if (e.key === "Enter" || e.key === "ArrowDown") move(1);
     else if (e.key === "ArrowUp") move(-1);
@@ -275,23 +293,50 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
     if (edits.length) commit(`Pasted ${edits.length} cell${edits.length === 1 ? "" : "s"}`, edits);
   }
 
-  // Finishing a drag of the fill handle.
+  // Dragging the fill handle: the row under the pointer sets how far the fill goes; near the edge the grid scrolls.
   useEffect(() => {
     if (!drag || !sel) return;
+    const box = wrap.current;
+    const lo0 = Math.min(sel.from, sel.to);
+    const hi0 = Math.max(sel.from, sel.to);
+    const rowAt = () => {
+      if (!box) return hi0;
+      const r = box.getBoundingClientRect();
+      const head = box.querySelector("thead")?.getBoundingClientRect().height ?? 30;
+      return Math.min(visible.length - 1, Math.max(hi0, Math.floor((lastY.current - r.top - head + box.scrollTop) / ROW_H)));
+    };
+    const move = (e: MouseEvent) => {
+      lastY.current = e.clientY;
+      setDrag({ end: rowAt() });
+    };
+    const tick = setInterval(() => {
+      if (!box) return;
+      const r = box.getBoundingClientRect();
+      if (lastY.current > r.bottom - 40) box.scrollTop += 30;
+      else if (lastY.current < r.top + 60) box.scrollTop -= 30;
+      else return;
+      setDrag({ end: rowAt() });
+    }, 40);
     const up = () => {
-      const lo = Math.min(sel.from, sel.to);
-      const hi = Math.max(sel.from, sel.to);
-      if (drag.end > hi) {
-        fill(sel.col, hi + 1, Array.from({ length: hi - lo + 1 }, (_, i) => lo + i), drag.end);
-        setSel({ col: sel.col, from: lo, to: drag.end });
+      const end = rowAt();
+      if (end > hi0) {
+        fill(sel.col, hi0 + 1, Array.from({ length: hi0 - lo0 + 1 }, (_, i) => lo0 + i), end);
+        setSel({ col: sel.col, from: lo0, to: end });
       }
       setDrag(null);
     };
+    window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
-    return () => window.removeEventListener("mouseup", up);
+    return () => {
+      clearInterval(tick);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag, sel]);
+  }, [!!drag, sel?.col, sel?.from, sel?.to, visible.length]);
 
+  const first = Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN);
+  const last = Math.min(visible.length, Math.ceil((scrollTop + Math.max(viewH, 300)) / ROW_H) + OVERSCAN);
   const hi = sel ? Math.max(sel.from, sel.to) : -1;
   const lo = sel ? Math.min(sel.from, sel.to) : -1;
   const dragHi = drag ? drag.end : hi;
@@ -338,7 +383,14 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
         <span style={{ marginLeft: "auto", color: "var(--text-faint, #888)" }}>Drag or double-click the square at a cell's corner to fill down · Ctrl+D fills down · paste from Excel</span>
       </div>
 
-      <div ref={wrap} style={{ overflow: "auto", maxHeight, border: "1px solid var(--border-soft, #ddd)", borderRadius: 8 }} onMouseUp={() => undefined}>
+      <div
+        ref={wrap}
+        onScroll={(e) => {
+          setScrollTop(e.currentTarget.scrollTop);
+          setViewH(e.currentTarget.clientHeight);
+        }}
+        style={{ overflow: "auto", maxHeight, border: "1px solid var(--border-soft, #ddd)", borderRadius: 8 }}
+      >
         <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth: "100%" }}>
           <thead>
             <tr>
@@ -378,10 +430,12 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
                 </td>
               </tr>
             )}
-            {visible.map((r, ri) => {
+            {first > 0 && <tr style={{ height: first * ROW_H }} aria-hidden />}
+            {visible.slice(first, last).map((r, k) => {
+              const ri = first + k;
               const locked = isLocked?.(r) ?? false;
               return (
-                <tr key={rowId(r)} style={{ borderTop: "1px solid var(--border-soft, #e5e5e5)", ...rowStyle?.(r) }}>
+                <tr key={rowId(r)} style={{ borderTop: "1px solid var(--border-soft, #e5e5e5)", height: ROW_H, ...rowStyle?.(r) }}>
                   {lead && <td style={{ padding: 4, whiteSpace: "nowrap" }}>{lead.cell(r)}</td>}
                   {columns.map((c, ci) => {
                     const inSel = sel?.col === ci && ri >= lo && ri <= dragHi;
@@ -390,7 +444,6 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
                       <td
                         key={c.key}
                         style={{ padding: 0, position: "relative", outline: inSel ? "2px solid var(--signal, #0d9488)" : undefined, outlineOffset: -1, background: inSel && ri > hi ? "var(--signal-dim, #d5f0ec)" : undefined }}
-                        onMouseEnter={() => drag && sel?.col === ci && setDrag({ end: Math.max(ri, hi) })}
                       >
                         <input
                           data-cell={`${ci}:${ri}`}
@@ -415,7 +468,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
                           }}
                           onKeyDown={(e) => onKey(e, ci, ri)}
                           onPaste={(e) => onPaste(e, ci, ri)}
-                          style={{ width: "100%", minWidth: c.width, boxSizing: "border-box", padding: "5px 7px", border: "none", background: "transparent", color: "inherit", fontSize: 12, fontFamily: "inherit", outline: "none" }}
+                          style={{ width: "100%", minWidth: c.width, boxSizing: "border-box", height: ROW_H - 1, padding: "0 7px", border: "none", background: "transparent", color: "inherit", fontSize: 12, fontFamily: "inherit", outline: "none" }}
                         />
                         {handle && (
                           <span
@@ -443,6 +496,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
                 </tr>
               );
             })}
+            {last < visible.length && <tr style={{ height: (visible.length - last) * ROW_H }} aria-hidden />}
           </tbody>
         </table>
       </div>
@@ -455,8 +509,29 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
           </div>
           <input value={menuSearch} onChange={(e) => setMenuSearch(e.target.value)} placeholder="Search values" autoFocus style={{ width: "100%", boxSizing: "border-box", padding: "5px 7px", marginBottom: 6, border: "1px solid var(--border, #ccc)", borderRadius: 5, background: "transparent", color: "inherit" }} />
           <div style={{ display: "flex", gap: 6, marginBottom: 4 }}>
-            <button type="button" style={menuBtn} onClick={() => setChosen(menu.key, new Set(menuValues.map(([v]) => v)))}>Select all</button>
-            <button type="button" style={menuBtn} onClick={() => setFilters((f) => ({ ...f, [menu.key]: new Set(menuSearch ? shownValues.map(([v]) => v) : []) }))}>{menuSearch ? "Only these" : "Clear"}</button>
+            {(() => {
+              // One button that both selects and unselects: it offers whichever the current state calls for.
+              const pool = menuSearch ? shownValues.map(([v]) => v) : menuValues.map(([v]) => v);
+              const allOn = pool.length > 0 && pool.every((v) => chosen.has(v));
+              return (
+                <button
+                  type="button"
+                  style={menuBtn}
+                  onClick={() => {
+                    const next = new Set(chosen);
+                    for (const v of pool) {
+                      if (allOn) next.delete(v);
+                      else next.add(v);
+                    }
+                    setFilters((f) => ({ ...f, [menu.key]: next }));
+                    if (!allOn && next.size >= menuValues.length) setChosen(menu.key, next);
+                  }}
+                >
+                  {allOn ? (menuSearch ? "Unselect these" : "Unselect all") : menuSearch ? "Select these" : "Select all"}
+                </button>
+              );
+            })()}
+            {menuSearch && <button type="button" style={menuBtn} onClick={() => setFilters((f) => ({ ...f, [menu.key]: new Set(shownValues.map(([v]) => v)) }))}>Only these</button>}
           </div>
           <div style={{ maxHeight: 220, overflowY: "auto", borderTop: "1px solid var(--border-soft, #ddd)", paddingTop: 4 }}>
             {shownValues.map(([v, n]) => (
