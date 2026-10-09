@@ -708,7 +708,7 @@ incidentsRouter.post("/bulk-delete", async (c) => {
   return c.json({ ok: true, deleted: parsed.data.ids.length });
 });
 
-const SIMPLE_INCIDENT_FIELDS = [
+export const SIMPLE_INCIDENT_FIELDS = [
   "country",
   "province",
   "county",

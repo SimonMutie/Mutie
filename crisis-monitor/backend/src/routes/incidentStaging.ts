@@ -5,7 +5,7 @@ import { newId } from "../ids";
 import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { ensureStagingTable, stageIncidents } from "../incidentStaging";
-import { incidentInsertStatement } from "./incidents";
+import { incidentInsertStatement, SIMPLE_INCIDENT_FIELDS } from "./incidents";
 
 export const incidentStagingRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 incidentStagingRouter.use("*", requireAuth, requireAdmin);
@@ -60,9 +60,28 @@ incidentStagingRouter.patch("/:id", async (c) => {
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const cur = await first<{ row_json: string; status: string }>(c.env.DB, `SELECT row_json, status FROM incident_staging WHERE id = ?`, [c.req.param("id")]);
   if (!cur) return c.json({ error: "Not found" }, 404);
-  if (cur.status === "pushed") return c.json({ error: "Already pushed to the database" }, 409);
+  const pushed = cur.status === "pushed";
+  if (pushed && parsed.data.status) return c.json({ error: "Already pushed to the database" }, 409);
   const merged = parsed.data.row ? { ...JSON.parse(cur.row_json), ...parsed.data.row } : JSON.parse(cur.row_json);
-  const status = parsed.data.status ?? cur.status;
+  const status = pushed ? "pushed" : parsed.data.status ?? cur.status;
+  // A pushed row lives on in the incident database: carry the edit across so both stay in step.
+  if (pushed && parsed.data.row) {
+    const id = c.req.param("id");
+    const live = await first<{ id: string; occurred_date: string | null; occurred_time: string | null }>(
+      c.env.DB,
+      `SELECT id, occurred_date, occurred_time FROM incidents WHERE raw_row LIKE ? LIMIT 1`,
+      [`%"staging_id":"${id.replace(/[^\w-]/g, "")}"%`]
+    );
+    if (live) {
+      const d = parsed.data.row as Record<string, unknown>;
+      const sets: string[] = [];
+      const ps: unknown[] = [];
+      for (const f of SIMPLE_INCIDENT_FIELDS) if (d[f] !== undefined) { sets.push(`${f} = ?`); ps.push(d[f]); }
+      if (d.date !== undefined) { sets.push("occurred_date = ?"); ps.push(d.date); }
+      if (d.time !== undefined) { sets.push("occurred_time = ?"); ps.push(d.time); }
+      if (sets.length) await c.env.DB.prepare(`UPDATE incidents SET ${sets.join(", ")} WHERE id = ?`).bind(...ps, live.id).run();
+    }
+  }
   await run(
     c.env.DB,
     `UPDATE incident_staging SET row_json = ?, status = ?, reviewed_at = ?, reviewed_by = ? WHERE id = ?`,

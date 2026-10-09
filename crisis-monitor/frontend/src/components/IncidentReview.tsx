@@ -162,7 +162,6 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
         getValue={(it, key) => it.row[key as keyof IncidentRow] as string | number | null | undefined}
         onEdit={applyEdits}
         onSave={saveEdits}
-        isLocked={(it) => it.status === "pushed"}
         rowStyle={(it) => ({ opacity: it.status === "rejected" ? 0.5 : 1 })}
         maxHeight="58vh"
         empty={date ? "Nothing here." : "No collections yet — press “Collect now”."}
