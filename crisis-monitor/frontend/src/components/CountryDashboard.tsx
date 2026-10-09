@@ -263,17 +263,25 @@ function CriminalVictims({ country, rows, done }: { country: string; rows: Incid
 }
 
 /** One country's incidents as lean rows (no bulky original upload), a page at a time. */
+const rowsCache = new Map<string, IncidentItem[]>();
+
 async function readCountryRows(country: string, range: { from?: string; to?: string }, isLive: () => boolean, onRows: (rows: IncidentItem[]) => void) {
+  const key = `${country}|${range.from ?? ""}|${range.to ?? ""}`;
+  const hit = rowsCache.get(key);
+  if (hit) { onRows(hit); return; } // switching back to a country already read is instant
   let after = 0;
-  let all: IncidentItem[] = [];
-  for (;;) {
-    const page = await api.getIncidentsGrid(after, 20000, { country, ...range });
+  const all: IncidentItem[] = [];
+  for (let n = 0; ; n++) {
+    // A small first page lets the map and charts appear at once; bigger pages follow.
+    const page = await api.getIncidentsGrid(after, n === 0 ? 3000 : 25000, { country, ...range });
     if (!isLive()) return;
-    all = all.concat(page.rows.map((r) => Object.fromEntries(page.columns.map((k, i) => [k, r[i]]))) as unknown as IncidentItem[]);
-    onRows(all);
-    if (page.next === null) return;
+    for (const r of page.rows) all.push(Object.fromEntries(page.columns.map((k, i) => [k, r[i]])) as unknown as IncidentItem);
+    onRows(all.slice());
+    if (page.next === null) break;
     after = page.next;
   }
+  if (rowsCache.size > 6) rowsCache.delete(rowsCache.keys().next().value as string);
+  rowsCache.set(key, all);
 }
 
 /** Draws its children only once they are near the screen, so a long dashboard paints its top first. */
