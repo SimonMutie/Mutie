@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * One-off generator for the two static geography files the escalation
- * pipeline uses (src/data/africaShapes.json, src/data/africaPlaces.json).
+ * pipeline uses (Africa and the Middle East) (src/data/africaShapes.json, src/data/africaPlaces.json).
  * Not part of the Worker build — run by hand only when the source data
  * needs refreshing:
  *
@@ -25,7 +25,7 @@ const cities = require("all-the-cities");
 const outDir = process.argv[2];
 if (!outDir) throw new Error("usage: buildGeoData.mjs <output dir>");
 
-// ISO 3166-1 numeric -> alpha-2, Africa only (plus Western Sahara, which
+// ISO 3166-1 numeric -> alpha-2, Africa and the Middle East (plus Western Sahara, which
 // Natural Earth draws separately and which is not in the app's 54-country list).
 const NUMERIC_TO_ISO2 = {
   "012": "DZ", "024": "AO", "204": "BJ", "072": "BW", "854": "BF", "108": "BI", "120": "CM", "132": "CV",
@@ -35,6 +35,9 @@ const NUMERIC_TO_ISO2 = {
   "478": "MR", "480": "MU", "504": "MA", "508": "MZ", "516": "NA", "562": "NE", "566": "NG", "646": "RW",
   "678": "ST", "686": "SN", "690": "SC", "694": "SL", "706": "SO", "710": "ZA", "728": "SS", "729": "SD",
   "834": "TZ", "768": "TG", "788": "TN", "800": "UG", "894": "ZM", "716": "ZW", "732": "EH",
+  // The Middle East, which the escalation pipeline also covers (Turkey, Iran and the Gulf included).
+  "760": "SY", "368": "IQ", "364": "IR", "376": "IL", "275": "PS", "422": "LB", "400": "JO", "887": "YE", "682": "SA",
+  "512": "OM", "784": "AE", "414": "KW", "634": "QA", "048": "BH", "792": "TR",
 };
 
 const round = (n) => Math.round(n * 100) / 100; // ~1.1 km — plenty for "is this point inside this country"

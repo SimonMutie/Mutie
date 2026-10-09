@@ -12,6 +12,7 @@ import {
   normalizeName,
   resolveCountryCode,
   resolvePlaceOffline,
+  MIDDLE_EAST_CODES,
 } from "../src/lib/africaGeo";
 import places from "../src/data/africaPlaces.json";
 
@@ -33,7 +34,7 @@ describe("country name resolution is exact, never substring", () => {
     expect(resolveCountryCode("Ivory Coast")).toBe("CI");
   });
   it("returns null for non-African countries and free text", () => {
-    for (const n of ["Yemen", "Saudi Arabia", "Papua New Guinea", "Oman", "Somali", "Malian forces", ""]) {
+    for (const n of ["Ukraine", "Pakistan", "Papua New Guinea", "Georgia", "Somali", "Malian forces", ""]) {
       expect(resolveCountryCode(n)).toBeNull();
     }
   });
@@ -50,15 +51,16 @@ describe("point-in-country", () => {
     expect(countryAt(4.8517, 31.5825)).toBe("SS"); // Juba, not Sudan
     expect(countryAt(13.5116, 2.1254)).toBe("NE"); // Niamey, not Nigeria
   });
-  it("returns null outside Africa", () => {
-    expect(countryAt(24.7136, 46.6753)).toBeNull(); // Riyadh
-    expect(countryAt(13.5789, 44.0209)).toBeNull(); // Taiz, Yemen
+  it("places the Middle East in its own countries and null beyond", () => {
+    expect(countryAt(24.7136, 46.6753)).toBe("SA"); // Riyadh
+    expect(countryAt(13.5789, 44.0209)).toBe("YE"); // Taiz
+    expect(countryAt(49.99, 36.23)).toBeNull(); // Kharkiv
   });
   it("rejects the mis-geolocations that were reported", () => {
     // An Ethiopia (Tigray) event must not be accepted at a Djibouti coordinate.
     expect(isInOrNearCountry("ET", 11.588, 43.145)).toBe(false);
     // Nothing in Yemen or Saudi Arabia can pass as any African country.
-    for (const code of Object.keys(AFRICA_GEO_COUNTRIES)) {
+    for (const code of Object.keys(AFRICA_GEO_COUNTRIES).filter((c) => !MIDDLE_EAST_CODES.has(c))) {
       expect(isInOrNearCountry(code, 24.7136, 46.6753)).toBe(false);
       expect(isInOrNearCountry(code, 13.5789, 44.0209)).toBe(false);
     }
@@ -134,8 +136,8 @@ describe("place resolution stays inside the stated country", () => {
 
 describe("Africa relevance check for world-news feeds", () => {
   it("passes items about Africa and skips the rest", () => {
-    for (const t of ["Sudan's army retakes key Kordofan town", "Drone strike kills seven in Mekelle", "Malian junta delays vote", "DR Congo rebels advance on Uvira", "Somaliland forces clash near Las Anod"]) expect(mentionsAfrica(t), t).toBe(true);
-    for (const t of ["Russian strike hits Kharkiv apartment block", "Houthi forces shell Taiz", "Israel strikes southern Lebanon", "Papua New Guinea landslide toll rises"]) expect(mentionsAfrica(t), t).toBe(false);
+    for (const t of ["Sudan's army retakes key Kordofan town", "Drone strike kills seven in Mekelle", "Malian junta delays vote", "DR Congo rebels advance on Uvira", "Somaliland forces clash near Las Anod", "Houthi forces shell Taiz", "Israel strikes southern Lebanon", "Red Sea shipping attacked"]) expect(mentionsAfrica(t), t).toBe(true);
+    for (const t of ["Russian strike hits Kharkiv apartment block", "Papua New Guinea landslide toll rises"]) expect(mentionsAfrica(t), t).toBe(false);
   });
 });
 

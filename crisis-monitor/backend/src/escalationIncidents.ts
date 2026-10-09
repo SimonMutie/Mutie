@@ -295,7 +295,7 @@ async function gatherGdelt(env: Env): Promise<Candidate[]> {
        FROM gdelt_bulk_events
        WHERE date_added >= ? AND source_url LIKE 'http%'
          AND (event_code LIKE '15%' OR event_code LIKE '18%' OR event_code LIKE '19%' OR event_code LIKE '20%')
-         AND lat BETWEEN -36 AND 38.5 AND lon BETWEEN -26 AND 60
+         AND lat BETWEEN -36 AND 42 AND lon BETWEEN -26 AND 64
        GROUP BY source_url ORDER BY mentions DESC LIMIT 400`,
       [since]
     );

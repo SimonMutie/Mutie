@@ -117,11 +117,11 @@ function clauseAt(sentence: string, at: number): string {
   return sentence.slice(start, end);
 }
 
-/** Countries and territories outside Africa where the reported event would
+/** Countries and territories outside Africa and the Middle East where the reported event would
  *  actually be. A headline that names one is not coded here even if an
  *  African place is also mentioned ("Kenyan killed in Ukraine strike"). */
 const ELSEWHERE_RX =
-  /\b(ukraine|gaza|israel|west bank|lebanon|syria|iran|iraq|yemen|pakistan|india|kashmir|afghanistan|myanmar|bangladesh|taiwan|north korea|philippines|haiti|colombia|venezuela|mexico|ecuador|texas|california|florida|new york|kosovo|armenia|azerbaijan)\b/i;
+  /\b(ukraine|pakistan|india|kashmir|afghanistan|myanmar|bangladesh|taiwan|north korea|philippines|haiti|colombia|venezuela|mexico|ecuador|texas|california|florida|new york|kosovo|armenia|azerbaijan)\b/i;
 /** Something that has not happened: a warning, a threat, a fear, a plan, a drill. */
 const HYPOTHETICAL_RX =
   /\b(warn(?:s|ed|ing)? (?:of|that|against)|threat(?:en)?(?:s|ed|ing)? (?:to|of)|fears? (?:of|that|grow)|risk of|could|might|plans? to|vows? to|pledges? to|ready to|set to|prepar(?:es|ing) (?:to|for)|drills?|military exercises?|training exercise|simulat\w+|menace de|risque de|pourrait)\b/i;
@@ -450,7 +450,7 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
   if (LEGAL_RX.test(title)) return reject("legal_or_court", "Headline is about legal proceedings.");
   if (REACTION_RX.test(title)) return reject("diplomatic_or_political_only", "Headline is a reaction to, or a statement about, an event — not a report of the event.");
   if (IMPACT_RX.test(title)) return reject("humanitarian_only", "Headline is about the consequences of fighting, not a new armed event.");
-  if (ELSEWHERE_RX.test(title)) return reject("outside_africa", "Headline names a place outside Africa.");
+  if (ELSEWHERE_RX.test(title)) return reject("outside_africa", "Headline names a place outside Africa and the Middle East.");
 
   // The headline's own sentences, then the summary's.
   const summarySentences = splitSentences(title && text.startsWith(title) ? text.slice(title.length).replace(/^[\s.]+/, "") : text);
@@ -512,7 +512,7 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
     const countryOnly = locateText(text);
     return countryOnly
       ? reject("unverified", `Names ${countryName(countryOnly.countryCode)} but no town or region; left for a full reading.`)
-      : reject("outside_africa", "Names no place in Africa.");
+      : reject("outside_africa", "Names no place in Africa or the Middle East.");
   }
 
   const toll = deathToll([...eventSentences, ...sentences.filter((s) => !eventSentences.includes(s))]);

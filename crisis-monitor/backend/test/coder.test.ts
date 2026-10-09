@@ -43,11 +43,18 @@ describe("verifyCoding", () => {
     expect(out.reports[0].fatalities).toBeNull();
   });
 
-  it("rejects events outside Africa (the Taiz case)", () => {
-    const text = "Houthi forces shelled government positions in Taiz on Thursday, Yemeni officials said, as Saudi mediators in Riyadh pressed for talks.";
-    const out = verifyCoding(coding(event({ country: "Yemen", country_iso2: "YE", place: "Taiz", indicators: [{ id: "heavy_weapons", quote: "Houthi forces shelled government positions in Taiz" }] })), article(text), NOW);
+  it("rejects events outside Africa and the Middle East", () => {
+    const text = "Russian drones struck apartment blocks in Kharkiv on Thursday, Ukrainian officials said, as talks in Istanbul stalled.";
+    const out = verifyCoding(coding(event({ country: "Ukraine", country_iso2: "UA", place: "Kharkiv", indicators: [{ id: "heavy_weapons", quote: "Russian drones struck apartment blocks in Kharkiv" }] })), article(text), NOW);
     expect(out.reports).toHaveLength(0);
     expect(out.rejectionReason).toBe("outside_africa");
+  });
+
+  it("accepts a Middle East event (the Taiz case)", () => {
+    const text = "Houthi forces shelled government positions in Taiz on Thursday, Yemeni officials said, as Saudi mediators in Riyadh pressed for talks.";
+    const out = verifyCoding(coding(event({ country: "Yemen", country_iso2: "YE", place: "Taiz", indicators: [{ id: "heavy_weapons", quote: "Houthi forces shelled government positions in Taiz" }] })), article(text), NOW);
+    expect(out.reports).toHaveLength(1);
+    expect(out.reports[0].countryCode).toBe("YE");
   });
 
   it("corrects the country when the named place belongs to another one (Hargeisa is not in Ethiopia)", () => {

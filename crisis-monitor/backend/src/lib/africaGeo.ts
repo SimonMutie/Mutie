@@ -99,7 +99,26 @@ export const AFRICA_GEO_COUNTRIES: Record<string, CountryInfo> = {
   ZM: { name: "Zambia", aliases: ["zambie"] },
   ZW: { name: "Zimbabwe", aliases: [] },
   EH: { name: "Western Sahara", aliases: ["sahara occidental", "w. sahara", "sahrawi arab democratic republic"] },
+  // The Middle East, the only region outside Africa the platform covers.
+  SY: { name: "Syria", aliases: ["syrian arab republic", "syrie"] },
+  IQ: { name: "Iraq", aliases: ["irak"] },
+  IR: { name: "Iran", aliases: ["islamic republic of iran"] },
+  IL: { name: "Israel", aliases: [] },
+  PS: { name: "Palestine", aliases: ["palestinian territories", "occupied palestinian territories", "state of palestine", "gaza strip", "gaza", "west bank", "occupied west bank"] },
+  LB: { name: "Lebanon", aliases: ["liban"] },
+  JO: { name: "Jordan", aliases: ["hashemite kingdom of jordan"] },
+  YE: { name: "Yemen", aliases: ["yemen republic"] },
+  SA: { name: "Saudi Arabia", aliases: ["ksa", "saudi", "kingdom of saudi arabia"] },
+  OM: { name: "Oman", aliases: [] },
+  AE: { name: "United Arab Emirates", aliases: ["uae", "emirates"] },
+  KW: { name: "Kuwait", aliases: [] },
+  QA: { name: "Qatar", aliases: [] },
+  BH: { name: "Bahrain", aliases: [] },
+  TR: { name: "Turkey", aliases: ["turkiye"] },
 };
+
+/** The Middle East codes in AFRICA_GEO_COUNTRIES — everything there that is not African. */
+export const MIDDLE_EAST_CODES = new Set(["SY", "IQ", "IR", "IL", "PS", "LB", "JO", "YE", "SA", "OM", "AE", "KW", "QA", "BH", "TR"]);
 
 /** Approximate geographic centroids — the last-resort marker position, used
  *  only when reporting names no place more specific than the country, and
@@ -115,6 +134,8 @@ export const AFRICA_CENTROIDS: Record<string, [number, number]> = {
   ST: [0.2, 6.6], SN: [14.5, -14.5], SC: [-4.7, 55.5], SL: [8.5, -11.8], SO: [5.2, 46.2],
   ZA: [-30.6, 22.9], SS: [7.9, 30.0], SD: [15.5, 30.2], TZ: [-6.4, 34.9], TG: [8.6, 0.8], TN: [34.0, 9.5],
   UG: [1.4, 32.3], ZM: [-13.1, 27.8], ZW: [-19.0, 29.8], EH: [24.6, -13.0],
+  SY: [35.0, 38.5], IQ: [33.0, 43.7], IR: [32.4, 53.7], IL: [31.5, 34.9], PS: [31.9, 35.2], LB: [33.9, 35.9], JO: [31.2, 36.5],
+  YE: [15.6, 47.6], SA: [24.0, 45.0], OM: [21.0, 57.0], AE: [24.3, 54.3], KW: [29.3, 47.6], QA: [25.3, 51.2], BH: [26.0, 50.55], TR: [39.0, 35.2],
 };
 
 /** Lowercase, strip diacritics/apostrophes/punctuation, collapse whitespace.
@@ -411,7 +432,7 @@ export function localityKey(countryCode: string, loc: ResolvedLocation, admin1: 
  *  filling the reading queue with stories from other continents — a loose
  *  relevance check, never an attribution. */
 const AFRICA_MENTION_TERMS: Set<string> = (() => {
-  const terms = new Set<string>(["africa", "african", "africaine", "afrique", "sahel", "maghreb"]);
+  const terms = new Set<string>(["africa", "african", "africaine", "afrique", "sahel", "maghreb", "middle east", "red sea", "gulf of aden", "strait of hormuz", "persian gulf", "levant", "bab el mandeb", "houthi", "houthis", "hezbollah", "hamas"]);
   for (const info of Object.values(AFRICA_GEO_COUNTRIES)) {
     for (const n of [info.name, ...info.aliases]) {
       const k = normalizeName(n).replace(/[()]/g, "").trim();
@@ -435,7 +456,7 @@ export function mentionsAfrica(text: string): boolean {
       if (AFRICA_MENTION_TERMS.has(phrase)) return true;
     }
     // Demonyms: "Sudanese", "Ethiopian", "Malian", "Somali", "Congolese"...
-    if (/^(?:sudanese|ethiopian|eritrean|somali|kenyan|ugandan|rwandan|burundian|tanzanian|congolese|malian|nigerien|nigerian|burkinabe|chadian|cameroonian|libyan|egyptian|tunisian|algerian|moroccan|mozambican|ivorian|ghanaian|senegalese|guinean|zimbabwean|zambian|angolan|malawian|togolese|beninese|mauritanian|gambian|liberian|namibian|malagasy|sahrawi|tigrayan|darfuri)s?$/.test(words[i])) return true;
+    if (/^(?:sudanese|ethiopian|eritrean|somali|kenyan|ugandan|rwandan|burundian|tanzanian|congolese|malian|nigerien|nigerian|burkinabe|chadian|cameroonian|libyan|egyptian|tunisian|algerian|moroccan|mozambican|ivorian|ghanaian|senegalese|guinean|zimbabwean|zambian|angolan|malawian|togolese|beninese|mauritanian|gambian|liberian|namibian|malagasy|sahrawi|tigrayan|darfuri|syrian|iraqi|iranian|israeli|palestinian|lebanese|jordanian|yemeni|saudi|omani|emirati|kuwaiti|qatari|bahraini|turkish)s?$/.test(words[i])) return true;
   }
   return false;
 }

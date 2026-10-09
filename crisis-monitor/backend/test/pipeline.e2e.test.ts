@@ -143,18 +143,18 @@ const FIXTURES: Fixture[] = recent<Fixture[]>([
     },
   },
   {
-    // GDELT geocoded this Yemen story onto Africa. Must be rejected outright.
-    url: "https://gulf-news.example/yemen-taiz-shelling",
-    title: "Houthi shelling hits Taiz as Riyadh talks stall",
+    // GDELT geocoded this Ukraine story onto Africa. Must be rejected outright.
+    url: "https://gulf-news.example/ukraine-kharkiv-shelling",
+    title: "Russian shelling hits Kharkiv as Istanbul talks stall",
     sourceCountry: "GDELT",
-    body: pad("Houthi forces shelled government positions in Taiz on Thursday, Yemeni officials said, as Saudi mediators in Riyadh pressed for a new round of talks. Shipping near Port Sudan and the Bab al-Mandab strait was unaffected."),
+    body: pad("Russian forces shelled government positions in Kharkiv on Thursday, Ukrainian officials said, as mediators in Istanbul pressed for a new round of talks. Shipping near Port Sudan was unaffected."),
     coding: {
       is_event_report: true, rejection_reason: null,
       events: [{
-        country: "Yemen", country_iso2: "YE", place: "Taiz", admin1: null, lat: 13.58, lon: 44.02, event_date: day(1), novelty: "new_event", actors: ["Houthis"],
-        indicators: [{ id: "heavy_weapons", quote: "Houthi forces shelled government positions in Taiz on Thursday" }],
+        country: "Ukraine", country_iso2: "UA", place: "Kharkiv", admin1: null, lat: 49.99, lon: 36.23, event_date: day(1), novelty: "new_event", actors: ["Russian forces"],
+        indicators: [{ id: "heavy_weapons", quote: "Russian forces shelled government positions in Kharkiv on Thursday" }],
         fatalities: null, fatalities_quote: null, trajectory: "continuation", trajectory_reason: null,
-        what_happened: "Houthi forces shelled government positions in Taiz.", significance: null, confidence: "high",
+        what_happened: "Russian forces shelled government positions in Kharkiv.", significance: null, confidence: "high",
       }],
     },
   },
@@ -216,9 +216,9 @@ beforeAll(() => {
             event_code TEXT, quad_class INTEGER, source_url TEXT, ingested_at TEXT);`);
   // An alert left behind by the old country-level scorer.
   db.prepare("INSERT INTO alerts (id, query_id, level, title, description, metric_snapshot, geo_label, created_at) VALUES ('legacy', NULL, 'elevated', 'Elevated escalation: Kenya', 'x', '{\"escalationScore\":3.1}', 'Kenya', ?)").run(iso(3));
-  // GDELT rows: the Yemen story geocoded onto Sudan's coast, the Ghana story geocoded onto Pretoria.
+  // GDELT rows: the Ukraine story geocoded onto Sudan's coast, the Ghana story geocoded onto Pretoria.
   const ins = db.prepare("INSERT INTO gdelt_bulk_events (id, date_added, lat, lon, place_name, num_mentions, event_code, quad_class, source_url) VALUES (?,?,?,?,?,?,?,?,?)");
-  ins.run("g1", gdeltTs(2), 19.6, 37.2, "Port Sudan, Red Sea, Sudan", 40, "194", 4, "https://gulf-news.example/yemen-taiz-shelling");
+  ins.run("g1", gdeltTs(2), 19.6, 37.2, "Port Sudan, Red Sea, Sudan", 40, "194", 4, "https://gulf-news.example/ukraine-kharkiv-shelling");
   ins.run("g2", gdeltTs(2), -25.75, 28.23, "Pretoria, Gauteng, South Africa", 12, "190", 4, "https://sa-times.example/africa/ghana-parliament-budget");
 
   const wireCandidates = FIXTURES.filter((f) => f.sourceCountry !== "GDELT").map((f, i) => ({
@@ -334,7 +334,7 @@ describe("escalation pipeline, end to end", () => {
   it("records why each rejected article was rejected", async () => {
     const audit = await getAuditLog(env, { status: "rejected" });
     const reason = (frag: string) => audit.find((a) => a.url.includes(frag))?.rejectionReason;
-    expect(reason("yemen-taiz")).toBe("outside_africa");
+    expect(reason("ukraine-kharkiv")).toBe("outside_africa");
     expect(reason("ghana-parliament")).toBe("not_security_related");
     expect(reason("security-outlook")).toBe("unverified");
   });

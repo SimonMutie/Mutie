@@ -115,7 +115,7 @@ const CODING_SCHEMA = {
   additionalProperties: false,
   required: ["is_event_report", "rejection_reason", "events"],
   properties: {
-    is_event_report: { type: "boolean", description: "True only if the article reports at least one specific armed/security event in Africa that meets the codebook." },
+    is_event_report: { type: "boolean", description: "True only if the article reports at least one specific armed/security event in Africa or the Middle East that meets the codebook." },
     rejection_reason: { type: ["string", "null"], enum: [...EXCLUSIONS.map((e) => e.id), null], description: "Required when is_event_report is false." },
     rejection_note: { type: ["string", "null"], description: "One short sentence saying what the article is actually about, when rejected." },
     events: {
@@ -162,7 +162,7 @@ const CODING_SCHEMA = {
   },
 } as const;
 
-const CODER_SYSTEM = `You code news articles for an African conflict-monitoring platform used by professional analysts. You read ONE article in full and record exactly what it reports, against the codebook below. You do not decide alert levels and you do not add anything the article does not say.
+const CODER_SYSTEM = `You code news articles for an Africa and Middle East conflict-monitoring platform used by professional analysts. You read ONE article in full and record exactly what it reports, against the codebook below. You do not decide alert levels and you do not add anything the article does not say.
 
 ${codebookText()}
 
@@ -178,7 +178,7 @@ RULES
    - explainers, rights reports, round-ups and updates that restate a long-running war, siege or insurgency without a specific new armed event of its own (commentary_or_analysis or retrospective).
    If such a piece does contain a specific new armed event with its own place and date, code that event only, from the passage that reports it. A standing situation is never an indicator by itself: "the city has been under siege since May" is background; "shelling killed nine in the city on Monday" is an event.
 
-3. LOCATION is where the event physically happened — never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa, reject with outside_africa.
+3. LOCATION is where the event physically happened — never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa and the Middle East (Syria, Iraq, Iran, Israel, Palestine/Gaza/West Bank, Lebanon, Jordan, Yemen, Saudi Arabia, Oman, UAE, Kuwait, Qatar, Bahrain, Turkey), reject with outside_africa. Use the country the event happened in; for the Gaza Strip and West Bank use Palestine.
 
 4. Every indicator needs a QUOTE copied character-for-character from the article, in its original language, that on its own establishes the indicator. If you cannot quote it, do not code it. Code only what is reported as having happened; do not code an indicator from a figurative use ("a clash of views", "under siege from critics"), from a denial, or from a hypothetical.
 
@@ -270,6 +270,16 @@ const GROUNDING_EXTRAS: Record<string, string[]> = {
   MA: ["المغرب"],
   MR: ["موريتانيا"],
   DJ: ["جيبوتي"],
+  PS: ["gaza", "west bank", "palestinian", "غزة", "الضفة الغربية", "فلسطين"],
+  IL: ["israeli", "إسرائيل"],
+  YE: ["yemeni", "houthi", "اليمن"],
+  SY: ["syrian", "سوريا"],
+  IQ: ["iraqi", "العراق"],
+  IR: ["iranian", "إيران", "ايران"],
+  LB: ["lebanese", "hezbollah", "لبنان"],
+  SA: ["saudi"],
+  AE: ["emirati"],
+  TR: ["turkish", "turkiye"],
 };
 /** Countries whose generic demonym pattern would collide with a neighbour's
  *  ("Nigerian" must not ground Niger). */
@@ -499,7 +509,7 @@ const SYNTHESIS_SCHEMA = {
   },
 } as const;
 
-const ANALYST_SYSTEM = `You are a senior conflict analyst writing the assessment for one flagged incident on an African security-monitoring platform. Your reader is an intelligence professional who will act on it.
+const ANALYST_SYSTEM = `You are a senior conflict analyst writing the assessment for one flagged incident on an Africa and Middle East security-monitoring platform. Your reader is an intelligence professional who will act on it.
 
 You are given the coded reports for this incident: each with its source, the indicators found in it and the exact quotes behind them, the actors, dates and figures. Write from that material only. Do not add events, causes, actors, numbers or history that are not in it.
 

@@ -203,7 +203,7 @@ export const EXCLUSIONS: { id: string; description: string }[] = [
   { id: "legal_or_court", description: "Trials, verdicts, arrests, investigations or human-rights reports about past events." },
   { id: "routine_military_activity", description: "Training exercises, parades, graduations, procurement, peacekeeping rotations, promotions, base visits." },
   { id: "crime_or_unrest_without_armed_actor", description: "Ordinary crime, protests, strikes or riots with no organised armed actor and no military or lethal security-force action." },
-  { id: "outside_africa", description: "The event took place outside Africa, even if African forces, citizens or governments are mentioned." },
+  { id: "outside_africa", description: "The event took place outside Africa and the Middle East, even if African forces, citizens or governments are mentioned." },
   { id: "threat_or_warning_only", description: "Threats, warnings, predictions or fears of violence where nothing has actually happened yet. (Reported troop movements that have actually occurred are mobilisation_or_reinforcement, not this.)" },
   { id: "not_security_related", description: "Business, sport, culture, weather, accidents and other non-security news, including figurative uses of conflict words." },
   { id: "unreadable", description: "The text is too short, garbled, paywalled or off-topic to code." },
