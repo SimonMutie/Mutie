@@ -295,12 +295,15 @@ async function gatherGdelt(env: Env): Promise<Candidate[]> {
        FROM gdelt_bulk_events
        WHERE date_added >= ? AND source_url LIKE 'http%'
          AND (event_code LIKE '15%' OR event_code LIKE '18%' OR event_code LIKE '19%' OR event_code LIKE '20%')
-         AND lat BETWEEN -36 AND 42 AND lon BETWEEN -26 AND 64
-       GROUP BY source_url ORDER BY mentions DESC LIMIT 400`,
+         AND ((lat BETWEEN -36 AND 38 AND lon BETWEEN -19 AND 53) OR (lat BETWEEN 12 AND 42 AND lon BETWEEN 25 AND 64))
+       GROUP BY source_url ORDER BY mentions DESC LIMIT 4000`,
       [since]
     );
+    // The boxes above also take in parts of Europe, the Caucasus and South Asia, so the rows are cut to Africa and
+    // the Middle East here, and only then to the reading budget; otherwise those events would crowd out the rest.
     return rows
       .filter((r) => countryAt(r.lat, r.lon) !== null || resolveCountryCode((r.place_name ?? "").split(",").pop()?.trim()) !== null)
+      .slice(0, 600)
       .map((r) => ({
         id: hashId(canonicalUrl(r.source_url)),
         url: r.source_url,

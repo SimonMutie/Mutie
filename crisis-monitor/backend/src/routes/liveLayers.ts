@@ -597,7 +597,7 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const [places, incidents] = await Promise.all([queryConflictPlaces(c.env, { hours: 48, box: { south: -36, west: -26, north: 42, east: 64 } }), getFlaggedIncidents(c.env)]);
+      const [places, incidents] = await Promise.all([queryConflictPlaces(c.env, { hours: 48, box: { south: -36, west: -19, north: 42, east: 64 } }), getFlaggedIncidents(c.env)]);
       const points: ZonePoint[] = [
         ...places.map((e) => ({ lat: e.lat, lon: e.lon, weight: e.n })),
         ...incidents.filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate").map((i) => ({ lat: i.lat, lon: i.lon, verified: true })),
