@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type DashboardWidget } from "../api";
 import DashboardEditor from "./DashboardEditor";
+import { compileQuery } from "./viz/types";
 
 const DEFAULT_COUNTRY = "Kenya";
 
@@ -16,7 +17,27 @@ const W = (id: string, type: DashboardWidget["type"], title: string, layout: { x
 const FIELD_LABELS = {
   province: { label: "Province", type: "text" as const },
   sector: { label: "Sector", type: "text" as const },
+  tactic: { label: "Tactic", type: "text" as const },
+  severity: { label: "Severity", type: "text" as const },
 };
+
+/** What — tactics, as a sunburst: each tactic in the inner ring, split by severity in the outer one. */
+const tacticSunburst = (layout: { x: number; y: number; w: number; h: number }): DashboardWidget => ({
+  id: "tactic",
+  type: "viz",
+  title: "What — tactics, by severity",
+  size: "medium",
+  layout,
+  viz: {
+    kind: "sunburst",
+    source: "incidents",
+    rows: [{ field: "tactic" }, { field: "severity" }],
+    columns: [],
+    values: [{ agg: "count" }],
+    filters: [],
+    options: { fields: FIELD_LABELS },
+  },
+});
 
 /** What a new country dashboard starts with. After that it is the person's own: every card can be moved, resized,
  *  edited or removed, more can be added, and it can be given a look and published like any other dashboard. */
@@ -31,7 +52,7 @@ function templateFor(): DashboardWidget[] {
     W("severity", "pie", "Severity", { x: 8, y: 16, w: 4, h: 8 }, { dataField: "by_severity", showLegend: true }),
     W("province", "bar", "Where — by province / county", { x: 0, y: 24, w: 4, h: 9 }, { dataField: "by_province", topN: 12, color: "#2a78d6", showDataLabels: true }),
     W("actor", "bar", "Who — actors involved", { x: 4, y: 24, w: 4, h: 9 }, { dataField: "by_actor", topN: 10, showDataLabels: true }),
-    W("tactic", "pie", "What — tactics", { x: 8, y: 24, w: 4, h: 9 }, { dataField: "by_tactic", topN: 8, showLegend: true }),
+    tacticSunburst({ x: 8, y: 24, w: 4, h: 9 }),
     W("calendar", "calendar", "Daily activity calendar", { x: 0, y: 33, w: 12, h: 6 }, { color: "#e34948" }),
     W("victims", "victims", "Women, men and children killed in criminal incidents", { x: 0, y: 39, w: 5, h: 11 }, { victimGroup: "Criminal" }),
     {
@@ -59,6 +80,9 @@ function templateFor(): DashboardWidget[] {
   ];
 }
 
+/** A visual's saved request is what a shared link runs, so every visual is saved with it compiled. */
+const withQuery = (w: DashboardWidget): DashboardWidget => (w.type === "viz" && w.viz && !w.viz.query ? { ...w, viz: { ...w.viz, query: compileQuery(w.viz) ?? undefined } } : w);
+
 const opening = new Map<string, Promise<string>>();
 /** The dashboard for a country: the one already made for it, or a new one built from the template. */
 function dashboardFor(country: string): Promise<string> {
@@ -68,8 +92,15 @@ function dashboardFor(country: string): Promise<string> {
     p = (async () => {
       const all = await api.getCustomDashboards();
       const found = all.find((d) => !d.is_auto && (d.country ?? "").toLowerCase() === key);
-      if (found) return found.id;
-      const created = await api.createCustomDashboard(`${country} — country dashboard`, templateFor());
+      if (found) {
+        // A dashboard made before the tactics chart became a sunburst: swap the untouched pie for it. Visuals saved
+        // without their compiled request get it now, so a shared link can run them.
+        const old = found.widgets.find((w) => w.id === "tactic" && w.type === "pie");
+        const next = found.widgets.map((w) => withQuery(w === old ? { ...tacticSunburst(old.layout ?? { x: 8, y: 24, w: 4, h: 9 }), locked: old.locked } : w));
+        if (old || next.some((w, i) => w !== found.widgets[i])) await api.updateCustomDashboard(found.id, { widgets: next }).catch(() => {});
+        return found.id;
+      }
+      const created = await api.createCustomDashboard(`${country} — country dashboard`, templateFor().map(withQuery));
       await api.updateCustomDashboard(created.id, { country });
       return created.id;
     })();
