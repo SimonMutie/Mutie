@@ -5,6 +5,7 @@ import { canAccessQuery } from "../ownership";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { channelsAvailable, cleanDestination } from "../lib/notify";
 import { baselineEscalationSubscription, DEFAULT_FREQUENCY, ensureAlertTables, FREQUENCIES, newSubscriptionId, sendTestMessage, type Subscription } from "../lib/alertDelivery";
+import { getVapid } from "../lib/webpush";
 import type { Env } from "../bindings";
 
 /**
@@ -19,20 +20,22 @@ export const alertSubscriptionsRouter = new Hono<{ Bindings: Env; Variables: Aut
 alertSubscriptionsRouter.use("*", requireAuth);
 
 const MAX_PER_TARGET = 6;
+/** Devices are counted apart from email and Signal addresses: a person may have several phones and computers. */
+const MAX_DEVICES = 15;
 
-const frequency = z.number().int().refine((n) => (FREQUENCIES as readonly number[]).includes(n), "frequency_minutes must be 15, 60, 360 or 1440");
+const frequency = z.number().int().refine((n) => (FREQUENCIES as readonly number[]).includes(n), "frequency_minutes must be 5, 15, 60, 360 or 1440");
 
 const createSchema = z.object({
   scope: z.enum(["query", "escalations"]),
   query_id: z.string().min(1).optional(),
-  channel: z.enum(["email", "signal"]),
-  destination: z.string().min(1).max(254),
+  channel: z.enum(["email", "signal", "push"]),
+  destination: z.string().min(1).max(2000),
   min_level: z.enum(["any", "alert", "elevated", "critical"]).optional(),
   frequency_minutes: frequency.optional(),
 });
 
 const patchSchema = z.object({
-  destination: z.string().min(1).max(254).optional(),
+  destination: z.string().min(1).max(2000).optional(),
   min_level: z.enum(["any", "alert", "elevated", "critical"]).optional(),
   frequency_minutes: frequency.optional(),
   enabled: z.boolean().optional(),
@@ -61,6 +64,9 @@ async function ownSubscription(c: { env: Env; get: (k: "userId") => string }, id
   return first<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE id = ? AND owner_id = ?", [id, c.get("userId")]);
 }
 
+/** The key a browser needs to subscribe this server to push messages. */
+alertSubscriptionsRouter.get("/push-key", async (c) => c.json({ publicKey: (await getVapid(c.env)).publicKey }));
+
 /** ?scope=escalations, or ?scope=query&query_id=… */
 alertSubscriptionsRouter.get("/", async (c) => {
   await ensureAlertTables(c.env);
@@ -85,7 +91,7 @@ alertSubscriptionsRouter.post("/", async (c) => {
   const d = parsed.data;
 
   const destination = cleanDestination(d.channel, d.destination);
-  if (!destination) return c.json({ error: d.channel === "email" ? "That is not a valid email address." : "Signal numbers are written with the country code, like +254712345678." }, 400);
+  if (!destination) return c.json({ error: d.channel === "email" ? "That is not a valid email address." : d.channel === "push" ? "This device could not be registered for alerts." : "Signal numbers are written with the country code, like +254712345678." }, 400);
 
   const minLevel = d.min_level ?? (d.scope === "escalations" ? "elevated" : "any");
   if (!levelFits(d.scope, minLevel)) return c.json({ error: LEVEL_ERROR }, 400);
@@ -98,11 +104,11 @@ alertSubscriptionsRouter.post("/", async (c) => {
   const existing = await first<{ n: number; dup: number }>(
     c.env.DB,
     `SELECT COUNT(*) AS n, SUM(CASE WHEN channel = ? AND destination = ? THEN 1 ELSE 0 END) AS dup
-     FROM alert_subscriptions WHERE owner_id = ? AND scope = ? AND COALESCE(query_id,'') = ?`,
-    [d.channel, destination, c.get("userId"), d.scope, queryId ?? ""]
+     FROM alert_subscriptions WHERE owner_id = ? AND scope = ? AND COALESCE(query_id,'') = ? AND (channel = 'push') = (? = 'push')`,
+    [d.channel, destination, c.get("userId"), d.scope, queryId ?? "", d.channel]
   );
   if (Number(existing?.dup ?? 0) > 0) return c.json({ error: "You already get these alerts there." }, 409);
-  if (Number(existing?.n ?? 0) >= MAX_PER_TARGET) return c.json({ error: `You can have up to ${MAX_PER_TARGET} delivery destinations here.` }, 400);
+  if (Number(existing?.n ?? 0) >= (d.channel === "push" ? MAX_DEVICES : MAX_PER_TARGET)) return c.json({ error: d.channel === "push" ? `Up to ${MAX_DEVICES} devices can get alerts.` : `You can have up to ${MAX_PER_TARGET} delivery destinations here.` }, 400);
 
   const id = newSubscriptionId();
   const now = nowIso();
@@ -110,7 +116,7 @@ alertSubscriptionsRouter.post("/", async (c) => {
     c.env.DB,
     `INSERT INTO alert_subscriptions (id, owner_id, scope, query_id, channel, destination, min_level, frequency_minutes, enabled, cursor_at, created_at)
      VALUES (?,?,?,?,?,?,?,?,1,?,?)`,
-    [id, c.get("userId"), d.scope, queryId, d.channel, destination, minLevel, d.frequency_minutes ?? DEFAULT_FREQUENCY[d.scope], d.scope === "query" ? now : null, now]
+    [id, c.get("userId"), d.scope, queryId, d.channel, destination, minLevel, d.frequency_minutes ?? (d.channel === "push" && d.scope === "escalations" ? 5 : DEFAULT_FREQUENCY[d.scope]), d.scope === "query" ? now : null, now]
   );
   // So the first alert is about what happens next, not a replay of what is on the map now.
   if (d.scope === "escalations") await baselineEscalationSubscription(c.env, id);

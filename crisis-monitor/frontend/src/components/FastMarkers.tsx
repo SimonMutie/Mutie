@@ -9,6 +9,8 @@ export interface FastPoint {
   color: string;
   /** Built only when the pointer rests on a pin, so tens of thousands of points cost nothing until looked at. */
   tip: () => string;
+  /** The full details, opened by clicking the pin. */
+  popup?: () => string;
 }
 
 const sprites = new Map<string, HTMLImageElement>();
@@ -27,7 +29,7 @@ function sprite(color: string, w: number, onReady: () => void): HTMLImageElement
 }
 
 /** Incident pins — the same teardrop markers as every other map — drawn on one canvas, so tens of thousands stay quick
- *  to pan and zoom (a page element per pin is not). Hover a pin for its details. */
+ *  to pan and zoom (a page element per pin is not). Hover a pin for a summary and click it for the full details, as on the main map. */
 export function FastMarkers({ points, width = 15 }: { points: FastPoint[]; width?: number }) {
   const map = useMap();
   useEffect(() => {
@@ -69,18 +71,27 @@ export function FastMarkers({ points, width = 15 }: { points: FastPoint[]; width
       if (!raf) raf = requestAnimationFrame(draw);
     }
 
+    const hitAt = (x: number, y: number) => {
+      for (let k = shown.length - 1; k >= 0; k--) {
+        const s = shown[k];
+        if (x >= s.x - width / 2 && x <= s.x + width / 2 && y >= s.y - height && y <= s.y) return s.i;
+      }
+      return -1;
+    };
+    const onClick = (e: L.LeafletMouseEvent) => {
+      const hit = hitAt(e.containerPoint.x, e.containerPoint.y);
+      const p = hit >= 0 ? points[hit] : null;
+      if (!p?.popup) return;
+      if (tip) map.removeLayer(tip);
+      tip = null;
+      tipFor = -1;
+      L.popup({ minWidth: 220, maxWidth: 320, offset: [0, -height] }).setLatLng([p.latitude, p.longitude]).setContent(p.popup()).openOn(map);
+    };
+
     let tip: L.Tooltip | null = null;
     let tipFor = -1;
     const onMove = (e: L.LeafletMouseEvent) => {
-      const { x, y } = e.containerPoint;
-      let hit = -1;
-      for (let k = shown.length - 1; k >= 0; k--) {
-        const s = shown[k];
-        if (x >= s.x - width / 2 && x <= s.x + width / 2 && y >= s.y - height && y <= s.y) {
-          hit = s.i;
-          break;
-        }
-      }
+      const hit = hitAt(e.containerPoint.x, e.containerPoint.y);
       map.getContainer().style.cursor = hit >= 0 ? "pointer" : "";
       if (hit === tipFor) return;
       tipFor = hit;
@@ -102,12 +113,14 @@ export function FastMarkers({ points, width = 15 }: { points: FastPoint[]; width
 
     map.on("move zoom viewreset resize moveend zoomend", schedule);
     map.on("mousemove", onMove);
+    map.on("click", onClick);
     map.on("mouseout", onOut);
     schedule();
     return () => {
       if (raf) cancelAnimationFrame(raf);
       map.off("move zoom viewreset resize moveend zoomend", schedule);
       map.off("mousemove", onMove);
+      map.off("click", onClick);
       map.off("mouseout", onOut);
       if (tip) map.removeLayer(tip);
       map.getContainer().style.cursor = "";

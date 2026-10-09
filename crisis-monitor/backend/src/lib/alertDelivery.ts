@@ -33,7 +33,7 @@ export type Scope = "query" | "escalations";
  *  today a coverage surge, see queryWatch.ts). */
 export type MinLevel = "any" | "alert" | "elevated" | "critical";
 
-export const FREQUENCIES = [15, 60, 360, 1440] as const;
+export const FREQUENCIES = [5, 15, 60, 360, 1440] as const;
 export const DEFAULT_FREQUENCY: Record<Scope, number> = { query: 60, escalations: 15 };
 const LEVEL_RANK: Record<string, number> = { any: 0, alert: 0, info: 0, elevated: 1, critical: 2 };
 /** Reports that must join a known incident before it is announced again. */
@@ -373,7 +373,13 @@ async function runQuerySub(env: Env, sub: Subscription, now: number, ai: { left:
 
 // ── Dispatcher ───────────────────────────────────────────────────────────
 
-async function recordSend(env: Env, sub: Subscription, result: { ok: boolean; error?: string }): Promise<void> {
+async function recordSend(env: Env, sub: Subscription, result: { ok: boolean; error?: string; gone?: boolean }): Promise<void> {
+  if (!result.ok && result.gone) {
+    // A device that no longer takes alerts is forgotten rather than failing every five minutes.
+    await run(env.DB, "DELETE FROM alert_subscription_seen WHERE subscription_id = ?", [sub.id]);
+    await run(env.DB, "DELETE FROM alert_subscriptions WHERE id = ?", [sub.id]);
+    return;
+  }
   if (result.ok) await run(env.DB, "UPDATE alert_subscriptions SET last_sent_at = ?, last_status = 'ok', last_error = NULL WHERE id = ?", [nowIso(), sub.id]);
   else {
     console.error(`[alerts] ${sub.channel} send failed for subscription ${sub.id}: ${result.error}`);

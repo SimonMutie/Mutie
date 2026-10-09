@@ -1,3 +1,4 @@
+import { cleanPushDestination, sendPush } from "./webpush";
 import type { Env } from "../bindings";
 
 /**
@@ -16,7 +17,7 @@ import type { Env } from "../bindings";
  * and a send to it fails with a clear message rather than silently.
  */
 
-export type Channel = "email" | "signal";
+export type Channel = "email" | "signal" | "push";
 
 export interface NotificationLink {
   title: string;
@@ -51,10 +52,13 @@ export interface Notification {
 export interface SendResult {
   ok: boolean;
   error?: string;
+  /** The destination no longer exists (a device that removed the app or withdrew permission): drop it. */
+  gone?: boolean;
 }
 
 export function channelsAvailable(env: Env): Record<Channel, boolean> {
   return {
+    push: true,
     email: !!(env.RESEND_API_KEY && env.ALERT_EMAIL_FROM),
     signal: !!(env.SIGNAL_API_URL && env.SIGNAL_SENDER_NUMBER),
   };
@@ -68,6 +72,7 @@ const PHONE_RE = /^\+[1-9]\d{6,14}$/;
 /** Returns the cleaned destination, or null when it is not valid for the channel. */
 export function cleanDestination(channel: Channel, raw: string): string | null {
   const v = raw.trim();
+  if (channel === "push") return cleanPushDestination(v);
   if (channel === "email") return EMAIL_RE.test(v) && v.length <= 254 ? v.toLowerCase() : null;
   const phone = v.replace(/[\s\-()]/g, "");
   return PHONE_RE.test(phone) ? phone : null;
@@ -168,5 +173,5 @@ export async function sendSignal(env: Env, recipient: string, n: Notification): 
 }
 
 export function sendNotification(env: Env, channel: Channel, destination: string, n: Notification): Promise<SendResult> {
-  return channel === "email" ? sendEmail(env, destination, n) : sendSignal(env, destination, n);
+  return channel === "email" ? sendEmail(env, destination, n) : channel === "push" ? sendPush(env, destination, n) : sendSignal(env, destination, n);
 }

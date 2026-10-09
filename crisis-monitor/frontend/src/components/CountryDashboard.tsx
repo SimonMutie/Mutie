@@ -21,21 +21,21 @@ const FIELD_LABELS = {
   severity: { label: "Severity", type: "text" as const },
 };
 
-/** Who — which actors are active, month by month, as stacked areas. */
-const actorsOverTime = (layout: { x: number; y: number; w: number; h: number }): DashboardWidget => ({
+/** Which sectors are hit, month by month, as stacked areas. */
+const sectorsOverTime = (layout: { x: number; y: number; w: number; h: number }): DashboardWidget => ({
   id: "sankey",
   type: "viz",
-  title: "Who is active — actors month by month",
+  title: "Which sectors are hit — month by month",
   size: "medium",
   layout,
   viz: {
     kind: "area",
     source: "incidents",
     rows: [{ field: "date", grain: "month" }],
-    columns: [{ field: "actor" }],
+    columns: [{ field: "sector" }],
     values: [{ agg: "count", label: "Incidents" }],
     filters: [],
-    options: { stack: "stacked", topN: 8, fields: { ...FIELD_LABELS, date: { label: "Date", type: "date" as const }, actor: { label: "Actor", type: "text" as const } } },
+    options: { stack: "stacked", topN: 8, fields: { ...FIELD_LABELS, date: { label: "Date", type: "date" as const } } },
   },
 });
 
@@ -71,7 +71,7 @@ function templateFor(): DashboardWidget[] {
     W("province", "bar", "Where — by province / county", { x: 0, y: 24, w: 4, h: 9 }, { dataField: "by_province", topN: 12, color: "#2a78d6", showDataLabels: true }),
     W("actor", "bar", "Who — actors involved", { x: 4, y: 24, w: 4, h: 9 }, { dataField: "by_actor", topN: 10, showDataLabels: true }),
     tacticSunburst({ x: 8, y: 24, w: 4, h: 9 }),
-    W("calendar", "calendar", "Daily terrorism calendar", { x: 0, y: 33, w: 12, h: 6 }, { color: "#e34948", calendarGroup: "Terrorism / Extremist" }),
+    W("calendar", "calendar", "Terrorism incidents by month and year", { x: 0, y: 33, w: 12, h: 6 }, { color: "#e34948", calendarGroup: "Terrorism / Extremist" }),
     W("victims", "victims", "Women, men and children killed in criminal incidents", { x: 0, y: 39, w: 5, h: 11 }, { victimGroup: "Criminal" }),
     {
       id: "province-sector",
@@ -89,7 +89,7 @@ function templateFor(): DashboardWidget[] {
         options: { stack: "stacked", orientation: "horizontal", topN: 14, labels: true, fields: FIELD_LABELS },
       },
     },
-    actorsOverTime({ x: 0, y: 50, w: 6, h: 10 }),
+    sectorsOverTime({ x: 0, y: 50, w: 6, h: 10 }),
     W("network", "network", "Where each sector is hit — sector ↔ province", { x: 6, y: 50, w: 6, h: 10 }, { dataField: "by_sector", secondaryField: "province", topN: 8 }),
     W("table", "heatmap_table", "Province × tactic", { x: 0, y: 60, w: 6, h: 10 }, { dataField: "by_province", secondaryField: "tactic", topN: 10 }),
     W("bubble", "bubble", "Sectors affected", { x: 6, y: 60, w: 3, h: 10 }, { dataField: "by_sector", topN: 14 }),
@@ -114,13 +114,14 @@ function dashboardFor(country: string): Promise<string> {
         // A dashboard made before the tactics chart became a sunburst: swap the untouched pie for it. Visuals saved
         // without their compiled request get it now, so a shared link can run them.
         const old = found.widgets.find((w) => w.id === "tactic" && w.type === "pie");
-        const oldFlow = found.widgets.find((w) => w.id === "sankey" && w.type === "sankey");
+        // Earlier versions of this card: the actor→tactic flow, then actors month by month.
+        const oldFlow = found.widgets.find((w) => w.id === "sankey" && (w.type === "sankey" || (w.viz?.kind === "area" && w.viz.columns[0]?.field === "actor")));
         const next = found.widgets.map((w) =>
           withQuery(
-            w.id === "calendar" && w.type === "calendar" && !w.datasetId && w.calendarGroup === undefined && w.title === "Daily activity calendar"
-              ? { ...w, title: "Daily terrorism calendar", calendarGroup: "Terrorism / Extremist" } :
+            w.id === "calendar" && w.type === "calendar" && !w.datasetId && (w.title === "Daily activity calendar" || w.title === "Daily terrorism calendar")
+              ? { ...w, title: "Terrorism incidents by month and year", calendarGroup: "Terrorism / Extremist" } :
             w === old ? { ...tacticSunburst(old.layout ?? { x: 8, y: 24, w: 4, h: 9 }), locked: old.locked }
-            : w === oldFlow ? { ...actorsOverTime(oldFlow.layout ?? { x: 0, y: 50, w: 6, h: 10 }), locked: oldFlow.locked }
+            : w === oldFlow ? { ...sectorsOverTime(oldFlow.layout ?? { x: 0, y: 50, w: 6, h: 10 }), locked: oldFlow.locked }
             : w,
           ),
         );

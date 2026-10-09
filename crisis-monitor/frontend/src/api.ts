@@ -673,16 +673,16 @@ export interface VictimGroupRow {
   incidents: number; women: number; men: number; children: number; unknown: number;
 }
 
-/** Incidents per day, per combination of the columns that name who was involved. */
-export interface DailyGroupRow {
-  date: string; actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number;
+/** Incidents per month, per combination of the columns that name who was involved. */
+export interface MonthlyGroupRow {
+  month: string; actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number;
 }
 
 export interface PublicDashboardData {
   name: string;
   country?: string | null;
   victimGroups?: VictimGroupRow[];
-  dailyGroups?: DailyGroupRow[];
+  monthlyGroups?: MonthlyGroupRow[];
   widgets: DashboardWidget[];
   stats: NormalizedDashboardStats;
   /** The date range this dashboard's owner set, if any — for display only;
@@ -1441,7 +1441,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export { ApiError };
 
-export type AlertChannel = "email" | "signal";
+export type AlertChannel = "email" | "signal" | "push";
 export interface AlertSubscription {
   id: string;
   scope: "query" | "escalations";
@@ -1604,6 +1604,7 @@ export const api = {
   refreshDueDiligenceList: (list: string) => req<{ ok: boolean; entries?: number }>("/api/due-diligence/sources/refresh", { method: "POST", body: JSON.stringify({ list }) }),
   dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
 
+  getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
   listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "query"; queryId: string }) =>
     req<AlertSubscriptionList>(`/api/alert-subscriptions?scope=${target.scope}${target.scope === "query" ? `&query_id=${encodeURIComponent(target.queryId)}` : ""}`),
   createAlertSubscription: (body: { scope: "query" | "escalations"; query_id?: string; channel: AlertChannel; destination: string; min_level?: string; frequency_minutes?: number }) =>
@@ -1753,8 +1754,8 @@ export const api = {
   // Public — no auth token needed, works for anyone with the share link.
   getVictimGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
     req<VictimGroupRow[]>(`/api/incidents/victim-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
-  getDailyGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
-    req<DailyGroupRow[]>(`/api/incidents/daily-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
+  getMonthlyGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
+    req<MonthlyGroupRow[]>(`/api/incidents/monthly-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
   getPublicDashboard: (token: string) => req<PublicDashboardData>(`/api/public/dashboards/${token}`),
 
   // General-purpose datasets — any schema, not tied to incidents at all.

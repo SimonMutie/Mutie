@@ -3,6 +3,7 @@ import AlertPopups from "./components/AlertPopups";
 import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
 import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
+import PushPrompt from "./components/PushPrompt";
 import { enableMonitorLayer } from "./monitorLayers";
 import type { SpotlightScope } from "./spotlightRegions";
 import { speakWelcomeIfPending } from "./intro";
@@ -215,6 +216,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
+      <PushPrompt />
       <AlertPopups liveMessage={liveMessage} onOpenQuery={(queryId) => setView({ queryId })} onShowOnMap={() => { setOpenMonitorTool(false); setView("live-osint"); }} />
 
       <Suspense fallback={viewLoadingFallback}>

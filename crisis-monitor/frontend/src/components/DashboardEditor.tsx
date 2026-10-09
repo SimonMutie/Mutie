@@ -5,7 +5,7 @@ import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type VictimGroupRow, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
-import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, valueMapKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
+import DashboardWidgetCard, { type MapIncidentRow, breakdownKeyFor, crosstabKeyFor, valueMapKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 import ErrorBoundary from "./ErrorBoundary";
 import { VizProvider, useViz } from "./viz/context";
 import { THEMES, themeFor, themeStyle } from "./viz/themes";
@@ -96,7 +96,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   const [toolsOpen, setToolsOpen] = useState(false);
   // A dashboard tied to one country (the Country Dashboard): every figure is limited to it.
   const [dashCountry, setDashCountry] = useState<string | null>(null);
-  const [dailyGroups, setDailyGroups] = useState<import("../api").DailyGroupRow[] | undefined>(undefined);
+  const [monthlyGroups, setDailyGroups] = useState<import("../api").MonthlyGroupRow[] | undefined>(undefined);
   const [victimGroups, setVictimGroups] = useState<VictimGroupRow[] | undefined>(undefined);
   const [dateRangeFrom, setDateRangeFrom] = useState<string | undefined>(undefined);
   const [dateRangeTo, setDateRangeTo] = useState<string | undefined>(undefined);
@@ -290,12 +290,12 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasVictims, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
-  const hasGroupCalendar = widgets.some((w) => w.type === "calendar" && w.calendarGroup);
+  const hasGroupCalendar = widgets.some((w) => w.type === "calendar" && !w.datasetId);
   useEffect(() => {
     if (!hasGroupCalendar) return;
     let live = true;
     setDailyGroups(undefined);
-    api.getDailyGroups({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters } as Record<string, string | undefined>).then((r) => live && setDailyGroups(r)).catch(() => live && setDailyGroups([]));
+    api.getMonthlyGroups({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters } as Record<string, string | undefined>).then((r) => live && setDailyGroups(r)).catch(() => live && setDailyGroups([]));
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasGroupCalendar, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
@@ -706,7 +706,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, [filterPanelOpen]);
 
-  const located = useMemo(() => incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number; severity?: string | null; actor?: string | null; sector?: string | null; tactic?: string | null; occurred_date?: string | null; city?: string | null; province?: string | null }[], [incidents]);
+  const located = useMemo(() => incidents.filter((i) => i.latitude != null && i.longitude != null) as unknown as MapIncidentRow[], [incidents]);
 
   const activeFilterCount = (dateRangeFrom ? 1 : 0) + (dateRangeTo ? 1 : 0) + Object.values(categoryFilters).filter(Boolean).length;
 
@@ -1278,7 +1278,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
                     stats={stats}
                     incidents={located}
                     victimGroups={victimGroups}
-                    dailyGroups={dailyGroups}
+                    monthlyGroups={monthlyGroups}
                     crosstabs={crosstabs}
                     breakdowns={breakdowns}
                     valueMaps={valueMaps}

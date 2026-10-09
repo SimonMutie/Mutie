@@ -587,33 +587,32 @@ export async function fetchVictimGroups(
   );
 }
 
-/** Incidents per day, split by the columns that say who was involved, so a calendar can count only one kind of actor
- *  (terrorism, say). With no period set it covers the 400 days up to the latest incident, as the plain calendar does. */
-export async function fetchDailyGroups(
+/** Incidents per month, split by the columns that say who was involved, so a calendar can count only one kind of actor
+ *  (terrorism, say) and say what happened in each month. Covers the whole history, or the chosen period. */
+export async function fetchMonthlyGroups(
   db: D1Database,
   ownerIds: string[] | null,
   dateFrom?: string,
   dateTo?: string,
   countries?: string[] | null,
   fieldFilters?: Partial<Record<PivotableField, string>>
-): Promise<{ date: string; actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number }[]> {
+): Promise<{ month: string; actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number }[]> {
   const { whereClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   const lead = whereClause ? `${whereClause} AND` : "WHERE";
-  const windowed = !dateFrom && !dateTo;
   return all(
     db,
-    `SELECT substr(occurred_at, 1, 10) AS date, actor, interest_group, sector, operation, target, tactic, COUNT(*) AS incidents
+    `SELECT substr(occurred_at, 1, 7) AS month, actor, interest_group, sector, operation, target, tactic, COUNT(*) AS incidents
      FROM incidents ${lead} occurred_at IS NOT NULL
-     ${windowed ? `AND substr(occurred_at, 1, 10) >= date((SELECT MAX(occurred_at) FROM incidents ${whereClause}), '-400 days')` : ""}
-     GROUP BY date, actor, interest_group, sector, operation, target, tactic
-     LIMIT 40000`,
-    windowed ? [...params, ...params] : params
+     GROUP BY month, actor, interest_group, sector, operation, target, tactic
+     ORDER BY month DESC
+     LIMIT 60000`,
+    params
   );
 }
 
-incidentsRouter.get("/daily-groups", async (c) => {
+incidentsRouter.get("/monthly-groups", async (c) => {
   const { ownerIds, countries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
-  return c.json(await fetchDailyGroups(c.env.DB, ownerIds, c.req.query("from"), c.req.query("to"), countries, parsePivotableFilters(c)));
+  return c.json(await fetchMonthlyGroups(c.env.DB, ownerIds, c.req.query("from"), c.req.query("to"), countries, parsePivotableFilters(c)));
 });
 
 incidentsRouter.get("/victim-groups", async (c) => {

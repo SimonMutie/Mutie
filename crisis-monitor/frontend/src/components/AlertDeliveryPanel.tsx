@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { enablePushAlerts, pushSupported, thisDeviceEndpoint } from "../pushAlerts";
 import { api, type AlertChannel, type AlertSubscription, type AlertSubscriptionList } from "../api";
 
 /**
@@ -10,8 +11,8 @@ import { api, type AlertChannel, type AlertSubscription, type AlertSubscriptionL
 
 type Target = { scope: "escalations" } | { scope: "query"; queryId: string };
 
-const FREQUENCY_LABELS: Record<number, string> = { 15: "Within 15 minutes", 60: "At most hourly", 360: "At most every 6 hours", 1440: "Once a day" };
-const CHANNEL_LABEL: Record<AlertChannel, string> = { email: "Email", signal: "Signal" };
+const FREQUENCY_LABELS: Record<number, string> = { 5: "Within 5 minutes", 15: "Within 15 minutes", 60: "At most hourly", 360: "At most every 6 hours", 1440: "Once a day" };
+const CHANNEL_LABEL: Record<AlertChannel, string> = { email: "Email", signal: "Signal", push: "Device" };
 
 const errText = (e: unknown, fallback: string) => (e instanceof Error && e.message ? e.message : fallback);
 
@@ -83,6 +84,27 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
   }
 
   const unavailable = (c: AlertChannel) => data && !data.channels[c];
+  const [thisDevice, setThisDevice] = useState<string | null>(null);
+  useEffect(() => { void thisDeviceEndpoint().then(setThisDevice); }, [data]);
+  const endpointOf = (s: AlertSubscription) => { try { return (JSON.parse(s.destination) as { endpoint?: string }).endpoint ?? null; } catch { return null; } };
+  const deviceName = (s: AlertSubscription) => {
+    const ep = endpointOf(s);
+    const mine = ep && ep === thisDevice ? "This device" : "A device";
+    let service = "";
+    try { const h = new URL(ep ?? "").hostname; service = /google|fcm/.test(h) ? "Chrome / Android" : /apple/.test(h) ? "Safari / Apple" : /mozilla/.test(h) ? "Firefox" : /windows/.test(h) ? "Edge / Windows" : ""; } catch { /* unknown service */ }
+    return `${mine}${service ? ` · ${service}` : ""} · added ${new Date(s.created_at).toLocaleDateString()}`;
+  };
+  const hasThisDevice = !!data?.subscriptions.some((s) => s.channel === "push" && endpointOf(s) === thisDevice && thisDevice);
+  async function turnOnHere() {
+    setBusy("device");
+    setError(null);
+    setNotice(null);
+    const err = await enablePushAlerts({ askPermission: true });
+    if (err) setError(err);
+    else setNotice("Alerts are on for this device. Use “Send a test” to see one.");
+    load();
+    setBusy(null);
+  }
   const levelOptions = isEsc
     ? [
         ["elevated", "Elevated and Critical"],
@@ -101,6 +123,24 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
           : "Get a message when this query has new developments: a short summary of what changed, an analysis, and links to the reports."}
       </p>
 
+      {isEsc && (
+        <div style={{ border: "1px solid var(--border-soft)", borderRadius: 8, padding: "10px 12px", background: "var(--panel-raised)", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Pop up on your devices</div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text-muted)" }}>
+            Escalation alerts appear as a notification on each device you turn this on for, even when The Lens is closed or the device was asleep. Do it once on every phone and computer you use. On an iPhone or iPad, add The Lens to the Home Screen first.
+          </div>
+          {pushSupported() ? (
+            hasThisDevice ? (
+              <div style={{ fontSize: 12.5, color: "var(--positive)" }}>On for this device.</div>
+            ) : (
+              <div><button type="button" style={primaryBtn} disabled={busy === "device"} onClick={turnOnHere}>{busy === "device" ? "Turning on…" : "Turn on for this device"}</button></div>
+            )
+          ) : (
+            <div style={{ fontSize: 12.5, color: "var(--elevated)" }}>This browser cannot show alerts when The Lens is closed.</div>
+          )}
+        </div>
+      )}
+
       {data && (unavailable("email") || unavailable("signal")) && (
         <div style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--elevated)" }}>
           {unavailable("email") && unavailable("signal") ? "Email and Signal delivery are not set up on this platform yet." : unavailable("email") ? "Email delivery is not set up on this platform yet." : "Signal delivery is not set up on this platform yet."} Alerts you add will wait until the platform administrator finishes the setup.
@@ -111,7 +151,7 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
         <div key={s.id} style={{ border: "1px solid var(--border-soft)", borderRadius: 8, padding: "10px 12px", background: "var(--panel-raised)", opacity: s.enabled ? 1 : 0.65 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--text-muted)" }}>{CHANNEL_LABEL[s.channel]}</span>
-            <span style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 120, overflowWrap: "anywhere" }}>{s.destination}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 120, overflowWrap: "anywhere" }}>{s.channel === "push" ? deviceName(s) : s.destination}</span>
             <button type="button" style={miniBtn} disabled={busy === s.id} onClick={() => act(s.id, "test")}>
               Send a test
             </button>

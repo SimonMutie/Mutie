@@ -4,7 +4,7 @@ import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, fetchDailyGroups, teamOwnerIds } from "./incidents";
+import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, fetchMonthlyGroups, teamOwnerIds } from "./incidents";
 import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -490,7 +490,7 @@ publicDashboardsRouter.get("/:token", async (c) => {
       const scope = buildScopeClause([ownerId], dateFrom ?? undefined, dateTo ?? undefined, countries);
       incidents = await all(
         c.env.DB,
-        `SELECT id, latitude, longitude, severity, actor, sector, tactic, occurred_date, city, province FROM incidents ${scope.whereClause ? scope.whereClause + " AND" : "WHERE"} latitude IS NOT NULL LIMIT 20000`,
+        `SELECT id, latitude, longitude, severity, actor, interest_group, sector, operation, target, tactic, occurred_date, city, province, precise_location, substr(details, 1, 400) AS details, civilian_death_child, civilian_death_female, civilian_death_male, civilian_death_unknown, civilian_injury_female, civilian_injury_male, civilian_injury_unknown FROM incidents ${scope.whereClause ? scope.whereClause + " AND" : "WHERE"} latitude IS NOT NULL LIMIT 20000`,
         scope.params
       );
     }
@@ -551,15 +551,15 @@ publicDashboardsRouter.get("/:token", async (c) => {
     ? await fetchVictimGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
     : [];
 
-  const dailyGroups = widgets.some((w) => w.type === "calendar" && w.calendarGroup)
-    ? await fetchDailyGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
+  const monthlyGroups = widgets.some((w) => w.type === "calendar" && !w.datasetId)
+    ? await fetchMonthlyGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
     : [];
 
   return c.json({
     name: dashboard.name,
     country,
     victimGroups,
-    dailyGroups,
+    monthlyGroups,
     widgets,
     stats,
     date_range_from: dateFrom,

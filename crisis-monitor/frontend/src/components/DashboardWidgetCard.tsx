@@ -484,10 +484,18 @@ function statValue(widget: DashboardWidget, stats: NormalizedDashboardStats, dat
   }
 }
 
+/** What a dashboard map knows of each incident: enough for its hover summary and its click-through card. */
+export interface MapIncidentRow {
+  latitude: number; longitude: number; severity?: string | null; actor?: string | null; interest_group?: string | null; sector?: string | null; operation?: string | null; target?: string | null; tactic?: string | null;
+  occurred_date?: string | null; city?: string | null; province?: string | null; precise_location?: string | null; details?: string | null;
+  civilian_death_child?: number | null; civilian_death_female?: number | null; civilian_death_male?: number | null; civilian_death_unknown?: number | null;
+  civilian_injury_female?: number | null; civilian_injury_male?: number | null; civilian_injury_unknown?: number | null;
+}
+
 interface Props {
   widget: DashboardWidget;
   stats: NormalizedDashboardStats;
-  incidents?: { latitude: number; longitude: number; severity?: string | null; actor?: string | null; sector?: string | null; tactic?: string | null; occurred_date?: string | null; city?: string | null; province?: string | null }[];
+  incidents?: MapIncidentRow[];
   /** Keyed "primaryColumn|secondaryColumn" — only present for widgets that
    *  actually have a secondaryField set; see crosstabKeyFor(). */
   crosstabs?: Record<string, CrosstabRow[]>;
@@ -509,7 +517,7 @@ interface Props {
   /** Who was killed, per group of actors — for the victims hemicycle. */
   victimGroups?: import("../api").VictimGroupRow[];
   /** Per-day rows by kind of actor, for a calendar limited to one kind (widget.calendarGroup). */
-  dailyGroups?: import("../api").DailyGroupRow[];
+  monthlyGroups?: import("../api").MonthlyGroupRow[];
   /** The user's uploaded datasets, for the "Data source" selector in the
    *  edit popover — only needed where editing happens, so undefined/empty
    *  on the read-only public view is fine. */
@@ -562,7 +570,7 @@ export default function DashboardWidgetCard({
   dailyBreakdowns,
   datasetSummaries,
   victimGroups,
-  dailyGroups,
+  monthlyGroups,
   datasets,
   onDatasetCreated,
   activeCrossFilters,
@@ -1189,9 +1197,10 @@ export default function DashboardWidgetCard({
         )}
 
         {widget.type === "calendar" && (
-          <CalendarHeatmap
-            daily={widget.datasetId ? (dailyBreakdowns?.[dailyKeyFor(widget) ?? ""] ?? []) : widget.calendarGroup ? dailyOfGroup(dailyGroups, widget.calendarGroup) : stats.daily}
+          <MonthYearGrid
+            months={widget.datasetId ? monthsOfDaily(dailyBreakdowns?.[dailyKeyFor(widget) ?? ""] ?? []) : monthsOfGroups(monthlyGroups, widget.calendarGroup)}
             baseColor={widget.color || "#0d9488"}
+            subject={widget.calendarGroup && !widget.datasetId ? widget.calendarGroup : "incidents"}
           />
         )}
 
@@ -3267,62 +3276,124 @@ function ChoroplethLegend({ breaks, maxValue, baseColor, colorScheme }: { breaks
  *  to fit, since 52 columns compressed into a narrow widget just becomes
  *  illegible; native SVG <title> elements give per-day tooltips with no extra
  *  dependency. */
-/** Per-day counts for one kind of actor only, from the per-day rows (the same sorting the map colours use). */
-function dailyOfGroup(rows: import("../api").DailyGroupRow[] | undefined, group: string): { date: string; count: number }[] {
-  const by = new Map<string, number>();
-  for (const r of rows ?? []) {
-    if (groupOfVictimRow(r as never) !== group) continue;
-    by.set(r.date, (by.get(r.date) ?? 0) + r.incidents);
-  }
-  return [...by.entries()].map(([date, count]) => ({ date, count }));
+interface MonthFacts {
+  count: number;
+  /** What happened that month, most common first — only known for incident data. */
+  actors?: [string, number][];
+  tactics?: [string, number][];
+  sectors?: [string, number][];
 }
 
-function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: number }[]; baseColor: string }) {
-  const countByDate = new Map(daily.map((d) => [d.date, d.count]));
-  const maxCount = Math.max(1, ...daily.map((d) => d.count));
+const top = (m: Map<string, number>, n = 3): [string, number][] => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 
-  // The year shown ends on the latest day that has incidents (today if there are none), so data from last year, or
-  // a chosen period in the past, still fills the calendar. Days are counted in UTC so none slips a day.
-  const DAY = 86_400_000;
-  const latest = daily.reduce((m, d) => (d.date > m ? d.date : m), "");
-  const endMs = latest ? Date.parse(latest + "T00:00:00Z") : Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
-  let startMs = endMs - 364 * DAY;
-  startMs -= new Date(startMs).getUTCDay() * DAY; // align to the preceding Sunday
-
-  const cells: { date: string; count: number; col: number; row: number }[] = [];
-  let col = 0;
-  for (let t = startMs; t <= endMs; t += DAY) {
-    const dow = new Date(t).getUTCDay();
-    const iso = new Date(t).toISOString().slice(0, 10);
-    cells.push({ date: iso, count: countByDate.get(iso) ?? 0, col, row: dow });
-    if (dow === 6) col++;
+/** Incident rows by month → each month's count and its most common actors, tactics and sectors, for one kind of actor
+ *  (or all). */
+function monthsOfGroups(rows: import("../api").MonthlyGroupRow[] | undefined, group: string | undefined): Map<string, MonthFacts> {
+  const acc = new Map<string, { count: number; actors: Map<string, number>; tactics: Map<string, number>; sectors: Map<string, number> }>();
+  for (const r of rows ?? []) {
+    if (group && groupOfVictimRow(r as never) !== group) continue;
+    let m = acc.get(r.month);
+    if (!m) acc.set(r.month, (m = { count: 0, actors: new Map(), tactics: new Map(), sectors: new Map() }));
+    m.count += r.incidents;
+    const add = (map: Map<string, number>, k: string | null) => k && map.set(k, (map.get(k) ?? 0) + r.incidents);
+    add(m.actors, r.actor);
+    add(m.tactics, r.tactic);
+    add(m.sectors, r.sector);
   }
-  const totalCols = col + 1;
-  const cell = 11;
-  const gap = 2;
-  const width = totalCols * (cell + gap);
-  const height = 7 * (cell + gap);
+  return new Map([...acc].map(([k, m]) => [k, { count: m.count, actors: top(m.actors), tactics: top(m.tactics), sectors: top(m.sectors) }]));
+}
+
+/** A dataset's per-day counts → per month. */
+function monthsOfDaily(daily: { date: string; count: number }[]): Map<string, MonthFacts> {
+  const out = new Map<string, MonthFacts>();
+  for (const d of daily) {
+    const k = d.date.slice(0, 7);
+    out.set(k, { count: (out.get(k)?.count ?? 0) + d.count });
+  }
+  return out;
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_FULL = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** The calendar: one row per year, one square per month, darker where more happened. Hover a month for its details. */
+function MonthYearGrid({ months, baseColor, subject }: { months: Map<string, MonthFacts>; baseColor: string; subject: string }) {
+  const [tip, setTip] = useState<{ key: string; x: number; y: number } | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const { years, max } = useMemo(() => {
+    const ys = [...new Set([...months.keys()].map((k) => Number(k.slice(0, 4))).filter((y) => y > 1900))];
+    const lo = ys.length ? Math.min(...ys) : new Date().getFullYear();
+    const hi = ys.length ? Math.max(...ys) : new Date().getFullYear();
+    const list: number[] = [];
+    for (let y = hi; y >= lo; y--) list.push(y); // latest year first
+    return { years: list, max: Math.max(1, ...[...months.values()].map((m) => m.count)) };
+  }, [months]);
+  const hovered = tip ? months.get(tip.key) : null;
+  const [ty, tm] = tip ? [Number(tip.key.slice(0, 4)), Number(tip.key.slice(5, 7)) - 1] : [0, 0];
+  const list = (label: string, rows: [string, number][] | undefined) =>
+    rows && rows.length ? (
+      <div style={{ marginTop: 3 }}>
+        <span style={{ color: "#9aa3b2" }}>{label}: </span>
+        {rows.map(([k, n]) => `${k} (${n})`).join(", ")}
+      </div>
+    ) : null;
 
   return (
-    <div style={{ height: "100%", overflow: "hidden", display: "flex", alignItems: "center" }}>
-      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ maxHeight: "100%" }}>
-        {cells.map((d) => {
-          const intensity = d.count > 0 ? Math.max(0.15, d.count / maxCount) : 0;
-          return (
-            <rect
-              key={d.date}
-              x={d.col * (cell + gap)}
-              y={d.row * (cell + gap)}
-              width={cell}
-              height={cell}
-              rx={2}
-              fill={d.count > 0 ? hexToRgba(baseColor, intensity) : "var(--border-soft)"}
-            >
-              <title>{`${d.date}: ${d.count} incident${d.count === 1 ? "" : "s"}`}</title>
-            </rect>
-          );
-        })}
-      </svg>
+    <div ref={boxRef} style={{ height: "100%", overflow: "auto", position: "relative" }} onMouseLeave={() => setTip(null)}>
+      <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 3, tableLayout: "fixed", fontSize: 11 }}>
+        <thead>
+          <tr>
+            <th style={{ width: 44 }} />
+            {MONTH_NAMES.map((m) => (
+              <th key={m} style={{ fontWeight: 600, color: "var(--text-muted)", textAlign: "center" }}>{m}</th>
+            ))}
+            <th style={{ width: 52, fontWeight: 600, color: "var(--text-muted)", textAlign: "right" }}>Year</th>
+          </tr>
+        </thead>
+        <tbody>
+          {years.map((y) => {
+            let total = 0;
+            const cells = MONTH_NAMES.map((_, mi) => {
+              const key = `${y}-${String(mi + 1).padStart(2, "0")}`;
+              const f = months.get(key);
+              total += f?.count ?? 0;
+              const intensity = f && f.count > 0 ? Math.max(0.18, f.count / max) : 0;
+              return (
+                <td
+                  key={key}
+                  onMouseMove={(e) => {
+                    const r = boxRef.current?.getBoundingClientRect();
+                    if (r) setTip({ key, x: e.clientX - r.left + (boxRef.current?.scrollLeft ?? 0), y: e.clientY - r.top + (boxRef.current?.scrollTop ?? 0) });
+                  }}
+                  style={{ height: 30, borderRadius: 4, textAlign: "center", fontSize: 10.5, fontWeight: 600, cursor: f ? "default" : undefined, background: f && f.count > 0 ? hexToRgba(baseColor, intensity) : "var(--border-soft)", color: intensity > 0.55 ? "#fff" : "var(--text-primary)" }}
+                >
+                  {f && f.count > 0 ? f.count : ""}
+                </td>
+              );
+            });
+            return (
+              <tr key={y}>
+                <th style={{ fontWeight: 700, textAlign: "left", color: "var(--text-muted)" }}>{y}</th>
+                {cells}
+                <td style={{ textAlign: "right", fontWeight: 700 }}>{total.toLocaleString()}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {tip && (
+        <div style={{ position: "absolute", left: Math.min(tip.x + 12, (boxRef.current?.clientWidth ?? 600) - 250), top: tip.y + 14, width: 236, pointerEvents: "none", zIndex: 5, background: "#1b2230", color: "#f2f4f8", borderRadius: 8, padding: "8px 10px", fontSize: 12, lineHeight: 1.4, boxShadow: "0 6px 20px rgba(0,0,0,.35)" }}>
+          <div style={{ fontWeight: 700 }}>{MONTH_FULL[tm]} {ty}</div>
+          <div>{hovered && hovered.count > 0 ? `${hovered.count.toLocaleString()} ${subject === "incidents" ? "incident" : `${subject} incident`}${hovered.count === 1 ? "" : "s"}` : `No ${subject === "incidents" ? "incidents" : `${subject} incidents`} recorded`}</div>
+          {hovered && hovered.count > 0 && (
+            <>
+              {list("Actors", hovered.actors)}
+              {list("Tactics", hovered.tactics)}
+              {list("Sectors", hovered.sectors)}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -4531,12 +4602,8 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
             latitude: i.latitude,
             longitude: i.longitude,
             color: classifyIncident(i).color,
-            tip: () =>
-              `<div style="font-size:12px;line-height:1.5"><div style="font-weight:700">${esc([i.city, i.province].filter(Boolean).join(", ") || "Unknown location")}</div>${
-                i.actor ? `<div>Actor: ${esc(i.actor)}</div>` : ""
-              }${i.sector ? `<div>Sector: ${esc(i.sector)}</div>` : ""}${i.tactic ? `<div>Tactic: ${esc(i.tactic)}</div>` : ""}${i.severity ? `<div>Severity: ${esc(i.severity)}</div>` : ""}${
-                i.occurred_date ? `<div style="color:#888">${esc(i.occurred_date)}</div>` : ""
-              }</div>`,
+            tip: () => incidentTip(i),
+            popup: () => incidentPopup(i),
           }))
         : [],
     [list, mode],
@@ -4577,6 +4644,40 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
       </MapContainer>
     </div>
   );
+}
+
+type MapIncident = MapIncidentRow;
+
+/** The hover summary of an incident on a dashboard map — the same facts, in the same order, as on the main map. */
+function incidentTip(i: MapIncident): string {
+  const cat = classifyIncident(i);
+  const place = [i.city, i.province].filter(Boolean).join(", ") || i.precise_location || "Unknown location";
+  const type = [i.sector, i.tactic].filter(Boolean).join(" · ") || cat.label;
+  const details = i.details ?? "";
+  return `<div style="width:230px;white-space:normal;font-size:12px;line-height:1.4"><div style="font-weight:700">${esc(place)}</div><div style="color:#666">${esc(i.occurred_date || "Date not recorded")}</div><div><span style="color:${cat.color};font-weight:700">${esc(type)}</span>${
+    i.actor ? `<span style="color:#666"> · ${esc(i.actor)}</span>` : ""
+  }</div>${details ? `<div style="margin-top:3px;color:#333">${esc(details.length > 150 ? `${details.slice(0, 150)}…` : details)}</div>` : ""}<div style="margin-top:3px;color:#999;font-size:10.5px">Click for full details</div></div>`;
+}
+
+/** The full card opened by clicking a pin: place, date, type, actor, severity, civilian casualties and the details. */
+function incidentPopup(i: MapIncident): string {
+  const cat = classifyIncident(i);
+  const place = [i.city, i.province].filter(Boolean).join(", ") || i.precise_location || "Unknown location";
+  const n = (v: number | null | undefined) => v ?? 0;
+  const killed = n(i.civilian_death_child) + n(i.civilian_death_female) + n(i.civilian_death_male) + n(i.civilian_death_unknown);
+  const hurt = n(i.civilian_injury_female) + n(i.civilian_injury_male) + n(i.civilian_injury_unknown);
+  const row = (k: string, v: string) => `<div style="display:flex;gap:8px"><span style="color:#777;min-width:54px">${k}</span><span>${v}</span></div>`;
+  const type = [i.sector, i.tactic].filter(Boolean).join(" · ");
+  return `<div style="font-size:13px;min-width:190px"><div style="font-weight:700;font-size:14px;margin-bottom:4px">${esc(place)}</div>${row("Date", esc(i.occurred_date || "Not recorded"))}${row("Type", esc(type || "Not recorded"))}${row(
+    "Actor",
+    `<b style="color:${cat.color}">${esc(i.actor || cat.label)}</b>`,
+  )}${i.severity ? row("Severity", esc(i.severity)) : ""}<div style="margin-top:6px">${
+    killed + hurt > 0 ? `<div style="color:#d1352b;margin-bottom:3px">${killed ? `${killed} civilian${killed === 1 ? "" : "s"} killed` : ""}${killed && hurt ? ", " : ""}${hurt ? `${hurt} injured` : ""}</div>` : ""
+  }${
+    i.details
+      ? `<div style="color:#333;max-height:140px;overflow-y:auto;line-height:1.45"><span style="color:#777;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Details</span><div>${esc(i.details)}</div></div>`
+      : `<div style="color:#888;font-size:12px">No details recorded.</div>`
+  }</div></div>`;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
