@@ -83,6 +83,11 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
   const [drag, setDrag] = useState<{ end: number } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const focusValue = useRef<string>("");
+  // The text being typed into a cell stays local until the person leaves it, so typing never waits on tens of
+  // thousands of rows being re-processed. Fills, pastes and saves flush it first.
+  const [draft, setDraft] = useState<{ id: string; key: string; value: string } | null>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [changes, setChanges] = useState<Change[]>([]);
   const [redo, setRedo] = useState<Change[]>([]);
   const [showLog, setShowLog] = useState(false);
@@ -118,8 +123,23 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
     setRedo([]);
     if (autoSave) void saveChange(c);
   }
+  /** Finishes the cell being typed in: one edit on screen and one entry in the change list. */
+  function flushDraft() {
+    const d = draftRef.current;
+    if (!d) return;
+    draftRef.current = null;
+    setDraft(null);
+    const c = columns.find((x) => x.key === d.key);
+    const now = d.value;
+    if (!c || now === focusValue.current) return;
+    const before = parse(focusValue.current, c.num);
+    const after = parse(now, c.num);
+    onEdit([{ id: d.id, key: d.key, value: after }]);
+    addChange(`${c.label}: ${focusValue.current ? `“${focusValue.current.slice(0, 24)}”` : "blank"} → ${now ? `“${now.slice(0, 24)}”` : "blank"}`, [{ id: d.id, key: d.key, value: after, before }]);
+  }
   /** A change made by the grid itself (a fill or a paste): shown on screen and recorded. */
   function commit(label: string, edits: SheetEdit[]) {
+    flushDraft();
     const withBefore = edits.map((e) => ({ ...e, before: current(e.id, e.key) })).filter((e) => text(e.before) !== text(e.value));
     if (withBefore.length === 0) return;
     onEdit(withBefore.map(({ id, key, value }) => ({ id, key, value })));
@@ -144,6 +164,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
   }
   const unsaved = changes.filter((c) => c.status === "pending" || c.status === "error");
   async function saveAll() {
+    flushDraft();
     for (const c of unsaved) await saveChange(c);
   }
   function undoLast() {
@@ -238,6 +259,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
   const colIndex = (key: string) => columns.findIndex((c) => c.key === key);
 
   function fill(col: number, from: number, source: number[], toRow: number) {
+    flushDraft();
     // `source` is the rows whose values are repeated (the selection); cells from..toRow take them in turn.
     const c = columns[col];
     const vals = source.map((i) => getValue(visible[i], c.key));
@@ -283,6 +305,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
     else if (e.key === "ArrowUp") move(-1);
     else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
       e.preventDefault();
+      flushDraft();
       undoLast();
     } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
       e.preventDefault();
@@ -472,7 +495,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
                         <input
                           data-cell={`${ci}:${ri}`}
                           disabled={locked}
-                          value={text(getValue(r, c.key))}
+                          value={draft && draft.id === rowId(r) && draft.key === c.key ? draft.value : text(getValue(r, c.key))}
                           onFocus={() => {
                             focusValue.current = text(getValue(r, c.key));
                             setSel((s) => (s && s.col === ci && s.from === ri && s.to === ri ? s : { col: ci, from: ri, to: ri }));
@@ -480,16 +503,8 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
                           onClick={(e) => {
                             if (e.shiftKey && sel && sel.col === ci) setSel({ col: ci, from: sel.from, to: ri });
                           }}
-                          onChange={(e) => onEdit([{ id: rowId(r), key: c.key, value: e.target.value }])}
-                          onBlur={() => {
-                            // One change per finished edit of a cell, and only if the cell actually changed.
-                            const now = text(getValue(r, c.key));
-                            if (now === focusValue.current) return;
-                            const before = parse(focusValue.current, c.num);
-                            const after = parse(now, c.num);
-                            onEdit([{ id: rowId(r), key: c.key, value: after }]);
-                            addChange(`${c.label}: ${focusValue.current ? `“${focusValue.current.slice(0, 24)}”` : "blank"} → ${now ? `“${now.slice(0, 24)}”` : "blank"}`, [{ id: rowId(r), key: c.key, value: after, before }]);
-                          }}
+                          onChange={(e) => setDraft({ id: rowId(r), key: c.key, value: e.target.value })}
+                          onBlur={flushDraft}
                           onKeyDown={(e) => onKey(e, ci, ri)}
                           onPaste={(e) => onPaste(e, ci, ri)}
                           style={{ width: "100%", minWidth: c.width, boxSizing: "border-box", height: ROW_H - 1, padding: "0 7px", border: "none", background: "transparent", color: "inherit", fontSize: 12, fontFamily: "inherit", outline: "none" }}
