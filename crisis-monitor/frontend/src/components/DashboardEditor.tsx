@@ -4,7 +4,7 @@ import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../g
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
+import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type VictimGroupRow, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
 import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor, valueMapKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 import ErrorBoundary from "./ErrorBoundary";
 import { VizProvider, useViz } from "./viz/context";
@@ -90,6 +90,9 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [isPublic, setIsPublic] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
+  // A dashboard tied to one country (the Country Dashboard): every figure is limited to it.
+  const [dashCountry, setDashCountry] = useState<string | null>(null);
+  const [victimGroups, setVictimGroups] = useState<VictimGroupRow[] | undefined>(undefined);
   const [dateRangeFrom, setDateRangeFrom] = useState<string | undefined>(undefined);
   const [dateRangeTo, setDateRangeTo] = useState<string | undefined>(undefined);
   // The dashboard's look (viz/themes.ts), saved with it. Null is the default look.
@@ -145,8 +148,11 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   // categoryFilters directly, not this — the hover preview shouldn't leak
   // into what looks like a saved, deliberate filter choice.
   const effectiveFilters = useMemo(
-    () => (hoverCrossFilter ? { ...categoryFilters, [hoverCrossFilter.field]: hoverCrossFilter.value } : categoryFilters),
-    [categoryFilters, hoverCrossFilter]
+    () => {
+      const base = hoverCrossFilter ? { ...categoryFilters, [hoverCrossFilter.field]: hoverCrossFilter.value } : categoryFilters;
+      return dashCountry ? { ...base, country: dashCountry } : base;
+    },
+    [categoryFilters, hoverCrossFilter, dashCountry]
   );
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
@@ -236,9 +242,41 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
 
   useEffect(() => {
     api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((s) => setStats(normalizeStats(s)));
-    api.getIncidents({ limit: 3000, from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then(setIncidents);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+
+  // The incidents behind a map widget, read a page at a time in the compact form (no bulky original upload), so a map
+  // can show tens of thousands of dots and the first ones appear while the rest are still arriving.
+  const hasMap = widgets.some((w) => w.type === "map");
+  useEffect(() => {
+    if (!hasMap) { setIncidents([]); return; }
+    let live = true;
+    const all: IncidentItem[] = [];
+    const filt = { from: dateRangeFrom, to: dateRangeTo, located: "1", ...effectiveFilters } as Record<string, string | undefined>;
+    (async () => {
+      let after = 0;
+      for (let n = 0; n < 6 && live; n++) {
+        const page = await api.getIncidentsGrid(after, n === 0 ? 3000 : 12000, filt);
+        if (!live) return;
+        for (const r of page.rows) all.push(Object.fromEntries(page.columns.map((k, i) => [k, r[i]])) as unknown as IncidentItem);
+        setIncidents(all.slice());
+        if (page.next === null) return;
+        after = page.next;
+      }
+    })().catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMap, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+
+  const hasVictims = widgets.some((w) => w.type === "victims");
+  useEffect(() => {
+    if (!hasVictims) return;
+    let live = true;
+    setVictimGroups(undefined);
+    api.getVictimGroups({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters } as Record<string, string | undefined>).then((r) => live && setVictimGroups(r)).catch(() => live && setVictimGroups([]));
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasVictims, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
 
   // A changed date range or category filter invalidates every previously-
   // fetched breakdown and crosstab (they were computed under the old
@@ -402,6 +440,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
       setIsPublic(d.is_public);
       setShareToken(d.share_token);
       setLocked(d.locked);
+      setDashCountry(d.country ?? null);
       setDateRangeFrom(d.date_range_from ?? undefined);
       setDateRangeTo(d.date_range_to ?? undefined);
       setThemeKey(d.theme ?? null);
@@ -436,9 +475,9 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     const widget: DashboardWidget = {
       id: crypto.randomUUID(),
       type: draftType,
-      title: `${draftType === "stat" ? "" : `${draftType[0].toUpperCase()}${draftType.slice(1)}: `}${fieldLabel(draftField)}`,
+      title: draftType === "victims" ? "Women, men and children killed" : `${draftType === "stat" ? "" : `${draftType[0].toUpperCase()}${draftType.slice(1)}: `}${fieldLabel(draftField)}`,
       label: draftLabel || undefined,
-      dataField: draftType === "map" ? undefined : draftField,
+      dataField: draftType === "map" || draftType === "victims" ? undefined : draftField,
       secondaryField: supportsBreakdown ? draftSecondaryField : undefined,
       size: draftSize,
       showDataLabels: draftDataLabels,
@@ -645,6 +684,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, [filterPanelOpen]);
 
+  const located = useMemo(() => incidents.filter((i) => i.latitude != null && i.longitude != null) as { latitude: number; longitude: number; severity?: string | null; actor?: string | null; sector?: string | null; tactic?: string | null; occurred_date?: string | null; city?: string | null; province?: string | null }[], [incidents]);
+
   const activeFilterCount = (dateRangeFrom ? 1 : 0) + (dateRangeTo ? 1 : 0) + Object.values(categoryFilters).filter(Boolean).length;
 
   return (
@@ -666,6 +707,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
           />
         )}
+        {!locked && <PeriodBar from={dateRangeFrom} to={dateRangeTo} onChange={updateDateRange} />}
         {!locked && (
           <div ref={filterPanelRef} style={{ position: "relative" }}>
             <button
@@ -748,7 +790,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                     <div>
                       <div className="eyebrow" style={{ fontSize: 10, marginBottom: 6, opacity: 0.7 }}>LOCATION</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {(["country", "province", "county", "district", "city", "suburb"] as const).map((field) => (
+                        {(["country", "province", "county", "district", "city", "suburb"] as const).filter((f) => !(dashCountry && f === "country")).map((field) => (
                           <DashboardFilterSelect
                             key={field}
                             label={PIVOT_FIELD_LABELS[field] ?? field}
@@ -1195,17 +1237,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
                   <DashboardWidgetCard
                     widget={w}
                     stats={stats}
-                    incidents={incidents.filter((i) => i.latitude != null && i.longitude != null) as {
-                      latitude: number;
-                      longitude: number;
-                      severity?: string | null;
-                      actor?: string | null;
-                      sector?: string | null;
-                      tactic?: string | null;
-                      occurred_date?: string | null;
-                      city?: string | null;
-                      province?: string | null;
-                    }[]}
+                    incidents={located}
+                    victimGroups={victimGroups}
                     crosstabs={crosstabs}
                     breakdowns={breakdowns}
                     valueMaps={valueMaps}
@@ -1248,6 +1281,42 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
 }
 
 /** What has been picked on the visuals (a click on a bar, a slicer choice) and is narrowing the others, with a way to clear each. */
+const ymd = (d: Date) => d.toISOString().slice(0, 10);
+const PERIOD_PRESETS: { id: string; label: string; range: () => [string | undefined, string | undefined] }[] = [
+  { id: "7", label: "7 days", range: () => [ymd(new Date(Date.now() - 6 * 86_400_000)), ymd(new Date())] },
+  { id: "30", label: "30 days", range: () => [ymd(new Date(Date.now() - 29 * 86_400_000)), ymd(new Date())] },
+  { id: "90", label: "90 days", range: () => [ymd(new Date(Date.now() - 89 * 86_400_000)), ymd(new Date())] },
+  { id: "365", label: "12 months", range: () => [ymd(new Date(Date.now() - 364 * 86_400_000)), ymd(new Date())] },
+  { id: "ytd", label: "This year", range: () => [`${new Date().getFullYear()}-01-01`, ymd(new Date())] },
+  { id: "all", label: "All time", range: () => [undefined, undefined] },
+];
+
+/** The period the dashboard covers: quick choices, or any two dates. Saved with the dashboard, so a shared link shows the same period. */
+function PeriodBar({ from, to, onChange }: { from?: string; to?: string; onChange: (from: string | undefined, to: string | undefined) => void }) {
+  const [custom, setCustom] = useState(false);
+  const current = PERIOD_PRESETS.find((p) => {
+    const [f, t] = p.range();
+    return f === from && t === to;
+  })?.id;
+  const active = custom || (!current && (from || to)) ? "custom" : current;
+  const chip = (on: boolean): React.CSSProperties => ({ padding: "5px 9px", fontSize: 12, borderRadius: 6, cursor: "pointer", border: "1px solid " + (on ? "var(--signal)" : "var(--border)"), background: on ? "var(--signal-dim)" : "transparent", color: "inherit" });
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }} title="The period every figure covers">
+      {PERIOD_PRESETS.map((p) => (
+        <button key={p.id} type="button" style={chip(active === p.id)} onClick={() => { setCustom(false); const [f, t] = p.range(); void onChange(f, t); }}>{p.label}</button>
+      ))}
+      <button type="button" style={chip(active === "custom")} onClick={() => setCustom((v) => !v)}>Custom…</button>
+      {(custom || active === "custom") && (
+        <>
+          <input type="date" value={from ?? ""} max={to} onChange={(e) => void onChange(e.target.value || undefined, to)} style={{ padding: "4px 6px", fontSize: 12, borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "inherit" }} />
+          <span style={{ fontSize: 12, opacity: 0.6 }}>to</span>
+          <input type="date" value={to ?? ""} min={from} onChange={(e) => void onChange(from, e.target.value || undefined)} style={{ padding: "4px 6px", fontSize: 12, borderRadius: 6, border: "1px solid var(--border)", background: "transparent", color: "inherit" }} />
+        </>
+      )}
+    </div>
+  );
+}
+
 function VizSelectionStrip() {
   const { selections, select, clearAll } = useViz();
   if (selections.length === 0) return null;

@@ -127,7 +127,7 @@ function PublicWidgetGrid({ data }: { data: PublicDashboardData }) {
           {w.type === "viz" ? (
             <VizCard widget={w} editable={false} />
           ) : (
-            <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} crosstabs={data.crosstabs} breakdowns={data.breakdowns} dailyBreakdowns={data.dailyBreakdowns} datasetSummaries={data.datasetSummaries} />
+            <DashboardWidgetCard widget={w} stats={data.stats} incidents={data.incidents} crosstabs={data.crosstabs} breakdowns={data.breakdowns} dailyBreakdowns={data.dailyBreakdowns} datasetSummaries={data.datasetSummaries} victimGroups={data.victimGroups} />
           )}
         </div>
       ))}

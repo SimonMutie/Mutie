@@ -4,7 +4,7 @@ import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, teamOwnerIds } from "./incidents";
+import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, teamOwnerIds } from "./incidents";
 import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -72,7 +72,7 @@ const vizSchema = z.object({
 
 const widgetSchema = z.object({
   id: z.string(),
-  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar", "sankey", "network", "bubble", "globe", "heatmap_table", "bullet", "viz"]),
+  type: z.enum(["stat", "bar", "line", "pie", "map", "radar", "funnel", "choropleth", "calendar", "sankey", "network", "bubble", "globe", "heatmap_table", "bullet", "viz", "victims"]),
   viz: vizSchema.optional(),
   title: z.string(),
   label: z.string().optional(),
@@ -125,6 +125,10 @@ const widgetSchema = z.object({
   manualCountryData: z.array(z.object({ country: z.string(), value: z.number(), color: z.string().optional() })).optional(),
   mapView: z.object({ lat: z.number(), lng: z.number(), zoom: z.number() }).optional(),
   mapViewMode: z.enum(["markers", "heatmap"]).optional(),
+  /** Which base map the map widget draws on (a key of the frontend's BASEMAPS). */
+  mapBasemap: z.string().max(30).optional(),
+  /** Victims widget: the group whose victims are shown ("Criminal", "Security Forces"…); empty means everyone. */
+  victimGroup: z.string().max(60).optional(),
   /** Globe only — free-standing text labels (checkpoints, ports, chokepoints,
    *  anything worth naming directly on the map) at a country name or precise
    *  "lat,lng", independent of country shading and routes. */
@@ -287,6 +291,8 @@ const updateSchema = z.object({
   date_range_to: z.string().nullable().optional(),
   /** The dashboard's look — a theme key the frontend knows. Null restores the default. */
   theme: z.string().max(40).nullable().optional(),
+  /** The one country every figure on this dashboard is limited to. Null shows all countries. */
+  country: z.string().max(80).nullable().optional(),
 });
 
 customDashboardsRouter.patch("/:id", async (c) => {
@@ -341,6 +347,10 @@ customDashboardsRouter.patch("/:id", async (c) => {
     updates.push("theme = ?");
     params.push(parsed.data.theme);
   }
+  if (parsed.data.country !== undefined) {
+    updates.push("country = ?");
+    params.push(parsed.data.country);
+  }
   updates.push("updated_at = ?");
   params.push(nowIso());
   params.push(id);
@@ -368,8 +378,8 @@ customDashboardsRouter.delete("/:id", async (c) => {
  *  dashboard's owner (not any viewer — there isn't one, this is public).
  *  Uses the exact same clause-building helper as the authenticated route, so
  *  the two can't quietly drift into different date-filtering behavior. */
-async function computeStatsForOwner(db: D1Database, ownerId: string | null, dateFrom?: string | null, dateTo?: string | null) {
-  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined);
+async function computeStatsForOwner(db: D1Database, ownerId: string | null, dateFrom?: string | null, dateTo?: string | null, countries?: string[] | null) {
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
@@ -463,7 +473,9 @@ publicDashboardsRouter.get("/:token", async (c) => {
 
   const dateFrom = dashboard.date_range_from as string | null;
   const dateTo = dashboard.date_range_to as string | null;
-  const stats = await computeStatsForOwner(c.env.DB, dashboard.owner_id as string | null, dateFrom, dateTo);
+  const country = (dashboard.country as string | null) || null;
+  const countries = country ? [country] : null;
+  const stats = await computeStatsForOwner(c.env.DB, dashboard.owner_id as string | null, dateFrom, dateTo, countries);
   const ownerId = dashboard.owner_id as string | null;
 
   // Only fetched if a map widget is actually present — no point pulling
@@ -472,13 +484,14 @@ publicDashboardsRouter.get("/:token", async (c) => {
   const hasMapWidget = Array.isArray(widgets) && widgets.some((w) => w.type === "map");
   let incidents: Record<string, unknown>[] = [];
   if (hasMapWidget) {
-    incidents = ownerId
-      ? await all(
-          c.env.DB,
-          `SELECT id, latitude, longitude, severity, actor, sector, tactic, occurred_date, city, province FROM incidents WHERE owner_id = ? AND latitude IS NOT NULL LIMIT 5000`,
-          [ownerId]
-        )
-      : [];
+    if (ownerId) {
+      const scope = buildScopeClause([ownerId], dateFrom ?? undefined, dateTo ?? undefined, countries);
+      incidents = await all(
+        c.env.DB,
+        `SELECT id, latitude, longitude, severity, actor, sector, tactic, occurred_date, city, province FROM incidents ${scope.whereClause ? scope.whereClause + " AND" : "WHERE"} latitude IS NOT NULL LIMIT 20000`,
+        scope.params
+      );
+    }
   }
 
   // Only the specific (primary, secondary) pairs and single fields this
@@ -526,14 +539,20 @@ publicDashboardsRouter.get("/:token", async (c) => {
     const primary = w.dataField ? DATA_FIELD_TO_COLUMN[w.dataField] : undefined;
     if (primary && isPivotable(primary) && isPivotable(w.secondaryField)) {
       const key = `${primary}|${w.secondaryField}`;
-      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId ? [ownerId] : null, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined);
+      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId ? [ownerId] : null, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined, countries);
     } else if (primary && isPivotable(primary) && !("by_" + primary in stats)) {
-      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId ? [ownerId] : null, primary, dateFrom ?? undefined, dateTo ?? undefined);
+      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId ? [ownerId] : null, primary, dateFrom ?? undefined, dateTo ?? undefined, countries);
     }
   }
 
+  const victimGroups = widgets.some((w) => w.type === "victims")
+    ? await fetchVictimGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
+    : [];
+
   return c.json({
     name: dashboard.name,
+    country,
+    victimGroups,
     widgets,
     stats,
     date_range_from: dateFrom,

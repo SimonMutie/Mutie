@@ -1,5 +1,5 @@
 import L from "leaflet";
-import { classifyIncident, pinSvg } from "./actorTheme";
+import { ACTOR_CATEGORIES, classifyIncident, pinSvg } from "./actorTheme";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -29,6 +29,9 @@ import {
 import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker, Marker as LeafletMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
 import { HeatmapLayer } from "./HeatmapLayer";
+import { FastMarkers, type FastPoint } from "./FastMarkers";
+import { BASEMAPS, type BasemapKey } from "./mapConstants";
+import VictimsWidget from "./VictimsWidget";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
 import worldTopology from "world-atlas/countries-50m.json?url";
@@ -129,6 +132,8 @@ export const FIELDS_FOR_TYPE: Record<WidgetType, WidgetDataField[]> = {
   bullet: ["total", "deaths", "injuries", "kidnappings_ngo"],
   // Visuals built on the any-data engine are drawn by components/viz, never by this card.
   viz: [],
+  // Draws from the victims-by-group figures, not a single field.
+  victims: [],
 };
 export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "stat", label: "Stat card" },
@@ -146,6 +151,7 @@ export const WIDGET_TYPES: { value: WidgetType; label: string }[] = [
   { value: "map", label: "Incident map" },
   { value: "heatmap_table", label: "Heatmap table (2 fields)" },
   { value: "bullet", label: "Bullet chart (value vs. thresholds)" },
+  { value: "victims", label: "Women, men & children killed (hemicycle)" },
 ];
 
 /** Only these types' rendering actually reads from a dataset when
@@ -499,6 +505,8 @@ interface Props {
   /** Keyed by dataset id — row count + numeric column sums, for stat cards
    *  sourced from a dataset instead of incidents. */
   datasetSummaries?: Record<string, DatasetSummary>;
+  /** Who was killed, per group of actors — for the victims hemicycle. */
+  victimGroups?: import("../api").VictimGroupRow[];
   /** The user's uploaded datasets, for the "Data source" selector in the
    *  edit popover — only needed where editing happens, so undefined/empty
    *  on the read-only public view is fine. */
@@ -550,6 +558,7 @@ export default function DashboardWidgetCard({
   valueMaps,
   dailyBreakdowns,
   datasetSummaries,
+  victimGroups,
   datasets,
   onDatasetCreated,
   activeCrossFilters,
@@ -1256,43 +1265,10 @@ export default function DashboardWidgetCard({
           />
         )}
 
+        {widget.type === "victims" && <VictimsWidget rows={victimGroups} group={widget.victimGroup} />}
+
         {widget.type === "map" && (
-          <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
-            <MapContainer
-              center={widget.mapView ? [widget.mapView.lat, widget.mapView.lng] : [1, 20]}
-              zoom={widget.mapView?.zoom ?? 2.2}
-              style={{ width: "100%", height: "100%" }}
-              scrollWheelZoom={false}
-              dragging={showFullControls}
-              zoomControl={false}
-            >
-              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
-              {(widget.mapViewMode ?? "markers") === "heatmap" ? (
-                <HeatmapLayer points={(incidents ?? []).slice(0, 5000).map((i) => [i.latitude, i.longitude, 1] as [number, number, number])} />
-              ) : (
-                (incidents ?? []).slice(0, 3000).map((i, idx) => (
-                  <LeafletMarker key={idx} position={[i.latitude, i.longitude]} icon={dashboardPin(classifyIncident(i).color)}>
-                    <LeafletTooltip direction="top" offset={[0, -2]} opacity={0.95}>
-                      <div style={{ fontSize: 12, lineHeight: 1.5 }}>
-                        <div style={{ fontWeight: 700 }}>{[i.city, i.province].filter(Boolean).join(", ") || "Unknown location"}</div>
-                        {i.actor && <div>Actor: {i.actor}</div>}
-                        {i.sector && <div>Sector: {i.sector}</div>}
-                        {i.tactic && <div>Tactic: {i.tactic}</div>}
-                        {i.severity && <div>Severity: {i.severity}</div>}
-                        {i.occurred_date && <div style={{ color: "#888" }}>{i.occurred_date}</div>}
-                      </div>
-                    </LeafletTooltip>
-                  </LeafletMarker>
-                ))
-              )}
-              {onUpdate && (
-                <>
-                  <MapViewLockButton locked={!!widget.mapView} onLock={(view) => onUpdate({ mapView: view })} onUnlock={() => onUpdate({ mapView: undefined })} />
-                  <MapModeToggle mode={widget.mapViewMode ?? "markers"} onChange={(mode) => onUpdate({ mapViewMode: mode })} />
-                </>
-              )}
-            </MapContainer>
-          </div>
+          <WidgetMap widget={widget} incidents={incidents} onUpdate={onUpdate} showFullControls={showFullControls} />
         )}
       </div>
 
@@ -1430,6 +1406,7 @@ function WidgetEditPopover({
     }
   }
 
+  const [victimGroup, setVictimGroup] = useState<string>(widget.victimGroup ?? "");
   const [field, setField] = useState<string>(widget.dataField ?? (widget.datasetId ? "" : FIELDS_FOR_TYPE[widget.type][0] ?? "by_sector"));
   const [secondaryField, setSecondaryField] = useState<string | undefined>(widget.secondaryField);
   const [geoProvinceColumn, setGeoProvinceColumn] = useState<string | undefined>(widget.geoProvinceColumn);
@@ -1549,7 +1526,8 @@ function WidgetEditPopover({
     onSave({
       type,
       datasetId: manualActive ? undefined : datasetId,
-      dataField: type === "map" || manualActive ? undefined : field || undefined,
+      victimGroup: type === "victims" ? victimGroup || undefined : undefined,
+      dataField: type === "map" || type === "victims" || manualActive ? undefined : field || undefined,
       // secondaryField ("SHOW") is offered for choropleth/globe with a
       // dataset too, via a separate UI block below that isn't gated by
       // supportsBreakdown — without including that case here, a chosen
@@ -1604,6 +1582,18 @@ function WidgetEditPopover({
       }}
     >
       <div className="eyebrow">EDIT THIS WIDGET</div>
+
+      {type === "victims" && (
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>WHOSE VICTIMS</div>
+          <select value={victimGroup} onChange={(e) => setVictimGroup(e.target.value)} style={selectStyle}>
+            <option value="">Everyone — all civilian deaths</option>
+            {[...new Set(ACTOR_CATEGORIES.map((c) => c.label))].map((l) => (
+              <option key={l} value={l}>Killed in {l} incidents</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {supportsManualData && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)" }}>
@@ -4499,6 +4489,84 @@ function MapViewLockButton({
 
 /** Markers vs. heatmap density — the same choice already available on the
  *  standalone incidents map, now available per dashboard widget too. */
+/** The dashboard's incident map: a choice of open base maps, thousands of dots on one canvas, and a heatmap view. */
+function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: DashboardWidget; incidents: Props["incidents"]; onUpdate?: Props["onUpdate"]; showFullControls: boolean }) {
+  const key = (widget.mapBasemap && widget.mapBasemap in BASEMAPS ? widget.mapBasemap : "osm") as BasemapKey;
+  const base = BASEMAPS[key];
+  const mode = widget.mapViewMode ?? "markers";
+  const list = incidents ?? [];
+  const points = useMemo<FastPoint[]>(
+    () =>
+      mode === "markers"
+        ? list.slice(0, 25000).map((i) => ({
+            latitude: i.latitude,
+            longitude: i.longitude,
+            color: classifyIncident(i).color,
+            tip: () =>
+              `<div style="font-size:12px;line-height:1.5"><div style="font-weight:700">${esc([i.city, i.province].filter(Boolean).join(", ") || "Unknown location")}</div>${
+                i.actor ? `<div>Actor: ${esc(i.actor)}</div>` : ""
+              }${i.sector ? `<div>Sector: ${esc(i.sector)}</div>` : ""}${i.tactic ? `<div>Tactic: ${esc(i.tactic)}</div>` : ""}${i.severity ? `<div>Severity: ${esc(i.severity)}</div>` : ""}${
+                i.occurred_date ? `<div style="color:#888">${esc(i.occurred_date)}</div>` : ""
+              }</div>`,
+          }))
+        : [],
+    [list, mode],
+  );
+  const heat = useMemo(() => (mode === "heatmap" ? list.slice(0, 40000).map((i) => [i.latitude, i.longitude, 1] as [number, number, number]) : []), [list, mode]);
+  return (
+    <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
+      <MapContainer
+        center={widget.mapView ? [widget.mapView.lat, widget.mapView.lng] : list.length ? [list.reduce((s, i) => s + i.latitude, 0) / list.length, list.reduce((s, i) => s + i.longitude, 0) / list.length] : [1, 20]}
+        zoom={widget.mapView?.zoom ?? (list.length ? 6 : 2.2)}
+        style={{ width: "100%", height: "100%" }}
+        scrollWheelZoom={false}
+        dragging={showFullControls}
+        zoomControl={false}
+        preferCanvas
+      >
+        <TileLayer key={key} url={base.url} attribution={base.attribution} maxZoom={19} />
+        {mode === "heatmap" ? <HeatmapLayer points={heat} style={{ gradient: "classic", radius: 16, blur: 14, max: Math.min(30, Math.max(1.5, heat.length / 120)), fade: 0.1 }} /> : <FastMarkers points={points} />}
+        {list.length > 0 && !widget.mapView && <FitIncidents incidents={list} />}
+        {onUpdate && (
+          <>
+            <MapViewLockButton locked={!!widget.mapView} onLock={(view) => onUpdate({ mapView: view })} onUnlock={() => onUpdate({ mapView: undefined })} />
+            <MapModeToggle mode={mode} onChange={(m) => onUpdate({ mapViewMode: m })} />
+            <select
+              value={key}
+              onChange={(e) => onUpdate({ mapBasemap: e.target.value })}
+              onMouseDown={(e) => e.stopPropagation()}
+              title="Base map"
+              style={{ position: "absolute", top: 62, right: 6, zIndex: 1000, padding: "2px 4px", fontSize: 10.5, borderRadius: 4, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(0,0,0,0.55)", color: "#fff", maxWidth: 130 }}
+            >
+              {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
+                <option key={k} value={k}>{BASEMAPS[k].label}</option>
+              ))}
+            </select>
+          </>
+        )}
+      </MapContainer>
+    </div>
+  );
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** Frames the incidents once, when they first arrive (and again when the set changes), unless the view is locked. */
+function FitIncidents({ incidents }: { incidents: { latitude: number; longitude: number }[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!incidents.length) return;
+    try {
+      const b = L.latLngBounds(incidents.slice(0, 20000).map((i) => [i.latitude, i.longitude] as [number, number]));
+      if (b.isValid()) map.fitBounds(b, { padding: [24, 24], maxZoom: 9, animate: false });
+    } catch {
+      /* the map may not have a size yet */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, incidents.length]);
+  return null;
+}
+
 function MapModeToggle({ mode, onChange }: { mode: "markers" | "heatmap"; onChange: (mode: "markers" | "heatmap") => void }) {
   return (
     <button

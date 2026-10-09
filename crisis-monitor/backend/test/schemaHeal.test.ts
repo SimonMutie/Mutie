@@ -35,7 +35,7 @@ describe("schema self-heal", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE custom_dashboards (id TEXT PRIMARY KEY, is_auto INTEGER NOT NULL DEFAULT 0); INSERT INTO custom_dashboards (id) VALUES ('d1');");
     await ensureSchema(makeEnv(db));
-    expect(columns(db, "custom_dashboards")).toEqual(["id", "is_auto", "locked", "date_range_from", "date_range_to", "theme"]);
+    expect(columns(db, "custom_dashboards")).toEqual(["id", "is_auto", "locked", "date_range_from", "date_range_to", "theme", "country"]);
     expect(db.prepare("SELECT locked FROM custom_dashboards").get()).toEqual({ locked: 0 });
   });
 

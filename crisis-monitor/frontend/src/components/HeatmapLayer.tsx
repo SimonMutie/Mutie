@@ -146,27 +146,45 @@ export function incidentHeatPoints(incidents: HeatIncident[], style: HeatmapStyl
 export function HeatmapLayer({ points, style }: { points: [number, number, number][]; style?: Partial<HeatmapStyle> }) {
   const map = useMap();
   const layerRef = useRef<L.HeatLayer | null>(null);
+  const pointsRef = useRef(points);
+  pointsRef.current = points;
   const resolved: HeatmapStyle = { ...DEFAULT_HEATMAP_STYLE, ...style };
 
+  // The heat layer sizes its canvas from the map when it is added. Added while the map has no size yet (a card that
+  // is still laying out, a hidden tab), it draws nothing or throws — so it waits for a real size, and redraws if the
+  // card is resized.
   useEffect(() => {
-    const layer = L.heatLayer(points, {
-      radius: resolved.radius,
-      blur: resolved.blur,
-      // leaflet.heat divides every point's weight by 2^(maxZoom − zoom) —
-      // with the old maxZoom of 12, at a typical country view (zoom ~6) each
-      // incident counted 1/64, so heat stayed pale and the intensity dial
-      // barely registered. 0 turns that damping off: a point's heat is its
-      // own weight at every zoom, so the intensity/weight controls mean the
-      // same thing however far in or out the map is.
-      maxZoom: 0,
-      minOpacity: resolved.fade,
-      max: resolved.max,
-      gradient: HEATMAP_GRADIENTS[resolved.gradient].stops,
+    let layer: L.HeatLayer | null = null;
+    const make = () => {
+      if (layer) return;
+      const size = map.getSize();
+      if (size.x < 10 || size.y < 10) return;
+      layer = L.heatLayer(pointsRef.current, {
+        radius: resolved.radius,
+        blur: resolved.blur,
+        // leaflet.heat divides every point's weight by 2^(maxZoom − zoom); 0 turns that damping off, so a point's heat
+        // is its own weight at every zoom and the intensity/weight controls mean the same however far in or out you are.
+        maxZoom: 0,
+        minOpacity: resolved.fade,
+        max: resolved.max,
+        gradient: HEATMAP_GRADIENTS[resolved.gradient].stops,
+      });
+      layer.addTo(map);
+      layerRef.current = layer;
+    };
+    map.invalidateSize();
+    make();
+    const box = map.getContainer();
+    const watch = new ResizeObserver(() => {
+      map.invalidateSize();
+      if (!layer) make();
+      else layer.redraw();
     });
-    layer.addTo(map);
-    layerRef.current = layer;
+    watch.observe(box);
+    map.whenReady(() => setTimeout(() => { map.invalidateSize(); make(); }, 50));
     return () => {
-      map.removeLayer(layer);
+      watch.disconnect();
+      if (layer) map.removeLayer(layer);
       layerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,6 +192,7 @@ export function HeatmapLayer({ points, style }: { points: [number, number, numbe
 
   useEffect(() => {
     layerRef.current?.setLatLngs(points);
+    layerRef.current?.redraw();
   }, [points]);
 
   return null;

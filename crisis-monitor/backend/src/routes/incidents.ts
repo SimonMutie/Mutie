@@ -292,6 +292,14 @@ incidentsRouter.get("/grid", async (c) => {
     conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) <= ?");
     params.push(to.slice(0, 10));
   }
+  // The dashboard's category filters (actor = …, sector = …) and "only rows that can be put on a map".
+  for (const [field, value] of Object.entries(parsePivotableFilters(c))) {
+    if (value && field !== "country") {
+      conditions.push(`${field} = ?`);
+      params.push(value);
+    }
+  }
+  if (c.req.query("located")) conditions.push("latitude IS NOT NULL AND longitude IS NOT NULL");
   const scope = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const pageWhere = `WHERE ${[...conditions, "rowid > ?"].join(" AND ")}`;
   const [rows, total] = await Promise.all([
@@ -553,6 +561,36 @@ export async function fetchIncidentsCrosstab(
     params
   );
 }
+
+/** Who was killed, counted by the columns that say who was involved. The page works out the group (criminal, security
+ *  forces…) from these, so a "women, men and children killed by …" chart needs only a few hundred rows however many
+ *  incidents there are. */
+export async function fetchVictimGroups(
+  db: D1Database,
+  ownerIds: string[] | null,
+  dateFrom?: string,
+  dateTo?: string,
+  countries?: string[] | null,
+  fieldFilters?: Partial<Record<PivotableField, string>>
+): Promise<{ actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number; women: number; men: number; children: number; unknown: number }[]> {
+  const { whereClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
+  return all(
+    db,
+    `SELECT actor, interest_group, sector, operation, target, tactic, COUNT(*) AS incidents,
+            COALESCE(SUM(civilian_death_female), 0) AS women, COALESCE(SUM(civilian_death_male), 0) AS men,
+            COALESCE(SUM(civilian_death_child), 0) AS children, COALESCE(SUM(civilian_death_unknown), 0) AS unknown
+     FROM incidents ${whereClause}
+     GROUP BY actor, interest_group, sector, operation, target, tactic
+     ORDER BY incidents DESC
+     LIMIT 3000`,
+    params
+  );
+}
+
+incidentsRouter.get("/victim-groups", async (c) => {
+  const { ownerIds, countries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  return c.json(await fetchVictimGroups(c.env.DB, ownerIds, c.req.query("from"), c.req.query("to"), countries, parsePivotableFilters(c)));
+});
 
 incidentsRouter.get("/breakdown", async (c) => {
   const field = c.req.query("field");

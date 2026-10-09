@@ -1,324 +1,92 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { MapContainer, Marker, Tooltip as LTooltip, useMap } from "react-leaflet";
-import { feature } from "topojson-client";
-import worldTopology from "world-atlas/countries-50m.json?url";
-import { findGeoHierarchy, getGeoLevel } from "../registry";
-import * as L from "leaflet";
-import { api, type CrosstabRow, type DashboardWidget, type IncidentItem, type IncidentStats, type NormalizedDashboardStats } from "../api";
-import DashboardWidgetCard, { breakdownKeyFor, crosstabKeyFor } from "./DashboardWidgetCard";
-import { HeatmapLayer } from "./HeatmapLayer";
-import VizCard from "./viz/VizCard";
-import { VizProvider } from "./viz/context";
-import { THEMES, themeStyle } from "./viz/themes";
-import type { VizResult, VizSpec } from "./viz/types";
-import { Parliament } from "./viz/charts/Radial";
-import "./viz/viz.css";
-import { classifyActor, classifyIncident, pinSvg } from "./actorTheme";
+import { useEffect, useRef, useState } from "react";
+import { api, type DashboardWidget } from "../api";
+import DashboardEditor from "./DashboardEditor";
 
-/**
- * Country dashboard: one country's incidents at a glance — headline figures, a live map
- * (icons in your actor colours, or a heatmap), the trend, who/what/where, the calendar,
- * and the relationships between actors, tactics and places. It is built from the same
- * widgets as the Auto Dashboard, locked to the chosen country, so switching country or
- * period redraws everything. No incident listing: the map and charts are the view.
- */
-
-const PERIODS: { id: string; label: string; days: number | null }[] = [
-  { id: "all", label: "All time", days: null },
-  { id: "365", label: "12 months", days: 365 },
-  { id: "180", label: "6 months", days: 180 },
-  { id: "90", label: "90 days", days: 90 },
-  { id: "30", label: "30 days", days: 30 },
-];
 const DEFAULT_COUNTRY = "Kenya";
-const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-function normalize(s: IncidentStats): NormalizedDashboardStats {
-  const sum = (p: string) => Object.entries(s.casualties).filter(([k]) => k.startsWith(p)).reduce((a, [, v]) => a + (v ?? 0), 0);
-  return { total: s.total, by_sector: s.by_sector, by_actor: s.by_actor, by_tactic: s.by_tactic, by_severity: s.by_severity, by_province: s.by_province, by_country: s.by_country, time_series: s.time_series, daily: s.daily, actor_tactic: s.actor_tactic, deaths: sum("deaths_"), injuries: sum("injuries_"), kidnappings_ngo: s.casualties.kidnappings_ngo ?? 0 };
-}
+const W = (id: string, type: DashboardWidget["type"], title: string, layout: { x: number; y: number; w: number; h: number }, extra: Partial<DashboardWidget> = {}): DashboardWidget => ({
+  id,
+  type,
+  title,
+  size: "medium",
+  layout,
+  ...extra,
+});
 
-type Located = IncidentItem & { latitude: number; longitude: number };
-
-/* ── the map: icons in the actor colours, or a heatmap, framed on the country's own incidents ── */
-
-const pins = new Map<string, L.DivIcon>();
-const pin = (color: string) => {
-  let ic = pins.get(color);
-  if (!ic) {
-    ic = L.divIcon({ html: pinSvg(color, 12), className: "incident-marker-icon", iconSize: [12, 16], iconAnchor: [6, 15], tooltipAnchor: [0, -14] });
-    pins.set(color, ic);
-  }
-  return ic;
-};
-
-/** The basemap, drawn from boundary files that ship with the app (country outlines from world-atlas, and state
- *  boundaries where the app holds them): no tile server, no key, no outside request. */
-const NAME_ALIASES: Record<string, string> = { "south sudan": "s. sudan", "democratic republic of the congo": "dem. rep. congo", "dr congo": "dem. rep. congo", drc: "dem. rep. congo", "central african republic": "central african rep.", "ivory coast": "côte d'ivoire", "cote d'ivoire": "côte d'ivoire", eswatini: "eswatini", "western sahara": "w. sahara", "equatorial guinea": "eq. guinea" };
-const norm = (v: string) => v.toLowerCase().trim();
-
-function Basemap({ country }: { country: string }) {
-  const map = useMap();
-  useEffect(() => {
-    let dead = false;
-    const layers: L.Layer[] = [];
-    const wanted = NAME_ALIASES[norm(country)] ?? norm(country);
-    fetch(worldTopology)
-      .then((r) => r.json())
-      .then((topo) => {
-        if (dead) return;
-        const fc = feature(topo, topo.objects.countries) as unknown as GeoJSON.FeatureCollection;
-        const land = L.geoJSON(fc, {
-          style: (f) => {
-            const mine = norm(String((f?.properties as { name?: string })?.name ?? "")) === wanted;
-            return { color: mine ? "#0f766e" : "#a8b3bd", weight: mine ? 1.6 : 0.8, fillColor: mine ? "#e6f4ef" : "#f3f1ea", fillOpacity: 1 };
-          },
-          onEachFeature: (f, layer) => layer.bindTooltip(String((f.properties as { name?: string })?.name ?? ""), { sticky: true, direction: "top" }),
-        }).addTo(map);
-        land.bringToBack();
-        layers.push(land);
-      })
-      .catch(() => {});
-    // State boundaries, where the app holds them for this country.
-    const lvl = (() => {
-      const h = findGeoHierarchy(country);
-      return h ? getGeoLevel(h, 1) : undefined;
-    })();
-    if (lvl) {
-      fetch(lvl.boundaryUrl)
-        .then((r) => r.json())
-        .then((data) => {
-          if (dead) return;
-          const fc = (data.type === "Topology" ? feature(data, data.objects[Object.keys(data.objects)[0]]) : data) as GeoJSON.FeatureCollection;
-          const states = L.geoJSON(fc, {
-            style: { color: "#0f766e", weight: 1, fillOpacity: 0, dashArray: "3 3" },
-            onEachFeature: (f, layer) => layer.bindTooltip(String((f.properties as Record<string, string>)?.[lvl.namePropertyKey] ?? ""), { sticky: true }),
-          }).addTo(map);
-          layers.push(states);
-        })
-        .catch(() => {});
-    }
-    return () => {
-      dead = true;
-      layers.forEach((l) => l.remove());
-    };
-  }, [map, country]);
-  return null;
-}
-
-function FitTo({ points }: { points: [number, number][] }) {
-  const map = useMap();
-  useEffect(() => {
-    if (points.length === 0) return;
-    map.invalidateSize();
-    try {
-      map.fitBounds(L.latLngBounds(points), { padding: [30, 30], maxZoom: 8, animate: false });
-    } catch {
-      /* the map was removed while this ran */
-    }
-  }, [map, points]);
-  return null;
-}
-
-function CountryMap({ incidents, country }: { incidents: Located[]; country: string }) {
-  const [mode, setMode] = useState<"icons" | "heat">("icons");
-  const points = useMemo(() => incidents.map((i) => [i.latitude, i.longitude] as [number, number]), [incidents]);
-  const seg = (on: boolean): React.CSSProperties => ({ fontSize: 12, padding: "4px 12px", cursor: "pointer", border: "none", background: on ? "var(--signal)" : "var(--panel)", color: on ? "#fff" : "var(--text-muted)" });
-  return (
-    <div style={{ position: "relative", height: "100%", borderRadius: 10, overflow: "hidden", border: "1px solid var(--border-soft)" }}>
-      <MapContainer center={[1, 38]} zoom={5} style={{ width: "100%", height: "100%", background: "#d6e6f2" }} scrollWheelZoom zoomControl attributionControl={false}>
-        <Basemap country={country} />
-        <FitTo points={points} />
-        {mode === "heat" ? (
-          <HeatmapLayer points={points.slice(0, 8000).map(([a, b]) => [a, b, 1] as [number, number, number])} />
-        ) : (
-          incidents.slice(0, 4000).map((i) => (
-            <Marker key={i.id} position={[i.latitude, i.longitude]} icon={pin(classifyIncident(i).color)}>
-              <LTooltip direction="top" opacity={0.95}>
-                <div style={{ fontSize: 12, lineHeight: 1.5 }}>
-                  <b>{[i.city, i.province].filter(Boolean).join(", ") || country}</b>
-                  <div>{[i.occurred_date, i.tactic, i.actor].filter(Boolean).join(" · ")}</div>
-                </div>
-              </LTooltip>
-            </Marker>
-          ))
-        )}
-      </MapContainer>
-      <div style={{ position: "absolute", top: 10, left: 54, zIndex: 500, display: "flex", borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)", boxShadow: "0 2px 8px #0004" }}>
-        <button type="button" style={seg(mode === "icons")} onClick={() => setMode("icons")}>Icons</button>
-        <button type="button" style={seg(mode === "heat")} onClick={() => setMode("heat")}>Heatmap</button>
-      </div>
-      <div style={{ position: "absolute", left: 10, bottom: 10, zIndex: 500, background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 9px", fontSize: 11.5 }}>
-        <b>{incidents.length.toLocaleString()}</b> mapped incidents
-      </div>
-    </div>
-  );
-}
-
-const W = (id: string, type: DashboardWidget["type"], title: string, extra: Partial<DashboardWidget> = {}): DashboardWidget => ({ id, type, title, size: "medium", ...extra });
-/** The widgets, all drawn by the same cards as the Auto Dashboard. Fixed, so a change of country only refetches the data. */
-const WIDGETS = {
-  trend: W("trend", "line", "Incidents over time", { dataField: "time_series", color: "#e34948" }),
-  severity: W("severity", "pie", "Severity", { dataField: "by_severity", showLegend: true }),
-  province: W("province", "bar", "Where — by province / county", { dataField: "by_province", topN: 12, color: "#2a78d6", showDataLabels: true }),
-  actor: W("actor", "bar", "Who — actors involved", { dataField: "by_actor", topN: 10, showDataLabels: true }),
-  tactic: W("tactic", "pie", "What — tactics", { dataField: "by_tactic", topN: 8, showLegend: true }),
-  calendar: W("calendar", "calendar", "Daily activity calendar", { color: "#e34948" }),
-  sankey: W("sankey", "sankey", "Who does what — actor → tactic", { dataField: "by_actor", secondaryField: "tactic", topN: 8 }),
-  network: W("network", "network", "Where each sector is hit — sector ↔ province", { dataField: "by_sector", secondaryField: "province", topN: 8 }),
-  bubble: W("bubble", "bubble", "Sectors affected", { dataField: "by_sector", topN: 14 }),
-  table: W("table", "heatmap_table", "Province × tactic", { dataField: "by_province", secondaryField: "tactic", topN: 10 }),
-  radar: W("radar", "radar", "Tactic profile", { dataField: "by_tactic", topN: 8, color: "#7c3aed" }),
-  funnel: W("funnel", "bar", "Hotspot towns", { dataField: "by_city", topN: 10, color: "#0d9488", showDataLabels: true }),
-};
-
-/** The "deep dive" visuals, built on the any-data engine and locked to the chosen country. */
 const FIELD_LABELS = {
-  deaths_men: { label: "Deaths: men", type: "number" as const },
-  deaths_women: { label: "Deaths: women", type: "number" as const },
-  deaths_children: { label: "Deaths: children", type: "number" as const },
   province: { label: "Province", type: "text" as const },
   sector: { label: "Sector", type: "text" as const },
 };
-const vizWidget = (id: string, title: string, viz: Omit<VizSpec, "source" | "columns" | "filters"> & Partial<Pick<VizSpec, "columns">>, country: string): DashboardWidget => ({
-  id,
-  type: "viz",
-  title,
-  size: "medium",
-  viz: { source: "incidents", columns: [], filters: [{ field: "country", op: "in", values: [country] }], ...viz, options: { ...viz.options, fields: FIELD_LABELS } },
-});
-const SITUATION = THEMES.find((t) => t.key === "situation") ?? THEMES[0];
 
-/** One hemicycle of the people killed in criminal incidents, named by who they were. "Criminal" is the same group the
- *  map colours blue (gangs, bandits, robbers, kidnappers and the like), judged from the actor, interest group, sector,
- *  operation, target, tactic and details of each incident. Read from every incident of the country, mapped or not. */
-type Victims = { women: number; men: number; children: number; unknown: number; criminalIncidents: number; fallback: boolean };
-const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-
-function CriminalVictims({ country, rows, done }: { country: string; rows: IncidentItem[] | null; done: boolean }) {
-  const data = useMemo<Victims | null>(() => {
-    if (!rows) return null;
-    const isCriminal = (i: IncidentItem) => classifyIncident(i).label === "Criminal" || classifyActor(`${i.tactic ?? ""} ${i.details ?? ""}`).label === "Criminal";
-    const tally = (list: IncidentItem[]) =>
-      list.reduce(
-        (a, i) => ({ women: a.women + num(i.civilian_death_female), men: a.men + num(i.civilian_death_male), children: a.children + num(i.civilian_death_child), unknown: a.unknown + num(i.civilian_death_unknown) }),
-        { women: 0, men: 0, children: 0, unknown: 0 },
-      );
-    const criminal = rows.filter(isCriminal);
-    const t = tally(criminal);
-    const any = t.women + t.men + t.children + t.unknown > 0;
-    // Nothing recorded against criminal actors: show every civilian death instead, and say so.
-    return { ...(any ? t : tally(rows)), criminalIncidents: criminal.length, fallback: !any };
-  }, [rows]);
-
-  const viz: VizSpec = {
-    kind: "parliament",
-    source: "incidents",
-    rows: [{ field: "victims" }],
-    columns: [],
-    values: [{ field: "killed", agg: "sum", label: "People killed" }],
-    filters: [],
-    options: { topN: 6, fields: { victims: { label: "Who was killed", type: "text" }, killed: { label: "People killed", type: "number" } } },
-  };
-  const ok = data;
-  const total = ok ? ok.women + ok.men + ok.children + ok.unknown : 0;
-  const result: VizResult | null = ok
-    ? {
-        rows: [
-          { d: ["Women"], m: [ok.women] },
-          { d: ["Men"], m: [ok.men] },
-          { d: ["Children"], m: [ok.children] },
-          ...(ok.unknown > 0 ? [{ d: ["Sex or age not recorded"], m: [ok.unknown] }] : []),
-        ],
-        truncated: false,
-      }
-    : null;
-  return (
-    <div className="panel vz-card vz-card--parliament">
-      <header className="vz-card__head">
-        <div className="vz-card__titles">
-          <div className="vz-card__title">{ok?.fallback ? "Women, men and children killed" : "Women, men and children killed in criminal incidents"}</div>
-          <div className="vz-card__caption">
-            {ok
-              ? ok.fallback
-                ? `No civilian deaths are recorded against criminal actors in ${country} for this period, so this shows all civilian deaths.`
-                : `${total.toLocaleString()} civilian deaths in ${ok.criminalIncidents.toLocaleString()} criminal incidents in ${country}`
-              : `Civilian deaths in ${country}`}
-          </div>
-        </div>
-      </header>
-      <div className="vz-card__body">
-        {data === null ? (
-          <div className="vz-empty">Loading…</div>
-        ) : total === 0 && !done ? (
-          <div className="vz-empty">Reading incidents…</div>
-        ) : total === 0 ? (
-          <div className="vz-empty">No civilian deaths are recorded for {country} in this period.</div>
-        ) : (
-          <Parliament viz={viz} result={result!} theme={SITUATION} selectedKey={null} />
-        )}
-      </div>
-    </div>
-  );
+/** What a new country dashboard starts with. After that it is the person's own: every card can be moved, resized,
+ *  edited or removed, more can be added, and it can be given a look and published like any other dashboard. */
+function templateFor(): DashboardWidget[] {
+  return [
+    W("kpi-total", "stat", "Incidents", { x: 0, y: 0, w: 3, h: 4 }, { dataField: "total", color: "#e34948" }),
+    W("kpi-deaths", "stat", "Civilian deaths", { x: 3, y: 0, w: 3, h: 4 }, { dataField: "deaths", color: "#7c3aed" }),
+    W("kpi-injuries", "stat", "Civilian injuries", { x: 6, y: 0, w: 3, h: 4 }, { dataField: "injuries", color: "#ea580c" }),
+    W("kpi-kidnap", "stat", "NGO kidnappings", { x: 9, y: 0, w: 3, h: 4 }, { dataField: "kidnappings_ngo", color: "#0d9488" }),
+    W("map", "map", "Where incidents happened", { x: 0, y: 4, w: 12, h: 12 }, { mapViewMode: "markers", mapBasemap: "osm" }),
+    W("trend", "line", "Incidents over time", { x: 0, y: 16, w: 8, h: 8 }, { dataField: "time_series", color: "#e34948" }),
+    W("severity", "pie", "Severity", { x: 8, y: 16, w: 4, h: 8 }, { dataField: "by_severity", showLegend: true }),
+    W("province", "bar", "Where — by province / county", { x: 0, y: 24, w: 4, h: 9 }, { dataField: "by_province", topN: 12, color: "#2a78d6", showDataLabels: true }),
+    W("actor", "bar", "Who — actors involved", { x: 4, y: 24, w: 4, h: 9 }, { dataField: "by_actor", topN: 10, showDataLabels: true }),
+    W("tactic", "pie", "What — tactics", { x: 8, y: 24, w: 4, h: 9 }, { dataField: "by_tactic", topN: 8, showLegend: true }),
+    W("calendar", "calendar", "Daily activity calendar", { x: 0, y: 33, w: 12, h: 6 }, { color: "#e34948" }),
+    W("victims", "victims", "Women, men and children killed in criminal incidents", { x: 0, y: 39, w: 5, h: 11 }, { victimGroup: "Criminal" }),
+    {
+      id: "province-sector",
+      type: "viz",
+      title: "Rows by province and sector",
+      size: "medium",
+      layout: { x: 5, y: 39, w: 7, h: 11 },
+      viz: {
+        kind: "bar",
+        source: "incidents",
+        rows: [{ field: "province" }],
+        columns: [{ field: "sector" }],
+        values: [{ agg: "count" }],
+        filters: [],
+        options: { stack: "stacked", orientation: "horizontal", topN: 14, labels: true, fields: FIELD_LABELS },
+      },
+    },
+    W("sankey", "sankey", "Who does what — actor → tactic", { x: 0, y: 50, w: 6, h: 10 }, { dataField: "by_actor", secondaryField: "tactic", topN: 8 }),
+    W("network", "network", "Where each sector is hit — sector ↔ province", { x: 6, y: 50, w: 6, h: 10 }, { dataField: "by_sector", secondaryField: "province", topN: 8 }),
+    W("table", "heatmap_table", "Province × tactic", { x: 0, y: 60, w: 6, h: 10 }, { dataField: "by_province", secondaryField: "tactic", topN: 10 }),
+    W("bubble", "bubble", "Sectors affected", { x: 6, y: 60, w: 3, h: 10 }, { dataField: "by_sector", topN: 14 }),
+    W("radar", "radar", "Tactic profile", { x: 9, y: 60, w: 3, h: 10 }, { dataField: "by_tactic", topN: 8, color: "#7c3aed" }),
+    W("towns", "bar", "Hotspot towns", { x: 0, y: 70, w: 12, h: 8 }, { dataField: "by_city", topN: 10, color: "#0d9488", showDataLabels: true }),
+  ];
 }
 
-/** One country's incidents as lean rows (no bulky original upload), a page at a time. */
-const rowsCache = new Map<string, IncidentItem[]>();
-type Snap = { stats: NormalizedDashboardStats; crosstabs: Record<string, CrosstabRow[]>; breakdowns: Record<string, { value: string; count: number }[]> };
-/** The last figures seen per country and period: shown at once on a revisit while fresh ones load. */
-const snapCache = new Map<string, Snap>();
-
-async function readCountryRows(country: string, range: { from?: string; to?: string }, isLive: () => boolean, onRows: (rows: IncidentItem[]) => void) {
-  const key = `${country}|${range.from ?? ""}|${range.to ?? ""}`;
-  const hit = rowsCache.get(key);
-  if (hit) { onRows(hit); return; } // switching back to a country already read is instant
-  let after = 0;
-  const all: IncidentItem[] = [];
-  for (let n = 0; ; n++) {
-    // A small first page lets the map and charts appear at once; bigger pages follow.
-    const page = await api.getIncidentsGrid(after, n === 0 ? 3000 : 25000, { country, ...range });
-    if (!isLive()) return;
-    for (const r of page.rows) all.push(Object.fromEntries(page.columns.map((k, i) => [k, r[i]])) as unknown as IncidentItem);
-    onRows(all.slice());
-    if (page.next === null) break;
-    after = page.next;
+const opening = new Map<string, Promise<string>>();
+/** The dashboard for a country: the one already made for it, or a new one built from the template. */
+function dashboardFor(country: string): Promise<string> {
+  const key = country.toLowerCase();
+  let p = opening.get(key);
+  if (!p) {
+    p = (async () => {
+      const all = await api.getCustomDashboards();
+      const found = all.find((d) => !d.is_auto && (d.country ?? "").toLowerCase() === key);
+      if (found) return found.id;
+      const created = await api.createCustomDashboard(`${country} — country dashboard`, templateFor());
+      await api.updateCustomDashboard(created.id, { country });
+      return created.id;
+    })();
+    opening.set(key, p);
+    p.catch(() => opening.delete(key));
   }
-  if (rowsCache.size > 6) rowsCache.delete(rowsCache.keys().next().value as string);
-  rowsCache.set(key, all);
+  return p;
 }
 
-/** Draws its children only once they are near the screen, so a long dashboard paints its top first. */
-function Lazy({ height, children, className, style }: { height: number; children: ReactNode; className?: string; style?: React.CSSProperties }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [seen, setSeen] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || seen) return;
-    if (typeof IntersectionObserver === "undefined") return setSeen(true);
-    const io = new IntersectionObserver((e) => e.some((x) => x.isIntersecting) && (setSeen(true), io.disconnect()), { rootMargin: "700px 0px" });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [seen]);
-  return (
-    <div ref={ref} className={className} style={{ ...style, height, minWidth: 0 }}>
-      {seen ? children : null}
-    </div>
-  );
-}
-
-/* ── the page ── */
-
+/** Trends & Patterns › Country Dashboard: pick a country and get a dashboard for it that works exactly like any other —
+ *  edit, add, move and resize cards, choose a look, set the period, and publish it as a live link. */
 export default function CountryDashboard() {
   const [countries, setCountries] = useState<{ value: string; count: number }[] | null>(null);
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
-  const [period, setPeriod] = useState("all");
-  const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
-  const [rows, setRows] = useState<IncidentItem[] | null>(null);
-  const [rowsDone, setRowsDone] = useState(false);
-  const incidents = useMemo(() => (rows ?? []).filter((i): i is Located => i.latitude != null && i.longitude != null), [rows]);
-  const [crosstabs, setCrosstabs] = useState<Record<string, CrosstabRow[]>>({});
-  const [breakdowns, setBreakdowns] = useState<Record<string, { value: string; count: number }[]>>({});
+  const [id, setId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const seq = useRef(0);
 
   useEffect(() => {
     let live = true;
@@ -328,7 +96,7 @@ export default function CountryDashboard() {
         if (!live) return;
         setCountries(list);
         const kenya = list.find((c) => c.value.toLowerCase() === DEFAULT_COUNTRY.toLowerCase());
-        setCountry(kenya?.value ?? list[0]?.value ?? DEFAULT_COUNTRY);
+        if (!kenya && list[0]) setCountry(list[0].value);
       })
       .catch(() => live && setCountries([]));
     return () => {
@@ -336,165 +104,41 @@ export default function CountryDashboard() {
     };
   }, []);
 
-  const range = useMemo(() => {
-    const days = PERIODS.find((p) => p.id === period)?.days;
-    return days ? { from: iso(new Date(Date.now() - days * 86_400_000)), to: iso(new Date()) } : {};
-  }, [period]);
-
   useEffect(() => {
-    let live = true;
-    const snapKey = `${country}|${range.from ?? ""}`;
-    const snap = snapCache.get(snapKey);
-    setStats(snap?.stats ?? null);
+    const mine = ++seq.current;
+    setId(null);
     setError(null);
-    setCrosstabs(snap?.crosstabs ?? {});
-    setBreakdowns(snap?.breakdowns ?? {});
-    const filters = { ...range, country };
-    api
-      .getIncidentStats(filters)
-      .then((s) => {
-        if (!live) return;
-        const n = normalize(s);
-        setStats(n);
-        snapCache.set(snapKey, { ...(snapCache.get(snapKey) ?? { crosstabs: {}, breakdowns: {} }), stats: n });
-      })
-      .catch((e) => live && setError(e instanceof Error ? e.message : "The figures could not be read."));
-    setRows(null);
-    setRowsDone(false);
-    readCountryRows(country, range, () => live, (all) => setRows(all))
-      .then(() => live && setRowsDone(true))
-      .catch(() => live && (setRows([]), setRowsDone(true)));
-    for (const w of Object.values(WIDGETS)) {
-      const ck = crosstabKeyFor(w);
-      if (ck) {
-        const [p, s] = ck.split("|") as [never, never];
-        api.getCrosstab(p, s, filters).then((rows) => { if (!live) return; setCrosstabs((prev) => ({ ...prev, [ck]: rows })); const o = snapCache.get(snapKey); if (o) o.crosstabs[ck] = rows; }).catch(() => {});
-      }
-      const bk = breakdownKeyFor(w);
-      if (bk) api.getBreakdown(bk as never, filters).then((rows) => { if (!live) return; setBreakdowns((prev) => ({ ...prev, [bk]: rows })); const o = snapCache.get(snapKey); if (o) o.breakdowns[bk] = rows; }).catch(() => {});
-    }
-    return () => {
-      live = false;
-    };
-  }, [country, range]);
+    dashboardFor(country)
+      .then((d) => mine === seq.current && setId(d))
+      .catch((e) => mine === seq.current && setError(e instanceof Error ? e.message : "The dashboard could not be opened."));
+  }, [country]);
 
-  const actorPalette = (stats?.by_actor ?? []).map((a) => classifyActor(a.value).color);
-  const card = (w0: DashboardWidget, h: number, cols: string) => {
-    const w = w0.id === "actor" && actorPalette.length ? { ...w0, palette: actorPalette } : w0;
-    return (
-    stats && (
-      <Lazy key={w.id} height={h} style={{ gridColumn: cols }}>
-        <DashboardWidgetCard widget={w} stats={stats} incidents={incidents} crosstabs={crosstabs} breakdowns={breakdowns} />
-      </Lazy>
-    )
-    );
-  };
-
-  const top = (rows: { value: string; count: number }[] | undefined) => rows?.[0]?.value ?? "—";
-  const sel: React.CSSProperties = { fontSize: 13, padding: "7px 10px", background: "var(--panel)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8 };
-  const kpi = (label: string, value: string, tint: string, sub?: string) => (
-    <div style={{ background: "var(--panel)", border: "1px solid var(--border-soft)", borderTop: `3px solid ${tint}`, borderRadius: 10, padding: "12px 16px", minWidth: 0 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-faint)" }}>{label}</div>
-      <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
-      {sub && <div style={{ fontSize: 12, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>}
-    </div>
-  );
-
+  const options = countries && countries.length ? countries : [{ value: country, count: 0 }];
   return (
-    <div style={{ flex: 1, overflowY: "auto" }}>
-      <div style={{ background: "linear-gradient(120deg, var(--signal-dim), transparent 70%)", borderBottom: "1px solid var(--border-soft)", padding: "20px 24px 16px" }}>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-faint)" }}>Country dashboard</div>
-            <h2 style={{ margin: "2px 0 0", fontSize: 34, letterSpacing: "-0.02em" }}>{country}</h2>
-          </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <select value={country} onChange={(e) => setCountry(e.target.value)} style={sel} aria-label="Country">
-              {(countries ?? []).some((c) => c.value === country) ? null : <option value={country}>{country}</option>}
-              {(countries ?? []).map((c) => (
-                <option key={c.value} value={c.value}>
-                  {c.value} ({c.count.toLocaleString()})
-                </option>
-              ))}
-            </select>
-            <div style={{ display: "flex", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }} role="group" aria-label="Period">
-              {PERIODS.map((p) => (
-                <button key={p.id} type="button" onClick={() => setPeriod(p.id)} style={{ fontSize: 12.5, padding: "7px 12px", cursor: "pointer", border: "none", background: period === p.id ? "var(--signal)" : "var(--panel)", color: period === p.id ? "#fff" : "var(--text-muted)" }}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-        {countries && countries.length > 1 && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>
-            {countries.slice(0, 12).map((c) => (
-              <button key={c.value} type="button" onClick={() => setCountry(c.value)} style={{ fontSize: 12, padding: "4px 11px", borderRadius: 999, cursor: "pointer", border: `1px solid ${c.value === country ? "var(--signal)" : "var(--border)"}`, background: c.value === country ? "var(--signal-dim)" : "var(--panel)", color: c.value === country ? "var(--text-primary)" : "var(--text-muted)" }}>
-                {c.value}
-              </button>
-            ))}
-          </div>
-        )}
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
+        <span className="eyebrow" style={{ fontSize: 11, opacity: 0.7 }}>COUNTRY</span>
+        <select
+          value={country}
+          onChange={(e) => setCountry(e.target.value)}
+          style={{ fontSize: 14, fontWeight: 600, padding: "6px 10px", background: "var(--panel)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8 }}
+        >
+          {options.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.value}
+              {c.count ? ` (${c.count.toLocaleString()})` : ""}
+            </option>
+          ))}
+        </select>
+        <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Each country keeps its own dashboard — edit it, restyle it, and publish it like any other.</span>
       </div>
-
-      <div style={{ padding: "16px 24px 36px" }}>
-        {error ? (
-          <div style={{ color: "var(--text-faint)" }}>{error}</div>
-        ) : !stats ? (
-          <div aria-busy="true" style={{ display: "grid", gap: 10 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
-              {[0, 1, 2, 3, 4].map((i) => <div key={i} style={{ height: 74, borderRadius: 10, background: "var(--panel)", border: "1px solid var(--border)", opacity: 0.6 }} />)}
-            </div>
-            <div style={{ height: 420, borderRadius: 12, background: "#d6e6f2", opacity: 0.5 }} />
-          </div>
-        ) : stats.total === 0 ? (
-          <div style={{ color: "var(--text-faint)" }}>No incidents are recorded for {country} in this period. Upload data, push approved rows from Daily review, or pick another country or period.</div>
-        ) : (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 14 }}>
-              {kpi("Incidents", stats.total.toLocaleString(), "#e34948")}
-              {kpi("Civilian deaths", (stats.deaths ?? 0).toLocaleString(), "#7c3aed")}
-              {kpi("Civilian injuries", (stats.injuries ?? 0).toLocaleString(), "#ea580c")}
-              {kpi("Most affected", top(stats.by_province), "#2a78d6", stats.by_province[0] ? `${stats.by_province[0].count.toLocaleString()} incidents` : undefined)}
-              {kpi("Leading actor", top(stats.by_actor), "#166534", stats.by_actor[0] ? `${stats.by_actor[0].count.toLocaleString()} incidents` : undefined)}
-              {kpi("Main tactic", top(stats.by_tactic), "#eab308", stats.by_tactic[0] ? `${stats.by_tactic[0].count.toLocaleString()} incidents` : undefined)}
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
-              <div style={{ gridColumn: "span 12", height: 480 }}>
-                <CountryMap key={`${country}-${period}`} incidents={incidents} country={country} />
-              </div>
-              {card(WIDGETS.trend, 300, "span 8")}
-              {card(WIDGETS.severity, 300, "span 4")}
-              {card(WIDGETS.province, 380, "span 4")}
-              {card(WIDGETS.actor, 380, "span 4")}
-              {card(WIDGETS.tactic, 380, "span 4")}
-              {card(WIDGETS.calendar, 250, "span 12")}
-              <Lazy height={468} style={{ gridColumn: "span 12", borderRadius: 12, overflow: "hidden" }}>
-                <VizProvider mode="edit" theme={SITUATION} dateFrom={range.from ?? null} dateTo={range.to ?? null}>
-                  <div data-viz-theme={SITUATION.key} style={{ ...themeStyle(SITUATION), padding: 14, display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
-                    <div style={{ gridColumn: "span 5", height: 440, minWidth: 0 }}>
-                      <CriminalVictims country={country} rows={rows} done={rowsDone} />
-                    </div>
-                    <div style={{ gridColumn: "span 7", height: 440, minWidth: 0 }}>
-                      <VizCard
-                        widget={vizWidget("province-sector", "Rows by province and sector", { kind: "bar", rows: [{ field: "province" }], columns: [{ field: "sector" }], values: [{ agg: "count" }], options: { stack: "stacked", orientation: "horizontal", topN: 14, labels: true } }, country)}
-                        editable={false}
-                      />
-                    </div>
-                  </div>
-                </VizProvider>
-              </Lazy>
-              {card(WIDGETS.sankey, 420, "span 6")}
-              {card(WIDGETS.network, 420, "span 6")}
-              {card(WIDGETS.table, 400, "span 6")}
-              {card(WIDGETS.bubble, 400, "span 3")}
-              {card(WIDGETS.radar, 400, "span 3")}
-              {stats && card(WIDGETS.funnel, 340, "span 12")}
-            </div>
-          </>
-        )}
-      </div>
+      {error ? (
+        <div style={{ padding: 24, color: "var(--text-faint)" }}>{error}</div>
+      ) : id ? (
+        <DashboardEditor key={id} mode={{ kind: "bespoke", id }} />
+      ) : (
+        <div style={{ padding: 24, color: "var(--text-faint)" }}>Opening the {country} dashboard…</div>
+      )}
     </div>
   );
 }

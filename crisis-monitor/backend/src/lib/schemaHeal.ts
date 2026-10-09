@@ -32,6 +32,7 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
     ["date_range_from", "TEXT"], // 013
     ["date_range_to", "TEXT"],
     ["theme", "TEXT"], // dashboard themes (no hand-run migration)
+    ["country", "TEXT"], // a dashboard tied to one country (the Country Dashboard)
   ],
   users: [
     ["client_id", "TEXT REFERENCES clients(id) ON DELETE SET NULL"], // 014

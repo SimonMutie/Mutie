@@ -398,6 +398,8 @@ export type WidgetType =
   | "globe"
   | "heatmap_table"
   | "bullet"
+  // Women, men and children killed, drawn as a hemicycle (see VictimsWidget).
+  | "victims"
   // A visual built on the any-data engine (components/viz): its definition
   // lives in the widget's `viz` field, not in dataField/datasetId.
   | "viz";
@@ -523,6 +525,10 @@ export interface DashboardWidget {
   mapView?: { lat: number; lng: number; zoom: number };
   /** Incident map only — markers (default) or heatmap density view. */
   mapViewMode?: "markers" | "heatmap";
+  /** Map widget: which base map (a key of mapConstants BASEMAPS). */
+  mapBasemap?: string;
+  /** Victims widget: the actor group whose victims are shown ("Criminal"); empty or absent means everyone. */
+  victimGroup?: string;
   /** Globe only — free-standing labeled points (checkpoints, ports,
    *  chokepoints, or any of the LABEL_TYPE_META categories) at a country
    *  name or precise "lat,lng", independent of country shading and routes. */
@@ -638,6 +644,8 @@ export interface CustomDashboard {
   date_range_to: string | null;
   /** The dashboard's look (components/viz/themes.ts); null is the default. */
   theme?: string | null;
+  /** When set, every figure on this dashboard is limited to this one country. */
+  country?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -658,8 +666,16 @@ export interface NormalizedDashboardStats {
   kidnappings_ngo: number;
 }
 
+/** Who was killed, counted per combination of the columns that name who was involved. */
+export interface VictimGroupRow {
+  actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null;
+  incidents: number; women: number; men: number; children: number; unknown: number;
+}
+
 export interface PublicDashboardData {
   name: string;
+  country?: string | null;
+  victimGroups?: VictimGroupRow[];
   widgets: DashboardWidget[];
   stats: NormalizedDashboardStats;
   /** The date range this dashboard's owner set, if any — for display only;
@@ -1681,7 +1697,7 @@ export const api = {
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
   /** The incidents table in compact pages for the spreadsheet grid: columns once, one array per row, no bulky raw upload. */
-  getIncidentsGrid: (after = 0, limit = 5000, filters: { country?: string; from?: string; to?: string } = {}) =>
+  getIncidentsGrid: (after = 0, limit = 5000, filters: { country?: string; from?: string; to?: string; located?: string; [field: string]: string | undefined } = {}) =>
     req<{ columns: string[]; rows: (string | number | null)[][]; next: number | null; total: number | null }>(
       `/api/incidents/grid?${new URLSearchParams({ after: String(after), limit: String(limit), ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) } as Record<string, string>)}`,
     ),
@@ -1715,7 +1731,7 @@ export const api = {
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
   updateCustomDashboard: (
     id: string,
-    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null }
+    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null; country?: string | null }
   ) =>
     req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
@@ -1728,6 +1744,8 @@ export const api = {
     req<import("./components/viz/types").VizResult>(`/api/public/dashboards-viz/${encodeURIComponent(token)}`, { method: "POST", body: JSON.stringify({ widgetId, filters }) }),
   deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
   // Public — no auth token needed, works for anyone with the share link.
+  getVictimGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
+    req<VictimGroupRow[]>(`/api/incidents/victim-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
   getPublicDashboard: (token: string) => req<PublicDashboardData>(`/api/public/dashboards/${token}`),
 
   // General-purpose datasets — any schema, not tied to incidents at all.

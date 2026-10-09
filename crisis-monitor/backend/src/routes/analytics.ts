@@ -126,9 +126,9 @@ const publicRequestSchema = z.object({
  * dashboard itself does.
  */
 publicAnalyticsRouter.post("/:token", async (c) => {
-  const dashboard = await first<{ owner_id: string | null; widgets: string; date_range_from: string | null; date_range_to: string | null }>(
+  const dashboard = await first<{ owner_id: string | null; widgets: string; date_range_from: string | null; date_range_to: string | null; country: string | null }>(
     c.env.DB,
-    `SELECT owner_id, widgets, date_range_from, date_range_to FROM custom_dashboards WHERE share_token = ? AND is_public = 1`,
+    `SELECT owner_id, widgets, date_range_from, date_range_to, country FROM custom_dashboards WHERE share_token = ? AND is_public = 1`,
     [c.req.param("token")]
   );
   if (!dashboard) return c.json({ error: "Not found" }, 404);
@@ -152,7 +152,7 @@ publicAnalyticsRouter.post("/:token", async (c) => {
   if (viz.source === "incidents") {
     // The same scope the rest of the shared view uses: the owner's own incidents, in the dashboard's date range.
     if (!dashboard.owner_id) return c.json({ error: "Not found" }, 404);
-    source = { kind: "incidents", ownerIds: [dashboard.owner_id], countries: null, dateFrom: dashboard.date_range_from, dateTo: dashboard.date_range_to };
+    source = { kind: "incidents", ownerIds: [dashboard.owner_id], countries: dashboard.country ? [dashboard.country] : null, dateFrom: dashboard.date_range_from, dateTo: dashboard.date_range_to };
   } else {
     const id = viz.source.startsWith("dataset:") ? viz.source.slice(8) : "";
     const dataset = id ? await loadDatasetSchema(c.env.DB, id) : null;
