@@ -50,8 +50,8 @@ const ITEMS: Item[] = [
 ];
 
 const candidates = ITEMS.map((it, i) => ({ id: `c${i}`, title: it.title, description: it.description, textEn: null, link: it.url, published: iso(1 + i), domain: new URL(it.url).hostname, sourceCountry: "XX", priority: 5 }));
-// Major and undated, but published thirty hours ago: outside the window. Not flagged.
-candidates.push({ id: "old", title: "Gunmen kill 19 villagers in Katsina village attack", description: "Gunmen killed 19 villagers in an attack on a village in Katsina State, residents said.", textEn: null, link: "https://katsina-post.example/thirty-hours-ago", published: iso(30), domain: "katsina-post.example", sourceCountry: "XX", priority: 5 });
+// Major and undated, but published sixty hours ago: outside the window. Not flagged.
+candidates.push({ id: "old", title: "Gunmen kill 19 villagers in Katsina village attack", description: "Gunmen killed 19 villagers in an attack on a village in Katsina State, residents said.", textEn: null, link: "https://katsina-post.example/thirty-hours-ago", published: iso(60), domain: "katsina-post.example", sourceCountry: "XX", priority: 5 });
 
 const body = (s: string) =>
   `${s} The report could not be independently verified. Communications in the area remain intermittent and aid agencies said access was restricted. Local officials said further details would be released, and residents described the situation as tense through the night.`;
