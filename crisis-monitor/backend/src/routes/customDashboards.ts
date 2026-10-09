@@ -426,8 +426,8 @@ async function computeStatsForOwner(db: D1Database, ownerId: string | null, date
         )
       : all<{ date: string; count: number }>(
           db,
-          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
-          scopeParams
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date((SELECT MAX(occurred_at) FROM incidents WHERE occurred_at IS NOT NULL ${andClause}), '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
+          [...scopeParams, ...scopeParams]
         ),
     all<{ actor: string; tactic: string; count: number }>(
       db,

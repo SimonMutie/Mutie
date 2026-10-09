@@ -21,6 +21,24 @@ const FIELD_LABELS = {
   severity: { label: "Severity", type: "text" as const },
 };
 
+/** Who — which actors are active, month by month, as stacked areas. */
+const actorsOverTime = (layout: { x: number; y: number; w: number; h: number }): DashboardWidget => ({
+  id: "sankey",
+  type: "viz",
+  title: "Who is active — actors month by month",
+  size: "medium",
+  layout,
+  viz: {
+    kind: "area",
+    source: "incidents",
+    rows: [{ field: "date", grain: "month" }],
+    columns: [{ field: "actor" }],
+    values: [{ agg: "count", label: "Incidents" }],
+    filters: [],
+    options: { stack: "stacked", topN: 8, fields: { ...FIELD_LABELS, date: { label: "Date", type: "date" as const }, actor: { label: "Actor", type: "text" as const } } },
+  },
+});
+
 /** What — tactics, as a sunburst: each tactic in the inner ring, split by severity in the outer one. */
 const tacticSunburst = (layout: { x: number; y: number; w: number; h: number }): DashboardWidget => ({
   id: "tactic",
@@ -71,7 +89,7 @@ function templateFor(): DashboardWidget[] {
         options: { stack: "stacked", orientation: "horizontal", topN: 14, labels: true, fields: FIELD_LABELS },
       },
     },
-    W("sankey", "sankey", "Who does what — actor → tactic", { x: 0, y: 50, w: 6, h: 10 }, { dataField: "by_actor", secondaryField: "tactic", topN: 8 }),
+    actorsOverTime({ x: 0, y: 50, w: 6, h: 10 }),
     W("network", "network", "Where each sector is hit — sector ↔ province", { x: 6, y: 50, w: 6, h: 10 }, { dataField: "by_sector", secondaryField: "province", topN: 8 }),
     W("table", "heatmap_table", "Province × tactic", { x: 0, y: 60, w: 6, h: 10 }, { dataField: "by_province", secondaryField: "tactic", topN: 10 }),
     W("bubble", "bubble", "Sectors affected", { x: 6, y: 60, w: 3, h: 10 }, { dataField: "by_sector", topN: 14 }),
@@ -96,8 +114,15 @@ function dashboardFor(country: string): Promise<string> {
         // A dashboard made before the tactics chart became a sunburst: swap the untouched pie for it. Visuals saved
         // without their compiled request get it now, so a shared link can run them.
         const old = found.widgets.find((w) => w.id === "tactic" && w.type === "pie");
-        const next = found.widgets.map((w) => withQuery(w === old ? { ...tacticSunburst(old.layout ?? { x: 8, y: 24, w: 4, h: 9 }), locked: old.locked } : w));
-        if (old || next.some((w, i) => w !== found.widgets[i])) await api.updateCustomDashboard(found.id, { widgets: next }).catch(() => {});
+        const oldFlow = found.widgets.find((w) => w.id === "sankey" && w.type === "sankey");
+        const next = found.widgets.map((w) =>
+          withQuery(
+            w === old ? { ...tacticSunburst(old.layout ?? { x: 8, y: 24, w: 4, h: 9 }), locked: old.locked }
+            : w === oldFlow ? { ...actorsOverTime(oldFlow.layout ?? { x: 0, y: 50, w: 6, h: 10 }), locked: oldFlow.locked }
+            : w,
+          ),
+        );
+        if (old || oldFlow || next.some((w, i) => w !== found.widgets[i])) await api.updateCustomDashboard(found.id, { widgets: next }).catch(() => {});
         return found.id;
       }
       const created = await api.createCustomDashboard(`${country} — country dashboard`, templateFor().map(withQuery));

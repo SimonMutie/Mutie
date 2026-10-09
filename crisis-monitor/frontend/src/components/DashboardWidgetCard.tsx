@@ -3254,20 +3254,21 @@ function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: n
   const countByDate = new Map(daily.map((d) => [d.date, d.count]));
   const maxCount = Math.max(1, ...daily.map((d) => d.count));
 
-  const today = new Date();
-  const start = new Date(today);
-  start.setDate(start.getDate() - 364);
-  start.setDate(start.getDate() - start.getDay()); // align to the preceding Sunday
+  // The year shown ends on the latest day that has incidents (today if there are none), so data from last year, or
+  // a chosen period in the past, still fills the calendar. Days are counted in UTC so none slips a day.
+  const DAY = 86_400_000;
+  const latest = daily.reduce((m, d) => (d.date > m ? d.date : m), "");
+  const endMs = latest ? Date.parse(latest + "T00:00:00Z") : Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+  let startMs = endMs - 364 * DAY;
+  startMs -= new Date(startMs).getUTCDay() * DAY; // align to the preceding Sunday
 
   const cells: { date: string; count: number; col: number; row: number }[] = [];
   let col = 0;
-  const cursor = new Date(start);
-  while (cursor <= today) {
-    const dow = cursor.getDay();
-    const iso = cursor.toISOString().slice(0, 10);
+  for (let t = startMs; t <= endMs; t += DAY) {
+    const dow = new Date(t).getUTCDay();
+    const iso = new Date(t).toISOString().slice(0, 10);
     cells.push({ date: iso, count: countByDate.get(iso) ?? 0, col, row: dow });
     if (dow === 6) col++;
-    cursor.setDate(cursor.getDate() + 1);
   }
   const totalCols = col + 1;
   const cell = 11;
@@ -3276,8 +3277,8 @@ function CalendarHeatmap({ daily, baseColor }: { daily: { date: string; count: n
   const height = 7 * (cell + gap);
 
   return (
-    <div style={{ height: "100%", overflowX: "auto", overflowY: "hidden", display: "flex", alignItems: "center" }}>
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }}>
+    <div style={{ height: "100%", overflow: "hidden", display: "flex", alignItems: "center" }}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ maxHeight: "100%" }}>
         {cells.map((d) => {
           const intensity = d.count > 0 ? Math.max(0.15, d.count / maxCount) : 0;
           return (

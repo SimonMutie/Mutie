@@ -674,8 +674,8 @@ incidentsRouter.get("/stats", async (c) => {
         )
       : all<{ date: string; count: number }>(
           c.env.DB,
-          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date('now', '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
-          scopeParams
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date((SELECT MAX(occurred_at) FROM incidents WHERE occurred_at IS NOT NULL ${andClause}), '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
+          [...scopeParams, ...scopeParams]
         ),
     // Genuine joint counts (not independent marginals like the by_X fields
     // above) — how often each actor/tactic combination actually co-occurs in
