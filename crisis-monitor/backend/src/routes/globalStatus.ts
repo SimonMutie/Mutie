@@ -46,7 +46,7 @@ globalStatusRouter.use("*", requireAuth);
 
 const CACHE_TTL_SECONDS = 300;
 
-async function cachedJson<T>(request: Request, build: () => Promise<T>, ttlSeconds = CACHE_TTL_SECONDS): Promise<Response> {
+async function cachedJson<T>(request: Request, build: () => Promise<T>, ttlSeconds: number | ((body: T) => number) = CACHE_TTL_SECONDS): Promise<Response> {
   const cache = caches.default;
   const cacheKey = new Request(request.url, { method: "GET" });
   const cached = await cache.match(cacheKey);
@@ -60,7 +60,8 @@ async function cachedJson<T>(request: Request, build: () => Promise<T>, ttlSecon
     return Response.json({ error: "Upstream feed unavailable", detail: message }, { status: 502 });
   }
 
-  const response = Response.json(body, { headers: { "Cache-Control": `public, max-age=${ttlSeconds}` } });
+  const ttl = typeof ttlSeconds === "function" ? ttlSeconds(body) : ttlSeconds;
+  const response = Response.json(body, { headers: { "Cache-Control": `public, max-age=${ttl}` } });
   await cache.put(cacheKey, response.clone());
   return response;
 }
@@ -455,17 +456,33 @@ const MIDDLE_EAST_COUNTRIES: Record<string, string> = {
   SA: "Saudi Arabia", OM: "Oman", AE: "United Arab Emirates", KW: "Kuwait", QA: "Qatar", BH: "Bahrain", TR: "Türkiye",
 };
 
-async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
-  const url = `https://api.worldbank.org/v2/country/${countryCodes.join(";")}/indicator/${indicatorId}?format=json&mrnev=1&per_page=20000`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+/** The World Bank rejects requests that name too many countries at once (an error body, not a failure status), so
+ *  countries go in small batches. An error body is treated as a failure so it shows up instead of an empty column. */
+const WB_BATCH = 25;
+
+async function fetchWorldBankBatch(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
+  const url = `https://api.worldbank.org/v2/country/${countryCodes.join(";")}/indicator/${indicatorId}?format=json&mrnev=1&per_page=1000`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
   if (!res.ok) throw new Error(`World Bank API returned ${res.status} for ${indicatorId}`);
-  const data = (await res.json()) as [unknown, Array<{ country: { id: string; value: string }; value: number | null; date: string }> | null];
-  const rows = data[1] ?? [];
+  const data = (await res.json()) as [{ message?: { key?: string; value?: string }[] } | null, Array<{ countryiso3code?: string; country: { id: string; value: string }; value: number | null; date: string }> | null];
+  if (!Array.isArray(data) || !data[1]) {
+    const msg = data?.[0]?.message?.[0]?.value ?? "no data returned";
+    throw new Error(`World Bank API: ${msg} (${indicatorId})`);
+  }
   const out = new Map<string, { value: number; date: string }>();
-  for (const row of rows) {
+  for (const row of data[1]) {
     if (row.value === null) continue;
     out.set(row.country.id, { value: row.value, date: row.date });
   }
+  return out;
+}
+
+async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < countryCodes.length; i += WB_BATCH) chunks.push(countryCodes.slice(i, i + WB_BATCH));
+  const parts = await Promise.all(chunks.map((ch) => fetchWorldBankBatch(indicatorId, ch)));
+  const out = new Map<string, { value: number; date: string }>();
+  for (const m of parts) for (const [k, v] of m) out.set(k, v);
   return out;
 }
 
@@ -473,14 +490,17 @@ async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string
  *  6h: these indicators genuinely only update quarterly/annually upstream,
  *  so this is about being a considerate API citizen, not freshness. */
 globalStatusRouter.get("/economic-indicators", async (c) => {
+  // "v=2" keys a fresh cache entry, so the empty table cached by the earlier version is not served.
   return cachedJson(
-    c.req.raw,
+    new Request(`${c.req.url}${c.req.url.includes("?") ? "&" : "?"}v=2`, { method: "GET" }),
     async () => {
       const names: Record<string, string> = { ...AFRICA_COUNTRIES, ...MIDDLE_EAST_COUNTRIES };
       const codes = Object.keys(names);
       // One call per indicator; one failing leaves its column empty rather than failing the table.
       const settled = await Promise.allSettled(WB_INDICATORS.map((ind) => fetchWorldBankIndicator(ind.id, codes)));
       const failed = WB_INDICATORS.filter((_, i) => settled[i].status === "rejected").map((i) => i.label);
+      if (failed.length === WB_INDICATORS.length) throw new Error("The World Bank API returned nothing for any measure");
+      settled.forEach((r, i) => { if (r.status === "rejected") console.error("[economy]", WB_INDICATORS[i].id, r.reason instanceof Error ? r.reason.message : r.reason); });
 
       const countries = codes.map((code) => {
         const entry: Record<string, unknown> = { code, name: names[code], region: code in MIDDLE_EAST_COUNTRIES ? "Middle East" : "Africa" };
@@ -502,6 +522,7 @@ globalStatusRouter.get("/economic-indicators", async (c) => {
         fetchedAt: new Date().toISOString(),
       };
     },
-    21600
+    // A table with gaps from a failed call is kept for only five minutes, so it is retried soon.
+    (body) => (body.failed.length > 0 ? 300 : 21600)
   );
 });
