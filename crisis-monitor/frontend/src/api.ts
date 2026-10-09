@@ -1208,6 +1208,7 @@ export interface EconomicIndicators {
   source: string;
   note: string;
   failed: string[];
+  errors?: string[];
   fetchedAt: string;
 }
 

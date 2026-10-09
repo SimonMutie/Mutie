@@ -134,6 +134,7 @@ export function EconomyPanel({ data, loading, error }: { data: EconomicIndicator
           <div style={{ fontSize: 10, color: MUTED, lineHeight: 1.45 }}>
             {data.source}. {data.note}
             {data.failed.length > 0 && <span style={{ color: AMBER }}> Not available just now: {data.failed.join(", ")}.</span>}
+            {data.errors && data.errors.length > 0 && <span style={{ display: "block", color: MUTED }}>Reason given: {data.errors[0]}</span>}
           </div>
           <div style={{ fontSize: 10, color: MUTED }}>Amber and red mark commonly used warning levels (for example govt debt above 70% and 100% of GDP, inflation above 10% and 20%).</div>
         </>

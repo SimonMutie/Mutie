@@ -456,33 +456,37 @@ const MIDDLE_EAST_COUNTRIES: Record<string, string> = {
   SA: "Saudi Arabia", OM: "Oman", AE: "United Arab Emirates", KW: "Kuwait", QA: "Qatar", BH: "Bahrain", TR: "Türkiye",
 };
 
-/** The World Bank rejects requests that name too many countries at once (an error body, not a failure status), so
- *  countries go in small batches. An error body is treated as a failure so it shows up instead of an empty column. */
-const WB_BATCH = 25;
-
-async function fetchWorldBankBatch(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
-  const url = `https://api.worldbank.org/v2/country/${countryCodes.join(";")}/indicator/${indicatorId}?format=json&mrnev=1&per_page=1000`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(12000) });
+/** One call per measure for every country the World Bank has ("all"), then keep the ones we show. This avoids long
+ *  country lists, which the World Bank answers with an error body rather than data. An error body counts as a failure. */
+async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
+  const url = `https://api.worldbank.org/v2/country/all/indicator/${indicatorId}?format=json&mrnev=1&per_page=1000`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(25000), headers: { Accept: "application/json", "User-Agent": "TheLens/1.0 (Afrilens Consulting)" } });
   if (!res.ok) throw new Error(`World Bank API returned ${res.status} for ${indicatorId}`);
-  const data = (await res.json()) as [{ message?: { key?: string; value?: string }[] } | null, Array<{ countryiso3code?: string; country: { id: string; value: string }; value: number | null; date: string }> | null];
-  if (!Array.isArray(data) || !data[1]) {
-    const msg = data?.[0]?.message?.[0]?.value ?? "no data returned";
+  const text = await res.text();
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`World Bank API sent a reply that is not JSON for ${indicatorId}: ${text.slice(0, 120)}`);
+  }
+  const rows = Array.isArray(data) ? (data[1] as Array<{ country: { id: string }; value: number | null; date: string }> | null) : null;
+  if (!rows) {
+    const msg = Array.isArray(data) ? JSON.stringify((data[0] as { message?: unknown })?.message ?? data[0]).slice(0, 200) : String(text).slice(0, 200);
     throw new Error(`World Bank API: ${msg} (${indicatorId})`);
   }
+  const wanted = new Set(countryCodes);
   const out = new Map<string, { value: number; date: string }>();
-  for (const row of data[1]) {
-    if (row.value === null) continue;
+  for (const row of rows) {
+    if (row.value === null || !wanted.has(row.country.id)) continue;
     out.set(row.country.id, { value: row.value, date: row.date });
   }
   return out;
 }
 
-async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
-  const chunks: string[][] = [];
-  for (let i = 0; i < countryCodes.length; i += WB_BATCH) chunks.push(countryCodes.slice(i, i + WB_BATCH));
-  const parts = await Promise.all(chunks.map((ch) => fetchWorldBankBatch(indicatorId, ch)));
-  const out = new Map<string, { value: number; date: string }>();
-  for (const m of parts) for (const [k, v] of m) out.set(k, v);
+/** Runs the tasks a few at a time: Workers allow only six open connections, and the rest would wait and time out. */
+async function inBatches<T>(tasks: (() => Promise<T>)[], size: number): Promise<PromiseSettledResult<T>[]> {
+  const out: PromiseSettledResult<T>[] = [];
+  for (let i = 0; i < tasks.length; i += size) out.push(...(await Promise.allSettled(tasks.slice(i, i + size).map((t) => t()))));
   return out;
 }
 
@@ -492,14 +496,15 @@ async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string
 globalStatusRouter.get("/economic-indicators", async (c) => {
   // "v=2" keys a fresh cache entry, so the empty table cached by the earlier version is not served.
   return cachedJson(
-    new Request(`${c.req.url}${c.req.url.includes("?") ? "&" : "?"}v=2`, { method: "GET" }),
+    new Request(`${c.req.url}${c.req.url.includes("?") ? "&" : "?"}v=3`, { method: "GET" }),
     async () => {
       const names: Record<string, string> = { ...AFRICA_COUNTRIES, ...MIDDLE_EAST_COUNTRIES };
       const codes = Object.keys(names);
       // One call per indicator; one failing leaves its column empty rather than failing the table.
-      const settled = await Promise.allSettled(WB_INDICATORS.map((ind) => fetchWorldBankIndicator(ind.id, codes)));
+      const settled = await inBatches(WB_INDICATORS.map((ind) => () => fetchWorldBankIndicator(ind.id, codes)), 4);
       const failed = WB_INDICATORS.filter((_, i) => settled[i].status === "rejected").map((i) => i.label);
-      if (failed.length === WB_INDICATORS.length) throw new Error("The World Bank API returned nothing for any measure");
+      const errors = settled.flatMap((r) => (r.status === "rejected" ? [r.reason instanceof Error ? r.reason.message : String(r.reason)] : []));
+      if (failed.length === WB_INDICATORS.length) throw new Error(`The World Bank API returned nothing for any measure. ${errors[0] ?? ""}`);
       settled.forEach((r, i) => { if (r.status === "rejected") console.error("[economy]", WB_INDICATORS[i].id, r.reason instanceof Error ? r.reason.message : r.reason); });
 
       const countries = codes.map((code) => {
@@ -519,6 +524,7 @@ globalStatusRouter.get("/economic-indicators", async (c) => {
         source: "World Bank Open Data (CC BY 4.0)",
         note: "Latest value the World Bank has published for each country and measure; the year is shown beside it. Most are annual and appear 1-2 years late, and some countries report some measures rarely or never.",
         failed,
+        errors: errors.slice(0, 3),
         fetchedAt: new Date().toISOString(),
       };
     },
