@@ -1,9 +1,8 @@
 import provincesJson from "../data/provinces.json";
 import { countryName } from "./africaGeo";
-import { MARITIME_THREAT_ZONES, ONGOING_CONFLICT_PROVINCES } from "../data/ongoingConflicts";
 
 /**
- * Provinces with active conflict, worked out from where recent conflict reporting falls.
+ * Provinces with active armed clashes, worked out from where recent fighting reports fall.
  *
  * Each report of fighting from the last two days (and each verified escalation incident) is placed in the province,
  * state or region it falls inside. A province is shaded when a verified incident is inside it, or when enough
@@ -49,10 +48,8 @@ export interface ZonePoint {
 
 export interface ConflictProvince {
   id: string;
-  /** "active": fighting reported or a verified incident in the last 48 hours. "ongoing": a long-running conflict on the analysts' list, with nothing fresh. */
-  tier: "active" | "ongoing";
-  /** What the conflict is, for ongoing ones. */
-  note?: string;
+  /** Always "active": only provinces with armed clashes or a verified escalation in the last 48 hours are returned. */
+  tier: "active";
   country: string;
   countryName: string;
   name: string;
@@ -111,23 +108,10 @@ export function conflictProvinces(points: ZonePoint[]): ConflictProvince[] {
     if (sc < ZONE_MIN_SCORE) continue;
     active.set(`${p.country}:${p.name}`, draw(p, "active", sc));
   }
-  // Long-running conflicts that have nothing fresh today stay on the map, shaded more lightly.
-  const out = [...active.values()].sort((a, b) => b.score - a.score);
-  for (const [cc, name, note] of ONGOING_CONFLICT_PROVINCES) {
-    const id = `${cc}:${name}`;
-    const prov = PROVINCES.find((p) => p.country === cc && p.name === name);
-    if (!prov) continue;
-    const hit = active.get(id);
-    if (hit) hit.note = note;
-    else out.push({ ...draw(prov, "ongoing", 0), note });
-  }
-  for (const z of MARITIME_THREAT_ZONES) {
-    out.push({ id: `sea:${z.id}`, tier: "ongoing", country: "", countryName: "At sea", name: z.name, note: z.note, score: 0, rings: [z.ring] });
-  }
-  return out;
+  return [...active.values()].sort((a, b) => b.score - a.score);
 }
 
-function draw(p: Province, tier: "active" | "ongoing", score: number): ConflictProvince {
+function draw(p: Province, tier: "active", score: number): ConflictProvince {
   return {
     id: `${p.country}:${p.name}`,
     tier,

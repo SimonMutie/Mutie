@@ -281,7 +281,12 @@ export async function queryBulkEvents(env: Env, opts: { hours: number; minQuadCl
   }));
 }
 
-/** Where conflict-coded events fell inside a box over the last `hours`, one row per place (to about a kilometre) with
+/** GDELT event codes for armed clashes: 18 assault (bombings, shootings, abductions), 19 fight (conventional
+ *  military force) and 20 mass violence. Protests, threats and posturing are not included, and neither is the tone
+ *  override the general conflict feeds use. */
+const ARMED_CLASH_SQL = "(event_code LIKE '18%' OR event_code LIKE '19%' OR event_code LIKE '20%')";
+
+/** Where armed-clash events fell inside a box over the last `hours`, one row per place (to about a kilometre) with
  *  how many events were there. Unlike queryBulkEvents this is not cut to the newest 2,000 events in the whole world,
  *  so a region is not crowded out by the rest of the globe. */
 export async function queryConflictPlaces(env: Env, opts: { hours: number; box: { south: number; west: number; north: number; east: number } }): Promise<{ lat: number; lon: number; n: number }[]> {
@@ -289,7 +294,7 @@ export async function queryConflictPlaces(env: Env, opts: { hours: number; box: 
   const { south, west, north, east } = opts.box;
   const { results } = await env.DB.prepare(
     `SELECT ROUND(lat, 2) AS lat, ROUND(lon, 2) AS lon, COUNT(*) AS n FROM gdelt_bulk_events
-     WHERE date_added >= ? AND ${STRICT_CONFLICT_SQL} AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
+     WHERE date_added >= ? AND ${ARMED_CLASH_SQL} AND quad_class = 4 AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?
      GROUP BY ROUND(lat, 2), ROUND(lon, 2) LIMIT 30000`
   )
     .bind(cutoff, south, north, west, east)

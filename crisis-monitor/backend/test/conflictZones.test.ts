@@ -24,16 +24,12 @@ describe("conflict provinces", () => {
     expect(act(Array.from({ length: 40 }, () => ({ lat: 13.4967, lon: 39.4753 })))).toHaveLength(0);
     expect(act([{ lat: 13.4967, lon: 39.4753, weight: 500 }])).toHaveLength(0);
   });
-  it("keeps long-running conflicts on the map with nothing fresh, and marks them lighter", () => {
-    const z = conflictProvinces([]);
-    const ids = z.filter((p) => p.tier === "ongoing").map((p) => p.id);
-    for (const id of ["NG:Borno", "NG:Zamfara", "NG:Kebbi", "CD:North Kivu", "SD:North Kordufan", "SD:Blue Nile", "ML:Gao", "YE:Al Hudaydah", "SY:Idlib", "PS:Gaza Strip"]) expect(ids).toContain(id);
-    expect(z.some((p) => p.tier === "active")).toBe(false);
-    expect(z.some((p) => p.id.startsWith("sea:"))).toBe(true);
+  it("shades nothing when there is no fresh fighting, however long a war has lasted", () => {
+    expect(conflictProvinces([])).toHaveLength(0);
   });
   it("shows a province with fresh fighting once, as active, with its note", () => {
     const z = conflictProvinces([{ lat: 11.8, lon: 13.15, verified: true }]);
-    expect(z.filter((p) => p.id === "NG:Borno")).toHaveLength(1);
-    expect(z.find((p) => p.id === "NG:Borno")).toMatchObject({ tier: "active", note: expect.any(String) });
+    expect(z.map((p) => p.id)).toEqual(["NG:Borno"]);
+    expect(z[0].tier).toBe("active");
   });
 });

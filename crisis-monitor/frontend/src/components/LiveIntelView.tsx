@@ -427,7 +427,7 @@ const LAYER_DEFS: LayerDef[] = [
   // Drawn on the map itself, so the layer has no points of its own.
   {
     key: "conflict-zones",
-    label: "Conflict Provinces",
+    label: "Armed Clash Provinces",
     group: "Threats & Intel",
     color: "#e02424",
     icon: Siren,
@@ -2407,7 +2407,7 @@ function FlatMap({
       {(conflictZones ?? []).map((z) => (
         <Polygon key={z.id} positions={z.rings} pathOptions={z.tier === "active" ? { color: "#ff5a5a", weight: 1.6, fillColor: "#e02424", fillOpacity: 0.42 } : { color: "#ff5a5a", weight: 0.8, opacity: 0.5, fillColor: "#e02424", fillOpacity: 0.16 }}>
           <LeafletTooltip sticky>
-            {z.name}{z.countryName ? `, ${z.countryName}` : ""} — {z.tier === "active" ? "fighting reported in the last 48 hours" : "long-running conflict"}{z.note ? `. ${z.note}` : ""}
+            {z.name}{z.countryName ? `, ${z.countryName}` : ""} — armed clashes reported in the last 48 hours
           </LeafletTooltip>
         </Polygon>
       ))}
