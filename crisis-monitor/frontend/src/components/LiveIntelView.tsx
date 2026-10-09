@@ -89,6 +89,7 @@ import {
   type SpaceWeather,
   type CyberThreats,
   type MarketsStatus,
+  type ConflictProvince,
   type ActivityIndex,
   type IncidentItem,
   type IncidentFilters as IncidentFilterOptions,
@@ -421,11 +422,11 @@ const LAYER_DEFS: LayerDef[] = [
         url: null,
       })),
   },
-  // Computed on the server from where fighting has been reported over the last two days (backend lib/conflictZones.ts).
-  // Shaded on the map itself, so the layer has no points of its own.
+  // Whole provinces shaded red where fighting was reported over the last two days (backend lib/conflictZones.ts).
+  // Drawn on the map itself, so the layer has no points of its own.
   {
     key: "conflict-zones",
-    label: "Active Conflict Areas",
+    label: "Active Conflict Provinces",
     group: "Threats & Intel",
     color: "#e02424",
     icon: Siren,
@@ -1290,14 +1291,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // is, and tied to the same Conflict Escalation toggle rather than adding a
   // whole new layer checkbox for one closely-related signal.
   // Active conflict areas, shaded red; worked out on the server from the last two days of reporting.
-  const [conflictZoneBoxes, setConflictZoneBoxes] = useState<[number, number, number, number][]>([]);
+  const [conflictZoneBoxes, setConflictZoneBoxes] = useState<ConflictProvince[]>([]);
   useEffect(() => {
     if (!enabled["conflict-zones"]) {
       setConflictZoneBoxes([]);
       return;
     }
     let cancelled = false;
-    const load = () => api.getConflictZones().then((z) => !cancelled && setConflictZoneBoxes(z.boxes)).catch(() => {});
+    const load = () => api.getConflictZones().then((z) => !cancelled && setConflictZoneBoxes(z.provinces)).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
     return () => { cancelled = true; clearInterval(t); };
@@ -2352,7 +2353,7 @@ function FlatMap({
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
-  conflictZones?: [number, number, number, number][];
+  conflictZones?: ConflictProvince[];
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2401,8 +2402,10 @@ function FlatMap({
       <MapNavPad />
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
-      {(conflictZones ?? []).map(([s, w, n, e], i) => (
-        <Polygon key={`zone-${i}`} positions={[[s, w], [s, e], [n, e], [n, w]]} interactive={false} pathOptions={{ stroke: false, fillColor: "#e02424", fillOpacity: 0.3 }} />
+      {(conflictZones ?? []).map((z) => (
+        <Polygon key={z.id} positions={z.rings} pathOptions={{ color: "#ff5a5a", weight: 1.2, fillColor: "#e02424", fillOpacity: 0.32 }}>
+          <LeafletTooltip sticky>{z.name}, {z.countryName} — active conflict (last 48 h)</LeafletTooltip>
+        </Polygon>
       ))}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (

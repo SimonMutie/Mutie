@@ -10,7 +10,7 @@ import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getFlaggedIncidents, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
-import { conflictZones, type ZonePoint } from "../lib/conflictZones";
+import { conflictProvinces, type ZonePoint } from "../lib/conflictZones";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
@@ -589,9 +589,9 @@ liveLayersRouter.get("/territory-changes", async (c) => {
   );
 });
 
-/** Areas of active fighting in Africa and the Middle East, drawn as red shading: where conflict reporting has clustered
- *  over the last two days, plus the verified escalation incidents. Worked out automatically on every refresh
- *  (lib/conflictZones.ts). Not a front line or a control boundary. */
+/** Provinces with active conflict in Africa and the Middle East, shaded red as whole provinces: the ones where
+ *  reported fighting from the last two days, or a verified escalation incident, falls (lib/conflictZones.ts).
+ *  Worked out automatically on each refresh. Not a front line or a control boundary. */
 liveLayersRouter.get("/conflict-zones", async (c) => {
   return cachedJson(
     c.req.raw,
@@ -601,8 +601,13 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
         ...events.map((e) => ({ lat: e.lat, lon: e.lon })),
         ...incidents.filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate").map((i) => ({ lat: i.lat, lon: i.lon, verified: true })),
       ];
-      const { boxes, cells } = conflictZones(points);
-      return { boxes, cells, windowHours: 48, basis: "Clusters of reported fighting and verified escalation incidents in the last 48 hours. Approximate; not a front line or control boundary.", fetchedAt: new Date().toISOString() };
+      return {
+        provinces: conflictProvinces(points),
+        windowHours: 48,
+        basis: "Provinces where fighting was reported, or a verified escalation was flagged, in the last 48 hours. The whole province is shaded; this is not a front line or control boundary.",
+        borders: "Natural Earth; geoBoundaries (CC BY 4.0) for the DR Congo",
+        fetchedAt: new Date().toISOString(),
+      };
     },
     300
   );

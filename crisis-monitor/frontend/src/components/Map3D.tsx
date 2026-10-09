@@ -1,3 +1,4 @@
+import type { ConflictProvince } from "../api";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import MapNavPad from "./MapNavPad";
@@ -110,8 +111,8 @@ interface Map3DProps {
   fitKey?: string;
   paths: Map3DPath[];
   territoryChanges: Map3DTerritoryChange[];
-  /** Active conflict areas as [south, west, north, east] boxes, shaded red. */
-  conflictZones?: [number, number, number, number][];
+  /** Provinces with active conflict, shaded red. */
+  conflictZones?: ConflictProvince[];
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
@@ -511,7 +512,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
       // polygon of what changed") — dashed amber outline + light fill so it
       // reads as a reported-area marker, not a crisp/precise boundary.
       map.addSource("osiris-conflict-zones", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "osiris-conflict-zones-fill", type: "fill", source: "osiris-conflict-zones", paint: { "fill-color": "#e02424", "fill-opacity": 0.3, "fill-antialias": false } });
+      map.addLayer({ id: "osiris-conflict-zones-fill", type: "fill", source: "osiris-conflict-zones", paint: { "fill-color": "#e02424", "fill-opacity": 0.32 } });
+      map.addLayer({ id: "osiris-conflict-zones-line", type: "line", source: "osiris-conflict-zones", paint: { "line-color": "#ff5a5a", "line-width": 1.2, "line-opacity": 0.9 } });
       map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "osiris-territory-changes-fill",
@@ -803,7 +805,11 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
     const apply = () =>
       (map.getSource("osiris-conflict-zones") as GeoJSONSource | undefined)?.setData({
         type: "FeatureCollection",
-        features: (conflictZones ?? []).map(([s, w, n, e]) => ({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } })),
+        features: (conflictZones ?? []).map((z) => ({
+          type: "Feature",
+          properties: { name: `${z.name}, ${z.countryName}` },
+          geometry: { type: "MultiPolygon", coordinates: z.rings.map((r) => [r.map(([lat, lng]) => [lng, lat])]) },
+        })),
       });
     if (map.getSource("osiris-conflict-zones")) apply();
     else map.once("load", apply);

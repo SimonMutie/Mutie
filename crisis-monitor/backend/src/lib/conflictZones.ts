@@ -1,69 +1,112 @@
-import { countryAt } from "./africaGeo";
+import provincesJson from "../data/provinces.json";
+import { countryName } from "./africaGeo";
 
 /**
- * Areas of active fighting, worked out from where recent conflict reporting clusters.
+ * Provinces with active conflict, worked out from where recent conflict reporting falls.
  *
- * The map is cut into half-degree cells (about 55 km). A cell counts as an active conflict area when, in the last
- * two days, it holds enough separate reports of fighting, or a verified escalation incident. Cells in a row are
- * joined into one rectangle so the layer stays small. This shows where reported fighting is concentrated; it is
- * NOT a front line or a control boundary, and says nothing about who holds the ground.
+ * Each report of fighting from the last two days (and each verified escalation incident) is placed in the province,
+ * state or region it falls inside. A province is shaded when a verified incident is inside it, or when enough
+ * separate reports of fighting are. The whole province is drawn, as in "Tigray" or "North Kivu": the shading says
+ * where fighting is being reported, not where a front line runs or who controls the ground.
+ *
+ * Borders: Natural Earth (public domain), and geoBoundaries (CC BY 4.0) for the DR Congo's current provinces.
  */
-export const ZONE_CELL_DEG = 0.5;
-/** A cell needs this much weight to be drawn. */
-export const ZONE_MIN_SCORE = 4;
-/** What a verified escalation incident is worth, against 1 for a reported event. */
-export const ZONE_INCIDENT_WEIGHT = 5;
-/** Events at exactly the same coordinates (often a place name resolved to a town centre) count at most this many times. */
+type Ring = [number, number][]; // [lon, lat]
+interface Province {
+  country: string;
+  name: string;
+  rings: Ring[];
+  bbox: [number, number, number, number]; // minLon, minLat, maxLon, maxLat
+}
+
+const PROVINCES: Province[] = (provincesJson as unknown as [string, string, Ring[]][]).map(([country, name, rings]) => {
+  let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
+  for (const r of rings) for (const [lon, lat] of r) {
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  return { country, name, rings, bbox: [minLon, minLat, maxLon, maxLat] };
+});
+
+/** A province needs this much weight to be shaded. */
+export const ZONE_MIN_SCORE = 6;
+/** What a verified escalation incident is worth, against 1 for a reported event: one is enough on its own. */
+export const ZONE_INCIDENT_WEIGHT = 6;
+/** Events at exactly the same coordinates (usually a place name resolved to a town centre) count at most this many times. */
 const MAX_PER_COORDINATE = 2;
 
 export interface ZonePoint {
   lat: number;
   lon: number;
-  /** Verified incident rather than a reported event. */
+  /** A verified incident rather than a reported event. */
   verified?: boolean;
 }
 
-/** [south, west, north, east] */
-export type ZoneBox = [number, number, number, number];
+export interface ConflictProvince {
+  id: string;
+  country: string;
+  countryName: string;
+  name: string;
+  /** Reports counted in it. */
+  score: number;
+  /** [lat, lon] rings, ready to draw. */
+  rings: [number, number][][];
+}
 
-export function conflictZones(points: ZonePoint[]): { boxes: ZoneBox[]; cells: number } {
+function inRing(lon: number, lat: number, ring: Ring): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** The smallest province containing the point, if any. */
+export function provinceAt(lat: number, lon: number): Province | null {
+  let best: Province | null = null;
+  let bestArea = Infinity;
+  for (const p of PROVINCES) {
+    const [a, b, c, d] = p.bbox;
+    if (lon < a || lon > c || lat < b || lat > d) continue;
+    if (!p.rings.some((r) => inRing(lon, lat, r))) continue;
+    const area = (c - a) * (d - b);
+    if (area < bestArea) {
+      best = p;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
+export function conflictProvinces(points: ZonePoint[]): ConflictProvince[] {
   const perCoord = new Map<string, number>();
-  const score = new Map<string, number>();
-  const cellOf = (v: number) => Math.floor(v / ZONE_CELL_DEG);
-  for (const p of points) {
-    if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
-    // Only land in Africa or the Middle East.
-    if (!countryAt(p.lat, p.lon)) continue;
-    let w = p.verified ? ZONE_INCIDENT_WEIGHT : 1;
-    if (!p.verified) {
-      const k = `${p.lat.toFixed(3)},${p.lon.toFixed(3)}`;
+  const score = new Map<Province, number>();
+  for (const pt of points) {
+    if (!Number.isFinite(pt.lat) || !Number.isFinite(pt.lon)) continue;
+    let w = pt.verified ? ZONE_INCIDENT_WEIGHT : 1;
+    if (!pt.verified) {
+      const k = `${pt.lat.toFixed(3)},${pt.lon.toFixed(3)}`;
       const n = (perCoord.get(k) ?? 0) + 1;
       perCoord.set(k, n);
-      if (n > MAX_PER_COORDINATE) w = 0;
+      if (n > MAX_PER_COORDINATE) continue;
     }
-    if (w === 0) continue;
-    const key = `${cellOf(p.lat)}:${cellOf(p.lon)}`;
-    score.set(key, (score.get(key) ?? 0) + w);
+    const prov = provinceAt(pt.lat, pt.lon);
+    if (!prov) continue;
+    score.set(prov, (score.get(prov) ?? 0) + w);
   }
-  const hot = [...score.entries()].filter(([, s]) => s >= ZONE_MIN_SCORE).map(([k]) => k.split(":").map(Number) as [number, number]);
-  // Join cells that sit side by side in the same row.
-  const rows = new Map<number, number[]>();
-  for (const [r, c] of hot) rows.set(r, [...(rows.get(r) ?? []), c]);
-  const boxes: ZoneBox[] = [];
-  for (const [r, cols] of rows) {
-    cols.sort((a, b) => a - b);
-    let start = cols[0];
-    let prev = cols[0];
-    const flush = () => boxes.push([r * ZONE_CELL_DEG, start * ZONE_CELL_DEG, (r + 1) * ZONE_CELL_DEG, (prev + 1) * ZONE_CELL_DEG]);
-    for (const c of cols.slice(1)) {
-      if (c === prev + 1) prev = c;
-      else {
-        flush();
-        start = c;
-        prev = c;
-      }
-    }
-    flush();
-  }
-  return { boxes, cells: hot.length };
+  return [...score.entries()]
+    .filter(([, s]) => s >= ZONE_MIN_SCORE)
+    .sort((a, b) => b[1] - a[1])
+    .map(([p, s]) => ({
+      id: `${p.country}:${p.name}`,
+      country: p.country,
+      countryName: countryName(p.country),
+      name: p.name,
+      score: s,
+      rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
+    }));
 }

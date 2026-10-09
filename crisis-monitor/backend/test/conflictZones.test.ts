@@ -1,26 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { conflictZones } from "../src/lib/conflictZones";
+import { conflictProvinces, provinceAt } from "../src/lib/conflictZones";
 
-describe("conflict zones", () => {
-  it("draws a cell where several separate reports cluster on land", () => {
-    // Around El Fasher, Sudan: four distinct coordinates in one half-degree cell.
-    const pts = [[13.63, 25.35], [13.65, 25.3], [13.7, 25.4], [13.6, 25.45]].map(([lat, lon]) => ({ lat, lon }));
-    const z = conflictZones(pts);
-    expect(z.boxes).toHaveLength(1);
-    const [s, w, n, e] = z.boxes[0];
-    expect(13.63).toBeGreaterThanOrEqual(s);
-    expect(13.63).toBeLessThan(n);
-    expect(25.35).toBeGreaterThanOrEqual(w);
-    expect(25.35).toBeLessThan(e);
+const spread = (lat: number, lon: number, n: number) => Array.from({ length: n }, (_, i) => ({ lat: lat + i * 0.03, lon: lon + i * 0.03 }));
+
+describe("conflict provinces", () => {
+  it("finds the province a point is in", () => {
+    expect(provinceAt(13.4967, 39.4753)).toMatchObject({ country: "ET", name: "Tigray" }); // Mekelle
+    expect(provinceAt(-1.68, 29.22)).toMatchObject({ country: "CD" }); // Goma
+    expect(provinceAt(9.9, 32.7)).toMatchObject({ country: "SS", name: "Upper Nile" });
+    expect(provinceAt(49.99, 36.23)).toBeNull(); // Kharkiv
   });
-  it("ignores a single report, reports piled on one coordinate, and the open sea", () => {
-    expect(conflictZones([{ lat: 13.63, lon: 25.35 }]).boxes).toHaveLength(0);
-    expect(conflictZones(Array.from({ length: 30 }, () => ({ lat: 13.63, lon: 25.35 }))).boxes).toHaveLength(0);
-    expect(conflictZones(Array.from({ length: 10 }, (_, i) => ({ lat: 0 + i * 0.01, lon: -20 }))).boxes).toHaveLength(0);
+  it("shades the whole province once enough separate reports fall in it", () => {
+    const z = conflictProvinces(spread(13.4, 39.4, 7));
+    expect(z.map((p) => p.id)).toEqual(["ET:Tigray"]);
+    expect(z[0].rings.length).toBeGreaterThan(0);
   });
-  it("lets a verified incident stand on its own and joins neighbouring cells", () => {
-    const z = conflictZones([{ lat: 13.6, lon: 25.2, verified: true }, { lat: 13.6, lon: 25.7, verified: true }]);
-    expect(z.cells).toBe(2);
-    expect(z.boxes).toHaveLength(1);
+  it("lets one verified incident stand on its own", () => {
+    expect(conflictProvinces([{ lat: 9.9, lon: 32.7, verified: true }]).map((p) => p.name)).toEqual(["Upper Nile"]);
+  });
+  it("ignores a few reports, and reports piled on one coordinate", () => {
+    expect(conflictProvinces(spread(13.4, 39.4, 3))).toHaveLength(0);
+    expect(conflictProvinces(Array.from({ length: 40 }, () => ({ lat: 13.4967, lon: 39.4753 })))).toHaveLength(0);
   });
 });

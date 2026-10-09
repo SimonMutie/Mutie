@@ -1169,12 +1169,20 @@ export interface MarketsStatus {
   fetchedAt: string;
 }
 
+export interface ConflictProvince {
+  id: string;
+  country: string;
+  countryName: string;
+  name: string;
+  score: number;
+  /** [lat, lon] rings */
+  rings: [number, number][][];
+}
 export interface ConflictZones {
-  /** [south, west, north, east] */
-  boxes: [number, number, number, number][];
-  cells: number;
+  provinces: ConflictProvince[];
   windowHours: number;
   basis: string;
+  borders: string;
   fetchedAt: string;
 }
 export interface MarketBoardRow { key: string; label: string; value: number; changePercent: number | null; series: number[]; unit?: string }
