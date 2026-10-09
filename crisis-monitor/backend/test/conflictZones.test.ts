@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { conflictProvinces, provinceAt } from "../src/lib/conflictZones";
 
-const spread = (lat: number, lon: number, n: number) => Array.from({ length: n }, (_, i) => ({ lat: lat + i * 0.03, lon: lon + i * 0.03 }));
-
 describe("conflict provinces", () => {
   it("finds the province a point is in", () => {
     expect(provinceAt(13.4967, 39.4753)).toMatchObject({ country: "ET", name: "Tigray" }); // Mekelle
@@ -10,26 +8,24 @@ describe("conflict provinces", () => {
     expect(provinceAt(9.9, 32.7)).toMatchObject({ country: "SS", name: "Upper Nile" });
     expect(provinceAt(49.99, 36.23)).toBeNull(); // Kharkiv
   });
-  it("shades the whole province once enough separate reports fall in it", () => {
-    const z = conflictProvinces(spread(13.4, 39.4, 7)).filter((p) => p.tier === "active");
-    expect(z.map((p) => p.id)).toEqual(["ET:Tigray"]);
-    expect(z[0].rings.length).toBeGreaterThan(0);
-  });
-  it("lets one verified incident stand on its own", () => {
-    expect(conflictProvinces([{ lat: 9.9, lon: 32.7, verified: true }]).filter((p) => p.tier === "active").map((p) => p.name)).toEqual(["Upper Nile"]);
-  });
-  it("ignores a few reports, and reports piled on one coordinate", () => {
-    const act = (pts: Parameters<typeof conflictProvinces>[0]) => conflictProvinces(pts).filter((p) => p.tier === "active");
-    expect(act(spread(13.4, 39.4, 3))).toHaveLength(0);
-    expect(act(Array.from({ length: 40 }, () => ({ lat: 13.4967, lon: 39.4753 })))).toHaveLength(0);
-    expect(act([{ lat: 13.4967, lon: 39.4753, weight: 500 }])).toHaveLength(0);
-  });
-  it("shades nothing when there is no fresh fighting, however long a war has lasted", () => {
+  it("shades nothing when nothing is flagged", () => {
     expect(conflictProvinces([])).toHaveLength(0);
   });
-  it("shows a province with fresh fighting once, as active, with its note", () => {
-    const z = conflictProvinces([{ lat: 11.8, lon: 13.15, verified: true }]);
+  it("shades the whole province an escalation is in, and only that one", () => {
+    const z = conflictProvinces([{ lat: 11.8, lon: 13.15, level: "elevated" }]);
     expect(z.map((p) => p.id)).toEqual(["NG:Borno"]);
-    expect(z[0].tier).toBe("active");
+    expect(z[0].rings.length).toBeGreaterThan(0);
+  });
+  it("counts incidents in a province and keeps the highest level, critical first", () => {
+    const z = conflictProvinces([
+      { lat: 9.9, lon: 32.7, level: "elevated" },
+      { lat: 13.4967, lon: 39.4753, level: "critical" },
+      { lat: 9.95, lon: 32.75, level: "critical" },
+    ]);
+    expect(z.find((p) => p.id === "SS:Upper Nile")).toMatchObject({ incidents: 2, level: "critical" });
+    expect(z.find((p) => p.id === "ET:Tigray")).toMatchObject({ incidents: 1, level: "critical" });
+  });
+  it("ignores a point outside Africa and the Middle East", () => {
+    expect(conflictProvinces([{ lat: 49.99, lon: 36.23, level: "critical" }])).toHaveLength(0);
   });
 });

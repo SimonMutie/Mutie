@@ -427,7 +427,7 @@ const LAYER_DEFS: LayerDef[] = [
   // Drawn on the map itself, so the layer has no points of its own.
   {
     key: "conflict-zones",
-    label: "Armed Clash Provinces",
+    label: "Escalation Provinces",
     group: "Threats & Intel",
     color: "#e02424",
     icon: Siren,
@@ -2405,9 +2405,9 @@ function FlatMap({
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
       {(conflictZones ?? []).map((z) => (
-        <Polygon key={z.id} positions={z.rings} pathOptions={z.tier === "active" ? { color: "#ff5a5a", weight: 1.6, fillColor: "#e02424", fillOpacity: 0.42 } : { color: "#ff5a5a", weight: 0.8, opacity: 0.5, fillColor: "#e02424", fillOpacity: 0.16 }}>
+        <Polygon key={z.id} positions={z.rings} pathOptions={z.level === "critical" ? { color: "#ff5a5a", weight: 1.8, fillColor: "#e02424", fillOpacity: 0.45 } : { color: "#ff8a5a", weight: 1.2, fillColor: "#e0572a", fillOpacity: 0.3 }}>
           <LeafletTooltip sticky>
-            {z.name}{z.countryName ? `, ${z.countryName}` : ""} — armed clashes reported in the last 48 hours
+            {z.name}{z.countryName ? `, ${z.countryName}` : ""} — {z.incidents} flagged escalation{z.incidents === 1 ? "" : "s"}, highest level {z.level}
           </LeafletTooltip>
         </Polygon>
       ))}

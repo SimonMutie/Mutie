@@ -2,12 +2,12 @@ import provincesJson from "../data/provinces.json";
 import { countryName } from "./africaGeo";
 
 /**
- * Provinces with active armed clashes, worked out from where recent fighting reports fall.
+ * Provinces with a flagged escalation.
  *
- * Each report of fighting from the last two days (and each verified escalation incident) is placed in the province,
- * state or region it falls inside. A province is shaded when a verified incident is inside it, or when enough
- * separate reports of fighting are. The whole province is drawn, as in "Tigray" or "North Kivu": the shading says
- * where fighting is being reported, not where a front line runs or who controls the ground.
+ * A province is shaded only when at least one escalation incident the platform has verified and flagged (elevated
+ * or critical, in the last 48 hours) is located inside it. Raw news-event counts are not used: they put shading in
+ * places with no escalation. The whole province is drawn, as in "Tigray" or "North Kivu"; the shading says where
+ * escalations are, not where a front line runs or who controls the ground.
  *
  * Borders: Natural Earth (public domain), and geoBoundaries (CC BY 4.0) for the DR Congo's current provinces.
  */
@@ -30,31 +30,25 @@ const PROVINCES: Province[] = (provincesJson as unknown as [string, string, Ring
   return { country, name, rings, bbox: [minLon, minLat, maxLon, maxLat] };
 });
 
-/** A province needs this much weight to be shaded. */
-export const ZONE_MIN_SCORE = 6;
-/** What a verified escalation incident is worth, against 1 for a reported event: one is enough on its own. */
-export const ZONE_INCIDENT_WEIGHT = 6;
-/** Events at exactly the same coordinates (usually a place name resolved to a town centre) count at most this many times. */
-const MAX_PER_COORDINATE = 2;
-
-export interface ZonePoint {
+export interface EscalationPoint {
   lat: number;
   lon: number;
-  /** Reports at this point, when several have been counted into one (default 1). */
-  weight?: number;
-  /** A verified incident rather than a reported event. */
-  verified?: boolean;
+  level: "elevated" | "critical";
+  /** Where the incident is, as named. */
+  label?: string | null;
 }
 
 export interface ConflictProvince {
   id: string;
-  /** Always "active": only provinces with armed clashes or a verified escalation in the last 48 hours are returned. */
+  /** Always "active": only provinces holding a flagged escalation are returned. */
   tier: "active";
   country: string;
   countryName: string;
   name: string;
-  /** Reports counted in it. */
-  score: number;
+  /** Flagged escalations inside it. */
+  incidents: number;
+  /** The highest level among them. */
+  level: "elevated" | "critical";
   /** [lat, lon] rings, ready to draw. */
   rings: [number, number][][];
 }
@@ -86,39 +80,25 @@ export function provinceAt(lat: number, lon: number): Province | null {
   return best;
 }
 
-export function conflictProvinces(points: ZonePoint[]): ConflictProvince[] {
-  const perCoord = new Map<string, number>();
-  const score = new Map<Province, number>();
+export function conflictProvinces(points: EscalationPoint[]): ConflictProvince[] {
+  const found = new Map<Province, { n: number; level: "elevated" | "critical" }>();
   for (const pt of points) {
     if (!Number.isFinite(pt.lat) || !Number.isFinite(pt.lon)) continue;
-    let w = pt.verified ? ZONE_INCIDENT_WEIGHT : Math.min(pt.weight ?? 1, MAX_PER_COORDINATE);
-    if (!pt.verified) {
-      const k = `${pt.lat.toFixed(2)},${pt.lon.toFixed(2)}`;
-      const used = perCoord.get(k) ?? 0;
-      if (used >= MAX_PER_COORDINATE) continue;
-      w = Math.min(w, MAX_PER_COORDINATE - used);
-      perCoord.set(k, used + w);
-    }
     const prov = provinceAt(pt.lat, pt.lon);
     if (!prov) continue;
-    score.set(prov, (score.get(prov) ?? 0) + w);
+    const cur = found.get(prov) ?? { n: 0, level: "elevated" as const };
+    found.set(prov, { n: cur.n + 1, level: cur.level === "critical" || pt.level === "critical" ? "critical" : "elevated" });
   }
-  const active = new Map<string, ConflictProvince>();
-  for (const [p, sc] of score) {
-    if (sc < ZONE_MIN_SCORE) continue;
-    active.set(`${p.country}:${p.name}`, draw(p, "active", sc));
-  }
-  return [...active.values()].sort((a, b) => b.score - a.score);
-}
-
-function draw(p: Province, tier: "active", score: number): ConflictProvince {
-  return {
-    id: `${p.country}:${p.name}`,
-    tier,
-    country: p.country,
-    countryName: countryName(p.country),
-    name: p.name,
-    score,
-    rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
-  };
+  return [...found.entries()]
+    .map(([p, v]) => ({
+      id: `${p.country}:${p.name}`,
+      tier: "active" as const,
+      country: p.country,
+      countryName: countryName(p.country),
+      name: p.name,
+      incidents: v.n,
+      level: v.level,
+      rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
+    }))
+    .sort((a, b) => (a.level === b.level ? b.incidents - a.incidents : a.level === "critical" ? -1 : 1));
 }

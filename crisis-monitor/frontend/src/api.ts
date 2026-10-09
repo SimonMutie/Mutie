@@ -1171,13 +1171,13 @@ export interface MarketsStatus {
 
 export interface ConflictProvince {
   id: string;
-  /** "active": fresh fighting in the last 48 hours; "ongoing": a long-running conflict on the analysts' list. */
-  tier: "active" | "ongoing";
-  note?: string;
+  tier: "active";
+  /** Flagged escalations inside it, and the highest level among them. */
+  incidents: number;
+  level: "elevated" | "critical";
   country: string;
   countryName: string;
   name: string;
-  score: number;
   /** [lat, lon] rings */
   rings: [number, number][][];
 }

@@ -6,11 +6,11 @@ import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
-import { queryBulkEvents, queryConflictPlaces, type BulkEventPoint } from "../connectors/gdeltBulk";
+import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getFlaggedIncidents, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
-import { conflictProvinces, type ZonePoint } from "../lib/conflictZones";
+import { conflictProvinces, type EscalationPoint } from "../lib/conflictZones";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
@@ -589,27 +589,26 @@ liveLayersRouter.get("/territory-changes", async (c) => {
   );
 });
 
-/** Provinces with armed clashes in Africa and the Middle East, shaded red as whole provinces: the ones where
- *  reported fighting from the last two days, or a verified escalation incident, falls (lib/conflictZones.ts).
- *  Worked out automatically on each refresh. Not a front line or a control boundary. */
+/** Provinces with a flagged escalation, shaded red as whole provinces: those holding at least one verified
+ *  escalation incident (elevated or critical, last 48 hours) located to a place. Same incidents as the Conflict
+ *  Escalation layer, so nothing is shaded where nothing is flagged. Not a front line or a control boundary. */
 liveLayersRouter.get("/conflict-zones", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const [places, incidents] = await Promise.all([queryConflictPlaces(c.env, { hours: 48, box: { south: -36, west: -19, north: 42, east: 64 } }), getFlaggedIncidents(c.env)]);
-      const points: ZonePoint[] = [
-        ...places.map((e) => ({ lat: e.lat, lon: e.lon, weight: e.n })),
-        ...incidents.filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate").map((i) => ({ lat: i.lat, lon: i.lon, verified: true })),
-      ];
+      const incidents = await getFlaggedIncidents(c.env);
+      const points: EscalationPoint[] = incidents
+        .filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate" || i.geoPrecision === "region")
+        .map((i) => ({ lat: i.lat, lon: i.lon, level: i.level, label: i.locationLabel }));
       return {
         provinces: conflictProvinces(points),
         windowHours: 48,
-        basis: "Provinces where armed clashes were reported, or a verified escalation was flagged, in the last 48 hours. The whole province is shaded; this is not a front line or control boundary.",
+        basis: "Provinces holding at least one flagged escalation from the last 48 hours. The whole province is shaded; this is not a front line or control boundary.",
         borders: "Natural Earth; geoBoundaries (CC BY 4.0) for the DR Congo",
         fetchedAt: new Date().toISOString(),
       };
     },
-    300
+    120
   );
 });
 
