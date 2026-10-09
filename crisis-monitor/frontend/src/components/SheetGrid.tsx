@@ -7,8 +7,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
  *  - the small square at the corner of the selection: drag it down to fill, or double-click it to fill down as far
  *    as the neighbouring column has data (the way Excel does);
  *  - Ctrl+D fills the selection down from its first cell; Enter / ↑ / ↓ move between rows;
- *  - paste from Excel: several lines fill down, tab-separated cells fill across.
- * Edits are handed to the parent, which owns the rows and saves them.
+ *  - paste from Excel: several lines fill down, tab-separated cells fill across;
+ *  - every change is listed with its own Save and Undo (Ctrl+Z / Ctrl+Y too), and "Save all" saves the lot. Changes
+ *    wait to be saved unless "Save as I go" is ticked.
+ * The parent owns the rows: onEdit shows a change on screen, onSave stores it.
  */
 
 export interface SheetColumn {
@@ -22,14 +24,24 @@ export interface SheetEdit {
   key: string;
   value: string | number | null;
 }
+/** One change the person made: a typed cell, a fill, a paste. It can be saved or undone on its own. */
+interface Change {
+  n: number;
+  label: string;
+  edits: (SheetEdit & { before: string | number | null })[];
+  status: "pending" | "saving" | "saved" | "error";
+  error?: string;
+}
 
 interface Props<T> {
   rows: T[];
   rowId: (r: T) => string;
   columns: SheetColumn[];
   getValue: (r: T, key: string) => string | number | null | undefined;
-  /** persist=false while typing (update the screen); true when a change is finished (save it). */
-  onEdit: (edits: SheetEdit[], persist: boolean) => void;
+  /** Shows the edits on screen. */
+  onEdit: (edits: SheetEdit[]) => void;
+  /** Stores the edits (rejects if it could not). */
+  onSave: (edits: SheetEdit[]) => Promise<void>;
   isLocked?: (r: T) => boolean;
   /** Cells to the left of the data columns (a checkbox, approve / reject buttons). */
   lead?: { header: ReactNode; width: number; cell: (r: T) => ReactNode };
@@ -59,7 +71,7 @@ interface Sel {
   to: number;
 }
 
-export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, isLocked, lead, tail, rowStyle, maxHeight = "60vh", onVisible, empty }: Props<T>) {
+export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, onSave, isLocked, lead, tail, rowStyle, maxHeight = "60vh", onVisible, empty }: Props<T>) {
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null);
@@ -68,6 +80,77 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
   const [drag, setDrag] = useState<{ end: number } | null>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const focusValue = useRef<string>("");
+  const [changes, setChanges] = useState<Change[]>([]);
+  const [redo, setRedo] = useState<Change[]>([]);
+  const [showLog, setShowLog] = useState(false);
+  const [autoSave, setAutoSave] = useState(false);
+  const counter = useRef(0);
+  const byId = useMemo(() => new Map(rows.map((r) => [rowId(r), r])), [rows, rowId]);
+  const current = (id: string, key: string) => {
+    const r = byId.get(id);
+    return r === undefined ? null : (getValue(r, key) ?? null);
+  };
+
+  const patch = (n: number, p: Partial<Change>) => setChanges((all) => all.map((c) => (c.n === n ? { ...c, ...p } : c)));
+  const saveChange = useCallback(
+    async (c: Change) => {
+      patch(c.n, { status: "saving", error: undefined });
+      try {
+        await onSave(c.edits.map(({ id, key, value }) => ({ id, key, value })));
+        patch(c.n, { status: "saved" });
+      } catch (e) {
+        patch(c.n, { status: "error", error: e instanceof Error ? e.message : "Could not save" });
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onSave],
+  );
+  function addChange(label: string, edits: Change["edits"]) {
+    if (edits.length === 0) return;
+    const c: Change = { n: ++counter.current, label, edits, status: "pending" };
+    setChanges((all) => [...all, c].slice(-200));
+    setRedo([]);
+    if (autoSave) void saveChange(c);
+  }
+  /** A change made by the grid itself (a fill or a paste): shown on screen and recorded. */
+  function commit(label: string, edits: SheetEdit[]) {
+    const withBefore = edits.map((e) => ({ ...e, before: current(e.id, e.key) })).filter((e) => text(e.before) !== text(e.value));
+    if (withBefore.length === 0) return;
+    onEdit(withBefore.map(({ id, key, value }) => ({ id, key, value })));
+    addChange(label, withBefore);
+  }
+  function undoChange(c: Change) {
+    if (c.status === "saving") return;
+    const back = c.edits.map(({ id, key, before }) => ({ id, key, value: before }));
+    onEdit(back);
+    if (c.status === "saved") void onSave(back).catch(() => undefined); // taking back what was stored
+    setChanges((all) => all.filter((x) => x.n !== c.n));
+    setRedo((r) => [...r, c]);
+  }
+  function redoChange() {
+    const c = redo[redo.length - 1];
+    if (!c) return;
+    setRedo((r) => r.slice(0, -1));
+    onEdit(c.edits.map(({ id, key, value }) => ({ id, key, value })));
+    const again: Change = { ...c, n: ++counter.current, status: "pending", error: undefined };
+    setChanges((all) => [...all, again]);
+    if (autoSave) void saveChange(again);
+  }
+  const unsaved = changes.filter((c) => c.status === "pending" || c.status === "error");
+  async function saveAll() {
+    for (const c of unsaved) await saveChange(c);
+  }
+  function undoLast() {
+    const c = [...changes].reverse().find((x) => x.status !== "saving");
+    if (c) undoChange(c);
+  }
+  // Leaving the page with changes that were never saved.
+  useEffect(() => {
+    if (unsaved.length === 0) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsaved.length]);
 
   const visible = useMemo(() => {
     let out = rows.filter((r) => Object.entries(filters).every(([k, set]) => set.has(text(getValue(r, k)) || BLANK)));
@@ -136,7 +219,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
       const v = vals[(r - from) % vals.length];
       edits.push({ id: rowId(visible[r]), key: c.key, value: v === undefined ? null : v });
     }
-    if (edits.length) onEdit(edits, true);
+    if (edits.length) commit(`${c.label}: filled ${edits.length} cell${edits.length === 1 ? "" : "s"}${vals[0] !== undefined && vals[0] !== null ? ` with “${text(vals[0]).slice(0, 30)}”` : ""}`, edits);
   }
   /** Excel's double-click: fill down as far as the neighbouring column has data. */
   function autoFillEnd(s: Sel): number {
@@ -161,7 +244,13 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
     };
     if (e.key === "Enter" || e.key === "ArrowDown") move(1);
     else if (e.key === "ArrowUp") move(-1);
-    else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d" && sel) {
+    else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      undoLast();
+    } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))) {
+      e.preventDefault();
+      redoChange();
+    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d" && sel) {
       e.preventDefault();
       const lo = Math.min(sel.from, sel.to);
       const hi = Math.max(sel.from, sel.to);
@@ -183,7 +272,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
         edits.push({ id: rowId(visible[r]), key: c.key, value: parse(v, c.num) });
       }),
     );
-    if (edits.length) onEdit(edits, true);
+    if (edits.length) commit(`Pasted ${edits.length} cell${edits.length === 1 ? "" : "s"}`, edits);
   }
 
   // Finishing a drag of the fill handle.
@@ -210,6 +299,32 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
 
   return (
     <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", margin: "0 0 8px", padding: "6px 8px", border: "1px solid var(--border-soft, #ddd)", borderRadius: 8, background: "var(--panel, #fff)", fontSize: 12.5, position: "relative" }}>
+        <b style={{ color: unsaved.length ? "#a16207" : "var(--text-muted, #555)" }}>{unsaved.length ? `${unsaved.length} unsaved change${unsaved.length === 1 ? "" : "s"}` : changes.length ? "All changes saved" : "No changes yet"}</b>
+        <button type="button" style={barBtn(unsaved.length > 0, true)} disabled={unsaved.length === 0} onClick={() => void saveAll()}>Save all</button>
+        <button type="button" style={barBtn(changes.length > 0)} disabled={changes.length === 0} onClick={undoLast} title="Undo the last change (Ctrl+Z)">↶ Undo</button>
+        <button type="button" style={barBtn(redo.length > 0)} disabled={redo.length === 0} onClick={redoChange} title="Redo (Ctrl+Y)">↷ Redo</button>
+        <button type="button" style={barBtn(changes.length > 0)} disabled={changes.length === 0} onClick={() => setShowLog((v) => !v)}>{showLog ? "Hide changes" : `Changes (${changes.length})`}</button>
+        <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, color: "var(--text-muted, #555)", cursor: "pointer" }}>
+          <input type="checkbox" checked={autoSave} onChange={(e) => { setAutoSave(e.target.checked); if (e.target.checked) void saveAll(); }} />
+          Save as I go
+        </label>
+      </div>
+      {showLog && changes.length > 0 && (
+        <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border-soft, #ddd)", borderRadius: 8, marginBottom: 8, background: "var(--panel, #fff)" }}>
+          {[...changes].reverse().map((c) => (
+            <div key={c.n} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderBottom: "1px solid var(--border-soft, #eee)", fontSize: 12.5 }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.label}>{c.label}</span>
+              <span style={{ color: c.status === "saved" ? "#166534" : c.status === "error" ? "#991b1b" : "#a16207", whiteSpace: "nowrap" }} title={c.error}>
+                {c.status === "saved" ? "✓ Saved" : c.status === "saving" ? "Saving…" : c.status === "error" ? "Not saved" : "Unsaved"}
+              </span>
+              {(c.status === "pending" || c.status === "error") && <button type="button" style={barBtn(true, true)} onClick={() => void saveChange(c)}>Save</button>}
+              <button type="button" style={barBtn(c.status !== "saving")} disabled={c.status === "saving"} onClick={() => undoChange(c)}>Undo</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "var(--text-muted, #555)", marginBottom: 6, flexWrap: "wrap" }}>
         <span>
           {visible.length.toLocaleString()} of {rows.length.toLocaleString()} rows
@@ -288,10 +403,15 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
                           onClick={(e) => {
                             if (e.shiftKey && sel && sel.col === ci) setSel({ col: ci, from: sel.from, to: ri });
                           }}
-                          onChange={(e) => onEdit([{ id: rowId(r), key: c.key, value: c.num ? e.target.value : e.target.value }], false)}
+                          onChange={(e) => onEdit([{ id: rowId(r), key: c.key, value: e.target.value }])}
                           onBlur={() => {
-                            // Saved only when the cell was actually changed.
-                            if (text(getValue(r, c.key)) !== focusValue.current) onEdit([{ id: rowId(r), key: c.key, value: parse(text(getValue(r, c.key)), c.num) }], true);
+                            // One change per finished edit of a cell, and only if the cell actually changed.
+                            const now = text(getValue(r, c.key));
+                            if (now === focusValue.current) return;
+                            const before = parse(focusValue.current, c.num);
+                            const after = parse(now, c.num);
+                            onEdit([{ id: rowId(r), key: c.key, value: after }]);
+                            addChange(`${c.label}: ${focusValue.current ? `“${focusValue.current.slice(0, 24)}”` : "blank"} → ${now ? `“${now.slice(0, 24)}”` : "blank"}`, [{ id: rowId(r), key: c.key, value: after, before }]);
                           }}
                           onKeyDown={(e) => onKey(e, ci, ri)}
                           onPaste={(e) => onPaste(e, ci, ri)}
@@ -364,3 +484,14 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, i
 }
 
 const menuBtn: React.CSSProperties = { flex: 1, padding: "4px 6px", fontSize: 12, cursor: "pointer", border: "1px solid var(--border, #ccc)", background: "transparent", color: "inherit", borderRadius: 5 };
+
+const barBtn = (on: boolean, primary = false): React.CSSProperties => ({
+  padding: "4px 10px",
+  fontSize: 12,
+  borderRadius: 5,
+  cursor: on ? "pointer" : "default",
+  opacity: on ? 1 : 0.45,
+  border: "1px solid " + (primary && on ? "var(--signal, #0d9488)" : "var(--border, #ccc)"),
+  background: primary && on ? "var(--signal, #0d9488)" : "transparent",
+  color: primary && on ? "#fff" : "inherit",
+});

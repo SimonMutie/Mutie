@@ -98,14 +98,16 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
     setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, status } : x)));
     api.stagingPatch(it.id, { status }).catch((e) => setMessage(String(e.message ?? e)));
   }
-  /** Edits from the grid: typing updates the screen; a finished edit or a fill is also saved. */
-  function applyEdits(edits: SheetEdit[], persist: boolean) {
+  /** Edits from the grid: shown on screen here, stored by saveEdits when the person saves them. */
+  function applyEdits(edits: SheetEdit[]) {
     const byId = new Map<string, Record<string, string | number | null>>();
     for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
     setItems((prev) => prev.map((x) => (byId.has(x.id) ? { ...x, row: { ...x.row, ...byId.get(x.id) } } : x)));
-    if (persist) {
-      for (const [id, row] of byId) api.stagingPatch(id, { row: row as Partial<IncidentRow> }).catch((e) => setMessage(String(e.message ?? e)));
-    }
+  }
+  async function saveEdits(edits: SheetEdit[]) {
+    const byId = new Map<string, Record<string, string | number | null>>();
+    for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
+    await Promise.all([...byId].map(([id, row]) => api.stagingPatch(id, { row: row as Partial<IncidentRow> })));
   }
   const pendingIds = items.filter((i) => i.status === "pending").map((i) => i.id);
 
@@ -159,6 +161,7 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
         columns={EDIT_FIELDS}
         getValue={(it, key) => it.row[key as keyof IncidentRow] as string | number | null | undefined}
         onEdit={applyEdits}
+        onSave={saveEdits}
         isLocked={(it) => it.status === "pushed"}
         rowStyle={(it) => ({ opacity: it.status === "rejected" ? 0.5 : 1 })}
         maxHeight="58vh"

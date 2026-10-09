@@ -48,7 +48,6 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [limit, setLimit] = useState(500);
   const [visibleRows, setVisibleRows] = useState<IncidentItem[]>([]);
-  const [saveNote, setSaveNote] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -59,8 +58,8 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
     setLoading(false);
   }
 
-  /** Edits from the grid: typing updates the screen; a finished edit or a fill is saved too. */
-  function applyEdits(edits: SheetEdit[], persist: boolean) {
+  /** Edits from the grid: shown on screen here, stored by saveEdits when the person saves them. */
+  function applyEdits(edits: SheetEdit[]) {
     const byId = new Map<string, Record<string, string | number | null>>();
     for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
     setIncidents((prev) =>
@@ -72,18 +71,15 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
         return { ...x, ...local } as IncidentItem;
       }),
     );
-    if (!persist) return;
+  }
+  async function saveEdits(edits: SheetEdit[]) {
+    const byId = new Map<string, Record<string, string | number | null>>();
+    for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
     const entries = [...byId.entries()];
-    setSaveNote(`Saving ${entries.length.toLocaleString()} row${entries.length === 1 ? "" : "s"}…`);
-    (async () => {
-      let failed = 0;
-      for (let i = 0; i < entries.length; i += 8) {
-        const results = await Promise.allSettled(entries.slice(i, i + 8).map(([id, patch]) => api.updateIncident(id, patch as never)));
-        failed += results.filter((r) => r.status === "rejected").length;
-      }
-      setSaveNote(failed ? `${failed} row${failed === 1 ? "" : "s"} could not be saved.` : `Saved ${entries.length.toLocaleString()} row${entries.length === 1 ? "" : "s"}.`);
-      onChanged();
-    })();
+    for (let i = 0; i < entries.length; i += 8) {
+      await Promise.all(entries.slice(i, i + 8).map(([id, patch]) => api.updateIncident(id, patch as never)));
+    }
+    onChanged();
   }
 
   async function deleteUpload(upload: SavedUpload) {
@@ -208,13 +204,13 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
         )}
       </div>
 
-      {saveNote && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{saveNote}</div>}
       <SheetGrid
         rows={incidents}
         rowId={(i) => i.id}
         columns={GRID_COLUMNS}
         getValue={(i, key) => (i as unknown as Record<string, string | number | null | undefined>)[LOCAL_KEY[key] ?? key]}
         onEdit={applyEdits}
+        onSave={saveEdits}
         onVisible={setVisibleRows}
         rowStyle={(i) => ({ background: selected.has(i.id) ? "color-mix(in srgb, var(--signal) 6%, transparent)" : "transparent" })}
         maxHeight="62vh"
