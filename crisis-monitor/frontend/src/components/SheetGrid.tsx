@@ -1,3 +1,4 @@
+import { parseCommand, applyToText, resolveColumns, describe, COMMAND_HELP, type Command } from "./sheetCommands";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 /**
@@ -91,6 +92,10 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
   const [changes, setChanges] = useState<Change[]>([]);
   const [redo, setRedo] = useState<Change[]>([]);
   const [showLog, setShowLog] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [cmdText, setCmdText] = useState("");
+  const [cmdVisibleOnly, setCmdVisibleOnly] = useState(true);
+  const [cmdPlan, setCmdPlan] = useState<{ cmd: Command; edits: SheetEdit[]; rows: number; samples: string[] } | { error: string } | null>(null);
   const [autoSave, setAutoSave] = useState(false);
   const counter = useRef(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -136,6 +141,37 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
     const after = parse(now, c.num);
     onEdit([{ id: d.id, key: d.key, value: after }]);
     addChange(`${c.label}: ${focusValue.current ? `“${focusValue.current.slice(0, 24)}”` : "blank"} → ${now ? `“${now.slice(0, 24)}”` : "blank"}`, [{ id: d.id, key: d.key, value: after, before }]);
+  }
+  /** Works out what a typed command would change, without changing anything yet. */
+  function previewCommand() {
+    flushDraft();
+    const cmd = parseCommand(cmdText);
+    if ("error" in cmd) return setCmdPlan(cmd);
+    const cols = resolveColumns(cmd, columns);
+    if ("error" in cols) return setCmdPlan(cols);
+    const scope = cmdVisibleOnly && filterCount > 0 ? visible : rows;
+    const edits: SheetEdit[] = [];
+    const seen = new Set<string>();
+    const samples: string[] = [];
+    for (const r of scope) {
+      if (isLocked?.(r)) continue;
+      const id = rowId(r);
+      for (const c of cols) {
+        const before = text(getValue(r, c.key));
+        if (!before) continue;
+        const after = applyToText(cmd, before);
+        if (after === null) continue;
+        edits.push({ id, key: c.key, value: parse(after, c.num) });
+        seen.add(id);
+        if (samples.length < 4) samples.push(`${c.label}: “${before.slice(0, 30)}” → “${after.slice(0, 30)}”`);
+      }
+    }
+    setCmdPlan({ cmd, edits, rows: seen.size, samples });
+  }
+  function runCommand() {
+    if (!cmdPlan || "error" in cmdPlan || cmdPlan.edits.length === 0) return;
+    commit(`${describe(cmdPlan.cmd)} (${cmdPlan.edits.length.toLocaleString()} cell${cmdPlan.edits.length === 1 ? "" : "s"})`, cmdPlan.edits);
+    setCmdPlan(null);
   }
   /** A change made by the grid itself (a fill or a paste): shown on screen and recorded. */
   function commit(label: string, edits: SheetEdit[]) {
@@ -392,11 +428,41 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
         <button type="button" style={barBtn(changes.length > 0)} disabled={changes.length === 0} onClick={undoLast} title="Undo the last change (Ctrl+Z)">↶ Undo</button>
         <button type="button" style={barBtn(redo.length > 0)} disabled={redo.length === 0} onClick={redoChange} title="Redo (Ctrl+Y)">↷ Redo</button>
         <button type="button" style={barBtn(changes.length > 0)} disabled={changes.length === 0} onClick={() => setShowLog((v) => !v)}>{showLog ? "Hide changes" : `Changes (${changes.length})`}</button>
+        <button type="button" style={barBtn(true)} onClick={() => setCmdOpen((v) => !v)} title="Type a command to change many cells at once">⌘ Command</button>
         <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, color: "var(--text-muted, #555)", cursor: "pointer" }}>
           <input type="checkbox" checked={autoSave} onChange={(e) => { setAutoSave(e.target.checked); if (e.target.checked) void saveAll(); }} />
           Save as I go
         </label>
       </div>
+      {cmdOpen && (
+        <div style={{ margin: "0 0 8px", padding: "8px 10px", border: "1px solid var(--border-soft, #ddd)", borderRadius: 8, background: "var(--panel, #fff)", fontSize: 12.5 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              value={cmdText}
+              autoFocus
+              placeholder="e.g. change Nairobi Reg to Nairobi"
+              onChange={(e) => { setCmdText(e.target.value); setCmdPlan(null); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (cmdPlan && !("error" in cmdPlan)) runCommand(); else previewCommand(); } }}
+              style={{ flex: 1, minWidth: 260, padding: "6px 9px", fontSize: 13, border: "1px solid var(--border, #ccc)", borderRadius: 6, background: "transparent", color: "inherit" }}
+            />
+            <button type="button" style={barBtn(cmdText.trim() !== "")} disabled={!cmdText.trim()} onClick={previewCommand}>Preview</button>
+            <button type="button" style={barBtn(!!cmdPlan && !("error" in cmdPlan) && cmdPlan.edits.length > 0, true)} disabled={!cmdPlan || "error" in cmdPlan || cmdPlan.edits.length === 0} onClick={runCommand}>
+              Apply{cmdPlan && !("error" in cmdPlan) ? ` to ${cmdPlan.edits.length.toLocaleString()} cell${cmdPlan.edits.length === 1 ? "" : "s"}` : ""}
+            </button>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6, color: "var(--text-muted, #555)" }}>
+            <input type="checkbox" checked={cmdVisibleOnly} onChange={(e) => { setCmdVisibleOnly(e.target.checked); setCmdPlan(null); }} />
+            Only the rows I can see (when filters are on); untick for all {rows.length.toLocaleString()} rows
+          </label>
+          {cmdPlan && "error" in cmdPlan && <div style={{ marginTop: 6, color: "#b91c1c" }}>{cmdPlan.error}</div>}
+          {cmdPlan && !("error" in cmdPlan) && (
+            <div style={{ marginTop: 6 }}>
+              {cmdPlan.edits.length === 0 ? "Nothing to change — no cell matches." : <><b>{describe(cmdPlan.cmd)}:</b> {cmdPlan.edits.length.toLocaleString()} cells in {cmdPlan.rows.toLocaleString()} rows will change. <span style={{ color: "var(--text-muted, #555)" }}>e.g. {cmdPlan.samples.join(" · ")}</span></>}
+            </div>
+          )}
+          <div style={{ marginTop: 6, color: "var(--text-faint, #888)" }}>Examples: {COMMAND_HELP.join(" · ")}. Applying it is one change in the list — you can Undo or Save it like any other.</div>
+        </div>
+      )}
       {showLog && changes.length > 0 && (
         <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border-soft, #ddd)", borderRadius: 8, marginBottom: 8, background: "var(--panel, #fff)" }}>
           {[...changes].reverse().map((c) => (
