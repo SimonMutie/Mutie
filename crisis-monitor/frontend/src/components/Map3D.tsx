@@ -512,8 +512,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
       // polygon of what changed") — dashed amber outline + light fill so it
       // reads as a reported-area marker, not a crisp/precise boundary.
       map.addSource("osiris-conflict-zones", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "osiris-conflict-zones-fill", type: "fill", source: "osiris-conflict-zones", paint: { "fill-color": "#e02424", "fill-opacity": 0.32 } });
-      map.addLayer({ id: "osiris-conflict-zones-line", type: "line", source: "osiris-conflict-zones", paint: { "line-color": "#ff5a5a", "line-width": 1.2, "line-opacity": 0.9 } });
+      map.addLayer({ id: "osiris-conflict-zones-fill", type: "fill", source: "osiris-conflict-zones", paint: { "fill-color": "#e02424", "fill-opacity": ["case", ["==", ["get", "active"], 1], 0.42, 0.16] } });
+      map.addLayer({ id: "osiris-conflict-zones-line", type: "line", source: "osiris-conflict-zones", paint: { "line-color": "#ff5a5a", "line-width": ["case", ["==", ["get", "active"], 1], 1.6, 0.8], "line-opacity": ["case", ["==", ["get", "active"], 1], 0.95, 0.5] } });
       map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "osiris-territory-changes-fill",
@@ -807,7 +807,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         type: "FeatureCollection",
         features: (conflictZones ?? []).map((z) => ({
           type: "Feature",
-          properties: { name: `${z.name}, ${z.countryName}` },
+          properties: { name: `${z.name}, ${z.countryName}`, active: z.tier === "active" ? 1 : 0 },
           geometry: { type: "MultiPolygon", coordinates: z.rings.map((r) => [r.map(([lat, lng]) => [lng, lat])]) },
         })),
       });

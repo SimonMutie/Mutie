@@ -1,5 +1,6 @@
 import provincesJson from "../data/provinces.json";
 import { countryName } from "./africaGeo";
+import { MARITIME_THREAT_ZONES, ONGOING_CONFLICT_PROVINCES } from "../data/ongoingConflicts";
 
 /**
  * Provinces with active conflict, worked out from where recent conflict reporting falls.
@@ -40,12 +41,18 @@ const MAX_PER_COORDINATE = 2;
 export interface ZonePoint {
   lat: number;
   lon: number;
+  /** Reports at this point, when several have been counted into one (default 1). */
+  weight?: number;
   /** A verified incident rather than a reported event. */
   verified?: boolean;
 }
 
 export interface ConflictProvince {
   id: string;
+  /** "active": fighting reported or a verified incident in the last 48 hours. "ongoing": a long-running conflict on the analysts' list, with nothing fresh. */
+  tier: "active" | "ongoing";
+  /** What the conflict is, for ongoing ones. */
+  note?: string;
   country: string;
   countryName: string;
   name: string;
@@ -87,26 +94,47 @@ export function conflictProvinces(points: ZonePoint[]): ConflictProvince[] {
   const score = new Map<Province, number>();
   for (const pt of points) {
     if (!Number.isFinite(pt.lat) || !Number.isFinite(pt.lon)) continue;
-    let w = pt.verified ? ZONE_INCIDENT_WEIGHT : 1;
+    let w = pt.verified ? ZONE_INCIDENT_WEIGHT : Math.min(pt.weight ?? 1, MAX_PER_COORDINATE);
     if (!pt.verified) {
-      const k = `${pt.lat.toFixed(3)},${pt.lon.toFixed(3)}`;
-      const n = (perCoord.get(k) ?? 0) + 1;
-      perCoord.set(k, n);
-      if (n > MAX_PER_COORDINATE) continue;
+      const k = `${pt.lat.toFixed(2)},${pt.lon.toFixed(2)}`;
+      const used = perCoord.get(k) ?? 0;
+      if (used >= MAX_PER_COORDINATE) continue;
+      w = Math.min(w, MAX_PER_COORDINATE - used);
+      perCoord.set(k, used + w);
     }
     const prov = provinceAt(pt.lat, pt.lon);
     if (!prov) continue;
     score.set(prov, (score.get(prov) ?? 0) + w);
   }
-  return [...score.entries()]
-    .filter(([, s]) => s >= ZONE_MIN_SCORE)
-    .sort((a, b) => b[1] - a[1])
-    .map(([p, s]) => ({
-      id: `${p.country}:${p.name}`,
-      country: p.country,
-      countryName: countryName(p.country),
-      name: p.name,
-      score: s,
-      rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
-    }));
+  const active = new Map<string, ConflictProvince>();
+  for (const [p, sc] of score) {
+    if (sc < ZONE_MIN_SCORE) continue;
+    active.set(`${p.country}:${p.name}`, draw(p, "active", sc));
+  }
+  // Long-running conflicts that have nothing fresh today stay on the map, shaded more lightly.
+  const out = [...active.values()].sort((a, b) => b.score - a.score);
+  for (const [cc, name, note] of ONGOING_CONFLICT_PROVINCES) {
+    const id = `${cc}:${name}`;
+    const prov = PROVINCES.find((p) => p.country === cc && p.name === name);
+    if (!prov) continue;
+    const hit = active.get(id);
+    if (hit) hit.note = note;
+    else out.push({ ...draw(prov, "ongoing", 0), note });
+  }
+  for (const z of MARITIME_THREAT_ZONES) {
+    out.push({ id: `sea:${z.id}`, tier: "ongoing", country: "", countryName: "At sea", name: z.name, note: z.note, score: 0, rings: [z.ring] });
+  }
+  return out;
+}
+
+function draw(p: Province, tier: "active" | "ongoing", score: number): ConflictProvince {
+  return {
+    id: `${p.country}:${p.name}`,
+    tier,
+    country: p.country,
+    countryName: countryName(p.country),
+    name: p.name,
+    score,
+    rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
+  };
 }

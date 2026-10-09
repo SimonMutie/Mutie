@@ -1171,6 +1171,9 @@ export interface MarketsStatus {
 
 export interface ConflictProvince {
   id: string;
+  /** "active": fresh fighting in the last 48 hours; "ongoing": a long-running conflict on the analysts' list. */
+  tier: "active" | "ongoing";
+  note?: string;
   country: string;
   countryName: string;
   name: string;
