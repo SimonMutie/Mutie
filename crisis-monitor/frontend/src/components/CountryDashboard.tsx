@@ -189,35 +189,35 @@ const vizWidget = (id: string, title: string, viz: Omit<VizSpec, "source" | "col
 });
 const SITUATION = THEMES.find((t) => t.key === "situation") ?? THEMES[0];
 
-/** One hemicycle of the people killed in criminal incidents, named by who they were: women, men, children.
- *  "Criminal" is the same actor group the map colours blue (gangs, bandits, robbers, kidnappers and the like). */
+/** One hemicycle of the people killed in criminal incidents, named by who they were. "Criminal" is the same group the
+ *  map colours blue (gangs, bandits, robbers, kidnappers and the like), judged from the actor, interest group, sector,
+ *  operation, target, tactic and details of each incident. Read from every incident of the country, mapped or not. */
+type Victims = { women: number; men: number; children: number; unknown: number; criminalIncidents: number; fallback: boolean };
+const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
 function CriminalVictims({ country, range }: { country: string; range: { from?: string; to?: string } }) {
-  const [data, setData] = useState<{ women: number; men: number; children: number; actors: string[] } | "none" | "error" | null>(null);
+  const [data, setData] = useState<Victims | "error" | null>(null);
   useEffect(() => {
     let live = true;
     setData(null);
-    (async () => {
-      const actors = (await api.getBreakdown("actor", { ...range, country })).map((a) => a.value).filter((v) => classifyActor(v).label === "Criminal");
-      if (actors.length === 0) return live && setData("none");
-      const r = await api.runVizQuery(
-        "incidents",
-        {
-          dimensions: [],
-          measures: [
-            { field: "deaths_women", agg: "sum" },
-            { field: "deaths_men", agg: "sum" },
-            { field: "deaths_children", agg: "sum" },
-          ],
-          filters: [
-            { field: "country", op: "in", values: [country] },
-            { field: "actor", op: "in", values: actors },
-          ],
-        },
-        range,
-      );
-      const m = r.rows[0]?.m ?? [];
-      if (live) setData({ women: m[0] ?? 0, men: m[1] ?? 0, children: m[2] ?? 0, actors });
-    })().catch(() => live && setData("error"));
+    api
+      .getIncidents({ ...range, country, limit: 250000 })
+      .then((rows) => {
+        if (!live) return;
+        const isCriminal = (i: IncidentItem) => classifyIncident(i).label === "Criminal" || classifyActor(`${i.tactic ?? ""} ${i.details ?? ""}`).label === "Criminal";
+        const tally = (list: IncidentItem[]) =>
+          list.reduce(
+            (a, i) => ({ women: a.women + num(i.civilian_death_female), men: a.men + num(i.civilian_death_male), children: a.children + num(i.civilian_death_child), unknown: a.unknown + num(i.civilian_death_unknown) }),
+            { women: 0, men: 0, children: 0, unknown: 0 },
+          );
+        const criminal = rows.filter(isCriminal);
+        const t = tally(criminal);
+        const any = t.women + t.men + t.children + t.unknown > 0;
+        // Nothing recorded against criminal actors: show every civilian death instead, and say so.
+        const shown = any ? t : tally(rows);
+        setData({ ...shown, criminalIncidents: criminal.length, fallback: !any });
+      })
+      .catch(() => live && setData("error"));
     return () => {
       live = false;
     };
@@ -230,37 +230,42 @@ function CriminalVictims({ country, range }: { country: string; range: { from?: 
     columns: [],
     values: [{ field: "killed", agg: "sum", label: "People killed" }],
     filters: [],
-    options: { fields: { victims: { label: "Who was killed", type: "text" }, killed: { label: "People killed", type: "number" } } },
+    options: { topN: 6, fields: { victims: { label: "Who was killed", type: "text" }, killed: { label: "People killed", type: "number" } } },
   };
-  const result: VizResult | null =
-    data && typeof data === "object"
-      ? {
-          rows: [
-            { d: ["Women"], m: [data.women] },
-            { d: ["Men"], m: [data.men] },
-            { d: ["Children"], m: [data.children] },
-          ],
-          truncated: false,
-        }
-      : null;
-  const total = data && typeof data === "object" ? data.women + data.men + data.children : 0;
+  const ok = data && data !== "error" ? data : null;
+  const total = ok ? ok.women + ok.men + ok.children + ok.unknown : 0;
+  const result: VizResult | null = ok
+    ? {
+        rows: [
+          { d: ["Women"], m: [ok.women] },
+          { d: ["Men"], m: [ok.men] },
+          { d: ["Children"], m: [ok.children] },
+          ...(ok.unknown > 0 ? [{ d: ["Sex or age not recorded"], m: [ok.unknown] }] : []),
+        ],
+        truncated: false,
+      }
+    : null;
   return (
     <div className="panel vz-card vz-card--parliament">
       <header className="vz-card__head">
         <div className="vz-card__titles">
-          <div className="vz-card__title">Women, men and children killed in criminal incidents</div>
-          <div className="vz-card__caption">Civilian deaths in incidents by criminal actors in {country}</div>
+          <div className="vz-card__title">{ok?.fallback ? "Women, men and children killed" : "Women, men and children killed in criminal incidents"}</div>
+          <div className="vz-card__caption">
+            {ok
+              ? ok.fallback
+                ? `No civilian deaths are recorded against criminal actors in ${country} for this period, so this shows all civilian deaths.`
+                : `${total.toLocaleString()} civilian deaths in ${ok.criminalIncidents.toLocaleString()} criminal incidents in ${country}`
+              : `Civilian deaths in ${country}`}
+          </div>
         </div>
       </header>
       <div className="vz-card__body">
         {data === null ? (
           <div className="vz-empty">Loading…</div>
-        ) : data === "none" ? (
-          <div className="vz-empty">No criminal actor is recorded for {country} in this period.</div>
         ) : data === "error" ? (
           <div className="vz-empty">The figures could not be read.</div>
         ) : total === 0 ? (
-          <div className="vz-empty">No civilian deaths are recorded in criminal incidents for {country} in this period.</div>
+          <div className="vz-empty">No civilian deaths are recorded for {country} in this period.</div>
         ) : (
           <Parliament viz={viz} result={result!} theme={SITUATION} selectedKey={null} />
         )}
