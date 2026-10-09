@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
@@ -79,11 +79,13 @@ type Mode = { kind: "bespoke"; id: string | null } | { kind: "auto" };
 
 interface Props {
   mode: Mode;
+  /** Extra controls shown first in the Tools panel (the Country Dashboard's country picker). */
+  extraTools?: ReactNode;
   onBack?: () => void;
   onSavedNew?: (id: string) => void;
 }
 
-export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
+export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }: Props) {
   const [name, setName] = useState(mode.kind === "auto" ? "Auto Dashboard" : "Untitled dashboard");
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [backendId, setBackendId] = useState<string | null>(mode.kind === "bespoke" ? mode.id : null);
@@ -724,6 +726,7 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
         </button>
         {toolsOpen && (
         <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {extraTools}
         {!locked && <PeriodBar from={dateRangeFrom} to={dateRangeTo} onChange={updateDateRange} />}
         {!locked && (
           <div ref={filterPanelRef} style={{ position: "relative" }}>

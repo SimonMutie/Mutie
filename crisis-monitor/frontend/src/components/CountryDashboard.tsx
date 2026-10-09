@@ -114,30 +114,31 @@ export default function CountryDashboard() {
   }, [country]);
 
   const options = countries && countries.length ? countries : [{ value: country, count: 0 }];
+  const picker = (
+    <label style={{ display: "flex", alignItems: "center", gap: 6 }} title="Each country keeps its own dashboard">
+      <span className="eyebrow" style={{ fontSize: 11, opacity: 0.7 }}>COUNTRY</span>
+      <select
+        value={country}
+        onChange={(e) => setCountry(e.target.value)}
+        style={{ fontSize: 13, fontWeight: 600, padding: "6px 10px", background: "var(--panel)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8 }}
+      >
+        {options.map((c) => (
+          <option key={c.value} value={c.value}>
+            {c.value}
+            {c.count ? ` (${c.count.toLocaleString()})` : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 24px", borderBottom: "1px solid var(--border-soft)", flexWrap: "wrap" }}>
-        <span className="eyebrow" style={{ fontSize: 11, opacity: 0.7 }}>COUNTRY</span>
-        <select
-          value={country}
-          onChange={(e) => setCountry(e.target.value)}
-          style={{ fontSize: 14, fontWeight: 600, padding: "6px 10px", background: "var(--panel)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 8 }}
-        >
-          {options.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.value}
-              {c.count ? ` (${c.count.toLocaleString()})` : ""}
-            </option>
-          ))}
-        </select>
-        <span style={{ fontSize: 12, color: "var(--text-faint)" }}>Each country keeps its own dashboard — edit it, restyle it, and publish it like any other.</span>
-      </div>
       {error ? (
-        <div style={{ padding: 24, color: "var(--text-faint)" }}>{error}</div>
+        <div style={{ padding: 24, color: "var(--text-faint)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>{picker}<span>{error}</span></div>
       ) : id ? (
-        <DashboardEditor key={id} mode={{ kind: "bespoke", id }} />
+        <DashboardEditor key={id} mode={{ kind: "bespoke", id }} extraTools={picker} />
       ) : (
-        <div style={{ padding: 24, color: "var(--text-faint)" }}>Opening the {country} dashboard…</div>
+        <div style={{ padding: 24, color: "var(--text-faint)", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>{picker}<span>Opening the {country} dashboard…</span></div>
       )}
     </div>
   );
