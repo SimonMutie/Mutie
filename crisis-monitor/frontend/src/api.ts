@@ -1680,6 +1680,11 @@ export const api = {
   getIncidentUploads: () => req<SavedUpload[]>("/api/incidents/uploads"),
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
+  /** The incidents table in compact pages for the spreadsheet grid: columns once, one array per row, no bulky raw upload. */
+  getIncidentsGrid: (after = 0, limit = 5000) =>
+    req<{ columns: string[]; rows: (string | number | null)[][]; next: number | null; total: number | null }>(`/api/incidents/grid?after=${after}&limit=${limit}`),
+  /** One incident with everything stored, for the full edit form. */
+  getIncidentFull: (id: string) => req<IncidentItem>(`/api/incidents/one/${encodeURIComponent(id)}`),
   updateIncident: (id: string, data: Partial<IncidentRow>) =>
     req<IncidentItem>(`/api/incidents/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   bulkDeleteIncidents: (ids: string[]) =>

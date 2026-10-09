@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type IncidentItem, type SavedUpload } from "../api";
 import IncidentManualEntry from "./IncidentManualEntry";
 import SheetGrid, { type SheetColumn, type SheetEdit } from "./SheetGrid";
@@ -46,17 +46,41 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<IncidentItem | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [limit, setLimit] = useState(250000);
   const [visibleRows, setVisibleRows] = useState<IncidentItem[]>([]);
 
+  const loadToken = useRef(0);
+  const skipReload = useRef(false);
+  const [totalRows, setTotalRows] = useState<number | null>(null);
+  /** Reads every incident, a page at a time: the grid is usable after the first page, and the rest arrives behind it. */
   async function load() {
+    const token = ++loadToken.current;
     setLoading(true);
-    const [rows, uploadRows] = await Promise.all([api.getIncidents({ limit }), api.getIncidentUploads()]);
-    setIncidents(rows);
-    setUploads(uploadRows);
-    setSelected((s) => new Set([...s].filter((id) => rows.some((r) => r.id === id))));
-    setLoading(false);
+    api.getIncidentUploads().then((u) => token === loadToken.current && setUploads(u)).catch(() => undefined);
+    let after = 0;
+    let first = true;
+    try {
+      for (;;) {
+        const page = await api.getIncidentsGrid(after, first ? 3000 : 10000);
+        if (token !== loadToken.current) return;
+        const chunk = page.rows.map((r) => Object.fromEntries(page.columns.map((k, i) => [k, r[i]]))) as unknown as IncidentItem[];
+        // Edits made while later pages arrive must survive, so pages are added to what is on screen.
+        if (first) {
+          setIncidents(chunk);
+          setTotalRows(page.total);
+          setLoading(false);
+          first = false;
+        } else setIncidents((prev) => prev.concat(chunk));
+        setLoaded((n) => (after === 0 ? chunk.length : n + chunk.length));
+        if (page.next === null) break;
+        after = page.next;
+      }
+    } finally {
+      if (token === loadToken.current) setLoading(false);
+    }
+    setLoaded((n) => n); // done
   }
+  const [loaded, setLoaded] = useState(0);
+  const stillLoading = totalRows !== null && loaded < totalRows;
 
   /** Edits from the grid: shown on screen here, stored by saveEdits when the person saves them. */
   function applyEdits(edits: SheetEdit[]) {
@@ -79,6 +103,7 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
     for (let i = 0; i < entries.length; i += 8) {
       await Promise.all(entries.slice(i, i + 8).map(([id, patch]) => api.updateIncident(id, patch as never)));
     }
+    skipReload.current = true;
     onChanged();
   }
 
@@ -100,9 +125,14 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   }
 
   useEffect(() => {
+    // A save reports itself through onChanged, which bumps refreshKey; that must not re-read every incident.
+    if (skipReload.current) {
+      skipReload.current = false;
+      return;
+    }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey, limit]);
+  }, [refreshKey]);
 
   function toggleOne(id: string) {
     setSelected((s) => {
@@ -195,7 +225,7 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-          {loading ? "Loading every incident…" : `${incidents.length.toLocaleString()} incidents loaded`}
+          {loading ? "Loading incidents…" : stillLoading ? `Loaded ${loaded.toLocaleString()} of ${(totalRows ?? 0).toLocaleString()} incidents — you can start filtering and editing; the rest is arriving…` : `${incidents.length.toLocaleString()} incidents`}
         </div>
         {selected.size > 0 && (
           <button onClick={deleteSelected} disabled={bulkDeleting} style={dangerBtnStyle}>
@@ -225,7 +255,7 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
           width: 120,
           cell: (i) => (
             <>
-              <button onClick={() => setEditing(i)} style={smallBtnStyle}>
+              <button onClick={() => api.getIncidentFull(i.id).then(setEditing).catch(() => setEditing(i))} style={smallBtnStyle}>
                 Edit
               </button>
               <button onClick={() => deleteOne(i.id)} style={{ ...smallBtnStyle, color: "var(--critical)", marginLeft: 6 }}>

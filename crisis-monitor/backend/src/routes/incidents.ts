@@ -251,6 +251,56 @@ incidentsRouter.get("/", async (c) => {
   return c.json(rows.map((row) => ({ ...row, raw_row: JSON.parse(String(row.raw_row ?? "{}")) })));
 });
 
+/** The columns the spreadsheet grid shows. No raw_row (the bulky original upload) and no sorting: the grid reads the
+ *  whole table quickly, page by page, and does its own sorting and filtering. */
+const GRID_COLUMNS = [
+  "occurred_date", "occurred_time", "country", "province", "county", "district", "city", "suburb", "precise_location", "latitude", "longitude",
+  "sector", "actor", "operation", "tactic", "severity", "target", "interest_group", "actual_main_victim", "intended_primary_target",
+  "civilian_death_male", "civilian_death_female", "civilian_death_child", "civilian_death_unknown",
+  "civilian_injury_male", "civilian_injury_female", "civilian_injury_unknown", "kidnappings_ngo", "details",
+] as const;
+
+/** GET /grid?after=<rowid>&limit=<n> — the next page of incidents as compact arrays (columns once, then one array per
+ *  row), in table order. The first page also says how many there are in all. */
+incidentsRouter.get("/grid", async (c) => {
+  const { ownerIds, countries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  const after = Number(c.req.query("after") ?? 0) || 0;
+  const limit = Math.min(Math.max(Number(c.req.query("limit")) || 5000, 1), 20000);
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (ownerIds && ownerIds.length > 0) {
+    conditions.push(`owner_id IN (${ownerIds.map(() => "?").join(",")})`);
+    params.push(...ownerIds);
+  }
+  if (countries && countries.length > 0) {
+    conditions.push(`LOWER(country) IN (${countries.map(() => "LOWER(?)").join(",")})`);
+    params.push(...countries);
+  }
+  const scope = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const pageWhere = `WHERE ${[...conditions, "rowid > ?"].join(" AND ")}`;
+  const [rows, total] = await Promise.all([
+    all<Record<string, unknown>>(c.env.DB, `SELECT rowid AS _r, id, ${GRID_COLUMNS.join(", ")} FROM incidents ${pageWhere} ORDER BY rowid LIMIT ?`, [...params, after, limit]),
+    after === 0 ? first<{ n: number }>(c.env.DB, `SELECT COUNT(*) AS n FROM incidents ${scope}`, params) : Promise.resolve(null),
+  ]);
+  const columns = ["id", ...GRID_COLUMNS];
+  return c.json({
+    columns,
+    rows: rows.map((r) => columns.map((k) => r[k] ?? null)),
+    next: rows.length === limit ? Number(rows[rows.length - 1]._r) : null,
+    total: total?.n ?? null,
+  });
+});
+
+/** One incident with everything stored, for the full edit form. */
+incidentsRouter.get("/one/:id", async (c) => {
+  const { ownerIds, countries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM incidents WHERE id = ?`, [c.req.param("id")]);
+  if (!row) return c.json({ error: "Not found" }, 404);
+  if (ownerIds && ownerIds.length > 0 && !ownerIds.includes(String(row.owner_id))) return c.json({ error: "Not found" }, 404);
+  if (countries && countries.length > 0 && !countries.some((x) => x.toLowerCase() === String(row.country ?? "").toLowerCase())) return c.json({ error: "Not found" }, 404);
+  return c.json({ ...row, raw_row: JSON.parse(String(row.raw_row ?? "{}")) });
+});
+
 /** Distinct values for each filterable field, so the frontend can populate filter
  *  dropdowns from real data rather than a hardcoded guess at what values exist. */
 incidentsRouter.get("/filters", async (c) => {
