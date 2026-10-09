@@ -53,9 +53,15 @@ export async function enablePushAlerts(opts: { askPermission: boolean }): Promis
     return null;
   } catch (e) {
     const m = e instanceof Error ? e.message : "";
-    // The browser could not reach its push service (Google's, in Chrome, Edge and Brave): usually a browser setting or a blocked network.
-    if (/push service|registration failed/i.test(m))
-      return "This browser could not reach its notification service. In Brave, turn on Settings → Privacy and security → “Use Google services for push messaging” and restart it; in other browsers, leave private mode and make sure the network does not block Google's push service (fcm.googleapis.com). Then try again.";
+    // The browser could not reach its push service: say what to check for the browser actually in use.
+    if (/push service|registration failed/i.test(m)) {
+      const ua = navigator.userAgent;
+      const brave = !!(navigator as unknown as { brave?: unknown }).brave;
+      if (brave) return "Brave blocks Google's push service by default. Turn on Settings → Privacy and security → “Use Google services for push messaging”, restart Brave, and try again.";
+      if (/Edg\//.test(ua)) return "Edge could not reach the Windows notification service. Check that Windows notifications are on for Microsoft Edge (Windows Settings → System → Notifications), that you are not in an InPrivate window, and that your network or organization is not blocking *.notify.windows.com. Then try again.";
+      if (/Firefox\//.test(ua)) return "Firefox could not reach its notification service. Check that you are not in a private window and that your network is not blocking push services, then try again.";
+      return "This browser could not reach its notification service. Leave private mode, check that your network is not blocking push services, and try again.";
+    }
     return m || "Could not turn alerts on for this device.";
   }
 }
