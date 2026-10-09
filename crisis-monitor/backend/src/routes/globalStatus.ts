@@ -238,7 +238,7 @@ globalStatusRouter.get("/markets", async (c) => {
 });
 
 /** One row of the Markets board: latest value, change over the last step, and a short history for the sparkline. */
-interface BoardRow { key: string; label: string; value: number; changePercent: number | null; series: number[]; unit?: string }
+interface BoardRow { key: string; label: string; value: number; changePercent: number | null; /** Change in the value itself, used for rates (percentage points). */ change?: number; series: number[]; unit?: string }
 
 const FX_SYMBOLS = ["EUR", "GBP", "JPY", "CHF", "CNY", "ZAR", "TRY", "INR", "BRL", "CAD", "AUD", "MXN"];
 
@@ -278,6 +278,32 @@ const BOARD_FRED: { id: string; label: string; unit: string }[] = [
   { id: "DDFUELNYH", label: "NY Harbor diesel", unit: "$/gal" },
 ];
 
+/** US Treasury yields and the Fed's dollar index, from the Federal Reserve through FRED (U.S. government data). */
+const RATES_FRED: { id: string; label: string; unit: string; kind: "rate" | "index" }[] = [
+  { id: "DGS2", label: "US 2-year yield", unit: "%", kind: "rate" },
+  { id: "DGS5", label: "US 5-year yield", unit: "%", kind: "rate" },
+  { id: "DGS10", label: "US 10-year yield", unit: "%", kind: "rate" },
+  { id: "DGS30", label: "US 30-year yield", unit: "%", kind: "rate" },
+  { id: "DFF", label: "Fed funds rate", unit: "%", kind: "rate" },
+  { id: "DTWEXBGS", label: "Dollar index (broad, Fed)", unit: "index", kind: "index" },
+];
+
+async function fetchRatesBoard(apiKey: string): Promise<BoardRow[]> {
+  const out = await Promise.allSettled(
+    RATES_FRED.map(async (s) => {
+      const res = await fetch(`https://api.stlouisfed.org/fred/series/observations?series_id=${s.id}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=40`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { observations?: { date: string; value: string }[] };
+      const series = (data.observations ?? []).filter((o) => o.value !== ".").map((o) => Number.parseFloat(o.value)).reverse();
+      if (series.length < 2) return null;
+      const last = series[series.length - 1];
+      const prev = series[series.length - 2];
+      return { key: s.id, label: s.label, unit: s.unit, value: last, changePercent: s.kind === "index" ? ((last - prev) / prev) * 100 : null, change: s.kind === "rate" ? last - prev : undefined, series: series.slice(-30) } as BoardRow;
+    })
+  );
+  return out.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+}
+
 async function fetchFredBoard(apiKey: string): Promise<BoardRow[]> {
   const out = await Promise.allSettled(
     BOARD_FRED.map(async (s) => {
@@ -299,16 +325,17 @@ async function fetchFredBoard(apiKey: string): Promise<BoardRow[]> {
 globalStatusRouter.get("/markets-board", async (c) => {
   return cachedJson(c.req.raw, async () => {
     const fredKey = c.env.FRED_API_KEY;
-    const [fx, crypto, energy] = await Promise.allSettled([fetchFxBoard(), fetchCryptoBoard(), fredKey ? fetchFredBoard(fredKey) : Promise.resolve([] as BoardRow[])]);
+    const [fx, crypto, energy, rates] = await Promise.allSettled([fetchFxBoard(), fetchCryptoBoard(), fredKey ? fetchFredBoard(fredKey) : Promise.resolve([] as BoardRow[]), fredKey ? fetchRatesBoard(fredKey) : Promise.resolve([] as BoardRow[])]);
     const pick = (r: PromiseSettledResult<BoardRow[]>) => (r.status === "fulfilled" ? r.value : []);
     const exchanges = EXCHANGES.map((ex) => ({ name: ex.name, country: ex.country, open: isExchangeOpen(ex) }));
     return {
       fx: pick(fx),
       crypto: pick(crypto),
       energy: pick(energy),
+      rates: pick(rates),
       energyAvailable: Boolean(fredKey),
       exchanges,
-      sources: { fx: "European Central Bank reference rates via Frankfurter", crypto: "CoinGecko", energy: "U.S. EIA via FRED" },
+      sources: { fx: "European Central Bank reference rates via Frankfurter", crypto: "CoinGecko", energy: "U.S. EIA via FRED", rates: "Federal Reserve via FRED" },
       fetchedAt: new Date().toISOString(),
     };
   });
@@ -406,12 +433,27 @@ export const AFRICA_COUNTRIES: Record<string, string> = {
  *  bilateral trade-flow detail (UN Comtrade) — Comtrade's own policy
  *  requires a paid license for any for-profit application, so it isn't
  *  built here; this is the closest real, free substitute. */
-const WB_INDICATORS: { id: string; key: string; label: string; unit: string }[] = [
-  { id: "NY.GDP.MKTP.CD", key: "gdpUsd", label: "GDP", unit: "US$" },
-  { id: "NY.GDP.MKTP.KD.ZG", key: "gdpGrowthPct", label: "GDP growth", unit: "%/yr" },
-  { id: "FP.CPI.TOTL.ZG", key: "inflationPct", label: "Inflation (CPI)", unit: "%/yr" },
-  { id: "NE.TRD.GNFS.ZS", key: "tradePctGdp", label: "Trade", unit: "% of GDP" },
+const WB_INDICATORS: { id: string; key: string; label: string; unit: "US$" | "%" | "% of GDP" | "% of GNI" | "% of exports" | "%/yr"; group: "Output" | "Prices" | "Debt" | "External" | "Fiscal" }[] = [
+  { id: "NY.GDP.MKTP.CD", key: "gdpUsd", label: "GDP", unit: "US$", group: "Output" },
+  { id: "NY.GDP.PCAP.CD", key: "gdpPerCapitaUsd", label: "GDP per person", unit: "US$", group: "Output" },
+  { id: "NY.GDP.MKTP.KD.ZG", key: "gdpGrowthPct", label: "GDP growth", unit: "%/yr", group: "Output" },
+  { id: "SL.UEM.TOTL.ZS", key: "unemploymentPct", label: "Unemployment", unit: "%", group: "Output" },
+  { id: "FP.CPI.TOTL.ZG", key: "inflationPct", label: "Inflation (CPI)", unit: "%/yr", group: "Prices" },
+  { id: "GC.DOD.TOTL.GD.ZS", key: "govDebtPctGdp", label: "Govt debt", unit: "% of GDP", group: "Debt" },
+  { id: "DT.DOD.DECT.CD", key: "externalDebtUsd", label: "External debt", unit: "US$", group: "Debt" },
+  { id: "DT.DOD.DECT.GN.ZS", key: "externalDebtPctGni", label: "External debt", unit: "% of GNI", group: "Debt" },
+  { id: "DT.TDS.DECT.EX.ZS", key: "debtServicePctExports", label: "Debt service", unit: "% of exports", group: "Debt" },
+  { id: "GC.BAL.CASH.GD.ZS", key: "fiscalBalancePctGdp", label: "Budget balance", unit: "% of GDP", group: "Fiscal" },
+  { id: "BN.CAB.XOKA.GD.ZS", key: "currentAccountPctGdp", label: "Current account", unit: "% of GDP", group: "External" },
+  { id: "FI.RES.TOTL.CD", key: "reservesUsd", label: "Reserves", unit: "US$", group: "External" },
+  { id: "NE.TRD.GNFS.ZS", key: "tradePctGdp", label: "Trade", unit: "% of GDP", group: "External" },
 ];
+
+/** The Middle East countries covered alongside Africa. */
+const MIDDLE_EAST_COUNTRIES: Record<string, string> = {
+  SY: "Syria", IQ: "Iraq", IR: "Iran", IL: "Israel", PS: "Palestine (West Bank & Gaza)", LB: "Lebanon", JO: "Jordan", YE: "Yemen",
+  SA: "Saudi Arabia", OM: "Oman", AE: "United Arab Emirates", KW: "Kuwait", QA: "Qatar", BH: "Bahrain", TR: "Türkiye",
+};
 
 async function fetchWorldBankIndicator(indicatorId: string, countryCodes: string[]): Promise<Map<string, { value: number; date: string }>> {
   const url = `https://api.worldbank.org/v2/country/${countryCodes.join(";")}/indicator/${indicatorId}?format=json&mrnev=1&per_page=20000`;
@@ -434,13 +476,17 @@ globalStatusRouter.get("/economic-indicators", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const codes = Object.keys(AFRICA_COUNTRIES);
-      const perIndicator = await Promise.all(WB_INDICATORS.map((ind) => fetchWorldBankIndicator(ind.id, codes)));
+      const names: Record<string, string> = { ...AFRICA_COUNTRIES, ...MIDDLE_EAST_COUNTRIES };
+      const codes = Object.keys(names);
+      // One call per indicator; one failing leaves its column empty rather than failing the table.
+      const settled = await Promise.allSettled(WB_INDICATORS.map((ind) => fetchWorldBankIndicator(ind.id, codes)));
+      const failed = WB_INDICATORS.filter((_, i) => settled[i].status === "rejected").map((i) => i.label);
 
       const countries = codes.map((code) => {
-        const entry: Record<string, unknown> = { code, name: AFRICA_COUNTRIES[code] };
+        const entry: Record<string, unknown> = { code, name: names[code], region: code in MIDDLE_EAST_COUNTRIES ? "Middle East" : "Africa" };
         WB_INDICATORS.forEach((ind, i) => {
-          const hit = perIndicator[i].get(code);
+          const r = settled[i];
+          const hit = r.status === "fulfilled" ? r.value.get(code) : undefined;
           entry[ind.key] = hit ? hit.value : null;
           entry[`${ind.key}Date`] = hit ? hit.date : null;
         });
@@ -449,8 +495,10 @@ globalStatusRouter.get("/economic-indicators", async (c) => {
 
       return {
         countries,
-        indicators: WB_INDICATORS.map(({ key, label, unit }) => ({ key, label, unit })),
-        source: "World Bank Open Data (CC-BY 4.0)",
+        indicators: WB_INDICATORS.map(({ key, label, unit, group }) => ({ key, label, unit, group })),
+        source: "World Bank Open Data (CC BY 4.0)",
+        note: "Latest value the World Bank has published for each country and measure; the year is shown beside it. Most are annual and appear 1-2 years late, and some countries report some measures rarely or never.",
+        failed,
         fetchedAt: new Date().toISOString(),
       };
     },

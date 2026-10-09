@@ -1,4 +1,5 @@
 import { MarketsPanel } from "./MarketsPanel";
+import { EconomyPanel } from "./EconomyPanel";
 import { STANDING_HOTSPOTS } from "../standingHotspots";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapCompass } from "./LeafletMapControls";
@@ -1147,7 +1148,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [econData, setEconData] = useState<EconomicIndicators | null>(null);
   const [econLoading, setEconLoading] = useState(false);
   const [econError, setEconError] = useState<string | null>(null);
-  const [econSortKey, setEconSortKey] = useState<string>("gdpUsd");
   useEffect(() => {
     if (activeTool !== "economy" || econData || econLoading) return;
     setEconLoading(true);
@@ -1995,7 +1995,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     >
       <div
         // The zoom pad keeps clear of the tool rail, and of a tool's own panel when one is open beside it.
-        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
+        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool === "economy" ? "min(648px, 55%)" : rightTool === "markets" ? "min(508px, 50%)" : rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
       >
         {mapMode === "3d" ? (
           <Map3D
@@ -2241,10 +2241,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
         {rightTool === "economy" && (
-          <EconomicIndicatorsPanel data={econData} loading={econLoading} error={econError} sortKey={econSortKey} onSortKeyChange={setEconSortKey} />
+          <ToolPanelShell title="Economy" width={560}>
+            <EconomyPanel data={econData} loading={econLoading} error={econError} />
+          </ToolPanelShell>
         )}
         {rightTool === "markets" && (
-          <ToolPanelShell title="Markets">
+          <ToolPanelShell title="Markets" width={420}>
             <MarketsPanel />
           </ToolPanelShell>
         )}
@@ -3437,9 +3439,9 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
  *  positioning (just left of the icon rail) and card chrome as the rail
  *  itself, so opening any tool feels like one consistent system rather
  *  than four separately-designed popovers. */
-function ToolPanelShell({ title, children }: { title: string; children: ReactNode }) {
+function ToolPanelShell({ title, children, width = 260 }: { title: string; children: ReactNode; width?: number }) {
   return (
-    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: 260, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: `min(${width}px, calc(100% - 100px))`, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>{title}</div>
       {children}
     </div>
@@ -4152,94 +4154,6 @@ function CryptoToolPanel({
         </div>
       )}
     </ToolPanelShell>
-  );
-}
-
-/** Economy tool — World Bank indicators (CC-BY 4.0, see globalStatus.ts's
- *  comment for the license check) across Afrilens's African coverage set.
- *  Tabular rather than map markers — a country's GDP isn't a point on the
- *  globe — so this is a wider scrollable panel rather than the usual
- *  260px ToolPanelShell. */
-function EconomicIndicatorsPanel({
-  data,
-  loading,
-  error,
-  sortKey,
-  onSortKeyChange,
-}: {
-  data: EconomicIndicators | null;
-  loading: boolean;
-  error: string | null;
-  sortKey: string;
-  onSortKeyChange: (k: string) => void;
-}) {
-  const rows = useMemo(() => {
-    if (!data) return [];
-    const sorted = [...data.countries].sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
-      if (typeof av !== "number" && typeof bv !== "number") return 0;
-      if (typeof av !== "number") return 1;
-      if (typeof bv !== "number") return -1;
-      return bv - av;
-    });
-    return sorted;
-  }, [data, sortKey]);
-
-  function formatValue(v: unknown, unit: string): string {
-    if (typeof v !== "number") return "—";
-    if (unit === "US$") return v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : `$${(v / 1e6).toFixed(0)}M`;
-    if (unit === "%/yr" || unit === "% of GDP") return `${v.toFixed(1)}%`;
-    return v.toLocaleString();
-  }
-
-  return (
-    <div
-      style={{
-        ...glassPanel(),
-        position: "absolute",
-        top: 12,
-        right: 76,
-        zIndex: 500,
-        width: 340,
-        maxHeight: "calc(100% - 24px)",
-        overflowY: "auto",
-        padding: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
-      <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Economy</div>
-      {loading && <div style={{ fontSize: 11, color: HUD.textMuted }}>Loading World Bank indicators…</div>}
-      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
-      {data && (
-        <>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {data.indicators.map((ind) => (
-              <ToolButton key={ind.key} active={sortKey === ind.key} onClick={() => onSortKeyChange(ind.key)}>
-                {ind.label}
-              </ToolButton>
-            ))}
-          </div>
-          <div style={{ fontSize: 10, color: HUD.textMuted }}>{data.source} · sorted by {data.indicators.find((i) => i.key === sortKey)?.label}</div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {rows.map((r) => {
-              const indicator = data.indicators.find((i) => i.key === sortKey);
-              return (
-                <div
-                  key={r.code}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 11.5, padding: "5px 0", borderBottom: "1px solid rgba(212,175,55,0.08)" }}
-                >
-                  <span style={{ color: HUD.textSecondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{r.name}</span>
-                  <span style={{ color: HUD.textPrimary, fontWeight: 600, marginLeft: 8 }}>{formatValue(r[sortKey], indicator?.unit ?? "")}</span>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 

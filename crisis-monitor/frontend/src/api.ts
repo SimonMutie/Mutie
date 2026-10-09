@@ -1185,14 +1185,15 @@ export interface ConflictZones {
   borders: string;
   fetchedAt: string;
 }
-export interface MarketBoardRow { key: string; label: string; value: number; changePercent: number | null; series: number[]; unit?: string }
+export interface MarketBoardRow { key: string; label: string; value: number; changePercent: number | null; change?: number; series: number[]; unit?: string }
 export interface MarketsBoard {
   fx: MarketBoardRow[];
   crypto: MarketBoardRow[];
   energy: MarketBoardRow[];
+  rates: MarketBoardRow[];
   energyAvailable: boolean;
   exchanges: { name: string; country: string; open: boolean }[];
-  sources: { fx: string; crypto: string; energy: string };
+  sources: { fx: string; crypto: string; energy: string; rates: string };
   fetchedAt: string;
 }
 
@@ -1202,11 +1203,11 @@ export interface ActivityIndex {
 }
 
 export interface EconomicIndicators {
-  countries: Array<
-    { code: string; name: string } & Record<string, number | string | null>
-  >;
-  indicators: { key: string; label: string; unit: string }[];
+  countries: Array<{ code: string; name: string; region: string } & Record<string, number | string | null>>;
+  indicators: { key: string; label: string; unit: string; group: string }[];
   source: string;
+  note: string;
+  failed: string[];
   fetchedAt: string;
 }
 
