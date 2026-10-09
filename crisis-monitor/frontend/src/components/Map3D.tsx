@@ -350,6 +350,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
+  // Which way the map is turned, so the compass can follow it.
+  const [bearing, setBearing] = useState(0);
   const onClickRef = useRef(onMapClick);
   onClickRef.current = onMapClick;
   const heatRef = useRef({ points: heatPoints, style: heatStyle });
@@ -407,6 +409,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
       attributionControl: { compact: true },
     });
     mapRef.current = map;
+    map.on("rotate", () => setBearing(map.getBearing()));
 
     map.on("load", () => {
       map.setProjection({ type: "globe" });
@@ -829,6 +832,19 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
   return (
     <>
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+      <button
+        type="button"
+        title="Compass — click to face north"
+        onClick={() => mapRef.current?.easeTo({ bearing: 0, pitch: 0 })}
+        style={{ position: "absolute", left: 10, bottom: 30, zIndex: 1000, width: 46, height: 46, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", cursor: "pointer", padding: 0 }}
+      >
+        <svg width="37" height="37" viewBox="0 0 32 32" style={{ transform: `rotate(${-bearing}deg)`, transition: "transform 0.15s" }} aria-label="Compass">
+          <circle cx="16" cy="16" r="14" fill="none" stroke="#9B978E" strokeWidth="0.6" opacity="0.6" />
+          <path d="M16 4 L20 16 L16 14 L12 16 Z" fill="#e34948" />
+          <path d="M16 28 L12 16 L16 18 L20 16 Z" fill="#e8e6e0" opacity="0.75" />
+          <text x="16" y="3.6" textAnchor="middle" fontSize="5.2" fontWeight="700" fill="#e8e6e0" dominantBaseline="hanging">N</text>
+        </svg>
+      </button>
       <MapNavPad
         onZoomIn={() => mapRef.current?.zoomIn()}
         onZoomOut={() => mapRef.current?.zoomOut()}

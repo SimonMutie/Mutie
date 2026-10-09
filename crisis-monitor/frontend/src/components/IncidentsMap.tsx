@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LeafletMapControls from "./LeafletMapControls";
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, ScaleControl, useMapEvents, useMap } from "react-leaflet";
 import * as L from "leaflet";
 import type { LatLngExpression } from "leaflet";
@@ -1131,7 +1132,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   const [showIncidentLog, setShowIncidentLog] = useState(false);
   const [showMapAids, setShowMapAids] = useState(false);
   const [scaleEnabled, setScaleEnabled] = useState(false);
-  const [compassEnabled, setCompassEnabled] = useState(false);
+  const [compassEnabled, setCompassEnabled] = useState(true);
   const [compassStyle, setCompassStyle] = useState<CompassStyle>("arrow");
   const [bufferKm, setBufferKm] = useState(5);
   const [onlyNearOverlay, setOnlyNearOverlay] = useState(false);
@@ -2015,7 +2016,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
         scrollWheelZoom
         zoomControl={false}
       >
-        <ZoomControl position="bottomright" />
+        <LeafletMapControls compass={false} />
         {scaleEnabled && <ScaleControl position="bottomleft" />}
         <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LeafletMapControls from "./LeafletMapControls";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -264,7 +265,8 @@ export default function IncidentSearch() {
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom>
+        <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom zoomControl={false}>
+          <LeafletMapControls />
           <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
           <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
 

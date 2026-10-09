@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import LeafletMapControls from "../LeafletMapControls";
 import { CircleMarker, MapContainer, Popup, TileLayer, Tooltip, useMap } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import "leaflet/dist/leaflet.css";
@@ -129,7 +130,8 @@ export default function MapPanel({ overview, fitKey }: { overview: QueryOverview
 function FlatMap({ mode, points, fitKey }: { mode: Exclude<Mode, "3d">; points: QueryMapPoint[]; fitKey: string }) {
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   return (
-    <MapContainer center={[4, 22]} zoom={3} minZoom={2} worldCopyJump scrollWheelZoom style={{ height: "100%", width: "100%", background: mode === "map" ? "#dfe5ec" : "#05070d" }}>
+    <MapContainer center={[4, 22]} zoom={3} minZoom={2} worldCopyJump scrollWheelZoom zoomControl={false} style={{ height: "100%", width: "100%", background: mode === "map" ? "#dfe5ec" : "#05070d" }}>
+      <LeafletMapControls />
       <TileLayer key={mode} url={tile.url} attribution={tile.attribution} />
       <KeepSized />
       <FitTo points={points} fitKey={fitKey} />

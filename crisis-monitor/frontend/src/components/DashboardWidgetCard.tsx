@@ -30,6 +30,7 @@ import { hierarchy, pack } from "d3-hierarchy";
 import { MapContainer, TileLayer, CircleMarker, Marker as LeafletMarker, Tooltip as LeafletTooltip, useMap } from "react-leaflet";
 import { HeatmapLayer } from "./HeatmapLayer";
 import { FastMarkers, type FastPoint } from "./FastMarkers";
+import LeafletMapControls from "./LeafletMapControls";
 import { BASEMAPS, type BasemapKey } from "./mapConstants";
 import VictimsWidget from "./VictimsWidget";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
@@ -4516,17 +4517,18 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
   return (
     <div style={{ height: "100%", borderRadius: 6, overflow: "hidden", position: "relative" }}>
       <MapContainer
-        center={widget.mapView ? [widget.mapView.lat, widget.mapView.lng] : list.length ? [list.reduce((s, i) => s + i.latitude, 0) / list.length, list.reduce((s, i) => s + i.longitude, 0) / list.length] : [1, 20]}
-        zoom={widget.mapView?.zoom ?? (list.length ? 6 : 2.2)}
+        center={widget.mapView ? [widget.mapView.lat, widget.mapView.lng] : [1, 20]}
+        zoom={widget.mapView?.zoom ?? 2.2}
         style={{ width: "100%", height: "100%" }}
         scrollWheelZoom={false}
-        dragging={showFullControls}
         zoomControl={false}
+        zoomSnap={0.25}
         preferCanvas
       >
         <TileLayer key={key} url={base.url} attribution={base.attribution} maxZoom={19} />
         {mode === "heatmap" ? <HeatmapLayer points={heat} style={{ gradient: "classic", radius: 16, blur: 14, max: Math.min(30, Math.max(1.5, heat.length / 120)), fade: 0.1 }} /> : <FastMarkers points={points} />}
         {list.length > 0 && !widget.mapView && <FitIncidents incidents={list} />}
+        <LeafletMapControls wheelOnClick />
         {onUpdate && (
           <>
             <MapViewLockButton locked={!!widget.mapView} onLock={(view) => onUpdate({ mapView: view })} onUnlock={() => onUpdate({ mapView: undefined })} />
@@ -4551,18 +4553,26 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-/** Frames the incidents once, when they first arrive (and again when the set changes), unless the view is locked. */
+/** Frames the main cluster of incidents once, when they first arrive, and then leaves the view alone — more incidents
+ *  arriving never move it. Loading a different set (a length that shrinks) frames afresh. The few furthest-out
+ *  incidents are left out of the framing, so one stray point does not zoom the map out to a whole continent. */
 function FitIncidents({ incidents }: { incidents: { latitude: number; longitude: number }[] }) {
   const map = useMap();
+  const state = useRef({ fitted: false, last: 0 });
   useEffect(() => {
-    if (!incidents.length) return;
+    if (incidents.length < state.current.last) state.current.fitted = false;
+    state.current.last = incidents.length;
+    if (state.current.fitted || !incidents.length) return;
+    state.current.fitted = true;
     try {
-      const b = L.latLngBounds(incidents.slice(0, 20000).map((i) => [i.latitude, i.longitude] as [number, number]));
-      if (b.isValid()) map.fitBounds(b, { padding: [24, 24], maxZoom: 9, animate: false });
+      const lat = incidents.map((i) => i.latitude).sort((a, b) => a - b);
+      const lng = incidents.map((i) => i.longitude).sort((a, b) => a - b);
+      const cut = incidents.length > 40 ? Math.floor(incidents.length * 0.03) : 0;
+      const b = L.latLngBounds([lat[cut], lng[cut]], [lat[lat.length - 1 - cut], lng[lng.length - 1 - cut]]);
+      if (b.isValid()) map.fitBounds(b.pad(0.08), { maxZoom: 11, animate: false });
     } catch {
       /* the map may not have a size yet */
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, incidents.length]);
   return null;
 }

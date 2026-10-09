@@ -259,11 +259,18 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     const filt = { from: dateRangeFrom, to: dateRangeTo, located: "1", ...effectiveFilters } as Record<string, string | undefined>;
     (async () => {
       let after = 0;
+      let shownAt = 0;
       for (let n = 0; n < 6 && live; n++) {
-        const page = await api.getIncidentsGrid(after, n === 0 ? 3000 : 12000, filt);
+        const page = await api.getIncidentsGrid(after, n === 0 ? 2000 : 12000, filt);
         if (!live) return;
         for (const r of page.rows) all.push(Object.fromEntries(page.columns.map((k, i) => [k, r[i]])) as unknown as IncidentItem);
-        setIncidents(all.slice());
+        // The first batch puts pins on the map straight away; after that the map is redrawn only now and then
+        // (and once more at the end), so a long load does not keep redrawing it.
+        const done = page.next === null || n === 5;
+        if (n === 0 || done || Date.now() - shownAt > 2500) {
+          setIncidents(all.slice());
+          shownAt = Date.now();
+        }
         if (page.next === null) return;
         after = page.next;
       }
