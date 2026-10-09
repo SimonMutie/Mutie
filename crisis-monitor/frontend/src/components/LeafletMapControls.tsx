@@ -8,7 +8,7 @@ export function MapCompass({ size = 46 }: { size?: number }) {
     <div
       className="lens-compass"
       title="North is up"
-      style={{ position: "absolute", left: 10, bottom: 30, zIndex: 1000, width: size, height: size, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}
+      style={{ position: "absolute", left: "var(--lens-pad-left, 10px)", transition: "left 0.2s", bottom: 30, zIndex: 1000, width: size, height: size, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}
     >
       <svg width={size * 0.8} height={size * 0.8} viewBox="0 0 32 32" aria-label="Compass: north is up">
         <circle cx="16" cy="16" r="14" fill="none" stroke="#9B978E" strokeWidth="0.6" opacity="0.6" />

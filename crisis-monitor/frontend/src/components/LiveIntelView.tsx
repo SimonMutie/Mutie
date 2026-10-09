@@ -421,6 +421,16 @@ const LAYER_DEFS: LayerDef[] = [
         url: null,
       })),
   },
+  // Computed on the server from where fighting has been reported over the last two days (backend lib/conflictZones.ts).
+  // Shaded on the map itself, so the layer has no points of its own.
+  {
+    key: "conflict-zones",
+    label: "Active Conflict Areas",
+    group: "Threats & Intel",
+    color: "#e02424",
+    icon: Siren,
+    fetcher: async () => [],
+  },
   {
     key: "global-incidents",
     label: "Global Incidents",
@@ -952,6 +962,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "submarine-cables": false,
     "ais-vessels": false,
     "ucdp-conflict-events": false,
+    "conflict-zones": true,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
   // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
@@ -1278,6 +1289,19 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // GlobePoint pipeline above; polled separately the same way myIncidentRows
   // is, and tied to the same Conflict Escalation toggle rather than adding a
   // whole new layer checkbox for one closely-related signal.
+  // Active conflict areas, shaded red; worked out on the server from the last two days of reporting.
+  const [conflictZoneBoxes, setConflictZoneBoxes] = useState<[number, number, number, number][]>([]);
+  useEffect(() => {
+    if (!enabled["conflict-zones"]) {
+      setConflictZoneBoxes([]);
+      return;
+    }
+    let cancelled = false;
+    const load = () => api.getConflictZones().then((z) => !cancelled && setConflictZoneBoxes(z.boxes)).catch(() => {});
+    load();
+    const t = setInterval(load, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [enabled["conflict-zones"]]);
   const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
   useEffect(() => {
     if (!enabled["conflict-escalation"]) {
@@ -1970,13 +1994,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     >
       <div
         // The zoom pad keeps clear of the tool rail, and of a tool's own panel when one is open beside it.
-        style={{ position: "relative", flex: 1, ["--lens-pad-right" as string]: rightOpen ? (rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
+        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
       >
         {mapMode === "3d" ? (
           <Map3D
             points={mapPoints}
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
+            conflictZones={conflictZoneBoxes}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
             onMapReady={setGlobeMap}
@@ -1991,6 +2016,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <FlatMap
             mode={mapMode}
             points={flatMapPoints}
+            conflictZones={conflictZoneBoxes}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2302,6 +2328,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 function FlatMap({
   mode,
   points,
+  conflictZones,
   onMapClick,
   drawMode,
   drawPoints,
@@ -2325,6 +2352,7 @@ function FlatMap({
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
+  conflictZones?: [number, number, number, number][];
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2373,6 +2401,9 @@ function FlatMap({
       <MapNavPad />
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
+      {(conflictZones ?? []).map(([s, w, n, e], i) => (
+        <Polygon key={`zone-${i}`} positions={[[s, w], [s, e], [n, e], [n, w]]} interactive={false} pathOptions={{ stroke: false, fillColor: "#e02424", fillOpacity: 0.3 }} />
+      ))}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
         <Polyline positions={drawPoints} pathOptions={{ color: "#ffd23f", weight: 2 }} />

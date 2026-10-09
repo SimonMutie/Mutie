@@ -212,8 +212,8 @@ export const EXCLUSIONS: { id: string; description: string }[] = [
 // ── Level rules ──────────────────────────────────────────────────────────
 
 /** Reports count toward an incident's level while their event is this
- *  recent: only what has happened in the last day is flagged. */
-export const ACTIVE_WINDOW_HOURS = 24;
+ *  recent: only what has happened in the last two days is flagged. */
+export const ACTIVE_WINDOW_HOURS = 48;
 /** A single event with at least this many reported deaths is Critical. */
 export const MASS_CASUALTY_THRESHOLD = 25;
 /** A contextual-tier event with at least this many reported deaths is Elevated. */

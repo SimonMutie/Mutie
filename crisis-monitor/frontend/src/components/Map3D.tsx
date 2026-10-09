@@ -110,6 +110,8 @@ interface Map3DProps {
   fitKey?: string;
   paths: Map3DPath[];
   territoryChanges: Map3DTerritoryChange[];
+  /** Active conflict areas as [south, west, north, east] boxes, shaded red. */
+  conflictZones?: [number, number, number, number][];
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
@@ -346,7 +348,7 @@ function toGeoJsonHeat(points: [number, number, number][] | null | undefined): G
   };
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, conflictZones, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -508,6 +510,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
       // Approximate territory-change circles ("can this automatically plot a
       // polygon of what changed") — dashed amber outline + light fill so it
       // reads as a reported-area marker, not a crisp/precise boundary.
+      map.addSource("osiris-conflict-zones", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({ id: "osiris-conflict-zones-fill", type: "fill", source: "osiris-conflict-zones", paint: { "fill-color": "#e02424", "fill-opacity": 0.3, "fill-antialias": false } });
       map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "osiris-territory-changes-fill",
@@ -795,6 +799,18 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
 
   useEffect(() => {
     const map = mapRef.current;
+    if (!map) return;
+    const apply = () =>
+      (map.getSource("osiris-conflict-zones") as GeoJSONSource | undefined)?.setData({
+        type: "FeatureCollection",
+        features: (conflictZones ?? []).map(([s, w, n, e]) => ({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } })),
+      });
+    if (map.getSource("osiris-conflict-zones")) apply();
+    else map.once("load", apply);
+  }, [conflictZones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
     if (!map || !readyRef.current) return;
     (map.getSource("osiris-draw-area") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(drawAreaRing));
   }, [drawAreaRing]);
@@ -837,7 +853,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
         className="lens-compass"
         title="Compass — click to face north"
         onClick={() => mapRef.current?.easeTo({ bearing: 0, pitch: 0 })}
-        style={{ position: "absolute", left: 10, bottom: 30, zIndex: 1000, width: 46, height: 46, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", cursor: "pointer", padding: 0 }}
+        style={{ position: "absolute", left: "var(--lens-pad-left, 10px)", transition: "left 0.2s", bottom: 30, zIndex: 1000, width: 46, height: 46, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", cursor: "pointer", padding: 0 }}
       >
         <svg width="37" height="37" viewBox="0 0 32 32" style={{ transform: `rotate(${-bearing}deg)`, transition: "transform 0.15s" }} aria-label="Compass">
           <circle cx="16" cy="16" r="14" fill="none" stroke="#9B978E" strokeWidth="0.6" opacity="0.6" />

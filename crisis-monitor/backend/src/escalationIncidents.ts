@@ -80,7 +80,7 @@ const GEOCODER_CALLS_PER_TICK = 6;
 /** Nothing published longer ago than the active window can be about an
  *  event inside it, so older items are not collected, read or coded. */
 const CANDIDATE_MAX_AGE_HOURS = ACTIVE_WINDOW_HOURS;
-const GDELT_CANDIDATE_WINDOW_HOURS = 24;
+const GDELT_CANDIDATE_WINDOW_HOURS = 48;
 const MAX_ATTEMPTS = 3;
 /** The most first-pass (headline) reports stored in one tick. */
 const HEADLINE_REPORTS_PER_TICK = 40;
@@ -674,14 +674,14 @@ function toStoredReport(r: ReportDbRow): StoredReport {
 const REPORT_SELECT = `SELECT r.*, a.url, a.title, a.domain, a.published_at, a.text_basis FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id`;
 
 /**
- * Is this report's event inside the active window (the last 24 hours)?
+ * Is this report's event inside the active window (the last 48 hours)?
  *
  * Two checks, because an event date is only known to the day:
  *   - the article was published within the window — an article older than
  *     that cannot be reporting something that happened inside it;
  *   - the event's own date (the day the article gives, or the publication
  *     day when it gives none) is today or yesterday.
- * So a marker stands for something reported in the last 24 hours as having
+ * So a marker stands for something reported in the last 48 hours as having
  * happened today or yesterday; older events never count, however recently
  * they were written about.
  */

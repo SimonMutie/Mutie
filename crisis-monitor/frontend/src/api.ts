@@ -1169,6 +1169,14 @@ export interface MarketsStatus {
   fetchedAt: string;
 }
 
+export interface ConflictZones {
+  /** [south, west, north, east] */
+  boxes: [number, number, number, number][];
+  cells: number;
+  windowHours: number;
+  basis: string;
+  fetchedAt: string;
+}
 export interface MarketBoardRow { key: string; label: string; value: number; changePercent: number | null; series: number[]; unit?: string }
 export interface MarketsBoard {
   fx: MarketBoardRow[];
@@ -1872,6 +1880,7 @@ export const api = {
   // numbers were rebuilt rather than copied.
   getSpaceWeather: () => req<SpaceWeather>("/api/global-status/space-weather"),
   getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
+  getConflictZones: () => req<ConflictZones>("/api/live-layers/conflict-zones"),
   getMarketsBoard: () => req<MarketsBoard>("/api/global-status/markets-board"),
   getMarkets: () => req<MarketsStatus>("/api/global-status/markets"),
   getActivityIndex: () => req<ActivityIndex>("/api/global-status/activity-index"),
