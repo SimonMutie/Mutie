@@ -158,20 +158,39 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
     return () => window.removeEventListener("beforeunload", warn);
   }, [unsaved.length]);
 
-  const visible = useMemo(() => {
-    let out = rows.filter((r) => Object.entries(filters).every(([k, set]) => set.has(text(getValue(r, k)) || BLANK)));
+  // Like Excel, the filter and sort are applied when you set them (or when rows arrive/leave), not on every cell
+  // edit: a row you just edited stays where it is, even if its new value no longer matches, until you reapply.
+  const [reapply, setReapply] = useState(0);
+  const latest = useRef({ rows, getValue });
+  latest.current = { rows, getValue };
+  const order = useMemo(() => {
+    const { rows: rs, getValue: gv } = latest.current;
+    let out = rs.filter((r) => Object.entries(filters).every(([k, set]) => set.has(text(gv(r, k)) || BLANK)));
     if (sort) {
       const { key, dir } = sort;
       const num = columns.find((c) => c.key === key)?.num;
       out = [...out].sort((a, b) => {
-        const x = getValue(a, key);
-        const y = getValue(b, key);
+        const x = gv(a, key);
+        const y = gv(b, key);
         if (num) return (Number(x ?? -Infinity) - Number(y ?? -Infinity)) * dir;
         return text(x).localeCompare(text(y), undefined, { numeric: true }) * dir;
       });
     }
+    return out.map((r) => rowId(r));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length, filters, sort, columns, reapply]);
+  const visible = useMemo(() => {
+    const out: T[] = [];
+    for (const id of order) {
+      const r = byId.get(id);
+      if (r !== undefined) out.push(r);
+    }
     return out;
-  }, [rows, filters, sort, columns, getValue]);
+  }, [order, byId]);
+  const stale = useMemo(
+    () => Object.keys(filters).length > 0 && visible.some((r) => Object.entries(filters).some(([k, set]) => !set.has(text(getValue(r, k)) || BLANK))),
+    [visible, filters, getValue],
+  );
   useEffect(() => onVisible?.(visible), [visible, onVisible]);
   useEffect(() => {
     if (wrap.current) wrap.current.scrollTop = 0;
@@ -373,6 +392,11 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
       <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12, color: "var(--text-muted, #555)", marginBottom: 6, flexWrap: "wrap" }}>
         <span>
           {visible.length.toLocaleString()} of {rows.length.toLocaleString()} rows
+          {stale && (
+            <button type="button" onClick={() => setReapply((n) => n + 1)} style={{ marginLeft: 8, fontSize: 12, background: "none", border: "none", color: "var(--signal, #0d9488)", cursor: "pointer", textDecoration: "underline" }}>
+              Reapply filter
+            </button>
+          )}
           {filterCount > 0 ? ` · ${filterCount} filter${filterCount === 1 ? "" : "s"} on` : ""}
         </span>
         {(filterCount > 0 || sort) && (
