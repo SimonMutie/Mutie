@@ -172,3 +172,13 @@ details[open] > summary::before {
 *:has(> .maplibregl-map) {
   isolation: isolate;
 }
+
+/* Where the panels are busy (the Live Intel screen has a layer list at the top left, a tool rail down the right, and
+   the view switch and status line at the bottom left), the compass and zoom pad sit together at the bottom centre, where
+   nothing else is. On a narrow screen they move to the right edge, above the bottom row. */
+.lens-dock-center .lens-compass { left: calc(50% - 116px) !important; }
+.lens-dock-center .lens-navpad { left: calc(50% - 62px) !important; right: auto !important; }
+@media (max-width: 760px) {
+  .lens-dock-center .lens-compass { left: auto !important; right: 12px !important; bottom: 130px !important; }
+  .lens-dock-center .lens-navpad { left: auto !important; right: 12px !important; bottom: 40px !important; }
+}

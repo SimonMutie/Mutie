@@ -834,6 +834,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, drawAre
       <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
       <button
         type="button"
+        className="lens-compass"
         title="Compass — click to face north"
         onClick={() => mapRef.current?.easeTo({ bearing: 0, pitch: 0 })}
         style={{ position: "absolute", left: 10, bottom: 30, zIndex: 1000, width: 46, height: 46, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", cursor: "pointer", padding: 0 }}

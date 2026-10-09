@@ -6,6 +6,7 @@ import MapNavPad from "./MapNavPad";
 export function MapCompass({ size = 46 }: { size?: number }) {
   return (
     <div
+      className="lens-compass"
       title="North is up"
       style={{ position: "absolute", left: 10, bottom: 30, zIndex: 1000, width: size, height: size, borderRadius: "50%", background: "rgba(8,10,20,0.88)", border: "1px solid rgba(212,175,55,0.25)", boxShadow: "0 4px 18px rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}
     >

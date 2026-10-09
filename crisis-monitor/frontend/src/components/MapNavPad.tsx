@@ -15,6 +15,7 @@ export default function MapNavPad({
   const btn: CSSProperties = { width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", color: "#9B978E", cursor: "pointer", fontSize: 16, fontFamily: "inherit", padding: 0 };
   return (
     <div
+      className="lens-navpad"
       style={{
         position: "absolute", right: 12, bottom: 30, zIndex: 1000, display: "flex", alignItems: "center", padding: "6px 8px", gap: 8,
         background: "rgba(8, 10, 20, 0.88)", backdropFilter: "blur(24px) saturate(1.3)", WebkitBackdropFilter: "blur(24px) saturate(1.3)",

@@ -1927,7 +1927,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
       }}
     >
-      <div style={{ position: "relative", flex: 1 }}>
+      <div className="lens-dock-center" style={{ position: "relative", flex: 1 }}>
         {mapMode === "3d" ? (
           <Map3D
             points={mapPoints}
