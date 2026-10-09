@@ -65,6 +65,10 @@ import {
   Wallet,
   Waypoints,
   X as CloseGlyph,
+  PanelLeftOpen,
+  PanelLeftClose,
+  PanelRightOpen,
+  PanelRightClose,
   type LucideIcon,
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
@@ -924,6 +928,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "ucdp-conflict-events": false,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
+  // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
+  const [leftOpen, setLeftOpen] = useState<boolean>(() => { try { return localStorage.getItem("lens.liveIntel.left") === "1"; } catch { return false; } });
+  const [rightOpen, setRightOpen] = useState<boolean>(() => { if (initialTool) return true; try { return localStorage.getItem("lens.liveIntel.right") === "1"; } catch { return false; } });
+  const togglePanel = (side: "left" | "right") => {
+    const set = side === "left" ? setLeftOpen : setRightOpen;
+    set((v) => { try { localStorage.setItem(`lens.liveIntel.${side}`, v ? "0" : "1"); } catch { /* private mode */ } return !v; });
+  };
   // The 3D map's clicked-feature detail — docked into a left-side panel
   // (Map3DDetailPanel) instead of a MapLibre Popup floating over the map
   // itself, per Simon's direction. Cleared whenever the mode switches away
@@ -977,6 +988,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
   // --- Right-side tools: at most one open at a time (see RightTool). ---
   const [activeTool, setActiveTool] = useState<RightTool>(initialTool);
+  // A tool's panel is shown only while the right-hand panel is open.
+  const rightTool = rightOpen ? activeTool : null;
+  // Anything that opens a tool (an alert, a shortcut) also shows the right-hand panel it lives in.
+  useEffect(() => { if (activeTool) setRightOpen(true); }, [activeTool]);
 
   // --- Live Monitoring: the user's monitoring queries as map layers.
   // Each query switched on here has its recent matches fetched (located
@@ -1927,7 +1942,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
       }}
     >
-      <div className="lens-dock-center" style={{ position: "relative", flex: 1 }}>
+      <div style={{ position: "relative", flex: 1 }}>
         {mapMode === "3d" ? (
           <Map3D
             points={mapPoints}
@@ -1977,89 +1992,101 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
-        <LayerPanel
-          defs={LAYER_DEFS}
-          enabled={enabled}
-          layers={layers}
-          onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))}
-          onToggleGroup={(group, nextOn) =>
-            setEnabled((prev) => {
-              const next = { ...prev };
-              for (const def of LAYER_DEFS) if (def.group === group) next[def.key] = nextOn;
-              return next;
-            })
-          }
-          maritimeLinesOn={enabled["maritime-lines"]}
-          maritimeLinesCount={maritimeLanes.length}
-          onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
-          submarineCablesOn={enabled["submarine-cables"]}
-          submarineCablesCount={submarineCables.length}
-          onToggleSubmarineCables={() => setEnabled((prev) => ({ ...prev, "submarine-cables": !prev["submarine-cables"] }))}
-          listeningQueries={savedListeningQueries}
-          activeListeningIds={activeListeningIds}
-          listeningLiveData={listeningLiveData}
-          listeningLiveErrors={listeningLiveErrors}
-          listeningLiveLoading={listeningLiveLoading}
-          onToggleListening={(id) => {
-            const turningOn = !activeListeningIds.has(id);
-            setActiveListeningIds((prev) => {
-              const next = new Set(prev);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              return next;
-            });
-            // Turning on fetches once immediately (so the toggle isn't just
-            // a blank "…" until someone remembers to hit refresh) — but
-            // does NOT start a recurring poll; see pollListeningQuery's own
-            // comment for why that's now a manual, explicit action.
-            if (turningOn) {
-              const sq = savedListeningQueries.find((q) => q.id === id);
-              if (sq) pollListeningQuery(sq);
-            }
-          }}
-          onRefreshListening={refreshListeningById}
-          onOpenListeningDashboard={() => {
-            setActiveTool("listen");
-            setListenTab("dashboard");
-          }}
-          show3DDisplayGroup={mapMode === "3d"}
-          dayNight={showDayNight}
-          buildings={showBuildings}
-          terrain={showTerrain}
-          onToggleDayNight={() => setShowDayNight((v) => !v)}
-          onToggleBuildings={() => setShowBuildings((v) => !v)}
-          onToggleTerrain={() => setShowTerrain((v) => !v)}
-        />
-        <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
+        <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
+          <PanelToggle side="left" open={leftOpen} onClick={() => togglePanel("left")} />
+          {leftOpen && (
+            <>
+              <LayerPanel
+                defs={LAYER_DEFS}
+                enabled={enabled}
+                layers={layers}
+                onToggle={(key) => setEnabled((prev) => ({ ...prev, [key]: !prev[key] }))}
+                onToggleGroup={(group, nextOn) =>
+                  setEnabled((prev) => {
+                    const next = { ...prev };
+                    for (const def of LAYER_DEFS) if (def.group === group) next[def.key] = nextOn;
+                    return next;
+                  })
+                }
+                maritimeLinesOn={enabled["maritime-lines"]}
+                maritimeLinesCount={maritimeLanes.length}
+                onToggleMaritimeLines={() => setEnabled((prev) => ({ ...prev, "maritime-lines": !prev["maritime-lines"] }))}
+                submarineCablesOn={enabled["submarine-cables"]}
+                submarineCablesCount={submarineCables.length}
+                onToggleSubmarineCables={() => setEnabled((prev) => ({ ...prev, "submarine-cables": !prev["submarine-cables"] }))}
+                listeningQueries={savedListeningQueries}
+                activeListeningIds={activeListeningIds}
+                listeningLiveData={listeningLiveData}
+                listeningLiveErrors={listeningLiveErrors}
+                listeningLiveLoading={listeningLiveLoading}
+                onToggleListening={(id) => {
+                  const turningOn = !activeListeningIds.has(id);
+                  setActiveListeningIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  });
+                  // Turning on fetches once immediately (so the toggle isn't just
+                  // a blank "…" until someone remembers to hit refresh) — but
+                  // does NOT start a recurring poll; see pollListeningQuery's own
+                  // comment for why that's now a manual, explicit action.
+                  if (turningOn) {
+                    const sq = savedListeningQueries.find((q) => q.id === id);
+                    if (sq) pollListeningQuery(sq);
+                  }
+                }}
+                onRefreshListening={refreshListeningById}
+                onOpenListeningDashboard={() => {
+                  setActiveTool("listen");
+                  setListenTab("dashboard");
+                }}
+                show3DDisplayGroup={mapMode === "3d"}
+                dayNight={showDayNight}
+                buildings={showBuildings}
+                terrain={showTerrain}
+                onToggleDayNight={() => setShowDayNight((v) => !v)}
+                onToggleBuildings={() => setShowBuildings((v) => !v)}
+                onToggleTerrain={() => setShowTerrain((v) => !v)}
+              />
+              <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
+            </>
+          )}
+        </div>
         <StatusBar totalFeatures={points.length + monitorLayerPoints.length} clock={clock} />
         <GlobalStatusTicker />
 
-        <RightToolRail
-          active={activeTool}
-          onSelect={(tool) =>
-            setActiveTool((prev) => {
-              const next = prev === tool ? null : tool;
-              // Leaving a tool clears its in-progress state, rather than
-              // leaving a half-drawn shape or a stale route sitting on the
-              // map invisibly (its panel gone, but its data/click-handling
-              // still live) the next time some other tool is opened.
-              if (next !== "draw") {
-                setDrawMode(null);
-                setDrawPoints([]);
+        <div style={{ position: "absolute", top: 12, right: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+          <PanelToggle side="right" open={rightOpen} onClick={() => togglePanel("right")} />
+          {rightOpen && (
+            <RightToolRail
+              active={activeTool}
+              onSelect={(tool) =>
+                setActiveTool((prev) => {
+                  const next = prev === tool ? null : tool;
+                  // Leaving a tool clears its in-progress state, rather than
+                  // leaving a half-drawn shape or a stale route sitting on the
+                  // map invisibly (its panel gone, but its data/click-handling
+                  // still live) the next time some other tool is opened.
+                  if (next !== "draw") {
+                    setDrawMode(null);
+                    setDrawPoints([]);
+                  }
+                  if (next !== "route") {
+                    setRouteOrigin(null);
+                    setRouteDestination(null);
+                    setRouteResult(null);
+                    setRouteError(null);
+                  }
+                  if (next !== "shapes") studio.set({ tool: "select", selectedId: null });
+                  return next;
+                })
               }
-              if (next !== "route") {
-                setRouteOrigin(null);
-                setRouteDestination(null);
-                setRouteResult(null);
-                setRouteError(null);
-              }
-              if (next !== "shapes") studio.set({ tool: "select", selectedId: null });
-              return next;
-            })
-          }
-        />
+            />
+          )}
+        </div>
 
-        {activeTool === "monitor" && (
+        {rightTool === "monitor" && (
           <MonitoringToolPanel
             queries={queries}
             activeIds={activeMonitorIds}
@@ -2081,7 +2108,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             }}
           />
         )}
-        {activeTool === "draw" && (
+        {rightTool === "draw" && (
           <DrawingToolPanel
             mode={drawMode}
             points={drawPoints}
@@ -2094,7 +2121,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onSaveLayer={saveDrawingAsLayer}
           />
         )}
-        {activeTool === "route" && (
+        {rightTool === "route" && (
           <RoutePlannerPanel
             mode={routeMode}
             onModeChange={setRouteMode}
@@ -2125,9 +2152,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onRouteBand={(km) => routeFeature && void bufferFeature(routeFeature, km, `${routeNameDraft.trim() || "Route"}: ${km} km band`)}
           />
         )}
-        {activeTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
-        {activeTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
-        {activeTool === "incidents" && (
+        {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
+        {rightTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
+        {rightTool === "incidents" && (
           <IncidentsToolPanel
             filterOptions={incidentFilterOptions}
             draft={incidentFilterDraft}
@@ -2157,10 +2184,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onHeatmapStyleChange={setIncidentHeatmapStyle}
           />
         )}
-        {activeTool === "economy" && (
+        {rightTool === "economy" && (
           <EconomicIndicatorsPanel data={econData} loading={econLoading} error={econError} sortKey={econSortKey} onSortKeyChange={setEconSortKey} />
         )}
-        {activeTool === "listen" && (
+        {rightTool === "listen" && (
           <SocialListeningPanel
             tab={listenTab}
             onTabChange={setListenTab}
@@ -2200,7 +2227,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onRefreshSaved={refreshListeningById}
           />
         )}
-        {activeTool === "crypto" && (
+        {rightTool === "crypto" && (
           <CryptoToolPanel
             address={cryptoAddress}
             onAddressChange={setCryptoAddress}
@@ -2212,7 +2239,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             error={cryptoError}
           />
         )}
-        {activeTool === "shapes" && (
+        {rightTool === "shapes" && (
           <StudioPanel
             shapes={savedShapes}
             nearby={{ incidents: myIncidentRows, state: nearby, viewMode: incidentViewMode, onResults: applyNearby, onViewMode: showNearbyAs }}
@@ -2485,7 +2512,7 @@ function LayerPanel({
   const pinnedListeningQueries = useMemo(() => listeningQueries.filter((q) => q.pinned), [listeningQueries]);
 
   return (
-    <div style={{ ...glassPanel(), position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 2, padding: 5 }}>
+    <div style={{ ...glassPanel(), position: "relative", display: "flex", flexDirection: "column", gap: 2, padding: 5 }}>
       <div style={{ borderBottom: "1px solid rgba(212,175,55,0.12)", paddingBottom: 4, marginBottom: 2 }}>
         <RailHoverToggle
           icon={Waypoints}
@@ -3096,6 +3123,23 @@ function LayerToggleSwitch({ on }: { on: boolean }) {
   );
 }
 
+/** The small button that shows or hides the left layer panel or the right tool rail. */
+function PanelToggle({ side, open, onClick }: { side: "left" | "right"; open: boolean; onClick: () => void }) {
+  const Icon = side === "left" ? (open ? PanelLeftClose : PanelLeftOpen) : open ? PanelRightClose : PanelRightOpen;
+  const label = side === "left" ? "Layers and map type" : "Tools";
+  return (
+    <button
+      onClick={onClick}
+      title={`${open ? "Hide" : "Show"} ${label.toLowerCase()}`}
+      aria-pressed={open}
+      style={{ ...glassPanel({ borderRadius: 10 }), display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", color: open ? HUD.gold : HUD.textMuted, cursor: "pointer", fontFamily: "inherit", fontSize: 10.5, letterSpacing: "0.08em", textTransform: "uppercase", fontWeight: 700 }}
+    >
+      <Icon size={15} />
+      {label}
+    </button>
+  );
+}
+
 function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapMode) => void }) {
   const options: { key: MapMode; label: string }[] = [
     { key: "3d", label: "3D" },
@@ -3104,7 +3148,7 @@ function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapM
     { key: "sat", label: "Sat" },
   ];
   return (
-    <div style={{ ...glassPanel(), position: "absolute", left: 12, bottom: 44, zIndex: 500, display: "flex", gap: 2, padding: 3 }}>
+    <div style={{ ...glassPanel(), position: "relative", display: "flex", gap: 2, padding: 3 }}>
       {options.map((opt) => (
         <button
           key={opt.key}
@@ -3137,7 +3181,8 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
       style={{
         ...glassPanel({ borderRadius: 8 }),
         position: "absolute",
-        left: 12,
+        left: "50%",
+        transform: "translateX(-50%)",
         bottom: 12,
         zIndex: 500,
         display: "flex",
@@ -3287,7 +3332,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     </button>
   );
   return (
-    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 12, zIndex: 500, display: "flex", flexDirection: "column", gap: 4, padding: 4 }}>
+    <div style={{ ...glassPanel(), position: "relative", display: "flex", flexDirection: "column", gap: 4, padding: 4 }}>
       {tools.map((t) => (
         <Fragment key={t.key}>
         {t.key === "incidents" && alertsSwitch}
