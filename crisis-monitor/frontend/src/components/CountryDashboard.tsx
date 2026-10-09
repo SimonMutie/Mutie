@@ -10,7 +10,8 @@ import { HeatmapLayer } from "./HeatmapLayer";
 import VizCard from "./viz/VizCard";
 import { VizProvider } from "./viz/context";
 import { THEMES, themeStyle } from "./viz/themes";
-import type { VizSpec } from "./viz/types";
+import type { VizResult, VizSpec } from "./viz/types";
+import { Parliament } from "./viz/charts/Radial";
 import "./viz/viz.css";
 import { classifyActor, classifyIncident, pinSvg } from "./actorTheme";
 
@@ -186,8 +187,87 @@ const vizWidget = (id: string, title: string, viz: Omit<VizSpec, "source" | "col
   size: "medium",
   viz: { source: "incidents", columns: [], filters: [{ field: "country", op: "in", values: [country] }], ...viz, options: { ...viz.options, fields: FIELD_LABELS } },
 });
-const hemicycle = (field: keyof typeof FIELD_LABELS) => ({ kind: "parliament" as const, rows: [{ field }], values: [{ agg: "count" as const }], options: { topN: 7 } });
 const SITUATION = THEMES.find((t) => t.key === "situation") ?? THEMES[0];
+
+/** One hemicycle of the people killed in criminal incidents, named by who they were: women, men, children.
+ *  "Criminal" is the same actor group the map colours blue (gangs, bandits, robbers, kidnappers and the like). */
+function CriminalVictims({ country, range }: { country: string; range: { from?: string; to?: string } }) {
+  const [data, setData] = useState<{ women: number; men: number; children: number; actors: string[] } | "none" | "error" | null>(null);
+  useEffect(() => {
+    let live = true;
+    setData(null);
+    (async () => {
+      const actors = (await api.getBreakdown("actor", { ...range, country })).map((a) => a.value).filter((v) => classifyActor(v).label === "Criminal");
+      if (actors.length === 0) return live && setData("none");
+      const r = await api.runVizQuery(
+        "incidents",
+        {
+          dimensions: [],
+          measures: [
+            { field: "deaths_women", agg: "sum" },
+            { field: "deaths_men", agg: "sum" },
+            { field: "deaths_children", agg: "sum" },
+          ],
+          filters: [
+            { field: "country", op: "in", values: [country] },
+            { field: "actor", op: "in", values: actors },
+          ],
+        },
+        range,
+      );
+      const m = r.rows[0]?.m ?? [];
+      if (live) setData({ women: m[0] ?? 0, men: m[1] ?? 0, children: m[2] ?? 0, actors });
+    })().catch(() => live && setData("error"));
+    return () => {
+      live = false;
+    };
+  }, [country, range]);
+
+  const viz: VizSpec = {
+    kind: "parliament",
+    source: "incidents",
+    rows: [{ field: "victims" }],
+    columns: [],
+    values: [{ field: "killed", agg: "sum", label: "People killed" }],
+    filters: [],
+    options: { fields: { victims: { label: "Who was killed", type: "text" }, killed: { label: "People killed", type: "number" } } },
+  };
+  const result: VizResult | null =
+    data && typeof data === "object"
+      ? {
+          rows: [
+            { d: ["Women"], m: [data.women] },
+            { d: ["Men"], m: [data.men] },
+            { d: ["Children"], m: [data.children] },
+          ],
+          truncated: false,
+        }
+      : null;
+  const total = data && typeof data === "object" ? data.women + data.men + data.children : 0;
+  return (
+    <div className="panel vz-card vz-card--parliament">
+      <header className="vz-card__head">
+        <div className="vz-card__titles">
+          <div className="vz-card__title">Women, men and children killed in criminal incidents</div>
+          <div className="vz-card__caption">Civilian deaths in incidents by criminal actors in {country}</div>
+        </div>
+      </header>
+      <div className="vz-card__body">
+        {data === null ? (
+          <div className="vz-empty">Loading…</div>
+        ) : data === "none" ? (
+          <div className="vz-empty">No criminal actor is recorded for {country} in this period.</div>
+        ) : data === "error" ? (
+          <div className="vz-empty">The figures could not be read.</div>
+        ) : total === 0 ? (
+          <div className="vz-empty">No civilian deaths are recorded in criminal incidents for {country} in this period.</div>
+        ) : (
+          <Parliament viz={viz} result={result!} theme={SITUATION} selectedKey={null} />
+        )}
+      </div>
+    </div>
+  );
+}
 
 /* ── the page ── */
 
@@ -341,16 +421,10 @@ export default function CountryDashboard() {
               <div style={{ gridColumn: "span 12", borderRadius: 12, overflow: "hidden" }}>
                 <VizProvider mode="edit" theme={SITUATION} dateFrom={range.from ?? null} dateTo={range.to ?? null}>
                   <div data-viz-theme={SITUATION.key} style={{ ...themeStyle(SITUATION), padding: 14, display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
-                    <div style={{ gridColumn: "span 4", height: 360 }}>
-                      <VizCard widget={vizWidget("hc-men", "Incidents by deaths: men", hemicycle("deaths_men"), country)} editable={false} />
+                    <div style={{ gridColumn: "span 5", height: 440, minWidth: 0 }}>
+                      <CriminalVictims country={country} range={range} />
                     </div>
-                    <div style={{ gridColumn: "span 4", height: 360 }}>
-                      <VizCard widget={vizWidget("hc-women", "Incidents by deaths: women", hemicycle("deaths_women"), country)} editable={false} />
-                    </div>
-                    <div style={{ gridColumn: "span 4", height: 360 }}>
-                      <VizCard widget={vizWidget("hc-children", "Incidents by deaths: children", hemicycle("deaths_children"), country)} editable={false} />
-                    </div>
-                    <div style={{ gridColumn: "span 12", height: 420 }}>
+                    <div style={{ gridColumn: "span 7", height: 440, minWidth: 0 }}>
                       <VizCard
                         widget={vizWidget("province-sector", "Rows by province and sector", { kind: "bar", rows: [{ field: "province" }], columns: [{ field: "sector" }], values: [{ agg: "count" }], options: { stack: "stacked", orientation: "horizontal", topN: 14, labels: true } }, country)}
                         editable={false}
