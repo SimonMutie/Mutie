@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapContainer, Marker, Tooltip as LTooltip, useMap } from "react-leaflet";
 import { feature } from "topojson-client";
 import worldTopology from "world-atlas/countries-50m.json?url";
@@ -195,33 +195,21 @@ const SITUATION = THEMES.find((t) => t.key === "situation") ?? THEMES[0];
 type Victims = { women: number; men: number; children: number; unknown: number; criminalIncidents: number; fallback: boolean };
 const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-function CriminalVictims({ country, range }: { country: string; range: { from?: string; to?: string } }) {
-  const [data, setData] = useState<Victims | "error" | null>(null);
-  useEffect(() => {
-    let live = true;
-    setData(null);
-    api
-      .getIncidents({ ...range, country, limit: 250000 })
-      .then((rows) => {
-        if (!live) return;
-        const isCriminal = (i: IncidentItem) => classifyIncident(i).label === "Criminal" || classifyActor(`${i.tactic ?? ""} ${i.details ?? ""}`).label === "Criminal";
-        const tally = (list: IncidentItem[]) =>
-          list.reduce(
-            (a, i) => ({ women: a.women + num(i.civilian_death_female), men: a.men + num(i.civilian_death_male), children: a.children + num(i.civilian_death_child), unknown: a.unknown + num(i.civilian_death_unknown) }),
-            { women: 0, men: 0, children: 0, unknown: 0 },
-          );
-        const criminal = rows.filter(isCriminal);
-        const t = tally(criminal);
-        const any = t.women + t.men + t.children + t.unknown > 0;
-        // Nothing recorded against criminal actors: show every civilian death instead, and say so.
-        const shown = any ? t : tally(rows);
-        setData({ ...shown, criminalIncidents: criminal.length, fallback: !any });
-      })
-      .catch(() => live && setData("error"));
-    return () => {
-      live = false;
-    };
-  }, [country, range]);
+function CriminalVictims({ country, rows, done }: { country: string; rows: IncidentItem[] | null; done: boolean }) {
+  const data = useMemo<Victims | null>(() => {
+    if (!rows) return null;
+    const isCriminal = (i: IncidentItem) => classifyIncident(i).label === "Criminal" || classifyActor(`${i.tactic ?? ""} ${i.details ?? ""}`).label === "Criminal";
+    const tally = (list: IncidentItem[]) =>
+      list.reduce(
+        (a, i) => ({ women: a.women + num(i.civilian_death_female), men: a.men + num(i.civilian_death_male), children: a.children + num(i.civilian_death_child), unknown: a.unknown + num(i.civilian_death_unknown) }),
+        { women: 0, men: 0, children: 0, unknown: 0 },
+      );
+    const criminal = rows.filter(isCriminal);
+    const t = tally(criminal);
+    const any = t.women + t.men + t.children + t.unknown > 0;
+    // Nothing recorded against criminal actors: show every civilian death instead, and say so.
+    return { ...(any ? t : tally(rows)), criminalIncidents: criminal.length, fallback: !any };
+  }, [rows]);
 
   const viz: VizSpec = {
     kind: "parliament",
@@ -232,7 +220,7 @@ function CriminalVictims({ country, range }: { country: string; range: { from?: 
     filters: [],
     options: { topN: 6, fields: { victims: { label: "Who was killed", type: "text" }, killed: { label: "People killed", type: "number" } } },
   };
-  const ok = data && data !== "error" ? data : null;
+  const ok = data;
   const total = ok ? ok.women + ok.men + ok.children + ok.unknown : 0;
   const result: VizResult | null = ok
     ? {
@@ -262,14 +250,47 @@ function CriminalVictims({ country, range }: { country: string; range: { from?: 
       <div className="vz-card__body">
         {data === null ? (
           <div className="vz-empty">Loading…</div>
-        ) : data === "error" ? (
-          <div className="vz-empty">The figures could not be read.</div>
+        ) : total === 0 && !done ? (
+          <div className="vz-empty">Reading incidents…</div>
         ) : total === 0 ? (
           <div className="vz-empty">No civilian deaths are recorded for {country} in this period.</div>
         ) : (
           <Parliament viz={viz} result={result!} theme={SITUATION} selectedKey={null} />
         )}
       </div>
+    </div>
+  );
+}
+
+/** One country's incidents as lean rows (no bulky original upload), a page at a time. */
+async function readCountryRows(country: string, range: { from?: string; to?: string }, isLive: () => boolean, onRows: (rows: IncidentItem[]) => void) {
+  let after = 0;
+  let all: IncidentItem[] = [];
+  for (;;) {
+    const page = await api.getIncidentsGrid(after, 20000, { country, ...range });
+    if (!isLive()) return;
+    all = all.concat(page.rows.map((r) => Object.fromEntries(page.columns.map((k, i) => [k, r[i]]))) as unknown as IncidentItem[]);
+    onRows(all);
+    if (page.next === null) return;
+    after = page.next;
+  }
+}
+
+/** Draws its children only once they are near the screen, so a long dashboard paints its top first. */
+function Lazy({ height, children, className, style }: { height: number; children: ReactNode; className?: string; style?: React.CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || seen) return;
+    if (typeof IntersectionObserver === "undefined") return setSeen(true);
+    const io = new IntersectionObserver((e) => e.some((x) => x.isIntersecting) && (setSeen(true), io.disconnect()), { rootMargin: "700px 0px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [seen]);
+  return (
+    <div ref={ref} className={className} style={{ ...style, height, minWidth: 0 }}>
+      {seen ? children : null}
     </div>
   );
 }
@@ -281,7 +302,9 @@ export default function CountryDashboard() {
   const [country, setCountry] = useState(DEFAULT_COUNTRY);
   const [period, setPeriod] = useState("all");
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
-  const [incidents, setIncidents] = useState<Located[]>([]);
+  const [rows, setRows] = useState<IncidentItem[] | null>(null);
+  const [rowsDone, setRowsDone] = useState(false);
+  const incidents = useMemo(() => (rows ?? []).filter((i): i is Located => i.latitude != null && i.longitude != null), [rows]);
   const [crosstabs, setCrosstabs] = useState<Record<string, CrosstabRow[]>>({});
   const [breakdowns, setBreakdowns] = useState<Record<string, { value: string; count: number }[]>>({});
   const [error, setError] = useState<string | null>(null);
@@ -289,12 +312,12 @@ export default function CountryDashboard() {
   useEffect(() => {
     let live = true;
     api
-      .getIncidentStats()
-      .then((s) => {
+      .getBreakdown("country")
+      .then((list) => {
         if (!live) return;
-        setCountries(s.by_country);
-        const kenya = s.by_country.find((c) => c.value.toLowerCase() === DEFAULT_COUNTRY.toLowerCase());
-        setCountry(kenya?.value ?? s.by_country[0]?.value ?? DEFAULT_COUNTRY);
+        setCountries(list);
+        const kenya = list.find((c) => c.value.toLowerCase() === DEFAULT_COUNTRY.toLowerCase());
+        setCountry(kenya?.value ?? list[0]?.value ?? DEFAULT_COUNTRY);
       })
       .catch(() => live && setCountries([]));
     return () => {
@@ -318,10 +341,11 @@ export default function CountryDashboard() {
       .getIncidentStats(filters)
       .then((s) => live && setStats(normalize(s)))
       .catch((e) => live && setError(e instanceof Error ? e.message : "The figures could not be read."));
-    api
-      .getIncidents({ ...filters, limit: 5000 })
-      .then((r) => live && setIncidents(r.filter((i): i is Located => i.latitude != null && i.longitude != null)))
-      .catch(() => live && setIncidents([]));
+    setRows(null);
+    setRowsDone(false);
+    readCountryRows(country, range, () => live, (all) => setRows(all))
+      .then(() => live && setRowsDone(true))
+      .catch(() => live && (setRows([]), setRowsDone(true)));
     for (const w of Object.values(WIDGETS)) {
       const ck = crosstabKeyFor(w);
       if (ck) {
@@ -341,9 +365,9 @@ export default function CountryDashboard() {
     const w = w0.id === "actor" && actorPalette.length ? { ...w0, palette: actorPalette } : w0;
     return (
     stats && (
-      <div key={w.id} style={{ gridColumn: cols, height: h, minWidth: 0 }}>
+      <Lazy key={w.id} height={h} style={{ gridColumn: cols }}>
         <DashboardWidgetCard widget={w} stats={stats} incidents={incidents} crosstabs={crosstabs} breakdowns={breakdowns} />
-      </div>
+      </Lazy>
     )
     );
   };
@@ -423,11 +447,11 @@ export default function CountryDashboard() {
               {card(WIDGETS.actor, 380, "span 4")}
               {card(WIDGETS.tactic, 380, "span 4")}
               {card(WIDGETS.calendar, 250, "span 12")}
-              <div style={{ gridColumn: "span 12", borderRadius: 12, overflow: "hidden" }}>
+              <Lazy height={468} style={{ gridColumn: "span 12", borderRadius: 12, overflow: "hidden" }}>
                 <VizProvider mode="edit" theme={SITUATION} dateFrom={range.from ?? null} dateTo={range.to ?? null}>
                   <div data-viz-theme={SITUATION.key} style={{ ...themeStyle(SITUATION), padding: 14, display: "grid", gridTemplateColumns: "repeat(12, minmax(0, 1fr))", gap: 12 }}>
                     <div style={{ gridColumn: "span 5", height: 440, minWidth: 0 }}>
-                      <CriminalVictims country={country} range={range} />
+                      <CriminalVictims country={country} rows={rows} done={rowsDone} />
                     </div>
                     <div style={{ gridColumn: "span 7", height: 440, minWidth: 0 }}>
                       <VizCard
@@ -437,7 +461,7 @@ export default function CountryDashboard() {
                     </div>
                   </div>
                 </VizProvider>
-              </div>
+              </Lazy>
               {card(WIDGETS.sankey, 420, "span 6")}
               {card(WIDGETS.network, 420, "span 6")}
               {card(WIDGETS.table, 400, "span 6")}

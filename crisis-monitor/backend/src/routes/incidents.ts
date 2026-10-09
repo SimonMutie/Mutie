@@ -276,6 +276,22 @@ incidentsRouter.get("/grid", async (c) => {
     conditions.push(`LOWER(country) IN (${countries.map(() => "LOWER(?)").join(",")})`);
     params.push(...countries);
   }
+  // Optional narrowing, so one country's rows can be read without the rest of the table.
+  const country = c.req.query("country");
+  if (country) {
+    conditions.push("LOWER(country) = LOWER(?)");
+    params.push(country);
+  }
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  if (from) {
+    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) >= ?");
+    params.push(from.slice(0, 10));
+  }
+  if (to) {
+    conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) <= ?");
+    params.push(to.slice(0, 10));
+  }
   const scope = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   const pageWhere = `WHERE ${[...conditions, "rowid > ?"].join(" AND ")}`;
   const [rows, total] = await Promise.all([

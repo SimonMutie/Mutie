@@ -1681,8 +1681,10 @@ export const api = {
   deleteIncident: (id: string) => req<void>(`/api/incidents/${id}`, { method: "DELETE" }),
   deleteIncidentBatch: (batchId: string) => req<void>(`/api/incidents/batch/${batchId}`, { method: "DELETE" }),
   /** The incidents table in compact pages for the spreadsheet grid: columns once, one array per row, no bulky raw upload. */
-  getIncidentsGrid: (after = 0, limit = 5000) =>
-    req<{ columns: string[]; rows: (string | number | null)[][]; next: number | null; total: number | null }>(`/api/incidents/grid?after=${after}&limit=${limit}`),
+  getIncidentsGrid: (after = 0, limit = 5000, filters: { country?: string; from?: string; to?: string } = {}) =>
+    req<{ columns: string[]; rows: (string | number | null)[][]; next: number | null; total: number | null }>(
+      `/api/incidents/grid?${new URLSearchParams({ after: String(after), limit: String(limit), ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) } as Record<string, string>)}`,
+    ),
   /** One incident with everything stored, for the full edit form. */
   getIncidentFull: (id: string) => req<IncidentItem>(`/api/incidents/one/${encodeURIComponent(id)}`),
   updateIncident: (id: string, data: Partial<IncidentRow>) =>
