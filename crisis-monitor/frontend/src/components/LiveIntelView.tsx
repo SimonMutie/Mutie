@@ -1,3 +1,5 @@
+import { MarketsPanel } from "./MarketsPanel";
+import { STANDING_HOTSPOTS } from "../standingHotspots";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapCompass } from "./LeafletMapControls";
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
@@ -35,7 +37,9 @@ import {
   CloudLightning,
   Flame,
   Hexagon,
+  Flag,
   Landmark,
+  LineChart,
   MapPin,
   Megaphone,
   BellOff,
@@ -395,6 +399,28 @@ const LAYER_DEFS: LayerDef[] = [
   // GDELT query instead — see the backend's /global-incidents route
   // comment for the exact query — still real, still keyless, no
   // licensing conflict.
+  // Not live data: a curated list of long-running flashpoints (see standingHotspots.ts), so the map shows where to
+  // look on a quiet day. Live, verified escalations are the alert layers; nothing here is an alert.
+  {
+    key: "standing-hotspots",
+    label: "Standing Hotspots",
+    group: "Threats & Intel",
+    color: "#c084fc",
+    icon: Flag,
+    fetcher: async () =>
+      STANDING_HOTSPOTS.map((h) => ({
+        id: `hotspot-${h.id}`,
+        layerKey: "Standing Hotspots",
+        lat: h.lat,
+        lng: h.lon,
+        color: "#c084fc",
+        size: 0.26,
+        title: h.name,
+        subtitle: `Standing hotspot (reference, not a live alert) — ${h.note}`,
+        time: null,
+        url: null,
+      })),
+  },
   {
     key: "global-incidents",
     label: "Global Incidents",
@@ -792,7 +818,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "listen" | "crypto" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -2190,6 +2216,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         {rightTool === "economy" && (
           <EconomicIndicatorsPanel data={econData} loading={econLoading} error={econError} sortKey={econSortKey} onSortKeyChange={setEconSortKey} />
         )}
+        {rightTool === "markets" && (
+          <ToolPanelShell title="Markets">
+            <MarketsPanel />
+          </ToolPanelShell>
+        )}
         {rightTool === "listen" && (
           <SocialListeningPanel
             tab={listenTab}
@@ -3316,6 +3347,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
     { key: "shapes", icon: Hexagon, label: "Studio" },
     { key: "economy", icon: Landmark, label: "Economy" },
+    { key: "markets", icon: LineChart, label: "Markets" },
     { key: "draw", icon: Ruler, label: "Draw" },
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },

@@ -237,6 +237,83 @@ globalStatusRouter.get("/markets", async (c) => {
   });
 });
 
+/** One row of the Markets board: latest value, change over the last step, and a short history for the sparkline. */
+interface BoardRow { key: string; label: string; value: number; changePercent: number | null; series: number[]; unit?: string }
+
+const FX_SYMBOLS = ["EUR", "GBP", "JPY", "CHF", "CNY", "ZAR", "TRY", "INR", "BRL", "CAD", "AUD", "MXN"];
+
+/** ECB reference rates through Frankfurter (keyless, free). Shown as units of foreign currency per US dollar. */
+async function fetchFxBoard(): Promise<BoardRow[]> {
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const end = new Date();
+  const start = new Date(end.getTime() - 45 * 86_400_000);
+  const res = await fetch(`https://api.frankfurter.dev/v1/${day(start)}..${day(end)}?base=USD&symbols=${FX_SYMBOLS.join(",")}`, { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { rates?: Record<string, Record<string, number>> };
+  const dates = Object.keys(data.rates ?? {}).sort();
+  const rows: BoardRow[] = [];
+  for (const sym of FX_SYMBOLS) {
+    const series = dates.map((d) => data.rates![d][sym]).filter((v) => typeof v === "number");
+    if (series.length < 2) continue;
+    const last = series[series.length - 1];
+    const prev = series[series.length - 2];
+    rows.push({ key: sym, label: `USD/${sym}`, value: last, changePercent: ((last - prev) / prev) * 100, series: series.slice(-30) });
+  }
+  return rows;
+}
+
+/** CoinGecko top coins with 7-day sparklines. */
+async function fetchCryptoBoard(): Promise<BoardRow[]> {
+  const res = await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=12&page=1&sparkline=true&price_change_percentage=24h", { signal: AbortSignal.timeout(8000) });
+  if (!res.ok) return [];
+  const data = (await res.json()) as { id: string; symbol: string; name: string; current_price: number; price_change_percentage_24h: number | null; sparkline_in_7d?: { price: number[] } }[];
+  return data.map((c) => ({ key: c.id, label: `${c.name} (${c.symbol.toUpperCase()})`, value: c.current_price, changePercent: c.price_change_percentage_24h ?? null, series: (c.sparkline_in_7d?.price ?? []).filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 40)) === 0) }));
+}
+
+const BOARD_FRED: { id: string; label: string; unit: string }[] = [
+  { id: "DCOILBRENTEU", label: "Brent crude", unit: "$/bbl" },
+  { id: "DCOILWTICO", label: "WTI crude", unit: "$/bbl" },
+  { id: "DHHNGSP", label: "Henry Hub gas", unit: "$/MMBtu" },
+  { id: "DGASNYH", label: "NY Harbor gasoline", unit: "$/gal" },
+  { id: "DDFUELNYH", label: "NY Harbor diesel", unit: "$/gal" },
+];
+
+async function fetchFredBoard(apiKey: string): Promise<BoardRow[]> {
+  const out = await Promise.allSettled(
+    BOARD_FRED.map(async (s) => {
+      const res = await fetch(`https://api.stlouisfed.org/fred/series/observations?series_id=${s.id}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=40`, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { observations?: { date: string; value: string }[] };
+      const series = (data.observations ?? []).filter((o) => o.value !== ".").map((o) => Number.parseFloat(o.value)).reverse();
+      if (series.length < 2) return null;
+      const last = series[series.length - 1];
+      const prev = series[series.length - 2];
+      return { key: s.id, label: s.label, unit: s.unit, value: last, changePercent: ((last - prev) / prev) * 100, series: series.slice(-30) } as BoardRow;
+    })
+  );
+  return out.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+}
+
+/** The Markets panel: FX (ECB), crypto (CoinGecko), energy (EIA via FRED) and the exchange clock. Share indices are
+ *  not included — no licensed free source exists for them (see the file comment). */
+globalStatusRouter.get("/markets-board", async (c) => {
+  return cachedJson(c.req.raw, async () => {
+    const fredKey = c.env.FRED_API_KEY;
+    const [fx, crypto, energy] = await Promise.allSettled([fetchFxBoard(), fetchCryptoBoard(), fredKey ? fetchFredBoard(fredKey) : Promise.resolve([] as BoardRow[])]);
+    const pick = (r: PromiseSettledResult<BoardRow[]>) => (r.status === "fulfilled" ? r.value : []);
+    const exchanges = EXCHANGES.map((ex) => ({ name: ex.name, country: ex.country, open: isExchangeOpen(ex) }));
+    return {
+      fx: pick(fx),
+      crypto: pick(crypto),
+      energy: pick(energy),
+      energyAvailable: Boolean(fredKey),
+      exchanges,
+      sources: { fx: "European Central Bank reference rates via Frankfurter", crypto: "CoinGecko", energy: "U.S. EIA via FRED" },
+      fetchedAt: new Date().toISOString(),
+    };
+  });
+});
+
 const RISK_COUNTRY_HINTS: Record<string, string> = {
   UA: "Ukraine", RU: "Russia", IL: "Israel", PS: "Palestine", SY: "Syria", YE: "Yemen", MM: "Myanmar",
   SD: "Sudan", AF: "Afghanistan", KP: "North Korea", IR: "Iran", TW: "Taiwan", VE: "Venezuela", HT: "Haiti",
