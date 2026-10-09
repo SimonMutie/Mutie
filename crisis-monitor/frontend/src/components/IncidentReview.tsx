@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { api, type IncidentRow, type StagedIncident, type StagingBatch, type StagingStatus } from "../api";
+import SheetGrid, { type SheetColumn, type SheetEdit } from "./SheetGrid";
 
 /** The analyst's spreadsheet layout, in order. `field` is the database field the app stores; a null field is a
  *  column the app does not collect automatically — it stays blank in the file for the analyst to fill. */
@@ -43,11 +44,20 @@ function exportBatch(date: string, items: StagedIncident[]) {
   XLSX.writeFile(wb, `incidents-${date}.xlsx`);
 }
 
-const EDIT_FIELDS: { key: keyof IncidentRow; label: string; width: number; num?: boolean }[] = [
-  { key: "date", label: "Date", width: 96 }, { key: "country", label: "Country", width: 100 }, { key: "province", label: "Province", width: 100 },
-  { key: "city", label: "City", width: 100 }, { key: "latitude", label: "Lat", width: 76, num: true }, { key: "longitude", label: "Lon", width: 76, num: true },
-  { key: "sector", label: "Sector", width: 90 }, { key: "actor", label: "Actor", width: 120 }, { key: "tactic", label: "Tactic", width: 120 },
-  { key: "severity", label: "Severity", width: 80 }, { key: "details", label: "Details", width: 300 },
+const EDIT_FIELDS: (SheetColumn & { key: keyof IncidentRow })[] = [
+  { key: "date", label: "Date", width: 96 }, { key: "time", label: "Time", width: 64 }, { key: "country", label: "Country", width: 100 },
+  { key: "province", label: "Province", width: 100 }, { key: "county", label: "County", width: 100 }, { key: "district", label: "District", width: 100 },
+  { key: "city", label: "City", width: 100 }, { key: "suburb", label: "Suburb", width: 90 }, { key: "precise_location", label: "Precise location", width: 140 },
+  { key: "latitude", label: "Lat", width: 76, num: true }, { key: "longitude", label: "Lon", width: 76, num: true },
+  { key: "sector", label: "Sector", width: 100 }, { key: "actor", label: "Actor", width: 130 }, { key: "operation", label: "Operation", width: 110 },
+  { key: "tactic", label: "Tactic", width: 120 }, { key: "severity", label: "Severity", width: 80 }, { key: "target", label: "Target", width: 110 },
+  { key: "interest_group", label: "Interest group", width: 120 }, { key: "actual_main_victim", label: "Main victim", width: 110 },
+  { key: "intended_primary_target", label: "Intended target", width: 120 },
+  { key: "civilian_death_male", label: "Deaths: men", width: 80, num: true }, { key: "civilian_death_female", label: "Deaths: women", width: 80, num: true },
+  { key: "civilian_death_child", label: "Deaths: children", width: 80, num: true }, { key: "civilian_death_unknown", label: "Deaths: unknown", width: 80, num: true },
+  { key: "civilian_injury_male", label: "Injured: men", width: 80, num: true }, { key: "civilian_injury_female", label: "Injured: women", width: 80, num: true },
+  { key: "civilian_injury_unknown", label: "Injured: unknown", width: 80, num: true }, { key: "kidnappings_ngo", label: "NGO kidnappings", width: 80, num: true },
+  { key: "details", label: "Details", width: 320 },
 ];
 
 const STATUS_COLOR: Record<StagingStatus, string> = { pending: "#a16207", approved: "#166534", rejected: "#991b1b", pushed: "#475569" };
@@ -88,13 +98,14 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
     setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, status } : x)));
     api.stagingPatch(it.id, { status }).catch((e) => setMessage(String(e.message ?? e)));
   }
-  function editField(it: StagedIncident, key: keyof IncidentRow, raw: string, num?: boolean) {
-    const value = num ? (raw.trim() === "" ? null : Number(raw)) : raw === "" ? null : raw;
-    if (num && value !== null && !Number.isFinite(value)) return;
-    setItems((prev) => prev.map((x) => (x.id === it.id ? { ...x, row: { ...x.row, [key]: value } } : x)));
-  }
-  function saveRow(it: StagedIncident) {
-    api.stagingPatch(it.id, { row: it.row }).catch((e) => setMessage(String(e.message ?? e)));
+  /** Edits from the grid: typing updates the screen; a finished edit or a fill is also saved. */
+  function applyEdits(edits: SheetEdit[], persist: boolean) {
+    const byId = new Map<string, Record<string, string | number | null>>();
+    for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
+    setItems((prev) => prev.map((x) => (byId.has(x.id) ? { ...x, row: { ...x.row, ...byId.get(x.id) } } : x)));
+    if (persist) {
+      for (const [id, row] of byId) api.stagingPatch(id, { row: row as Partial<IncidentRow> }).catch((e) => setMessage(String(e.message ?? e)));
+    }
   }
   const pendingIds = items.filter((i) => i.status === "pending").map((i) => i.id);
 
@@ -142,49 +153,35 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
       </div>
       {message && <div style={{ margin: "6px 0", color: "#0b5" }}>{message}</div>}
 
-      <div style={{ overflowX: "auto", border: "1px solid #ddd", borderRadius: 6, maxHeight: "55vh", overflowY: "auto" }}>
-        <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth: 1400 }}>
-          <thead style={{ position: "sticky", top: 0, background: "#eee" }}>
-            <tr>
-              <th style={{ padding: 6, textAlign: "left" }}>Review</th>
-              {EDIT_FIELDS.map((f) => <th key={f.key} style={{ padding: 6, textAlign: "left" }}>{f.label}</th>)}
-              <th style={{ padding: 6, textAlign: "left" }}>Source</th>
-              <th style={{ padding: 6, textAlign: "left" }}>Conf.</th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.length === 0 && <tr><td colSpan={EDIT_FIELDS.length + 3} style={{ padding: 16, color: "#777" }}>{date ? "Nothing here." : "No collections yet — press “Collect now”."}</td></tr>}
-            {shown.map((it) => {
-              const locked = it.status === "pushed";
-              return (
-                <tr key={it.id} style={{ borderTop: "1px solid #e5e5e5", opacity: it.status === "rejected" ? 0.5 : 1 }}>
-                  <td style={{ padding: 4, whiteSpace: "nowrap" }}>
-                    {locked ? <span style={{ color: STATUS_COLOR.pushed }}>In database</span> : (
-                      <>
-                        <button title="Approve" style={{ ...btn, padding: "2px 7px", background: it.status === "approved" ? "#166534" : "#f6f6f6", color: it.status === "approved" ? "#fff" : "#166534" }} onClick={() => setStatus(it, it.status === "approved" ? "pending" : "approved")}>✓</button>{" "}
-                        <button title="Reject" style={{ ...btn, padding: "2px 7px", background: it.status === "rejected" ? "#991b1b" : "#f6f6f6", color: it.status === "rejected" ? "#fff" : "#991b1b" }} onClick={() => setStatus(it, it.status === "rejected" ? "pending" : "rejected")}>✕</button>
-                      </>
-                    )}
-                  </td>
-                  {EDIT_FIELDS.map((f) => (
-                    <td key={f.key} style={{ padding: 2 }}>
-                      <input
-                        disabled={locked}
-                        value={(it.row[f.key] as string | number | null | undefined) ?? ""}
-                        onChange={(e) => editField(it, f.key, e.target.value, f.num)}
-                        onBlur={() => saveRow(it)}
-                        style={{ width: f.width, padding: "3px 4px", border: "1px solid #ddd", borderRadius: 3, fontSize: 12 }}
-                      />
-                    </td>
-                  ))}
-                  <td style={{ padding: 4 }}>{it.source_url ? <a href={it.source_url} target="_blank" rel="noreferrer">{it.source_domain ?? "link"}</a> : "—"}</td>
-                  <td style={{ padding: 4 }}>{it.confidence ?? ""}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <SheetGrid
+        rows={shown}
+        rowId={(it) => it.id}
+        columns={EDIT_FIELDS}
+        getValue={(it, key) => it.row[key as keyof IncidentRow] as string | number | null | undefined}
+        onEdit={applyEdits}
+        isLocked={(it) => it.status === "pushed"}
+        rowStyle={(it) => ({ opacity: it.status === "rejected" ? 0.5 : 1 })}
+        maxHeight="58vh"
+        empty={date ? "Nothing here." : "No collections yet — press “Collect now”."}
+        lead={{
+          header: "Review",
+          width: 90,
+          cell: (it) =>
+            it.status === "pushed" ? (
+              <span style={{ color: STATUS_COLOR.pushed }}>In database</span>
+            ) : (
+              <>
+                <button title="Approve" style={{ ...btn, padding: "2px 7px", background: it.status === "approved" ? "#166534" : "#f6f6f6", color: it.status === "approved" ? "#fff" : "#166534" }} onClick={() => setStatus(it, it.status === "approved" ? "pending" : "approved")}>✓</button>{" "}
+                <button title="Reject" style={{ ...btn, padding: "2px 7px", background: it.status === "rejected" ? "#991b1b" : "#f6f6f6", color: it.status === "rejected" ? "#fff" : "#991b1b" }} onClick={() => setStatus(it, it.status === "rejected" ? "pending" : "rejected")}>✕</button>
+              </>
+            ),
+        }}
+        tail={{
+          header: "Source",
+          width: 120,
+          cell: (it) => (it.source_url ? <a href={it.source_url} target="_blank" rel="noreferrer">{it.source_domain ?? "link"}</a> : "—"),
+        }}
+      />
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type IncidentItem, type SavedUpload } from "../api";
 import IncidentManualEntry from "./IncidentManualEntry";
+import SheetGrid, { type SheetColumn, type SheetEdit } from "./SheetGrid";
 
 interface Props {
   refreshKey: number;
@@ -19,6 +20,24 @@ function totalCasualties(i: IncidentItem): number {
   );
 }
 
+const GRID_COLUMNS: SheetColumn[] = [
+  { key: "date", label: "Date", width: 96 }, { key: "time", label: "Time", width: 64 }, { key: "country", label: "Country", width: 100 },
+  { key: "province", label: "Province", width: 100 }, { key: "county", label: "County", width: 100 }, { key: "district", label: "District", width: 100 },
+  { key: "city", label: "City", width: 100 }, { key: "suburb", label: "Suburb", width: 90 }, { key: "precise_location", label: "Precise location", width: 140 },
+  { key: "latitude", label: "Lat", width: 76, num: true }, { key: "longitude", label: "Lon", width: 76, num: true },
+  { key: "sector", label: "Sector", width: 100 }, { key: "actor", label: "Actor", width: 130 }, { key: "operation", label: "Operation", width: 110 },
+  { key: "tactic", label: "Tactic", width: 120 }, { key: "severity", label: "Severity", width: 80 }, { key: "target", label: "Target", width: 110 },
+  { key: "interest_group", label: "Interest group", width: 120 }, { key: "actual_main_victim", label: "Main victim", width: 110 },
+  { key: "intended_primary_target", label: "Intended target", width: 120 },
+  { key: "civilian_death_male", label: "Deaths: men", width: 80, num: true }, { key: "civilian_death_female", label: "Deaths: women", width: 80, num: true },
+  { key: "civilian_death_child", label: "Deaths: children", width: 80, num: true }, { key: "civilian_death_unknown", label: "Deaths: unknown", width: 80, num: true },
+  { key: "civilian_injury_male", label: "Injured: men", width: 80, num: true }, { key: "civilian_injury_female", label: "Injured: women", width: 80, num: true },
+  { key: "civilian_injury_unknown", label: "Injured: unknown", width: 80, num: true }, { key: "kidnappings_ngo", label: "NGO kidnappings", width: 80, num: true },
+  { key: "details", label: "Details", width: 320 },
+];
+/** The grid's "date" and "time" are stored as occurred_date / occurred_time on a loaded row. */
+const LOCAL_KEY: Record<string, string> = { date: "occurred_date", time: "occurred_time" };
+
 export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [uploads, setUploads] = useState<SavedUpload[]>([]);
@@ -28,6 +47,8 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
   const [editing, setEditing] = useState<IncidentItem | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [limit, setLimit] = useState(500);
+  const [visibleRows, setVisibleRows] = useState<IncidentItem[]>([]);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -36,6 +57,33 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
     setUploads(uploadRows);
     setSelected((s) => new Set([...s].filter((id) => rows.some((r) => r.id === id))));
     setLoading(false);
+  }
+
+  /** Edits from the grid: typing updates the screen; a finished edit or a fill is saved too. */
+  function applyEdits(edits: SheetEdit[], persist: boolean) {
+    const byId = new Map<string, Record<string, string | number | null>>();
+    for (const e of edits) byId.set(e.id, { ...(byId.get(e.id) ?? {}), [e.key]: e.value });
+    setIncidents((prev) =>
+      prev.map((x) => {
+        const ch = byId.get(x.id);
+        if (!ch) return x;
+        const local: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(ch)) local[LOCAL_KEY[k] ?? k] = v;
+        return { ...x, ...local } as IncidentItem;
+      }),
+    );
+    if (!persist) return;
+    const entries = [...byId.entries()];
+    setSaveNote(`Saving ${entries.length.toLocaleString()} row${entries.length === 1 ? "" : "s"}…`);
+    (async () => {
+      let failed = 0;
+      for (let i = 0; i < entries.length; i += 8) {
+        const results = await Promise.allSettled(entries.slice(i, i + 8).map(([id, patch]) => api.updateIncident(id, patch as never)));
+        failed += results.filter((r) => r.status === "rejected").length;
+      }
+      setSaveNote(failed ? `${failed} row${failed === 1 ? "" : "s"} could not be saved.` : `Saved ${entries.length.toLocaleString()} row${entries.length === 1 ? "" : "s"}.`);
+      onChanged();
+    })();
   }
 
   async function deleteUpload(upload: SavedUpload) {
@@ -160,59 +208,47 @@ export default function IncidentManageTable({ refreshKey, onChanged }: Props) {
         )}
       </div>
 
-      <div style={{ overflowX: "auto", border: "1px solid var(--border-soft)", borderRadius: 8 }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-          <thead>
-            <tr style={{ background: "var(--panel-raised)", textAlign: "left" }}>
-              <th style={thStyle}>
-                <input type="checkbox" checked={incidents.length > 0 && selected.size === incidents.length} onChange={toggleAll} />
-              </th>
-              <th style={thStyle}>Date</th>
-              <th style={thStyle}>Location</th>
-              <th style={thStyle}>Sector</th>
-              <th style={thStyle}>Actor</th>
-              <th style={thStyle}>Severity</th>
-              <th style={thStyle}>Casualties</th>
-              <th style={thStyle}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {incidents.map((i) => (
-              <tr key={i.id} style={{ borderTop: "1px solid var(--border-soft)", background: selected.has(i.id) ? "color-mix(in srgb, var(--signal) 6%, transparent)" : "transparent" }}>
-                <td style={tdStyle}>
-                  <input type="checkbox" checked={selected.has(i.id)} onChange={() => toggleOne(i.id)} />
-                </td>
-                <td style={tdStyle}>{i.occurred_date || "—"}</td>
-                <td style={tdStyle}>{[i.city, i.province, i.country].filter(Boolean).join(", ") || i.precise_location || "—"}</td>
-                <td style={tdStyle}>{i.sector || "—"}</td>
-                <td style={tdStyle}>{i.actor || "—"}</td>
-                <td style={tdStyle}>{i.severity || "—"}</td>
-                <td style={{ ...tdStyle, color: totalCasualties(i) > 0 ? "var(--critical)" : "var(--text-muted)" }}>{totalCasualties(i) || "—"}</td>
-                <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-                  <button onClick={() => setEditing(i)} style={smallBtnStyle}>
-                    Edit
-                  </button>
-                  <button onClick={() => deleteOne(i.id)} style={{ ...smallBtnStyle, color: "var(--critical)", marginLeft: 6 }}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {!loading && incidents.length === 0 && (
-              <tr>
-                <td colSpan={8} style={{ ...tdStyle, textAlign: "center", color: "var(--text-faint)", padding: "24px 12px" }}>
-                  No incidents yet — upload a file or add one manually.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      {saveNote && <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 6 }}>{saveNote}</div>}
+      <SheetGrid
+        rows={incidents}
+        rowId={(i) => i.id}
+        columns={GRID_COLUMNS}
+        getValue={(i, key) => (i as unknown as Record<string, string | number | null | undefined>)[LOCAL_KEY[key] ?? key]}
+        onEdit={applyEdits}
+        onVisible={setVisibleRows}
+        rowStyle={(i) => ({ background: selected.has(i.id) ? "color-mix(in srgb, var(--signal) 6%, transparent)" : "transparent" })}
+        maxHeight="62vh"
+        empty="No incidents yet — upload a file or add one manually."
+        lead={{
+          header: <input type="checkbox" title="Select every row the filters show" checked={visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.id))} onChange={() => setSelected((s) => (visibleRows.every((r) => s.has(r.id)) ? new Set() : new Set(visibleRows.map((r) => r.id))))} />,
+          width: 34,
+          cell: (i) => <input type="checkbox" checked={selected.has(i.id)} onChange={() => toggleOne(i.id)} />,
+        }}
+        tail={{
+          header: "",
+          width: 120,
+          cell: (i) => (
+            <>
+              <button onClick={() => setEditing(i)} style={smallBtnStyle}>
+                Edit
+              </button>
+              <button onClick={() => deleteOne(i.id)} style={{ ...smallBtnStyle, color: "var(--critical)", marginLeft: 6 }}>
+                Delete
+              </button>
+            </>
+          ),
+        }}
+      />
 
       {incidents.length === limit && (
-        <button onClick={() => setLimit((l) => l + 500)} style={{ ...smallBtnStyle, marginTop: 12 }}>
-          Load 500 more
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={() => setLimit((l) => l + 500)} style={smallBtnStyle}>
+            Load 500 more
+          </button>
+          <button onClick={() => setLimit(250000)} style={smallBtnStyle} title="Filters only see the rows loaded, so load everything to filter across all of it">
+            Load all
+          </button>
+        </div>
       )}
     </div>
   );
