@@ -90,6 +90,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
   const [isPublic, setIsPublic] = useState(false);
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
+  // The editing controls stay tucked away until asked for, so the dashboard itself stays clean.
+  const [toolsOpen, setToolsOpen] = useState(false);
   // A dashboard tied to one country (the Country Dashboard): every figure is limited to it.
   const [dashCountry, setDashCountry] = useState<string | null>(null);
   const [victimGroups, setVictimGroups] = useState<VictimGroupRow[] | undefined>(undefined);
@@ -707,6 +709,21 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             style={{ fontSize: 15, fontWeight: 700, border: "none", background: "transparent", color: "var(--text-primary)", flex: 1, minWidth: 160 }}
           />
         )}
+        {!locked && <SaveStatusIndicator status={saveStatus} errorDetail={saveErrorDetail} onRetry={save} />}
+        {(dateRangeFrom || dateRangeTo) && !toolsOpen && (
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{dateRangeFrom ?? "…"} → {dateRangeTo ?? "today"}</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setToolsOpen((v) => !v)}
+          aria-expanded={toolsOpen}
+          title="Period, filters, add widgets, look, save, share and download"
+          style={{ ...secondaryBtnStyle, background: toolsOpen ? "var(--signal-dim)" : undefined, borderColor: toolsOpen ? "var(--signal)" : undefined }}
+        >
+          {toolsOpen ? "Hide tools ▴" : "⚙ Tools ▾"}
+        </button>
+        {toolsOpen && (
+        <div style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         {!locked && <PeriodBar from={dateRangeFrom} to={dateRangeTo} onChange={updateDateRange} />}
         {!locked && (
           <div ref={filterPanelRef} style={{ position: "relative" }}>
@@ -890,7 +907,6 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             Save
           </button>
         )}
-        {!locked && <SaveStatusIndicator status={saveStatus} errorDetail={saveErrorDetail} onRetry={save} />}
         <button onClick={toggleLock} title={locked ? "Unlock to edit again" : "Lock once you're done editing, to prevent accidental changes"} style={locked ? liveBtnStyle : secondaryBtnStyle}>
           {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}
         </button>
@@ -915,6 +931,8 @@ export default function DashboardEditor({ mode, onBack, onSavedNew }: Props) {
             : "⭳ Download as GIF"}
         </button>
         {gifError && <div style={{ fontSize: 11, color: "var(--critical)", alignSelf: "center" }}>{gifError}</div>}
+        </div>
+        )}
       </div>
 
       {addingWidget && (
