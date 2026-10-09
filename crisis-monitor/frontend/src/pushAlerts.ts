@@ -52,6 +52,10 @@ export async function enablePushAlerts(opts: { askPermission: boolean }): Promis
     }
     return null;
   } catch (e) {
-    return e instanceof Error && e.message ? e.message : "Could not turn alerts on for this device.";
+    const m = e instanceof Error ? e.message : "";
+    // The browser could not reach its push service (Google's, in Chrome, Edge and Brave): usually a browser setting or a blocked network.
+    if (/push service|registration failed/i.test(m))
+      return "This browser could not reach its notification service. In Brave, turn on Settings → Privacy and security → “Use Google services for push messaging” and restart it; in other browsers, leave private mode and make sure the network does not block Google's push service (fcm.googleapis.com). Then try again.";
+    return m || "Could not turn alerts on for this device.";
   }
 }
