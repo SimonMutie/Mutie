@@ -232,8 +232,8 @@ function TimelineStrip({ items }: { items: Milestone[] }) {
   const today = Math.min(W, Math.max(0, ((Date.now() - start) / (end - start)) * W));
   const phases: { from: string; to: string; label: string; tone: string }[] = [
     { from: "2026-10-01", to: "2027-03-16", label: "Parties prepare", tone: "a" },
-    { from: "2027-03-16", to: "2027-05-08", label: "Primaries", tone: "b" },
-    { from: "2027-05-08", to: "2027-06-12", label: "Nominations", tone: "c" },
+    { from: "2027-03-16", to: "2027-05-09", label: "Primaries", tone: "b" },
+    { from: "2027-05-09", to: "2027-06-12", label: "Nominations", tone: "c" },
     { from: "2027-06-12", to: "2027-08-10", label: "Campaign", tone: "d" },
     { from: "2027-08-10", to: "2027-09-09", label: "After the vote", tone: "e" },
   ];
@@ -618,7 +618,7 @@ function OutlookSection() {
       tone: "mid",
       how: "The opposition stays split across four or five serious candidates, Mt Kenya divides between Ruto and Gachagua, and ODM’s voters stay home or stay with the government. Ruto holds Rift Valley and adds Coast, North Eastern and western Kenya.",
       needs: `About ${n0(need)} votes at ${turnout}% turnout, versus the ${n0(ruto2022)} he won in 2022.`,
-      signs: ["No single opposition candidate named by the primaries deadline (8 May 2027)", "Gachagua barred or sidelined by the courts", "Sifuna and ODM contest separately"],
+      signs: ["No single opposition candidate named by the primaries deadline (9 May 2027)", "Gachagua barred or sidelined by the courts", "Sifuna and ODM contest separately"],
     },
     {
       name: "Run-off: Ruto against one opposition candidate",
@@ -641,8 +641,8 @@ function OutlookSection() {
   const signposts = [
     { when: "15 Oct 2026", what: "Parties name authorised persons: who has a registered vehicle, and who does not." },
     { when: "30 Oct to 6 Nov 2026", what: "Nomination rules certified and lodged: which coalition partners sign up to a common primary." },
-    { when: "10 Feb 2027", what: "Public officers resign: which Cabinet Secretaries and officials leave to contest." },
-    { when: "8 May 2027", what: "Primaries end: the opposition’s single candidate, or the lack of one, becomes visible." },
+    { when: "9 Feb 2027", what: "Public officers resign: which Cabinet Secretaries and officials leave to contest." },
+    { when: "9 May 2027", what: "Primaries end: the opposition’s single candidate, or the lack of one, becomes visible." },
     { when: "29 May to 11 Jun 2027", what: "Presidential nominations: the final list of candidates and running mates." },
   ];
 
