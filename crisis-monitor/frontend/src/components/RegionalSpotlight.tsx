@@ -119,7 +119,7 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
   if (screen.kind === "election") {
     return (
       <Suspense fallback={<div className="spotlight-page"><div className="spotlight-wrap"><div className="spotlight-empty">Loading…</div></div></div>}>
-        <KenyaElection onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
+        <KenyaElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
       </Suspense>
     );
   }

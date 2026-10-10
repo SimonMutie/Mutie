@@ -56,7 +56,7 @@ const classOf = (n: number, breaks: number[]) => {
   return k;
 };
 
-export default function ElectionMap({ metrics, defaultKey, caption }: { metrics: Metric[]; defaultKey?: string; caption?: string }) {
+export default function ElectionMap({ metrics, defaultKey, caption, detail, rankLabel }: { metrics: Metric[]; defaultKey?: string; caption?: string; detail?: (c: County) => [string, string][]; rankLabel?: string }) {
   const [shapes, setShapes] = useState<FeatureCollection<Geometry, { code: string; name: string }> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [key, setKey] = useState(defaultKey ?? metrics[0].key);
@@ -212,11 +212,16 @@ export default function ElectionMap({ metrics, defaultKey, caption }: { metrics:
                 <p className="el-kicker">{shown.region}</p>
                 <h4>{shown.name}</h4>
                 <dl>
-                  <div><dt>Registered voters, 2022</dt><dd>{shown.reg2022.toLocaleString()}</dd></div>
+                  {detail
+                    ? detail(shown).map(([k, v]) => (
+                        <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
+                      ))
+                    : null}
+                  {!detail && <><div><dt>Registered voters, 2022</dt><dd>{shown.reg2022.toLocaleString()}</dd></div>
                   <div><dt>Share of the 2022 register</dt><dd>{((shown.reg2022 / 22_102_532) * 100).toFixed(1)}%</dd></div>
                   <div><dt>Population, 2019 census</dt><dd>{shown.pop2019.toLocaleString()}</dd></div>
                   <div><dt>Registered per 100 residents</dt><dd>{((shown.reg2022 / shown.pop2019) * 100).toFixed(0)}</dd></div>
-                  {shown.new2026 !== undefined && <div><dt>New voters, 2026 drive (part-way)</dt><dd>+{shown.new2026.toLocaleString()}</dd></div>}
+                  {shown.new2026 !== undefined && <div><dt>New voters, 2026 drive (part-way)</dt><dd>+{shown.new2026.toLocaleString()}</dd></div>}</>}
                 </dl>
               </>
             ) : (
@@ -232,7 +237,7 @@ export default function ElectionMap({ metrics, defaultKey, caption }: { metrics:
               </li>
             ))}
           </ol>
-          <p className="el-muted el-small">Top 12 of {ranked.length}. {caption}</p>
+          <p className="el-muted el-small">{rankLabel ?? "Top 12"} of {ranked.length}. {caption}</p>
         </aside>
       </div>
     </div>

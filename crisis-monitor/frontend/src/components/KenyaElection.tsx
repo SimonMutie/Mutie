@@ -1,17 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import ElectionMap, { type Metric } from "./ElectionMap";
 import {
   AS_OF,
-  CANDIDATES,
   ALSO_NAMED,
   COUNTIES,
   ELECTION_DAY,
   NEW_REGISTRATIONS_2026,
-  POLLS,
   POLL_2022_LESSON,
   REGISTER_TARGET_2027,
   SOURCES,
-  TIMELINE,
   TOTAL_POP_2019,
   TOTAL_REG_2022,
   type Candidate,
@@ -19,6 +16,10 @@ import {
   type Poll,
   type Region,
 } from "../data/kenyaElection";
+import { ElectionDataCtx, mergeLive, type Live } from "../data/electionLive";
+import { api } from "../api";
+import ElectionSafety from "./ElectionSafety";
+import ElectionManage from "./ElectionManage";
 import "./Election.css";
 
 /**
@@ -37,9 +38,11 @@ const SECTIONS = [
   { id: "population", label: "Population" },
   { id: "candidates", label: "Candidates" },
   { id: "polls", label: "Polls" },
+  { id: "safety", label: "Violence & rhetoric" },
   { id: "outlook", label: "Outlook" },
+  { id: "manage", label: "Manage", admin: true },
   { id: "sources", label: "Sources" },
-] as const;
+] as { id: string; label: string; admin?: boolean }[];
 
 const DAY = 86_400_000;
 const at = (iso: string) => new Date(`${iso}T00:00:00`).getTime();
@@ -49,7 +52,15 @@ const mil = (n: number) => `${(n / 1e6).toFixed(n >= 1e7 ? 1 : 2)}M`;
 const kilo = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)}M` : `${Math.round(n / 1e3)}k`);
 const pct = (n: number, d = 1) => `${n.toFixed(d)}%`;
 
-export default function KenyaElection({ onBack }: { onBack: () => void }) {
+export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () => void; isAdmin?: boolean }) {
+  const [live, setLive] = useState<Live>(() => mergeLive(null));
+  const loadContent = () => api.ewContent().then((c) => setLive(mergeLive(c))).catch(() => {});
+  useEffect(() => {
+    loadContent();
+    const t = setInterval(loadContent, 5 * 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const sections = SECTIONS.filter((s) => !s.admin || isAdmin);
   const [active, setActive] = useState<string>("overview");
   const pageRef = useRef<HTMLDivElement>(null);
 
@@ -64,18 +75,19 @@ export default function KenyaElection({ onBack }: { onBack: () => void }) {
       },
       { root, rootMargin: "-80px 0px -65% 0px", threshold: 0 },
     );
-    SECTIONS.forEach((s) => {
+    sections.forEach((s) => {
       const el = root.querySelector(`#el-${s.id}`);
       if (el) io.observe(el);
     });
     return () => io.disconnect();
-  }, []);
+  }, [isAdmin]);
 
   function go(id: string) {
     pageRef.current?.querySelector(`#el-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   return (
+    <ElectionDataCtx.Provider value={live}>
     <div className="el-page" ref={pageRef}>
       <header className="el-hero" id="el-overview">
         <div className="el-wrap">
@@ -89,7 +101,7 @@ export default function KenyaElection({ onBack }: { onBack: () => void }) {
 
       <nav className="el-nav" aria-label="Sections">
         <div className="el-wrap el-nav__in">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <button key={s.id} type="button" aria-current={active === s.id} onClick={() => go(s.id)}>
               {s.label}
             </button>
@@ -103,10 +115,17 @@ export default function KenyaElection({ onBack }: { onBack: () => void }) {
         <PopulationSection />
         <CandidatesSection />
         <PollsSection />
+        <ElectionSafety isAdmin={isAdmin} />
         <OutlookSection />
+        {isAdmin && (
+          <section className="el-section" id="el-manage">
+            <ElectionManage live={live} onChanged={loadContent} />
+          </section>
+        )}
         <SourcesSection />
       </main>
     </div>
+    </ElectionDataCtx.Provider>
   );
 }
 
@@ -124,6 +143,11 @@ function Section({ id, kicker, title, intro, children }: { id: string; kicker: s
 /* ── overview ─────────────────────────────────────────────── */
 
 function Overview() {
+  const { timeline: TIMELINE } = useContext(ElectionDataCtx);
+  const [coverage, setCoverage] = useState<{ id: string; title: string; url: string; domain: string | null; published_at: string }[]>([]);
+  useEffect(() => {
+    api.ewCoverage().then((r) => setCoverage(r.slice(0, 5))).catch(() => {});
+  }, []);
   const days = Math.ceil((at(ELECTION_DAY) - Date.now()) / DAY);
   const next = TIMELINE.filter((m) => at(m.until ?? m.date) >= Date.now() - DAY).sort((a, b) => at(a.date) - at(b.date))[0];
   const register2027 = TOTAL_REG_2022 + NEW_REGISTRATIONS_2026;
@@ -159,6 +183,20 @@ function Overview() {
         </p>
       )}
 
+      {coverage.length > 0 && (
+        <div className="el-coverage">
+          <b>Latest coverage</b>
+          <ul>
+            {coverage.map((c) => (
+              <li key={c.id}>
+                <a href={c.url} target="_blank" rel="noreferrer noopener">{c.title}</a>
+                <span>{c.domain ?? ""} · {fmtDate(c.published_at.slice(0, 10), { day: "numeric", month: "short" })}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <p className="el-flag">
         <b>The date is under legal challenge.</b> On 7 August 2026 the High Court at Malindi held that 10 August 2027 is unconstitutional because the vote was due in 2026, but suspended its decision until after the 2027 election. IEBC is proceeding with 10 August 2027. Further appeals could still change this, so treat the calendar as firm for planning but not for certainty.
       </p>
@@ -172,6 +210,7 @@ function Overview() {
 const BASIS: Record<Milestone["basis"], string> = { gazetted: "IEBC gazette", constitution: "Constitution", event: "Event" };
 
 function TimelineSection() {
+  const { timeline: TIMELINE } = useContext(ElectionDataCtx);
   const [showPast, setShowPast] = useState(false);
   const now = Date.now();
   const items = [...TIMELINE].sort((a, b) => at(a.date) - at(b.date));
@@ -387,17 +426,18 @@ function Portrait({ c, size = 72 }: { c: Candidate; size?: number }) {
 
 const STANDING_ORDER = ["Incumbent", "Declared", "Declared interest", "Not formally declared", "Polled"];
 
-function latestShare(c: Candidate): { v: number; poll: string } | null {
+function latestShare(c: Candidate, POLLS: Poll[]): { v: number; poll: string } | null {
   const p = [...POLLS].sort((a, b) => b.published.localeCompare(a.published)).find((x) => c.polls[x.id] !== undefined);
   return p ? { v: c.polls[p.id], poll: p.pollster.split(" ")[0] } : null;
 }
 
 function CandidatesSection() {
+  const { candidates: CANDIDATES, polls: POLLS } = useContext(ElectionDataCtx);
   const [filter, setFilter] = useState<string>("All");
   const [open, setOpen] = useState<Candidate | null>(null);
   const list = useMemo(
-    () => [...CANDIDATES].filter((c) => filter === "All" || c.standing === filter).sort((a, b) => STANDING_ORDER.indexOf(a.standing) - STANDING_ORDER.indexOf(b.standing) || (latestShare(b)?.v ?? -1) - (latestShare(a)?.v ?? -1)),
-    [filter],
+    () => [...CANDIDATES].filter((c) => filter === "All" || c.standing === filter).sort((a, b) => STANDING_ORDER.indexOf(a.standing) - STANDING_ORDER.indexOf(b.standing) || (latestShare(b, POLLS)?.v ?? -1) - (latestShare(a, POLLS)?.v ?? -1)),
+    [filter, CANDIDATES, POLLS],
   );
   return (
     <Section id="candidates" kicker="The field" title="Who is running for president" intro={<p>The field is not closed: nothing is final until IEBC registers presidential candidates between 29 May and 11 June 2027. “Declared” means the person has announced a bid; “declared interest” means they have said they want to run and are working to be the opposition’s single candidate. Poll figures are the most recent that include them.</p>}>
@@ -408,7 +448,7 @@ function CandidatesSection() {
       </div>
       <ul className="el-cands">
         {list.map((c) => {
-          const l = latestShare(c);
+          const l = latestShare(c, POLLS);
           return (
             <li key={c.id}>
               <button type="button" onClick={() => setOpen(c)} className="el-cand">
@@ -441,6 +481,7 @@ function CandidatesSection() {
 }
 
 function Profile({ c, onClose }: { c: Candidate; onClose: () => void }) {
+  const { polls: POLLS } = useContext(ElectionDataCtx);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -495,6 +536,7 @@ function Profile({ c, onClose }: { c: Candidate; onClose: () => void }) {
 /* ── polls ────────────────────────────────────────────────── */
 
 function PollsSection() {
+  const { candidates: CANDIDATES, polls: POLLS } = useContext(ElectionDataCtx);
   const [decidedOnly, setDecidedOnly] = useState(false);
   const polls = [...POLLS].sort((a, b) => a.published.localeCompare(b.published));
   const names = CANDIDATES.filter((c) => polls.some((p) => p.shares[c.id] !== undefined)).sort((a, b) => Math.max(...polls.map((p) => b.polls[p.id] ?? 0)) - Math.max(...polls.map((p) => a.polls[p.id] ?? 0)));

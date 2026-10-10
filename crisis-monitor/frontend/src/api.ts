@@ -19,6 +19,50 @@ export function getToken(): string | null {
 
 export type UserRole = "admin" | "client";
 
+export type EwCategory = "political_violence" | "protest_policing" | "abduction" | "election_admin" | "intimidation" | "hate_speech" | "disinformation" | "coverage";
+export interface EwItem {
+  id: string;
+  url: string;
+  title: string;
+  summary: string | null;
+  domain: string | null;
+  published_at: string;
+  category: EwCategory;
+  severity: number;
+  county_code: string | null;
+  county: string | null;
+  fatalities: number | null;
+  reports: number;
+  cluster_id: string;
+  method: string;
+  status: "auto" | "verified" | "rejected";
+  note: string | null;
+}
+export interface EwDashboard {
+  days: number;
+  events: number;
+  reports: number;
+  verified: number;
+  deaths: number;
+  last7: number;
+  prev7: number;
+  coverageItems: number;
+  byCategory: Record<string, number>;
+  byCounty: Record<string, { events: number; deaths: number }>;
+  weekly: ({ week: string } & Record<string, number | string>)[];
+  lastCollectAt: string | null;
+  lastScanned: number | null;
+}
+export interface EwLead {
+  id: string;
+  kind: "poll" | "declaration" | "iebc" | "court";
+  title: string;
+  url: string;
+  domain: string | null;
+  published_at: string;
+}
+export type EwContent = Record<"poll" | "candidate" | "milestone", { id: string; data: Record<string, unknown>; updated_at: string }[]>;
+
 export interface BroadcastAudience {
   mode: "all_clients" | "clients" | "list_only";
   client_ids?: string[];
@@ -1754,6 +1798,22 @@ export const api = {
   getSpotlightEntry: (id: string) => req<SpotlightEntry>(`/api/spotlight/${id}`),
   createSpotlightEntry: (data: SpotlightEntryInput) => req<SpotlightEntry>("/api/spotlight", { method: "POST", body: JSON.stringify(data) }),
   updateSpotlightEntry: (id: string, data: SpotlightEntryInput) => req<SpotlightEntry>(`/api/spotlight/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  ewDashboard: (days: number) => req<EwDashboard>(`/api/election-watch/ke/dashboard?days=${days}`),
+  ewItems: (p: { category?: string; county?: string; days?: number; status?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== "") q.set(k, String(v));
+    return req<EwItem[]>(`/api/election-watch/ke/items?${q}`);
+  },
+  ewCoverage: () => req<{ id: string; title: string; url: string; domain: string | null; published_at: string }[]>("/api/election-watch/ke/coverage"),
+  ewContent: () => req<EwContent>("/api/election-watch/ke/content"),
+  ewSaveContent: (kind: string, id: string, data: unknown) => req<{ ok: boolean }>(`/api/election-watch/ke/content/${kind}/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  ewRemoveContent: (kind: string, id: string) => req<{ ok: boolean }>(`/api/election-watch/ke/content/${kind}/${id}`, { method: "DELETE" }),
+  ewLeads: () => req<EwLead[]>("/api/election-watch/ke/leads"),
+  ewSetLead: (id: string, status: "pending" | "done" | "dismissed") => req<{ ok: boolean }>(`/api/election-watch/ke/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
+  ewPatchItem: (id: string, data: { status?: "auto" | "verified" | "rejected"; category?: EwCategory; county_code?: string | null; fatalities?: number | null }) => req<{ ok: boolean }>(`/api/election-watch/ke/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  ewAddItem: (data: { title: string; url: string; category: EwCategory; county_code?: string | null; published_at: string; fatalities?: number | null }) => req<{ id: string }>("/api/election-watch/ke/items", { method: "POST", body: JSON.stringify(data) }),
+  ewCollect: (hours?: number) => req<{ scanned: number; inserted: number; leads: number }>("/api/election-watch/ke/collect", { method: "POST", body: JSON.stringify({ hours }) }),
+  ewCsvUrl: (days: number) => `${API_URL}/api/election-watch/ke/items.csv?days=${days}`,
   deleteSpotlightEntry: (id: string) => req<{ ok: boolean }>(`/api/spotlight/${id}`, { method: "DELETE" }),
   /** Uploads one image for an article and returns the address to show it from. */
   uploadSpotlightImage: async (image: Blob) => {

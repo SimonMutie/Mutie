@@ -25,6 +25,8 @@ import { alertSubscriptionsRouter } from "./routes/alertSubscriptions";
 import { sourceRegisterRouter } from "./routes/sourceRegister";
 import { broadcastsRouter } from "./routes/broadcasts";
 import { contactsRouter } from "./routes/contacts";
+import { electionWatchRouter } from "./routes/electionWatch";
+import { collectElectionItems } from "./lib/electionWatch";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
 import { refreshStaleLists } from "./lib/dd/sanctionsLists";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
@@ -116,6 +118,7 @@ app.route("/api/alert-subscriptions", alertSubscriptionsRouter);
 app.route("/api/source-register", sourceRegisterRouter);
 app.route("/api/broadcasts", broadcastsRouter);
 app.route("/api/contacts", contactsRouter);
+app.route("/api/election-watch/ke", electionWatchRouter);
 app.route("/api/due-diligence", dueDiligenceRouter);
 app.route("/api/public/spotlight", publicSpotlightRouter);
 
@@ -225,6 +228,16 @@ export default {
         runQueryWatch(env)
           .then((r) => r.surges > 0 && console.log(`[watch] ${r.surges} of ${r.queries} queries in surge`))
           .catch((err) => console.error("[watch] run failed", err))
+      );
+    }
+
+    // Kenya Election Watch: political violence, hate-speech and election
+    // coverage collected from the same feeds (lib/electionWatch.ts).
+    if (isWatchTick(controller.scheduledTime)) {
+      ctx.waitUntil(
+        collectElectionItems(env)
+          .then((r) => r.inserted > 0 && console.log(`[election-watch] ${r.inserted} new items (${r.leads} leads) from ${r.scanned} scanned`))
+          .catch((err) => console.error("[election-watch] collection failed", err))
       );
     }
 
