@@ -128,8 +128,8 @@ const publicRequestSchema = z.object({
 publicAnalyticsRouter.post("/:token", async (c) => {
   const dashboard = await first<{ owner_id: string | null; widgets: string; date_range_from: string | null; date_range_to: string | null; country: string | null }>(
     c.env.DB,
-    `SELECT owner_id, widgets, date_range_from, date_range_to, country FROM custom_dashboards WHERE share_token = ? AND is_public = 1 AND (share_expires_at IS NULL OR share_expires_at > ?)`,
-    [c.req.param("token"), new Date().toISOString()]
+    `SELECT owner_id, widgets, date_range_from, date_range_to, country FROM custom_dashboards WHERE share_token = ? AND is_public = 1`,
+    [c.req.param("token")]
   );
   if (!dashboard) return c.json({ error: "Not found" }, 404);
   const parsed = publicRequestSchema.safeParse(await c.req.json().catch(() => null));

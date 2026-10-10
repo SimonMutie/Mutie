@@ -1804,7 +1804,7 @@ export const api = {
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
   updateCustomDashboard: (
     id: string,
-    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; share_days?: number; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null; country?: string | null }
+    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null; country?: string | null }
   ) =>
     req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 

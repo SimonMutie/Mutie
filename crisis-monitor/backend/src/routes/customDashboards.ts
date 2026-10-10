@@ -286,8 +286,6 @@ const updateSchema = z.object({
   name: z.string().min(1).optional(),
   widgets: z.array(widgetSchema).optional(),
   is_public: z.boolean().optional(),
-  /** How long a new public link lives, in days. Defaults to 7. */
-  share_days: z.number().int().min(1).max(90).optional(),
   locked: z.boolean().optional(),
   // Nullable (not just optional) so the filter can be explicitly cleared —
   // undefined means "don't touch this field", null means "remove the date
@@ -338,11 +336,10 @@ customDashboardsRouter.patch("/:id", async (c) => {
     updates.push("is_public = ?");
     params.push(parsed.data.is_public ? 1 : 0);
     if (parsed.data.is_public) {
-      // A fresh token and expiry every time sharing is switched on, so an old
-      // link that was switched off can never come back to life.
-      const days = parsed.data.share_days ?? 7;
-      updates.push("share_token = ?", "share_expires_at = ?");
-      params.push(newId(), new Date(Date.now() + days * 86_400_000).toISOString());
+      // A fresh token every time sharing is switched on, so an old link that
+      // was switched off can never come back to life. Links do not expire.
+      updates.push("share_token = ?", "share_expires_at = NULL");
+      params.push(newId());
     } else {
       // Switching off revokes the link for good.
       updates.push("share_token = NULL", "share_expires_at = NULL");
@@ -486,8 +483,8 @@ publicDashboardsRouter.get("/:token", async (c) => {
   const token = c.req.param("token");
   const dashboard = await first<Record<string, unknown>>(
     c.env.DB,
-    `SELECT * FROM custom_dashboards WHERE share_token = ? AND is_public = 1 AND (share_expires_at IS NULL OR share_expires_at > ?)`,
-    [token, nowIso()]
+    `SELECT * FROM custom_dashboards WHERE share_token = ? AND is_public = 1`,
+    [token]
   );
   if (!dashboard) return c.json({ error: "Not found" }, 404);
 
@@ -599,6 +596,5 @@ publicDashboardsRouter.get("/:token", async (c) => {
     datasetSummaries,
     incidents,
     updated_at: dashboard.updated_at,
-    share_expires_at: (dashboard.share_expires_at as string | null) ?? null,
   });
 });

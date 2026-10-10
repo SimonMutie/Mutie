@@ -92,7 +92,6 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [backendId, setBackendId] = useState<string | null>(mode.kind === "bespoke" ? mode.id : null);
   const [isPublic, setIsPublic] = useState(false);
-  const [shareExpiry, setShareExpiry] = useState<string | null>(null);
   const caps = useCapabilities();
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
@@ -465,7 +464,6 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
       setBackendId(d.id);
       setIsPublic(d.is_public);
       setShareToken(d.share_token);
-      setShareExpiry(d.share_expires_at ?? null);
       setLocked(d.locked);
       setDashCountry(d.country ?? null);
       setDateRangeFrom(d.date_range_from ?? undefined);
@@ -665,21 +663,14 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     if (!backendId) await save();
     if (!backendId) return;
     try {
-      let days: number | undefined;
       if (!isPublic) {
-        const answer = window.prompt(
-          "Anyone with this link can view the dashboard without signing in. Treat it as a published document: share it only with people entitled to see it.\n\nHow many days should the link work for? (1–90)",
-          "7"
-        );
-        if (answer === null) return;
-        days = Math.min(90, Math.max(1, Math.round(Number(answer)) || 7));
+        if (!window.confirm("Anyone with this link can view the dashboard without signing in. Share it only with people entitled to see it. The link stays live until you turn sharing off.\n\nCreate the public link?")) return;
       } else if (!window.confirm("Turn off sharing? The current link stops working for good.")) {
         return;
       }
-      const updated = await api.updateCustomDashboard(backendId, { is_public: !isPublic, share_days: days });
+      const updated = await api.updateCustomDashboard(backendId, { is_public: !isPublic });
       setIsPublic(updated.is_public);
       setShareToken(updated.share_token);
-      setShareExpiry(updated.share_expires_at ?? null);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Couldn't change sharing.");
     }
@@ -953,7 +944,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
           {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}
         </button>
         {!locked && (caps.canSharePublicly || isPublic) && !caps.viewer && (
-          <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle} title={isPublic && shareExpiry ? `Link expires ${new Date(shareExpiry).toLocaleDateString()} — click to turn off` : undefined}>
+          <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle} title={isPublic ? "Click to turn off sharing" : undefined}>
             {isPublic ? "● Shared (public link)" : "Create public link"}
           </button>
         )}

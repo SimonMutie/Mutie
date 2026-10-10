@@ -74,7 +74,6 @@ export default function PublicDashboardView({ token }: { token: string }) {
           <div style={{ fontSize: 16, fontWeight: 700 }}>{data.name}</div>
           <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
             Shared view, not for onward distribution · updated {new Date(data.updated_at).toLocaleString()}
-            {data.share_expires_at && <> · link expires {new Date(data.share_expires_at).toLocaleDateString()}</>}
             {(data.date_range_from || data.date_range_to) && (
               <> · showing {data.date_range_from ?? "the start"} to {data.date_range_to ?? "now"}</>
             )}

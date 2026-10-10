@@ -562,7 +562,7 @@ function ClientDetail({
             <div>
               <div style={{ fontSize: 13, fontWeight: 600 }}>Allow public share links</div>
               <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                Off by default. When on, this client's logins can create dashboard links that work without signing in; each link expires (7 days unless they choose up to 90) and can be switched off at any time.
+                Off by default. When on, this client's logins can create dashboard links that work without signing in; links stay live until the user switches sharing off.
               </div>
             </div>
           </label>
