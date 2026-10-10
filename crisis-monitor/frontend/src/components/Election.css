@@ -336,3 +336,53 @@
   .el-kpis { grid-template-columns: repeat(2, 1fr); }
   .el-safety__grid { grid-template-columns: 1fr; }
 }
+
+/* ── South Sudan: government record, agreement tracker ─────── */
+.ss-gov { margin-top: 8px; }
+.ss-gov__chart { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 10px; overflow-x: auto; }
+.ss-gov__axis { position: relative; height: 22px; margin-left: 230px; border-bottom: 1px solid var(--border-soft); }
+.ss-gov__axis span { position: absolute; bottom: 4px; transform: translateX(-50%); font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.ss-gov__row { display: grid; grid-template-columns: 230px 1fr; gap: 0 10px; align-items: start; border-bottom: 1px solid var(--border-soft); padding: 6px 0; min-width: 760px; }
+.ss-gov__row:last-child { border-bottom: none; }
+.ss-gov__label { padding-top: 6px; font-size: 12.5px; line-height: 1.3; }
+.ss-gov__label b { font-weight: 600; }
+.ss-gov__label small { display: block; color: var(--text-faint); font-size: 11px; margin-top: 2px; }
+.ss-gov__track { position: relative; width: 100%; background: repeating-linear-gradient(90deg, transparent 0 calc(12.5% - 1px), var(--border-soft) calc(12.5% - 1px) 12.5%); border-radius: 6px; }
+.ss-gov__mark { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed color-mix(in srgb, var(--elevated) 70%, transparent); pointer-events: none; }
+.ss-gov__bar { position: absolute; height: 26px; border-radius: 6px; background: var(--info); color: #fff; font-size: 11.5px; font-weight: 600; display: flex; align-items: center; padding: 0 8px; overflow: hidden; white-space: nowrap; box-sizing: border-box; min-width: 6px; }
+.ss-gov__bar span { overflow: hidden; text-overflow: ellipsis; }
+.ss-gov__bar--dismissed { background: color-mix(in srgb, var(--critical) 80%, var(--panel)); }
+.ss-gov__bar--detained { background: repeating-linear-gradient(135deg, var(--critical) 0 6px, color-mix(in srgb, var(--critical) 70%, var(--panel)) 6px 12px); }
+.ss-gov__bar--appointed, .ss-gov__bar--reappointed, .ss-gov__bar--reinstated { background: var(--signal); color: #fff; }
+.ss-gov__bar--acting { background: var(--elevated); }
+.ss-gov__bar.is-open-start { border-left: 2px dashed rgba(255,255,255,0.85); }
+.ss-gov__bar.is-open-end { border-right: 2px dashed rgba(255,255,255,0.85); }
+.ss-gov__key { margin: 8px 2px 0; }
+.ss-gov__list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+.ss-gov__list li { display: grid; grid-template-columns: 120px 96px 1fr 210px; gap: 10px; align-items: baseline; font-size: 13px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.ss-gov__when { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ss-gov__what { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--signal); }
+.ss-gov__what--dismissed { color: var(--critical); }
+.ss-gov__what--detained { color: var(--critical); }
+.ss-gov__who em { color: var(--text-muted); font-style: normal; }
+.ss-gov__list a { color: var(--info); font-size: 12px; }
+@media (max-width: 760px) {
+  .ss-gov__list li { grid-template-columns: 1fr; gap: 2px; }
+}
+
+.ss-bench { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.ss-bench__card { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--text-faint); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.ss-bench__card--ok { border-left-color: var(--signal); }
+.ss-bench__card--part { border-left-color: var(--info); }
+.ss-bench__card--warn { border-left-color: var(--elevated); }
+.ss-bench__card--bad { border-left-color: var(--critical); }
+.ss-bench__card h3 { margin: 0; font-size: 15px; line-height: 1.3; }
+.ss-bench__card p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.ss-bench__card p:first-child { color: var(--text-faint); }
+.ss-bench__area { font-size: 11px !important; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+.ss-status { align-self: flex-start; padding: 2px 9px; border-radius: 99px; font-size: 11.5px; font-weight: 700; background: var(--panel-raised); color: var(--text-muted); }
+.ss-status--ok { background: var(--signal-dim); color: #0a5d56; }
+.ss-status--part { background: color-mix(in srgb, var(--info) 14%, var(--panel)); color: var(--info); }
+.ss-status--warn { background: color-mix(in srgb, var(--elevated) 16%, var(--panel)); color: var(--elevated); }
+.ss-status--bad { background: color-mix(in srgb, var(--critical) 14%, var(--panel)); color: var(--critical); }
+.ss-viol { margin-top: 10px; }

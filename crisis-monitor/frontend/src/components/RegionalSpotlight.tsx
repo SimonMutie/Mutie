@@ -8,6 +8,7 @@ import { uploadImageFile } from "../imageUpload";
 import "./Spotlight.css";
 
 const KenyaElection = lazy(() => import("./KenyaElection"));
+const SouthSudanElection = lazy(() => import("./SouthSudanElection"));
 
 /**
  * Regional Spotlight: publications filed by region.
@@ -119,7 +120,11 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
   if (screen.kind === "election") {
     return (
       <Suspense fallback={<div className="spotlight-page"><div className="spotlight-wrap"><div className="spotlight-empty">Loading…</div></div></div>}>
-        <KenyaElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
+        {screen.iso2 === "SS" ? (
+          <SouthSudanElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
+        ) : (
+          <KenyaElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
+        )}
       </Suspense>
     );
   }

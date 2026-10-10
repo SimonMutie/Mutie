@@ -21,6 +21,7 @@ const GROUPS: { name: string; codes: string[] }[] = [
 /** Countries that have a product of their own beyond the publications list. */
 export const COUNTRY_PRODUCTS: Record<string, { title: string; blurb: string; tag: string }[]> = {
   KE: [{ title: "Election Watch 2027", blurb: "Timeline to 10 August 2027, registered voters and population by county, declared candidates with profiles, the latest polls with credibility grades, and an assessment of how the vote could go.", tag: "Election" }],
+  SS: [{ title: "Transition and Conflict Watch", blurb: "The 22 December 2026 election, government changes since 2025 shown as a timeline of posts, the Revitalised Agreement’s benchmarks and reported breaches, and a live conflict dashboard by state.", tag: "Transition" }],
 };
 
 export const flag = (iso2: string) => (iso2.length === 2 ? String.fromCodePoint(...[...iso2.toUpperCase()].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "");

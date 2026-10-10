@@ -3,6 +3,12 @@ import { geoMercator, geoPath, geoCentroid } from "d3-geo";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 import { COUNTIES, type County } from "../data/kenyaElection";
 
+/** Anything drawn on the map: a code that matches a shape, and a name. */
+export interface MapUnit {
+  code: string;
+  name: string;
+}
+
 /**
  * County map for the Kenya election screens.
  *
@@ -15,31 +21,37 @@ import { COUNTIES, type County } from "../data/kenyaElection";
  * counties would otherwise turn the other forty into one pale shade.
  */
 
-export interface Metric {
+export interface Metric<U extends MapUnit = County> {
   key: string;
   label: string;
   /** Short line under the tabs saying what is being shown. */
   note: string;
-  value: (c: County) => number | undefined;
+  value: (c: U) => number | undefined;
   format: (n: number) => string;
   /** Compact form for map labels and bars. */
   short?: (n: number) => string;
 }
 
-type CountyFeature = Feature<Geometry, { code: string; name: string }>;
+type ShapeFeature = Feature<Geometry, { code: string; name: string }>;
 
 const RAMP = ["#dff3ef", "#b5e3da", "#85cfc4", "#52b5a9", "#2b958b", "#1a756e", "#0d544f"];
 const CLASSES = RAMP.length;
 const NO_DATA = "repeating-linear-gradient(45deg,var(--panel-raised),var(--panel-raised) 3px,var(--border-soft) 3px,var(--border-soft) 4px)";
 
-let geoCache: Promise<FeatureCollection<Geometry, { code: string; name: string }>> | null = null;
-function loadCounties() {
-  geoCache ??= fetch("/KEN-counties.json").then((r) => {
-    if (!r.ok) throw new Error("The county map could not be loaded.");
-    return r.json();
-  });
-  return geoCache;
+const geoCache = new Map<string, Promise<FeatureCollection<Geometry, { code: string; name: string }>>>();
+/** Shapes are GeoJSON with a code and a name on each feature. Kenya's counties are the default. */
+function loadShapes(url: string) {
+  let p = geoCache.get(url);
+  if (!p) {
+    p = fetch(url).then((r) => {
+      if (!r.ok) throw new Error("The map could not be loaded.");
+      return r.json();
+    });
+    geoCache.set(url, p);
+  }
+  return p;
 }
+const KE_LABELS = ["047", "001", "022", "032", "037"];
 
 const W = 520;
 const H = 600;
@@ -56,7 +68,33 @@ const classOf = (n: number, breaks: number[]) => {
   return k;
 };
 
-export default function ElectionMap({ metrics, defaultKey, caption, detail, rankLabel }: { metrics: Metric[]; defaultKey?: string; caption?: string; detail?: (c: County) => [string, string][]; rankLabel?: string }) {
+export default function ElectionMap<U extends MapUnit = County>({
+  metrics,
+  defaultKey,
+  caption,
+  detail,
+  rankLabel,
+  units,
+  geoUrl = "/KEN-counties.json",
+  labelCodes = KE_LABELS,
+  noun = "counties",
+  aria,
+}: {
+  metrics: Metric<U>[];
+  defaultKey?: string;
+  caption?: string;
+  detail?: (c: U) => [string, string][];
+  rankLabel?: string;
+  /** What is drawn. Defaults to Kenya's 47 counties. */
+  units?: U[];
+  geoUrl?: string;
+  /** Codes of the shapes whose names are written on the map. */
+  labelCodes?: string[];
+  /** Plural noun for the units, used in the legend. */
+  noun?: string;
+  aria?: string;
+}) {
+  const list = (units ?? (COUNTIES as unknown as U[])) as U[];
   const [shapes, setShapes] = useState<FeatureCollection<Geometry, { code: string; name: string }> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [key, setKey] = useState(defaultKey ?? metrics[0].key);
@@ -66,15 +104,15 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
 
   useEffect(() => {
     let live = true;
-    loadCounties().then((g) => live && setShapes(g)).catch((e) => live && setError(e instanceof Error ? e.message : "Map failed to load."));
+    loadShapes(geoUrl).then((g) => live && setShapes(g)).catch((e) => live && setError(e instanceof Error ? e.message : "Map failed to load."));
     return () => {
       live = false;
     };
-  }, []);
+  }, [geoUrl]);
 
   const metric = metrics.find((m) => m.key === key) ?? metrics[0];
-  const byCode = useMemo(() => new Map(COUNTIES.map((c) => [c.code, c])), []);
-  const values = useMemo(() => COUNTIES.map((c) => metric.value(c)).filter((n): n is number => n !== undefined), [metric]);
+  const byCode = useMemo(() => new Map(list.map((c) => [c.code, c])), [list]);
+  const values = useMemo(() => list.map((c) => metric.value(c)).filter((n): n is number => n !== undefined), [metric, list]);
   const breaks = useMemo(() => quantileBreaks(values, CLASSES), [values]);
   const max = Math.max(...values);
 
@@ -89,7 +127,7 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
     );
     const path = geoPath(projection);
     return {
-      items: (shapes.features as CountyFeature[]).map((f) => {
+      items: (shapes.features as ShapeFeature[]).map((f) => {
         const [lon, lat] = geoCentroid(f);
         const [x, y] = projection([lon, lat]) ?? [0, 0];
         return { f, d: path(f) ?? "", x, y };
@@ -101,12 +139,12 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
   const shown = shownCode ? byCode.get(shownCode) : undefined;
   const ranked = useMemo(
     () =>
-      COUNTIES.map((c) => ({ c, v: metric.value(c) }))
-        .filter((r): r is { c: County; v: number } => r.v !== undefined)
+      list.map((c) => ({ c, v: metric.value(c) }))
+        .filter((r): r is { c: U; v: number } => r.v !== undefined)
         .sort((a, b) => b.v - a.v),
-    [metric],
+    [metric, list],
   );
-  const missing = COUNTIES.length - ranked.length;
+  const missing = list.length - ranked.length;
   const short = metric.short ?? metric.format;
 
   return (
@@ -125,10 +163,11 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
           {error && <p className="el-notice">{error}</p>}
           {!geometry && !error && <p className="el-notice">Drawing the counties…</p>}
           {geometry && (
-            <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Map of Kenya’s 47 counties by ${metric.label}`}>
+            <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={aria ?? `Map of Kenya’s 47 counties by ${metric.label}`}>
               <g>
                 {geometry.items.map(({ f, d }) => {
-                  const c = byCode.get(f.properties.code)!;
+                  const c = byCode.get(f.properties.code);
+                  if (!c) return null;
                   const v = metric.value(c);
                   const active = shownCode === c.code;
                   return (
@@ -157,7 +196,8 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
               {bubbles && (
                 <g pointerEvents="none">
                   {geometry.items.map(({ f, x, y }) => {
-                    const c = byCode.get(f.properties.code)!;
+                    const c = byCode.get(f.properties.code);
+                    if (!c) return null;
                     const v = metric.value(c);
                     if (v === undefined) return null;
                     const r = 3 + Math.sqrt(v / max) * 26;
@@ -166,13 +206,14 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
                 </g>
               )}
               {geometry.items
-                .filter(({ f }) => ["047", "001", "022", "032", "037"].includes(f.properties.code))
+                .filter(({ f }) => labelCodes.includes(f.properties.code) && byCode.has(f.properties.code))
                 .map(({ f, x, y }) => {
                   const c = byCode.get(f.properties.code)!;
                   const v = metric.value(c);
+                  const edge = c.code === "001" || c.code === "047";
                   return (
                     <g key={c.code} pointerEvents="none" fontFamily="var(--font-body)">
-                      <text x={x + (c.code === "001" ? 8 : c.code === "047" ? 10 : 0)} y={y + (c.code === "001" ? 14 : c.code === "047" ? 18 : -6)} textAnchor={c.code === "047" || c.code === "001" ? "start" : "middle"} fontSize="10" fontWeight="700" fill="var(--text-primary)" stroke="var(--panel)" strokeWidth="3" paintOrder="stroke">
+                      <text x={x + (c.code === "001" ? 8 : c.code === "047" ? 10 : 0)} y={y + (c.code === "001" ? 14 : c.code === "047" ? 18 : -6)} textAnchor={edge ? "start" : "middle"} fontSize="10" fontWeight="700" fill="var(--text-primary)" stroke="var(--panel)" strokeWidth="3" paintOrder="stroke">
                         {c.name}
                         {v !== undefined ? ` ${short(v)}` : ""}
                       </text>
@@ -189,7 +230,7 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
             </div>
             <div className="el-map__ramp-labels">
               <span>{values.length ? short(Math.min(...values)) : ""}</span>
-              <span>Each shade holds about {Math.round(values.length / CLASSES)} counties</span>
+              <span>Each shade holds about {Math.round(values.length / CLASSES)} {noun}</span>
               <span>{values.length ? short(max) : ""}</span>
             </div>
             <div className="el-map__legend-row">
@@ -198,7 +239,7 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
               </label>
               {missing > 0 && (
                 <span className="el-map__nodata">
-                  <i style={{ background: NO_DATA }} /> {missing} counties not reported
+                  <i style={{ background: NO_DATA }} /> {missing} {noun} not reported
                 </span>
               )}
             </div>
@@ -209,7 +250,7 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
           <div className="el-map__card" aria-live="polite">
             {shown ? (
               <>
-                <p className="el-kicker">{shown.region}</p>
+                <p className="el-kicker">{isCounty(shown) ? shown.region : noun.replace(/ies$/, "y").replace(/s$/, "")}</p>
                 <h4>{shown.name}</h4>
                 <dl>
                   {detail
@@ -217,7 +258,7 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
                         <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
                       ))
                     : null}
-                  {!detail && <><div><dt>Registered voters, 2022</dt><dd>{shown.reg2022.toLocaleString()}</dd></div>
+                  {!detail && isCounty(shown) && <><div><dt>Registered voters, 2022</dt><dd>{shown.reg2022.toLocaleString()}</dd></div>
                   <div><dt>Share of the 2022 register</dt><dd>{((shown.reg2022 / 22_102_532) * 100).toFixed(1)}%</dd></div>
                   <div><dt>Population, 2019 census</dt><dd>{shown.pop2019.toLocaleString()}</dd></div>
                   <div><dt>Registered per 100 residents</dt><dd>{((shown.reg2022 / shown.pop2019) * 100).toFixed(0)}</dd></div>
@@ -225,7 +266,7 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
                 </dl>
               </>
             ) : (
-              <p className="el-muted">Point at a county (or tap it) to see its numbers.</p>
+              <p className="el-muted">Point at a {noun.replace(/s$/, "")} (or tap it) to see its numbers.</p>
             )}
           </div>
           <ol className="el-rank">
@@ -243,3 +284,5 @@ export default function ElectionMap({ metrics, defaultKey, caption, detail, rank
     </div>
   );
 }
+
+const isCounty = (u: MapUnit): u is County => "reg2022" in u;

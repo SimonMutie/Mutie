@@ -17,7 +17,7 @@ import {
   type Region,
 } from "../data/kenyaElection";
 import { ElectionDataCtx, mergeLive, type Live } from "../data/electionLive";
-import { api } from "../api";
+import { watchApi } from "../api";
 import ElectionSafety from "./ElectionSafety";
 import ElectionManage from "./ElectionManage";
 import "./Election.css";
@@ -54,7 +54,7 @@ const pct = (n: number, d = 1) => `${n.toFixed(d)}%`;
 
 export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () => void; isAdmin?: boolean }) {
   const [live, setLive] = useState<Live>(() => mergeLive(null));
-  const loadContent = () => api.ewContent().then((c) => setLive(mergeLive(c))).catch(() => {});
+  const loadContent = () => watchApi("ke").content().then((c) => setLive(mergeLive(c))).catch(() => {});
   useEffect(() => {
     loadContent();
     const t = setInterval(loadContent, 5 * 60_000);
@@ -146,7 +146,7 @@ function Overview() {
   const { timeline: TIMELINE } = useContext(ElectionDataCtx);
   const [coverage, setCoverage] = useState<{ id: string; title: string; url: string; domain: string | null; published_at: string }[]>([]);
   useEffect(() => {
-    api.ewCoverage().then((r) => setCoverage(r.slice(0, 5))).catch(() => {});
+    watchApi("ke").coverage().then((r) => setCoverage(r.slice(0, 5))).catch(() => {});
   }, []);
   const days = Math.ceil((at(ELECTION_DAY) - Date.now()) / DAY);
   const next = TIMELINE.filter((m) => at(m.until ?? m.date) >= Date.now() - DAY).sort((a, b) => at(a.date) - at(b.date))[0];

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, getToken, type EwCategory, type EwDashboard, type EwItem } from "../api";
-import ElectionMap, { type Metric } from "./ElectionMap";
-import { COUNTIES } from "../data/kenyaElection";
+import { getToken, watchApi, type EwDashboard, type EwItem, type WatchKey } from "../api";
+import ElectionMap, { type Metric, type MapUnit } from "./ElectionMap";
+import { KE_WATCH_CONFIG, type WatchConfig } from "../data/watchConfig";
 
 /**
  * Political violence, hate speech and related risks around the election: a
@@ -12,35 +12,7 @@ import { COUNTIES } from "../data/kenyaElection";
  * reject items, and the page says how many are verified.
  */
 
-export const EW_LABEL: Record<EwCategory, string> = {
-  political_violence: "Political violence",
-  protest_policing: "Protest violence and policing",
-  abduction: "Abductions and disappearances",
-  election_admin: "Attacks on election administration",
-  intimidation: "Threats and intimidation",
-  hate_speech: "Hate speech and incitement",
-  disinformation: "Election disinformation",
-  coverage: "Election coverage",
-};
-const EW_HELP: Record<string, string> = {
-  political_violence: "Attacks, clashes, killings and arson linked to politicians, rallies or supporters.",
-  protest_policing: "Deaths, injuries and force at protests and demonstrations.",
-  abduction: "Abductions, kidnappings and disappearances of political actors, activists and critics.",
-  election_admin: "Attacks on IEBC offices, registration centres and staff.",
-  intimidation: "Reported threats, harassment and intimidation of candidates, voters and journalists.",
-  hate_speech: "Reports of hate speech, ethnic incitement and NCIC action.",
-  disinformation: "Reported fake or manipulated content about politics and the vote.",
-};
-const CATS = Object.keys(EW_HELP) as EwCategory[];
-const COLORS: Record<string, string> = {
-  political_violence: "#d1352b",
-  protest_policing: "#e07a1f",
-  abduction: "#8a3ffc",
-  election_admin: "#2f66f0",
-  intimidation: "#b3690b",
-  hate_speech: "#c2185b",
-  disinformation: "#0d9488",
-};
+export const EW_LABEL = KE_WATCH_CONFIG.labels;
 
 const ago = (iso: string | null) => {
   if (!iso) return "not yet";
@@ -52,11 +24,16 @@ const ago = (iso: string | null) => {
 };
 const when = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
-export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
+export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG }: { isAdmin: boolean; watch?: WatchConfig }) {
+  const w = watchApi(watch.key);
+  const L = watch.labels;
+  const H = watch.help;
+  const CATS = watch.categories;
+  const COLORS = watch.colors;
   const [days, setDays] = useState(90);
   const [dash, setDash] = useState<EwDashboard | null>(null);
   const [items, setItems] = useState<EwItem[] | null>(null);
-  const [cat, setCat] = useState<EwCategory | "">("");
+  const [cat, setCat] = useState<string>("");
   const [county, setCounty] = useState("");
   const [onlyVerified, setOnlyVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +41,7 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
 
   const load = useCallback(async () => {
     try {
-      const [d, i] = await Promise.all([api.ewDashboard(days), api.ewItems({ days, category: cat, county, status: onlyVerified ? "verified" : "", limit: 80 })]);
+      const [d, i] = await Promise.all([w.dashboard(days), w.items({ days, category: cat, county, status: onlyVerified ? "verified" : "", limit: 80 })]);
       setDash(d);
       setItems(i);
       setError(null);
@@ -93,11 +70,11 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
 
   async function download() {
     try {
-      const res = await fetch(api.ewCsvUrl(days), { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+      const res = await fetch(w.csvUrl(days), { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
       if (!res.ok) throw new Error("Download failed.");
       const a = document.createElement("a");
       a.href = URL.createObjectURL(await res.blob());
-      a.download = `kenya-election-watch-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `${watch.csvName}-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 2000);
     } catch (e) {
@@ -107,10 +84,10 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
 
   const trend = dash ? dash.last7 - dash.prev7 : 0;
   const hate = dash?.byCategory.hate_speech ?? 0;
-  const metrics: Metric[] = useMemo(
+  const metrics: Metric<MapUnit>[] = useMemo(
     () => [
-      { key: "events", label: "Events", note: "Distinct events reported in each county in the period. Reports of the same event are counted once. Counties with no event named in a report show as zero, which means nothing was reported, not that nothing happened.", value: (c) => dash?.byCounty[c.code]?.events ?? 0, format: (n) => `${n} event${n === 1 ? "" : "s"}`, short: (n) => String(n) },
-      { key: "deaths", label: "Reported deaths", note: "Deaths stated in reports of political violence, protest policing, abductions and attacks on election administration, by county. Tolls come from headlines and are lower bounds until verified.", value: (c) => dash?.byCounty[c.code]?.deaths ?? 0, format: (n) => `${n} death${n === 1 ? "" : "s"}`, short: (n) => String(n) },
+      { key: "events", label: "Events", note: `Distinct events reported in each ${watch.noun} in the period. Reports of the same event are counted once. ${watch.nouns[0].toUpperCase()}${watch.nouns.slice(1)} with no event named in a report show as zero, which means nothing was reported, not that nothing happened.`, value: (c) => dash?.byCounty[c.code]?.events ?? 0, format: (n) => `${n} event${n === 1 ? "" : "s"}`, short: (n) => String(n) },
+      { key: "deaths", label: "Reported deaths", note: `Deaths stated in reports, by ${watch.noun}. Tolls come from headlines and are lower bounds until verified.`, value: (c) => dash?.byCounty[c.code]?.deaths ?? 0, format: (n) => `${n} death${n === 1 ? "" : "s"}`, short: (n) => String(n) },
     ],
     [dash],
   );
@@ -120,12 +97,10 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <section className="el-section" id="el-safety">
-      <p className="el-kicker">Live monitoring</p>
-      <h2>Violence and hate speech</h2>
+      <p className="el-kicker">{watch.kicker}</p>
+      <h2>{watch.heading}</h2>
       <div className="el-intro">
-        <p>
-          Political violence, intimidation, hate speech, election disinformation and attacks on election administration, collected from the platform’s news feeds every 15 minutes and coded by type and county. Counts are of events, with duplicate reports grouped. They measure what is reported, so they undercount, and every item starts unverified until an analyst checks it.
-        </p>
+        <p>{watch.intro}</p>
       </div>
 
       <div className="el-live">
@@ -142,7 +117,7 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
         </div>
         <button type="button" className="el-btn" onClick={download}>Download CSV</button>
         {isAdmin && (
-          <button type="button" className="el-btn" disabled={busy === "collect"} onClick={() => act("collect", () => api.ewCollect(72))}>
+          <button type="button" className="el-btn" disabled={busy === "collect"} onClick={() => act("collect", () => w.collect(72))}>
             {busy === "collect" ? "Collecting…" : "Collect now"}
           </button>
         )}
@@ -187,7 +162,7 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
               <li key={k}>
                 <button type="button" aria-pressed={cat === k} onClick={() => setCat(cat === k ? "" : k)}>
                   <i style={{ background: COLORS[k] }} />
-                  <span><b>{EW_LABEL[k]}</b><small>{EW_HELP[k]}</small></span>
+                  <span><b>{L[k]}</b><small>{H[k]}</small></span>
                   <strong>{dash?.byCategory[k] ?? 0}</strong>
                 </button>
               </li>
@@ -199,24 +174,29 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
       <h3 className="el-subhead">Where it is happening</h3>
       <ElectionMap
         metrics={metrics}
+        units={watch.mapUnits}
+        geoUrl={watch.geoUrl}
+        labelCodes={watch.labelCodes}
+        noun={watch.nouns}
+        aria={`Map of ${watch.nouns} by reported events`}
         rankLabel="Top 12"
-        caption="Counties are placed from the place named in the report; reports that name none are not mapped."
+        caption={`${watch.nouns[0].toUpperCase()}${watch.nouns.slice(1)} are placed from the place named in the report; reports that name none are not mapped.`}
         detail={(c) => [
           ["Events", String(dash?.byCounty[c.code]?.events ?? 0)],
           ["Reported deaths", String(dash?.byCounty[c.code]?.deaths ?? 0)],
-          ["Registered voters, 2022", c.reg2022.toLocaleString()],
+          ...(watch.key === "ke" && "reg2022" in c ? [["Registered voters, 2022", (c as unknown as { reg2022: number }).reg2022.toLocaleString()] as [string, string]] : []),
         ]}
       />
 
       <h3 className="el-subhead">Latest reports</h3>
       <div className="el-filters">
-        <select value={cat} onChange={(e) => setCat(e.target.value as EwCategory | "")} aria-label="Type">
+        <select value={cat} onChange={(e) => setCat(e.target.value as string | "")} aria-label="Type">
           <option value="">All types</option>
-          {CATS.map((k) => <option key={k} value={k}>{EW_LABEL[k]}</option>)}
+          {CATS.filter((k) => k !== "coverage").map((k) => <option key={k} value={k}>{L[k]}</option>)}
         </select>
-        <select value={county} onChange={(e) => setCounty(e.target.value)} aria-label="County">
-          <option value="">All counties</option>
-          {COUNTIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+        <select value={county} onChange={(e) => setCounty(e.target.value)} aria-label={watch.noun[0].toUpperCase() + watch.noun.slice(1)}>
+          <option value="">All {watch.nouns}</option>
+          {watch.places.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
         </select>
         <label><input type="checkbox" checked={onlyVerified} onChange={(e) => setOnlyVerified(e.target.checked)} /> Verified only</label>
         <span className="el-muted el-small">{items ? `${items.length} events shown` : ""}</span>
@@ -229,7 +209,7 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
             <span className="el-reports__bar" style={{ background: COLORS[it.category] ?? "var(--text-faint)" }} aria-hidden="true" />
             <div className="el-reports__body">
               <p className="el-reports__meta">
-                <span className="el-reports__cat" style={{ color: COLORS[it.category] }}>{EW_LABEL[it.category]}</span>
+                <span className="el-reports__cat" style={{ color: COLORS[it.category] }}>{L[it.category]}</span>
                 <span>{when(it.published_at)}</span>
                 {it.county && <span>{it.county}</span>}
                 {it.fatalities ? <span className="el-reports__deaths">{it.fatalities} dead</span> : null}
@@ -240,16 +220,16 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
               <p className="el-muted el-small">{it.domain}</p>
               {isAdmin && (
                 <div className="el-reports__admin">
-                  <button type="button" className="el-btn el-btn--small" disabled={busy === it.id} onClick={() => act(it.id, () => api.ewPatchItem(it.id, { status: it.status === "verified" ? "auto" : "verified" }))}>
+                  <button type="button" className="el-btn el-btn--small" disabled={busy === it.id} onClick={() => act(it.id, () => w.patchItem(it.id, { status: it.status === "verified" ? "auto" : "verified" }))}>
                     {it.status === "verified" ? "Unverify" : "Verify"}
                   </button>
-                  <button type="button" className="el-btn el-btn--small" disabled={busy === it.id} onClick={() => act(it.id, () => api.ewPatchItem(it.id, { status: "rejected" }))}>Reject</button>
-                  <select value={it.category} aria-label="Type" onChange={(e) => act(it.id, () => api.ewPatchItem(it.id, { category: e.target.value as EwCategory }))}>
-                    {[...CATS, "coverage" as EwCategory].map((k) => <option key={k} value={k}>{EW_LABEL[k]}</option>)}
+                  <button type="button" className="el-btn el-btn--small" disabled={busy === it.id} onClick={() => act(it.id, () => w.patchItem(it.id, { status: "rejected" }))}>Reject</button>
+                  <select value={it.category} aria-label="Type" onChange={(e) => act(it.id, () => w.patchItem(it.id, { category: e.target.value as string }))}>
+                    {[...CATS, "coverage" as string].map((k) => <option key={k} value={k}>{L[k]}</option>)}
                   </select>
-                  <select value={it.county_code ?? ""} aria-label="County" onChange={(e) => act(it.id, () => api.ewPatchItem(it.id, { county_code: e.target.value || null }))}>
-                    <option value="">No county</option>
-                    {COUNTIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                  <select value={it.county_code ?? ""} aria-label={watch.noun} onChange={(e) => act(it.id, () => w.patchItem(it.id, { county_code: e.target.value || null }))}>
+                    <option value="">No {watch.noun}</option>
+                    {watch.places.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
                   </select>
                 </div>
               )}
@@ -257,21 +237,24 @@ export default function ElectionSafety({ isAdmin }: { isAdmin: boolean }) {
           </li>
         ))}
       </ul>
-      {isAdmin && <AddReport onAdded={load} />}
-      <p className="el-muted el-small">Method: headlines and feed summaries from Kenyan and regional outlets are coded by written rules (type, county, stated deaths). The page stores the headline, a short summary and the link, never the content of a hateful message. Rules can misread a headline, which is why items are marked unverified and can be corrected or rejected. Violence figures come from media reports and undercount events in remote areas and in counties with fewer outlets.</p>
+      {isAdmin && <AddReport watch={watch} onAdded={load} />}
+      <p className="el-muted el-small">Method: {watch.method} The page stores the headline, a short summary and the link, never the content of a hateful message. Rules can misread a headline, which is why items are marked unverified and can be corrected or rejected. Violence figures come from media reports and undercount events in remote areas and in counties with fewer outlets.</p>
     </section>
   );
 }
 
-function AddReport({ onAdded }: { onAdded: () => void }) {
+function AddReport({ watch, onAdded }: { watch: WatchConfig; onAdded: () => void }) {
+  const w = watchApi(watch.key);
+  const L = watch.labels;
+  const CATS = watch.categories;
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ title: "", url: "", category: "political_violence" as EwCategory, county_code: "", published_at: new Date().toISOString().slice(0, 10), fatalities: "" });
+  const [f, setF] = useState({ title: "", url: "", category: CATS[0] as string, county_code: "", published_at: new Date().toISOString().slice(0, 10), fatalities: "" });
   const [msg, setMsg] = useState<string | null>(null);
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setMsg(null);
     try {
-      await api.ewAddItem({ title: f.title.trim(), url: f.url.trim(), category: f.category, county_code: f.county_code || null, published_at: f.published_at, fatalities: f.fatalities === "" ? null : Number(f.fatalities) });
+      await w.addItem({ title: f.title.trim(), url: f.url.trim(), category: f.category, county_code: f.county_code || null, published_at: f.published_at, fatalities: f.fatalities === "" ? null : Number(f.fatalities) });
       setF({ ...f, title: "", url: "", fatalities: "" });
       setMsg("Added as verified.");
       onAdded();
@@ -286,8 +269,8 @@ function AddReport({ onAdded }: { onAdded: () => void }) {
       <label>Headline<input required minLength={5} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} /></label>
       <label>Link<input required type="url" value={f.url} onChange={(e) => setF({ ...f, url: e.target.value })} /></label>
       <div className="el-form__row">
-        <label>Type<select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value as EwCategory })}>{CATS.map((k) => <option key={k} value={k}>{EW_LABEL[k]}</option>)}</select></label>
-        <label>County<select value={f.county_code} onChange={(e) => setF({ ...f, county_code: e.target.value })}><option value="">Not stated</option>{COUNTIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select></label>
+        <label>Type<select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value as string })}>{CATS.filter((k) => k !== "coverage").map((k) => <option key={k} value={k}>{L[k]}</option>)}</select></label>
+        <label>{watch.noun[0].toUpperCase() + watch.noun.slice(1)}<select value={f.county_code} onChange={(e) => setF({ ...f, county_code: e.target.value })}><option value="">Not stated</option>{watch.places.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</select></label>
         <label>Date<input required type="date" value={f.published_at} onChange={(e) => setF({ ...f, published_at: e.target.value })} /></label>
         <label>Deaths<input type="number" min={0} value={f.fatalities} onChange={(e) => setF({ ...f, fatalities: e.target.value })} /></label>
       </div>

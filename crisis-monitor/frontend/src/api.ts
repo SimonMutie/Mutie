@@ -19,7 +19,7 @@ export function getToken(): string | null {
 
 export type UserRole = "admin" | "client";
 
-export type EwCategory = "political_violence" | "protest_policing" | "abduction" | "election_admin" | "intimidation" | "hate_speech" | "disinformation" | "coverage";
+export type EwCategory = string;
 export interface EwItem {
   id: string;
   url: string;
@@ -55,13 +55,13 @@ export interface EwDashboard {
 }
 export interface EwLead {
   id: string;
-  kind: "poll" | "declaration" | "iebc" | "court";
+  kind: string;
   title: string;
   url: string;
   domain: string | null;
   published_at: string;
 }
-export type EwContent = Record<"poll" | "candidate" | "milestone", { id: string; data: Record<string, unknown>; updated_at: string }[]>;
+export type EwContent = Record<string, { id: string; data: Record<string, unknown>; updated_at: string }[]>;
 
 export interface BroadcastAudience {
   mode: "all_clients" | "clients" | "list_only";
@@ -1798,22 +1798,6 @@ export const api = {
   getSpotlightEntry: (id: string) => req<SpotlightEntry>(`/api/spotlight/${id}`),
   createSpotlightEntry: (data: SpotlightEntryInput) => req<SpotlightEntry>("/api/spotlight", { method: "POST", body: JSON.stringify(data) }),
   updateSpotlightEntry: (id: string, data: SpotlightEntryInput) => req<SpotlightEntry>(`/api/spotlight/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  ewDashboard: (days: number) => req<EwDashboard>(`/api/election-watch/ke/dashboard?days=${days}`),
-  ewItems: (p: { category?: string; county?: string; days?: number; status?: string; limit?: number }) => {
-    const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== "") q.set(k, String(v));
-    return req<EwItem[]>(`/api/election-watch/ke/items?${q}`);
-  },
-  ewCoverage: () => req<{ id: string; title: string; url: string; domain: string | null; published_at: string }[]>("/api/election-watch/ke/coverage"),
-  ewContent: () => req<EwContent>("/api/election-watch/ke/content"),
-  ewSaveContent: (kind: string, id: string, data: unknown) => req<{ ok: boolean }>(`/api/election-watch/ke/content/${kind}/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  ewRemoveContent: (kind: string, id: string) => req<{ ok: boolean }>(`/api/election-watch/ke/content/${kind}/${id}`, { method: "DELETE" }),
-  ewLeads: () => req<EwLead[]>("/api/election-watch/ke/leads"),
-  ewSetLead: (id: string, status: "pending" | "done" | "dismissed") => req<{ ok: boolean }>(`/api/election-watch/ke/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
-  ewPatchItem: (id: string, data: { status?: "auto" | "verified" | "rejected"; category?: EwCategory; county_code?: string | null; fatalities?: number | null }) => req<{ ok: boolean }>(`/api/election-watch/ke/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  ewAddItem: (data: { title: string; url: string; category: EwCategory; county_code?: string | null; published_at: string; fatalities?: number | null }) => req<{ id: string }>("/api/election-watch/ke/items", { method: "POST", body: JSON.stringify(data) }),
-  ewCollect: (hours?: number) => req<{ scanned: number; inserted: number; leads: number }>("/api/election-watch/ke/collect", { method: "POST", body: JSON.stringify({ hours }) }),
-  ewCsvUrl: (days: number) => `${API_URL}/api/election-watch/ke/items.csv?days=${days}`,
   deleteSpotlightEntry: (id: string) => req<{ ok: boolean }>(`/api/spotlight/${id}`, { method: "DELETE" }),
   /** Uploads one image for an article and returns the address to show it from. */
   uploadSpotlightImage: async (image: Blob) => {
@@ -2112,6 +2096,35 @@ export const api = {
     req<SavedListeningQuery>(`/api/listening-queries/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteListeningQuery: (id: string) => req<{ ok: boolean }>(`/api/listening-queries/${id}`, { method: "DELETE" }),
 };
+
+/** The election watches. Each country has its own router; the calls are the same. */
+export type WatchKey = "ke" | "ss";
+export const watchApi = (k: WatchKey) => {
+  const base = `/api/election-watch/${k}`;
+  return {
+    dashboard: (days: number) => req<EwDashboard>(`${base}/dashboard?days=${days}`),
+    items: (p: { category?: string; county?: string; days?: number; status?: string; limit?: number }) => {
+      const q = new URLSearchParams();
+      if (p.category) q.set("category", p.category);
+      if (p.county) q.set("county", p.county);
+      if (p.days) q.set("days", String(p.days));
+      if (p.status) q.set("status", p.status);
+      if (p.limit) q.set("limit", String(p.limit));
+      return req<EwItem[]>(`${base}/items?${q}`);
+    },
+    coverage: () => req<{ id: string; title: string; url: string; domain: string | null; published_at: string }[]>(`${base}/coverage`),
+    content: () => req<EwContent>(`${base}/content`),
+    saveContent: (kind: string, id: string, data: unknown) => req<{ ok: boolean }>(`${base}/content/${kind}/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    removeContent: (kind: string, id: string) => req<{ ok: boolean }>(`${base}/content/${kind}/${id}`, { method: "DELETE" }),
+    leads: () => req<EwLead[]>(`${base}/leads`),
+    setLead: (id: string, status: "pending" | "done" | "dismissed") => req<{ ok: boolean }>(`${base}/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
+    patchItem: (id: string, data: { status?: "auto" | "verified" | "rejected"; category?: EwCategory; county_code?: string | null; fatalities?: number | null }) => req<{ ok: boolean }>(`${base}/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    addItem: (data: { title: string; url: string; category: EwCategory; county_code?: string | null; published_at: string; fatalities?: number | null }) => req<{ id: string }>(`${base}/items`, { method: "POST", body: JSON.stringify(data) }),
+    collect: (hours?: number) => req<{ scanned: number; inserted: number; leads: number }>(`${base}/collect`, { method: "POST", body: JSON.stringify({ hours }) }),
+    csvUrl: (days: number) => `${API_URL}${base}/items.csv?days=${days}`,
+  };
+};
+
 
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
   let ws: WebSocket | null = null;

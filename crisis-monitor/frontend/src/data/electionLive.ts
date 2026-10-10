@@ -26,7 +26,7 @@ export const slug = (s: string) =>
 export const milestoneId = (m: { date: string; title: string }) => `${m.date}-${slug(m.title)}`.slice(0, 60);
 
 type Row = { id: string; data: Record<string, unknown> };
-function overlay<T extends { id?: string }>(base: T[], idOf: (t: T) => string, rows: Row[] | undefined, make: (data: Record<string, unknown>, id: string, prev?: T) => T): T[] {
+export function overlay<T extends { id?: string }>(base: T[], idOf: (t: T) => string, rows: Row[] | undefined, make: (data: Record<string, unknown>, id: string, prev?: T) => T): T[] {
   const map = new Map(base.map((b) => [idOf(b), b]));
   for (const r of rows ?? []) {
     if (r.data.deleted) map.delete(r.id);

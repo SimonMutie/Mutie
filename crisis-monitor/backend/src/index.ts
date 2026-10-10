@@ -25,8 +25,9 @@ import { alertSubscriptionsRouter } from "./routes/alertSubscriptions";
 import { sourceRegisterRouter } from "./routes/sourceRegister";
 import { broadcastsRouter } from "./routes/broadcasts";
 import { contactsRouter } from "./routes/contacts";
-import { electionWatchRouter } from "./routes/electionWatch";
-import { collectElectionItems } from "./lib/electionWatch";
+import { electionWatchRouter, southSudanWatchRouter } from "./routes/electionWatch";
+import { collectElectionItems, KE_WATCH } from "./lib/electionWatch";
+import { SS_WATCH } from "./lib/southSudanWatch";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
 import { refreshStaleLists } from "./lib/dd/sanctionsLists";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
@@ -119,6 +120,7 @@ app.route("/api/source-register", sourceRegisterRouter);
 app.route("/api/broadcasts", broadcastsRouter);
 app.route("/api/contacts", contactsRouter);
 app.route("/api/election-watch/ke", electionWatchRouter);
+app.route("/api/election-watch/ss", southSudanWatchRouter);
 app.route("/api/due-diligence", dueDiligenceRouter);
 app.route("/api/public/spotlight", publicSpotlightRouter);
 
@@ -231,14 +233,17 @@ export default {
       );
     }
 
-    // Kenya Election Watch: political violence, hate-speech and election
-    // coverage collected from the same feeds (lib/electionWatch.ts).
+    // Election watches: Kenya (political violence, hate speech, coverage) and
+    // South Sudan (conflict, agreement breaches, transition), each collected
+    // from the same feeds (lib/electionWatch.ts, lib/southSudanWatch.ts).
     if (isWatchTick(controller.scheduledTime)) {
-      ctx.waitUntil(
-        collectElectionItems(env)
-          .then((r) => r.inserted > 0 && console.log(`[election-watch] ${r.inserted} new items (${r.leads} leads) from ${r.scanned} scanned`))
-          .catch((err) => console.error("[election-watch] collection failed", err))
-      );
+      for (const W of [KE_WATCH, SS_WATCH]) {
+        ctx.waitUntil(
+          collectElectionItems(env, 30, W)
+            .then((r) => r.inserted > 0 && console.log(`[election-watch:${W.key}] ${r.inserted} new items (${r.leads} leads) from ${r.scanned} scanned`))
+            .catch((err) => console.error(`[election-watch:${W.key}] collection failed`, err))
+        );
+      }
     }
 
     // Africa Wire crawl (see durableObjects/africaWireActor.ts) — enqueues

@@ -118,7 +118,7 @@ export function findCounty(title: string, text: string): string | null {
 /* ── coding ───────────────────────────────────────────────── */
 
 export interface Coding {
-  category: Category;
+  category: string;
   severity: 1 | 2 | 3;
   fatalities: number | null;
   countyCode: string | null;
@@ -191,43 +191,83 @@ export function leadKind(title: string, summary: string): "poll" | "declaration"
   return null;
 }
 
-/* ── storage ──────────────────────────────────────────────── */
+/* ── configuration per country ────────────────────────────── */
 
-let ready: Promise<unknown> | null = null;
-export function resetElectionWatchCheck() {
-  ready = null;
+export interface WatchTables {
+  items: string;
+  leads: string;
+  content: string;
+  state: string;
 }
 
-export async function ensureElectionWatchTables(env: Env): Promise<void> {
-  if (!ready) {
-    ready = (async () => {
-      await run(env.DB, `CREATE TABLE IF NOT EXISTS ew_items (
+/**
+ * One watch per country. The engine is the same for each; what differs is
+ * the feed query, the coding rules, the categories, the place list and the
+ * kinds of lead and content. Tables are named from the key so the two
+ * countries never share rows.
+ */
+export interface Watch {
+  key: string;
+  csvName: string;
+  t: WatchTables;
+  categories: readonly string[];
+  labels: Record<string, string>;
+  /** What a stored place code looks like (validated on write). */
+  placeRe: RegExp;
+  query: string;
+  code: (title: string, summary: string, domain: string) => Coding | null;
+  leadKind: (title: string, summary: string) => string | null;
+  leadKinds: readonly string[];
+  contentKinds: readonly string[];
+  /** Categories that carry a death toll. */
+  deathCategories: readonly string[];
+  /** Display names for place codes. */
+  places?: Map<string, string>;
+}
+
+const tablesFor = (prefix: string): WatchTables => ({ items: `${prefix}_items`, leads: `${prefix}_leads`, content: `${prefix}_content`, state: `${prefix}_state` });
+
+/* ── storage ──────────────────────────────────────────────── */
+
+const ready = new Map<string, Promise<unknown>>();
+export function resetElectionWatchCheck() {
+  ready.clear();
+}
+
+export async function ensureElectionWatchTables(env: Env, W: Watch = KE_WATCH): Promise<void> {
+  let p = ready.get(W.key);
+  if (!p) {
+    const t = W.t;
+    p = (async () => {
+      await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.items} (
         id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL, summary TEXT, domain TEXT, published_at TEXT NOT NULL,
         category TEXT NOT NULL, severity INTEGER NOT NULL DEFAULT 1, county_code TEXT, fatalities INTEGER,
         cluster_id TEXT NOT NULL, method TEXT NOT NULL DEFAULT 'rules', status TEXT NOT NULL DEFAULT 'auto', note TEXT,
         created_at TEXT NOT NULL, reviewed_at TEXT)`);
-      await run(env.DB, "CREATE INDEX IF NOT EXISTS idx_ew_items_pub ON ew_items (published_at)");
-      await run(env.DB, "CREATE INDEX IF NOT EXISTS idx_ew_items_cluster ON ew_items (cluster_id)");
-      await run(env.DB, `CREATE TABLE IF NOT EXISTS ew_leads (
+      await run(env.DB, `CREATE INDEX IF NOT EXISTS idx_${t.items}_pub ON ${t.items} (published_at)`);
+      await run(env.DB, `CREATE INDEX IF NOT EXISTS idx_${t.items}_cluster ON ${t.items} (cluster_id)`);
+      await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.leads} (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL UNIQUE, domain TEXT, published_at TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`);
-      await run(env.DB, "CREATE TABLE IF NOT EXISTS ew_content (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (kind, id))");
-      await run(env.DB, "CREATE TABLE IF NOT EXISTS ew_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.content} (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (kind, id))`);
+      await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.state} (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
     })().catch((err) => {
-      ready = null;
+      ready.delete(W.key);
       throw err;
     });
+    ready.set(W.key, p);
   }
-  await ready;
+  await p;
 }
 
+const STOP = new Set(["with", "from", "that", "this", "after", "over", "says", "kenya", "kenyan", "south", "sudan", "sudanese"]);
 const tokens = (s: string) =>
   new Set(
     s
       .toLowerCase()
       .replace(/[^a-z0-9 ]+/g, " ")
       .split(/\s+/)
-      .filter((w) => w.length > 3 && !["with", "from", "that", "this", "after", "over", "says", "kenya", "kenyan"].includes(w)),
+      .filter((w) => w.length > 3 && !STOP.has(w)),
   );
 function jaccard(a: Set<string>, b: Set<string>): number {
   if (!a.size || !b.size) return 0;
@@ -236,23 +276,22 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return n / (a.size + b.size - n);
 }
 
-/** The cluster an item joins: a recent item of the same category (and county) with a similar headline, else its own. */
-export async function clusterFor(env: Env, category: Category, countyCode: string | null, title: string, publishedAt: string): Promise<string | null> {
+/** The cluster an item joins: a recent item of the same category (and place) with a similar headline, else its own. */
+export async function clusterFor(env: Env, category: string, placeCode: string | null, title: string, publishedAt: string, W: Watch = KE_WATCH): Promise<string | null> {
   if (category === "coverage") return null;
   const t = Date.parse(publishedAt);
   const lo = new Date(t - 2 * 86_400_000).toISOString();
   const hi = new Date(t + 2 * 86_400_000).toISOString();
-  const rows = await all<{ cluster_id: string; title: string; county_code: string | null }>(env.DB, "SELECT cluster_id, title, county_code FROM ew_items WHERE category = ? AND published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 80", [category, lo, hi]);
+  const rows = await all<{ cluster_id: string; title: string; county_code: string | null }>(env.DB, `SELECT cluster_id, title, county_code FROM ${W.t.items} WHERE category = ? AND published_at BETWEEN ? AND ? ORDER BY published_at DESC LIMIT 80`, [category, lo, hi]);
   const mine = tokens(title);
   for (const r of rows) {
-    const sameCounty = countyCode && r.county_code === countyCode;
-    if (jaccard(mine, tokens(r.title)) >= (sameCounty ? 0.34 : 0.55)) return r.cluster_id;
+    const samePlace = placeCode && r.county_code === placeCode;
+    if (jaccard(mine, tokens(r.title)) >= (samePlace ? 0.34 : 0.55)) return r.cluster_id;
   }
   return null;
 }
 
-export const COLLECTION_QUERY =
-  '(Kenya OR Kenyan OR Nairobi OR IEBC OR NCIC OR Ruto OR Gachagua OR Kalonzo OR "Matiang\'i" OR Sifuna OR Raila OR Oburu OR "Kenya Kwanza" OR Azimio OR "United Opposition" OR DCP OR "Gen Z")';
+/* ── collection ───────────────────────────────────────────── */
 
 export interface CollectResult {
   scanned: number;
@@ -260,11 +299,11 @@ export interface CollectResult {
   leads: number;
 }
 
-/** Reads the feeds once and stores what is Kenyan political reporting. Idempotent: an article is stored once. */
-export async function collectElectionItems(env: Env, maxAgeHours = 30): Promise<CollectResult> {
-  await ensureElectionWatchTables(env);
-  const parsed = parseBooleanQuery(COLLECTION_QUERY);
-  const hits = (await searchFeeds(env, [{ id: "ew", text: COLLECTION_QUERY, parsed }], maxAgeHours, 700)).get("ew") ?? [];
+/** Reads the feeds once and stores what this country's watch codes. Idempotent: an article is stored once. */
+export async function collectElectionItems(env: Env, maxAgeHours = 30, W: Watch = KE_WATCH): Promise<CollectResult> {
+  await ensureElectionWatchTables(env, W);
+  const parsed = parseBooleanQuery(W.query);
+  const hits = (await searchFeeds(env, [{ id: "ew", text: W.query, parsed }], maxAgeHours, 700)).get("ew") ?? [];
   let inserted = 0;
   let leads = 0;
   const now = nowIso();
@@ -272,26 +311,26 @@ export async function collectElectionItems(env: Env, maxAgeHours = 30): Promise<
     const title = (h.title ?? "").replace(/\s+/g, " ").trim();
     if (!title || !h.link) continue;
     const summary = (h.text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 420);
-    const code = codeReport(title, summary, h.domain);
+    const code = W.code(title, summary, h.domain);
     if (!code) continue;
-    const existing = await first<{ id: string }>(env.DB, "SELECT id FROM ew_items WHERE url = ?", [h.link]);
+    const existing = await first<{ id: string }>(env.DB, `SELECT id FROM ${W.t.items} WHERE url = ?`, [h.link]);
     if (existing) continue;
     const id = newId();
-    const cluster = (await clusterFor(env, code.category, code.countyCode, title, h.published)) ?? id;
-    await run(env.DB, "INSERT OR IGNORE INTO ew_items (id, url, title, summary, domain, published_at, category, severity, county_code, fatalities, cluster_id, method, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'rules','auto',?)", [
+    const cluster = (await clusterFor(env, code.category, code.countyCode, title, h.published, W)) ?? id;
+    await run(env.DB, `INSERT OR IGNORE INTO ${W.t.items} (id, url, title, summary, domain, published_at, category, severity, county_code, fatalities, cluster_id, method, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,'rules','auto',?)`, [
       id, h.link, title, summary, h.domain, h.published, code.category, code.severity, code.countyCode, code.fatalities, cluster, now,
     ]);
     inserted++;
     if (code.category === "coverage") {
-      const kind = leadKind(title, summary);
+      const kind = W.leadKind(title, summary);
       if (kind) {
-        await run(env.DB, "INSERT OR IGNORE INTO ew_leads (id, kind, title, url, domain, published_at, status, created_at) VALUES (?,?,?,?,?,?, 'pending', ?)", [newId(), kind, title, h.link, h.domain, h.published, now]);
+        await run(env.DB, `INSERT OR IGNORE INTO ${W.t.leads} (id, kind, title, url, domain, published_at, status, created_at) VALUES (?,?,?,?,?,?, 'pending', ?)`, [newId(), kind, title, h.link, h.domain, h.published, now]);
         leads++;
       }
     }
   }
-  await run(env.DB, "INSERT INTO ew_state (key, value) VALUES ('last_collect', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [now]);
-  await run(env.DB, "INSERT INTO ew_state (key, value) VALUES ('last_scanned', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [String(hits.length)]);
+  await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES ('last_collect', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [now]);
+  await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES ('last_scanned', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(hits.length)]);
   return { scanned: hits.length, inserted, leads };
 }
 
@@ -304,7 +343,7 @@ export interface ItemRow {
   summary: string | null;
   domain: string | null;
   published_at: string;
-  category: Category;
+  category: string;
   severity: number;
   county_code: string | null;
   fatalities: number | null;
@@ -321,10 +360,10 @@ const weekStart = (iso: string) => {
   return d.toISOString().slice(0, 10);
 };
 
-export async function buildDashboard(env: Env, days = 90) {
-  await ensureElectionWatchTables(env);
+export async function buildDashboard(env: Env, days = 90, W: Watch = KE_WATCH) {
+  await ensureElectionWatchTables(env, W);
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const rows = await all<ItemRow>(env.DB, "SELECT * FROM ew_items WHERE published_at >= ? AND category != 'coverage' AND status != 'rejected' ORDER BY published_at DESC LIMIT 6000", [since]);
+  const rows = await all<ItemRow>(env.DB, `SELECT * FROM ${W.t.items} WHERE published_at >= ? AND category != 'coverage' AND status != 'rejected' ORDER BY published_at DESC LIMIT 6000`, [since]);
 
   // One event per cluster: the earliest report, with the highest severity and toll and the number of reports behind it.
   const clusters = new Map<string, { first: ItemRow; reports: number; severity: number; fatalities: number; verified: boolean; counties: Set<string> }>();
@@ -367,9 +406,9 @@ export async function buildDashboard(env: Env, days = 90) {
     if (age <= 7) last7++;
     else if (age <= 14) prev7++;
   }
-  const state = await all<{ key: string; value: string }>(env.DB, "SELECT key, value FROM ew_state");
+  const state = await all<{ key: string; value: string }>(env.DB, `SELECT key, value FROM ${W.t.state}`);
   const st = Object.fromEntries(state.map((s) => [s.key, s.value]));
-  const coverage = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM ew_items WHERE category = 'coverage' AND published_at >= ?", [since]);
+  const coverage = await first<{ n: number }>(env.DB, `SELECT COUNT(*) AS n FROM ${W.t.items} WHERE category = 'coverage' AND published_at >= ?`, [since]);
   return {
     days,
     events: events.length,
@@ -386,3 +425,24 @@ export async function buildDashboard(env: Env, days = 90) {
     lastScanned: st.last_scanned ? Number(st.last_scanned) : null,
   };
 }
+
+export const COLLECTION_QUERY =
+  '(Kenya OR Kenyan OR Nairobi OR IEBC OR NCIC OR Ruto OR Gachagua OR Kalonzo OR "Matiang\'i" OR Sifuna OR Raila OR Oburu OR "Kenya Kwanza" OR Azimio OR "United Opposition" OR DCP OR "Gen Z")';
+
+/* ── the Kenya watch ──────────────────────────────────────── */
+
+export const KE_WATCH: Watch = {
+  key: "ke",
+  csvName: "kenya-election-watch",
+  t: tablesFor("ew"),
+  categories: CATEGORIES,
+  labels: CATEGORY_LABELS,
+  placeRe: /^\d{3}$/,
+  query: COLLECTION_QUERY,
+  code: codeReport,
+  leadKind,
+  leadKinds: ["poll", "declaration", "iebc", "court"],
+  contentKinds: ["poll", "candidate", "milestone"],
+  deathCategories: ["political_violence", "protest_policing", "abduction", "election_admin"],
+  places: new Map(COUNTY_LIST),
+};

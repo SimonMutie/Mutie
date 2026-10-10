@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type EwLead } from "../api";
+import { watchApi, type EwLead } from "../api";
 import type { Candidate, Milestone, Phase, Poll, Standing } from "../data/kenyaElection";
 import { milestoneId, slug, type Live } from "../data/electionLive";
 
@@ -11,7 +11,8 @@ import { milestoneId, slug, type Live } from "../data/electionLive";
  * collector found, and appears for everyone straight away.
  */
 
-const LEAD_LABEL: Record<EwLead["kind"], string> = { poll: "Possible new poll", declaration: "Possible declaration", iebc: "IEBC notice", court: "Court or legal development" };
+const ke = watchApi("ke");
+const LEAD_LABEL: Record<string, string> = { poll: "Possible new poll", declaration: "Possible declaration", iebc: "IEBC notice", court: "Court or legal development" };
 type Tab = "leads" | "polls" | "candidates" | "timeline";
 
 export default function ElectionManage({ live, onChanged }: { live: Live; onChanged: () => void }) {
@@ -20,7 +21,7 @@ export default function ElectionManage({ live, onChanged }: { live: Live; onChan
   const [msg, setMsg] = useState<string | null>(null);
   const [poll, setPoll] = useState<Partial<Poll> | null>(null);
 
-  const loadLeads = () => api.ewLeads().then(setLeads).catch(() => setLeads([]));
+  const loadLeads = () => ke.leads().then(setLeads).catch(() => setLeads([]));
   useEffect(() => {
     loadLeads();
   }, []);
@@ -64,8 +65,8 @@ export default function ElectionManage({ live, onChanged }: { live: Live; onChan
                   {l.kind === "poll" && (
                     <button type="button" className="el-btn el-btn--small" onClick={() => { setPoll({ source: { label: l.domain ?? "Source", url: l.url }, published: l.published_at.slice(0, 10) }); setTab("polls"); }}>Add poll</button>
                   )}
-                  <button type="button" className="el-btn el-btn--small" onClick={() => run(() => api.ewSetLead(l.id, "done").then(loadLeads), "Marked done.")}>Done</button>
-                  <button type="button" className="el-btn el-btn--small" onClick={() => run(() => api.ewSetLead(l.id, "dismissed").then(loadLeads), "Dismissed.")}>Dismiss</button>
+                  <button type="button" className="el-btn el-btn--small" onClick={() => run(() => ke.setLead(l.id, "done").then(loadLeads), "Marked done.")}>Done</button>
+                  <button type="button" className="el-btn el-btn--small" onClick={() => run(() => ke.setLead(l.id, "dismissed").then(loadLeads), "Dismissed.")}>Dismiss</button>
                 </span>
               </li>
             ))}
@@ -95,7 +96,7 @@ function PollsTab({ live, draft, setDraft, run }: { live: Live; draft: Partial<P
             <b>{p.pollster}</b> <small>{p.fieldwork}</small>
             <span className="el-leads__actions">
               <button type="button" className="el-btn el-btn--small" onClick={() => setDraft(p)}>Edit</button>
-              <button type="button" className="el-btn el-btn--small" onClick={() => confirm(`Remove the ${p.pollster} poll?`) && run(() => api.ewSaveContent("poll", p.id, { deleted: true }), "Poll removed.")}>Remove</button>
+              <button type="button" className="el-btn el-btn--small" onClick={() => confirm(`Remove the ${p.pollster} poll?`) && run(() => ke.saveContent("poll", p.id, { deleted: true }), "Poll removed.")}>Remove</button>
             </span>
           </li>
         ))}
@@ -162,7 +163,7 @@ function PollForm({ live, initial, onClose, run }: { live: Live; initial: Partia
       disclosed: { fieldwork: f.fieldworkOk, sample: f.sampleOk, margin: f.marginOk, mode: f.modeOk },
       source: { label: f.sourceLabel.trim() || "Source", url: f.sourceUrl.trim() },
     };
-    await run(() => api.ewSaveContent("poll", id, poll), "Poll saved. It is live now.");
+    await run(() => ke.saveContent("poll", id, poll), "Poll saved. It is live now.");
     onClose();
   }
 
@@ -221,7 +222,7 @@ function CandidatesTab({ live, run }: { live: Live; run: Run }) {
             <b>{c.name}</b> <small>{c.standing} · {c.party}</small>
             <span className="el-leads__actions">
               <button type="button" className="el-btn el-btn--small" onClick={() => setEdit(c)}>Edit</button>
-              <button type="button" className="el-btn el-btn--small" onClick={() => confirm(`Remove ${c.name} from the field?`) && run(() => api.ewSaveContent("candidate", c.id, { deleted: true }), "Candidate removed.")}>Remove</button>
+              <button type="button" className="el-btn el-btn--small" onClick={() => confirm(`Remove ${c.name} from the field?`) && run(() => ke.saveContent("candidate", c.id, { deleted: true }), "Candidate removed.")}>Remove</button>
             </span>
           </li>
         ))}
@@ -248,7 +249,7 @@ function CandidateForm({ initial, onClose, run }: { initial: Partial<Candidate>;
     e.preventDefault();
     const id = initial.id ?? slug(f.name);
     const data = { id, name: f.name.trim(), party: f.party.trim(), wiki: f.wiki.trim() || f.name.trim().replace(/ /g, "_"), standing: f.standing, role: f.role.trim(), base: f.base.trim(), bio: f.bio.trim(), assets: lines(f.assets), risks: lines(f.risks) };
-    await run(() => api.ewSaveContent("candidate", id, data), "Candidate saved. It is live now.");
+    await run(() => ke.saveContent("candidate", id, data), "Candidate saved. It is live now.");
     onClose();
   }
   return (
@@ -295,7 +296,7 @@ function TimelineTab({ live, run }: { live: Live; run: Run }) {
               <b>{m.date}</b> {m.title}
               <span className="el-leads__actions">
                 <button type="button" className="el-btn el-btn--small" onClick={() => setEdit({ ...m, id })}>Edit</button>
-                <button type="button" className="el-btn el-btn--small" onClick={() => confirm(`Remove “${m.title}”?`) && run(() => api.ewSaveContent("milestone", id, { deleted: true }), "Removed.")}>Remove</button>
+                <button type="button" className="el-btn el-btn--small" onClick={() => confirm(`Remove “${m.title}”?`) && run(() => ke.saveContent("milestone", id, { deleted: true }), "Removed.")}>Remove</button>
               </span>
             </li>
           );
@@ -312,7 +313,7 @@ function MilestoneForm({ initial, onClose, run }: { initial: Partial<Milestone> 
     e.preventDefault();
     const id = initial.id ?? milestoneId(f);
     const data: Milestone = { date: f.date, until: f.until || undefined, title: f.title.trim(), detail: f.detail.trim(), phase: f.phase, basis: f.basis, key: f.key || undefined };
-    await run(() => api.ewSaveContent("milestone", id, data), "Saved. It is on the calendar now.");
+    await run(() => ke.saveContent("milestone", id, data), "Saved. It is on the calendar now.");
     onClose();
   }
   return (
