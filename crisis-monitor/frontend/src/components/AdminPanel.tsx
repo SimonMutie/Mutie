@@ -483,6 +483,8 @@ function ClientDetail({
             </div>
           </label>
 
+          <AllowancesSection clientId={clientId} />
+
           <CountryAccessSection clientId={clientId} />
 
           <SharedItemsSection
@@ -879,6 +881,74 @@ function SharedItemsSection({
         </>
       )}
     </div>
+  );
+}
+
+/** This month's use against each allowance, and the limits this client has. */
+function AllowancesSection({ clientId }: { clientId: string }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.getClientUsage>> | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function load() {
+    const d = await api.getClientUsage(clientId);
+    setData(d);
+    const next: Record<string, string> = {};
+    for (const m of d.monthly) next[m.kind] = String(m.limit);
+    for (const s of d.stock) next[s.kind] = String(s.limit);
+    setDraft(next);
+  }
+  useEffect(() => {
+    load().catch(() => setMsg("Couldn't load allowances."));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientId]);
+
+  async function save() {
+    if (!data) return;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(draft)) {
+      const n = Math.max(0, Math.round(Number(v)));
+      if (Number.isFinite(n) && n !== data.defaults[k]) out[k] = n;
+    }
+    try {
+      await api.setClientQuotas(clientId, out);
+      setMsg("Saved.");
+      await load();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Couldn't save.");
+    }
+  }
+
+  if (!data) return null;
+  const row = (kind: string, label: string, used?: number) => (
+    <div key={kind} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 12.5 }}>
+      <div style={{ flex: 1 }}>{label}</div>
+      {used !== undefined && <div className="mono" style={{ color: "var(--text-muted)", width: 60, textAlign: "right" }}>{used} used</div>}
+      <input
+        type="number"
+        min={0}
+        value={draft[kind] ?? ""}
+        onChange={(e) => setDraft({ ...draft, [kind]: e.target.value })}
+        style={{ ...inputStyle, width: 90, padding: "4px 8px" }}
+      />
+    </div>
+  );
+  return (
+    <>
+      <div className="eyebrow" style={{ marginTop: 20, marginBottom: 10 }}>
+        ALLOWANCES
+      </div>
+      <div className="panel" style={{ padding: "12px 14px", marginBottom: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        {data.monthly.map((m) => row(m.kind, m.label, m.used))}
+        {data.stock.map((s) => row(s.kind, s.label))}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={save} style={primaryBtnStyle}>
+            Save limits
+          </button>
+          {msg && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{msg}</span>}
+        </div>
+      </div>
+    </>
   );
 }
 

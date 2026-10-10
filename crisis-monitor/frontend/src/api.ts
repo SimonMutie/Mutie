@@ -1519,6 +1519,15 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   me: () => req<AuthUser>("/api/auth/me"),
+  getClientUsage: (clientId: string) =>
+    req<{
+      monthly: { kind: string; label: string; used: number; limit: number }[];
+      stock: { kind: string; label: string; limit: number }[];
+      defaults: Record<string, number>;
+      overrides: Record<string, number>;
+    }>(`/api/clients/${clientId}/usage`),
+  setClientQuotas: (clientId: string, limits: Record<string, number>) =>
+    req<{ ok: boolean }>(`/api/clients/${clientId}/quotas`, { method: "PUT", body: JSON.stringify(limits) }),
   logoutAll: () => req<{ ok: boolean }>("/api/auth/logout-all", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),

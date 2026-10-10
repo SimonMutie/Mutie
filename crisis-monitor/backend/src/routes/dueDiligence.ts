@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, run, nowIso } from "../db";
 import { requireAuth, type AuthedVariables } from "../middleware";
+import { consumeQuota } from "../lib/quota";
 import { runDueDiligence, type DdResult } from "../lib/dd/run";
 import { LIST_SOURCES, listStatuses, refreshList, type ListId } from "../lib/dd/sanctionsLists";
 import type { Env } from "../bindings";
@@ -87,6 +88,9 @@ dueDiligenceRouter.post("/", async (c) => {
   const cap = Math.max(0, Number(c.env.DUE_DILIGENCE_RUNS_PER_DAY ?? DEFAULT_RUNS_PER_DAY) || 0);
   const today = await first<{ n: number }>(c.env.DB, "SELECT COUNT(*) AS n FROM due_diligence_cases WHERE created_at >= ?", [`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`]);
   if (Number(today?.n ?? 0) >= cap) return c.json({ error: `Today's ${cap} screenings have been used. More can be run after 03:00 Nairobi time.` }, 429);
+
+  const over = await consumeQuota(c, "due_diligence");
+  if (over) return over;
 
   let result;
   try {

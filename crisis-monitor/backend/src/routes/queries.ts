@@ -1,6 +1,7 @@
+import { checkStock } from "../lib/quota";
 import { Hono } from "hono";
 import { z } from "zod";
-import { all, nowIso } from "../db";
+import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
 import { validateBooleanQuery, parseBooleanQuery, evaluate } from "../booleanQuery";
 import { rowToMonitoringQuery } from "../mappers";
@@ -56,6 +57,12 @@ queriesRouter.post("/", async (c) => {
   const validationError = validateBooleanQuery(parsed.data.boolean_query);
   if (validationError) {
     return c.json({ error: `Invalid boolean query: ${validationError}` }, 400);
+  }
+
+  if (c.get("role") !== "admin") {
+    const owned = await first<{ n: number }>(c.env.DB, `SELECT COUNT(*) AS n FROM monitoring_queries WHERE owner_id IN (SELECT id FROM users WHERE client_id = (SELECT client_id FROM users WHERE id = ?) OR id = ?)`, [c.get("userId"), c.get("userId")]);
+    const over = await checkStock(c, "monitoring_queries", owned?.n ?? 0);
+    if (over) return over;
   }
 
   const id = newId();

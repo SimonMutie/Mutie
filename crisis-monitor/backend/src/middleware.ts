@@ -2,6 +2,7 @@ import type { Context, Next } from "hono";
 import type { Env } from "./bindings";
 import type { UserRole } from "./types";
 import { verifySessionToken } from "./auth";
+import { rateLimited } from "./lib/quota";
 
 export interface AuthedVariables {
   userId: string;
@@ -68,6 +69,11 @@ export async function requireAuth(c: AuthedContext, next: Next) {
 
   const payload = await verifySessionToken(token, c.env.SESSION_SECRET);
   if (!payload) return c.json({ error: "Invalid or expired session" }, 401);
+
+  if (rateLimited(payload.userId, payload.role)) {
+    c.header("Retry-After", "30");
+    return c.json({ error: "Too many requests — slow down for a moment." }, 429);
+  }
 
   const gate = await loadGate(c.env, payload.userId);
   if (gate === null) return c.json({ error: "Invalid or expired session" }, 401);

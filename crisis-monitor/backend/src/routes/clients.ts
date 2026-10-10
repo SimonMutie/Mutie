@@ -7,6 +7,7 @@ import { rowToUser } from "../mappers";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { passwordSchema } from "../lib/passwordPolicy";
 import { forgetGate } from "../middleware";
+import { usageFor, DEFAULT_MONTHLY_LIMITS, DEFAULT_STOCK_LIMITS, QUOTA_LABELS } from "../lib/quota";
 import type { Env } from "../bindings";
 
 export const clientsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -201,6 +202,44 @@ clientsRouter.get("/:id", async (c) => {
     account_count: countRow?.count ?? 0,
     created_at: String(row.created_at),
   });
+});
+
+/** Platform-admin only: this month's use against each allowance, and the
+ *  limits in force (defaults unless the admin has set this client's own). */
+clientsRouter.get("/:id/usage", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const row = await first<{ quota_json: string | null }>(c.env.DB, `SELECT quota_json FROM clients WHERE id = ?`, [clientId]);
+  if (!row) return c.json({ error: "Not found" }, 404);
+  let overrides: Record<string, number> = {};
+  try {
+    overrides = row.quota_json ? JSON.parse(row.quota_json) : {};
+  } catch {
+    overrides = {};
+  }
+  const stock = Object.keys(DEFAULT_STOCK_LIMITS).map((k) => ({
+    kind: k,
+    label: QUOTA_LABELS[k as keyof typeof QUOTA_LABELS],
+    limit: typeof overrides[k] === "number" ? overrides[k] : DEFAULT_STOCK_LIMITS[k as keyof typeof DEFAULT_STOCK_LIMITS],
+  }));
+  return c.json({ monthly: await usageFor(c.env, clientId), stock, defaults: { ...DEFAULT_MONTHLY_LIMITS, ...DEFAULT_STOCK_LIMITS }, overrides });
+});
+
+const quotaSchema = z.record(z.string(), z.number().int().min(0).max(10_000_000));
+
+/** Platform-admin only: set (or clear, with an empty object) this client's own allowance limits. */
+clientsRouter.put("/:id/quotas", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const clientId = c.req.param("id");
+  const body = await c.req.json().catch(() => null);
+  const parsed = quotaSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: "Limits must be whole numbers." }, 400);
+  const allowed = new Set([...Object.keys(DEFAULT_MONTHLY_LIMITS), ...Object.keys(DEFAULT_STOCK_LIMITS)]);
+  const clean = Object.fromEntries(Object.entries(parsed.data).filter(([k]) => allowed.has(k)));
+  const existing = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [clientId]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  await run(c.env.DB, `UPDATE clients SET quota_json = ? WHERE id = ?`, [Object.keys(clean).length ? JSON.stringify(clean) : null, clientId]);
+  return c.json({ ok: true, overrides: clean });
 });
 
 /** Admin, or that client's own client-admin: list this client's accounts.

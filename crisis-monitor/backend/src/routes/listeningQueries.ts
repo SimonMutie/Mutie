@@ -1,3 +1,4 @@
+import { checkStock } from "../lib/quota";
 import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, nowIso } from "../db";
@@ -38,6 +39,10 @@ listeningQueriesRouter.post("/", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const owned = await first<{ n: number }>(c.env.DB, `SELECT COUNT(*) AS n FROM listening_queries WHERE owner_id IN (SELECT id FROM users WHERE client_id = (SELECT client_id FROM users WHERE id = ?) OR id = ?)`, [c.get("userId"), c.get("userId")]);
+  const over = await checkStock(c, "listening_queries", owned?.n ?? 0);
+  if (over) return over;
 
   const id = newId();
   const now = nowIso();

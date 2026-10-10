@@ -1,3 +1,4 @@
+import { checkStock } from "../lib/quota";
 import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, batchRun, nowIso } from "../db";
@@ -135,6 +136,12 @@ incidentsRouter.post("/bulk", async (c) => {
   }
 
   const ownerId = c.get("userId");
+
+  if (c.get("role") !== "admin") {
+    const held = await first<{ n: number }>(c.env.DB, `SELECT COUNT(*) AS n FROM incidents WHERE owner_id IN (SELECT id FROM users WHERE client_id = (SELECT client_id FROM users WHERE id = ?) OR id = ?)`, [ownerId, ownerId]);
+    const over = await checkStock(c, "incidents", held?.n ?? 0, parsed.data.rows.length);
+    if (over) return over;
+  }
 
   // A country-restricted client (see effectiveCountryScope) can only ever
   // upload incidents for countries they're actually allowed — checked

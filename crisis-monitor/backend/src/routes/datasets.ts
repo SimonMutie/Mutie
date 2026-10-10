@@ -1,3 +1,4 @@
+import { checkStock } from "../lib/quota";
 import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, batchRun, nowIso } from "../db";
@@ -374,6 +375,12 @@ datasetsRouter.post("/:id/rows", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = rowsUploadSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  if (!isAdmin) {
+    const held = await first<{ n: number }>(c.env.DB, `SELECT COALESCE(SUM(row_count), 0) AS n FROM datasets WHERE owner_id IN (SELECT id FROM users WHERE client_id = (SELECT client_id FROM users WHERE id = ?) OR id = ?)`, [ownerId, ownerId]);
+    const over = await checkStock(c, "dataset_rows", held?.n ?? 0, parsed.data.rows.length);
+    if (over) return over;
+  }
 
   const now = nowIso();
   const statements = parsed.data.rows.map((row) => ({

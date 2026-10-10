@@ -1,3 +1,4 @@
+import { consumeQuota } from "../lib/quota";
 import { Hono } from "hono";
 import { all, first } from "../db";
 import { canAccessQuery } from "../ownership";
@@ -369,6 +370,8 @@ queryInsightsRouter.post("/:queryId/day-summary", async (c) => {
   const { items, total } = await dayItems(c.env, query.id, bounds);
   const stored = await readAiSummary(c.env, query.id, day, tz, total);
   if (stored.status === "ready") return c.json(stored);
+  const over = await consumeQuota(c, "ai_summary");
+  if (over) return over;
   try {
     return c.json(await writeAiSummary(c.env, query.id, query.name, day, tz, items, total));
   } catch (err) {
@@ -601,6 +604,8 @@ queryInsightsRouter.post("/:queryId/notebook/draft", async (c) => {
   if (!query) return c.json({ error: "Query not found" }, 404);
   const parsed = digestSchema.safeParse(((await c.req.json().catch(() => ({}))) as { digest?: unknown }).digest);
   if (!parsed.success) return c.json({ error: "The dashboard's figures could not be read. Reload the page and try again." }, 400);
+  const over = await consumeQuota(c, "ai_notebook");
+  if (over) return over;
   const result = await draftNotebook(c.env, query, parsed.data, await authorName(c));
   return result.ok ? c.json(result.row) : c.json({ error: result.error }, result.status);
 });

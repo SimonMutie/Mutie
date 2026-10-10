@@ -53,7 +53,7 @@ beforeAll(async () => {
       operation TEXT, target TEXT, interest_group TEXT, actual_main_victim TEXT, intended_primary_target TEXT, latitude REAL, longitude REAL,
       civilian_death_child INTEGER, civilian_death_female INTEGER, civilian_death_male INTEGER, civilian_death_unknown INTEGER,
       civilian_injury_female INTEGER, civilian_injury_male INTEGER, civilian_injury_unknown INTEGER, kidnappings_ngo INTEGER);
-    CREATE TABLE custom_dashboards (id TEXT PRIMARY KEY, owner_id TEXT, name TEXT, widgets TEXT, is_public INTEGER, share_token TEXT, date_range_from TEXT, date_range_to TEXT, theme TEXT, country TEXT);
+    CREATE TABLE custom_dashboards (id TEXT PRIMARY KEY, owner_id TEXT, name TEXT, widgets TEXT, is_public INTEGER, share_token TEXT, date_range_from TEXT, date_range_to TEXT, theme TEXT, country TEXT, share_expires_at TEXT);
     INSERT INTO users VALUES ('admin-1', 'admin', 'admin', NULL), ('owner-1', 'owner', 'client', NULL), ('other-1', 'other', 'client', NULL);
   `);
   db.prepare("INSERT INTO datasets VALUES ('ds1', 'owner-1', 'Aid', ?, ?, 'x', 'x')").run(JSON.stringify(SCHEMA), ROWS.length);
