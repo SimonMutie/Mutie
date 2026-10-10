@@ -83,6 +83,10 @@ export interface ClientOrg {
   can_view_all_incidents: boolean;
   /** Whether this client's logins may create public share links (off by default). */
   can_share_publicly?: boolean;
+  /** Email domains this client's alerts may be sent to (space/comma separated). */
+  alert_email_domains?: string;
+  /** Signal numbers approved for this client's alerts. */
+  alert_signal_numbers?: string;
   /** This client's logo, if set — a base64 data URL. Only present on the
    *  single-client GET/PATCH responses, not the platform-admin list (kept
    *  off that one to avoid bloating a list of many clients with full image
@@ -1528,6 +1532,13 @@ export const api = {
     }>(`/api/clients/${clientId}/usage`),
   setClientQuotas: (clientId: string, limits: Record<string, number>) =>
     req<{ ok: boolean }>(`/api/clients/${clientId}/quotas`, { method: "PUT", body: JSON.stringify(limits) }),
+  getAuditLog: (params: { limit?: number; action?: string; username?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.action) q.set("action", params.action);
+    if (params.username) q.set("username", params.username);
+    return req<{ id: number; at: string; user_id: string | null; username: string | null; action: string; detail: string | null; ip: string | null }[]>(`/api/auth/audit?${q}`);
+  },
   logoutAll: () => req<{ ok: boolean }>("/api/auth/logout-all", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
@@ -1552,7 +1563,7 @@ export const api = {
   getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
   createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string }) =>
     req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
-  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean }) =>
+  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean; alert_email_domains?: string; alert_signal_numbers?: string }) =>
     req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
   updateClientLogo: (clientId: string, logoData: string | null) =>

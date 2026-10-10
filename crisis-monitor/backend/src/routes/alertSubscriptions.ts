@@ -5,6 +5,7 @@ import { canAccessQuery } from "../ownership";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { channelsAvailable, cleanDestination } from "../lib/notify";
 import { baselineEscalationSubscription, DEFAULT_FREQUENCY, ensureAlertTables, FREQUENCIES, newSubscriptionId, sendTestMessage, type Subscription } from "../lib/alertDelivery";
+import { destinationRefusal } from "../lib/alertPolicy";
 import { getVapid } from "../lib/webpush";
 import type { Env } from "../bindings";
 
@@ -93,6 +94,9 @@ alertSubscriptionsRouter.post("/", async (c) => {
   const destination = cleanDestination(d.channel, d.destination);
   if (!destination) return c.json({ error: d.channel === "email" ? "That is not a valid email address." : d.channel === "push" ? "This device could not be registered for alerts." : "Signal numbers are written with the country code, like +254712345678." }, 400);
 
+  const refused = await destinationRefusal(c.env, c.get("userId"), c.get("role"), d.channel, destination);
+  if (refused) return c.json({ error: refused }, 403);
+
   const minLevel = d.min_level ?? (d.scope === "escalations" ? "elevated" : "any");
   if (!levelFits(d.scope, minLevel)) return c.json({ error: LEVEL_ERROR }, 400);
   if (d.scope === "query") {
@@ -136,6 +140,8 @@ alertSubscriptionsRouter.patch("/:id", async (c) => {
   if (d.destination !== undefined) {
     const cleaned = cleanDestination(sub.channel, d.destination);
     if (!cleaned) return c.json({ error: sub.channel === "email" ? "That is not a valid email address." : "Signal numbers are written with the country code, like +254712345678." }, 400);
+    const refused = await destinationRefusal(c.env, c.get("userId"), c.get("role"), sub.channel as "email" | "signal" | "push", cleaned);
+    if (refused) return c.json({ error: refused }, 403);
     destination = cleaned;
   }
   const minLevel = d.min_level ?? sub.min_level;

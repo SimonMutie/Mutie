@@ -5,6 +5,7 @@ import { newId } from "../ids";
 import { hashPassword, verifyPassword, createSessionToken } from "../auth";
 import { rowToUser } from "../mappers";
 import { requireAuth, requireAdmin, forgetGate, type AuthedVariables } from "../middleware";
+import { audit, clientIp, readAudit } from "../lib/audit";
 import { passwordSchema } from "../lib/passwordPolicy";
 import type { Env } from "../bindings";
 
@@ -69,6 +70,30 @@ async function userWithClientLogo(db: D1Database, row: Record<string, unknown>) 
   return { ...user, client_logo: clientLogo, can_share_publicly: canShare };
 }
 
+/** Five wrong passwords in a row lock a login for 15 minutes. A right password resets the count. */
+const MAX_FAILED_LOGINS = 5;
+const LOCK_MINUTES = 15;
+
+function lockedMinutesLeft(row: Record<string, unknown>): number {
+  const until = row.locked_until ? Date.parse(String(row.locked_until)) : 0;
+  return until > Date.now() ? Math.ceil((until - Date.now()) / 60_000) : 0;
+}
+
+async function recordFailedLogin(env: Env, row: Record<string, unknown>, ip: string | null) {
+  const failures = Number(row.failed_logins ?? 0) + 1;
+  const lock = failures >= MAX_FAILED_LOGINS;
+  await run(env.DB, "UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?", [
+    failures,
+    lock ? new Date(Date.now() + LOCK_MINUTES * 60_000).toISOString() : null,
+    row.id,
+  ]);
+  await audit(env, { userId: String(row.id), username: String(row.username), action: lock ? "login.locked" : "login.failed", detail: `${failures} in a row`, ip });
+}
+
+async function clearFailedLogins(env: Env, row: Record<string, unknown>) {
+  if (Number(row.failed_logins ?? 0) > 0 || row.locked_until) await run(env.DB, "UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?", [row.id]);
+}
+
 authRouter.post("/login", async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const { username, password } = body as { username?: string; password?: string };
@@ -76,10 +101,29 @@ authRouter.post("/login", async (c) => {
 
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE username = ?", [username]);
   const row = rows[0];
-  if (!row) return c.json({ error: "Invalid username or password" }, 401);
+  const ip = clientIp(c.req);
+  if (!row) {
+    await audit(c.env, { username: String(username).slice(0, 64), action: "login.unknown", ip });
+    return c.json({ error: "Invalid username or password" }, 401);
+  }
+
+  const wait = lockedMinutesLeft(row);
+  if (wait > 0) {
+    await audit(c.env, { userId: String(row.id), username: String(row.username), action: "login.blocked", detail: "locked", ip });
+    return c.json({ error: `Too many wrong passwords. This login is locked for about ${wait} more minute${wait === 1 ? "" : "s"}.` }, 429);
+  }
 
   const valid = await verifyPassword(password, String(row.password_hash));
-  if (!valid) return c.json({ error: "Invalid username or password" }, 401);
+  if (!valid) {
+    await recordFailedLogin(c.env, row, ip);
+    return c.json({ error: "Invalid username or password" }, 401);
+  }
+  if (row.disabled) {
+    await audit(c.env, { userId: String(row.id), username: String(row.username), action: "login.disabled", ip });
+    return c.json({ error: "This account has been disabled. Contact your Afrilens representative." }, 403);
+  }
+  await clearFailedLogins(c.env, row);
+  await audit(c.env, { userId: String(row.id), username: String(row.username), action: "login.ok", ip });
 
   const user = await userWithClientLogo(c.env.DB, row);
   const token = await createSessionToken(user.id, user.role, c.env.SESSION_SECRET);
@@ -98,7 +142,18 @@ authRouter.post("/logout-all", requireAuth, async (c) => {
   const userId = c.get("userId");
   await run(c.env.DB, "UPDATE users SET tokens_valid_after = ? WHERE id = ?", [Math.floor(Date.now() / 1000) + 1, userId]);
   forgetGate(userId);
+  await audit(c.env, { userId, action: "logout.all", ip: clientIp(c.req) });
   return c.json({ ok: true });
+});
+
+/** Admin-only: the activity log, newest first. ?action=login filters by prefix, ?username= by person. */
+authRouter.get("/audit", requireAuth, requireAdmin, async (c) => {
+  const entries = await readAudit(c.env, {
+    limit: Number(c.req.query("limit") ?? 100) || 100,
+    action: c.req.query("action") || undefined,
+    username: c.req.query("username") || undefined,
+  });
+  return c.json(entries);
 });
 
 /** Admin-only: list every client account (for the admin panel). */
@@ -128,6 +183,7 @@ authRouter.post("/users", requireAuth, requireAdmin, async (c) => {
     [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, role, readOnly, nowIso()]
   );
 
+  await audit(c.env, { userId: c.get("userId"), action: "user.created", detail: `${parsed.data.username} (${role}${readOnly ? ", viewer" : ""})`, ip: clientIp(c.req) });
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE id = ?", [id]);
   return c.json(rowToUser(rows[0]), 201);
 });
@@ -161,6 +217,7 @@ authRouter.post("/change-password", requireAuth, async (c) => {
 
   const newHash = await hashPassword(parsed.data.new_password);
   await run(c.env.DB, "UPDATE users SET password_hash = ? WHERE id = ?", [newHash, userId]);
+  await audit(c.env, { userId, username: String(row.username), action: "password.changed", ip: clientIp(c.req) });
   return c.json({ ok: true });
 });
 
@@ -186,8 +243,15 @@ authRouter.post("/change-password-public", async (c) => {
 
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE username = ?", [parsed.data.username]);
   const row = rows[0];
+  const ip = clientIp(c.req);
+  if (row && lockedMinutesLeft(row) > 0) return c.json({ error: "Too many wrong passwords. Try again in a few minutes." }, 429);
   const valid = row ? await verifyPassword(parsed.data.current_password, String(row.password_hash)) : false;
-  if (!row || !valid) return c.json({ error: "Username or current password is incorrect" }, 401);
+  if (!row || !valid) {
+    if (row) await recordFailedLogin(c.env, row, ip);
+    return c.json({ error: "Username or current password is incorrect" }, 401);
+  }
+  await clearFailedLogins(c.env, row);
+  await audit(c.env, { userId: String(row.id), username: String(row.username), action: "password.changed", detail: "from sign-in screen", ip });
 
   const newHash = await hashPassword(parsed.data.new_password);
   await run(c.env.DB, "UPDATE users SET password_hash = ? WHERE id = ?", [newHash, row.id]);

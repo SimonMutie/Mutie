@@ -6,6 +6,8 @@ import { hashPassword } from "../auth";
 import { rowToUser } from "../mappers";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { passwordSchema } from "../lib/passwordPolicy";
+import { splitList } from "../lib/alertPolicy";
+import { audit, clientIp } from "../lib/audit";
 import { forgetGate } from "../middleware";
 import { usageFor, DEFAULT_MONTHLY_LIMITS, DEFAULT_STOCK_LIMITS, QUOTA_LABELS } from "../lib/quota";
 import type { Env } from "../bindings";
@@ -118,6 +120,10 @@ const updateClientSchema = z.object({
   max_accounts: z.number().int().min(1).max(50).optional(),
   can_view_all_incidents: z.boolean().optional(),
   can_share_publicly: z.boolean().optional(),
+  /** Space/comma separated: the email domains this client's alerts may go to. */
+  alert_email_domains: z.string().max(500).optional(),
+  /** Space/comma separated: Signal numbers approved for this client's alerts. */
+  alert_signal_numbers: z.string().max(500).optional(),
 });
 
 /** Platform-admin only: rename a client, change its account limit, or
@@ -155,10 +161,19 @@ clientsRouter.patch("/:id", async (c) => {
     updates.push("can_share_publicly = ?");
     params.push(parsed.data.can_share_publicly ? 1 : 0);
   }
+  if (parsed.data.alert_email_domains !== undefined) {
+    updates.push("alert_email_domains = ?");
+    params.push(splitList(parsed.data.alert_email_domains).join(", ") || null);
+  }
+  if (parsed.data.alert_signal_numbers !== undefined) {
+    updates.push("alert_signal_numbers = ?");
+    params.push(splitList(parsed.data.alert_signal_numbers).join(", ") || null);
+  }
   if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
   params.push(id);
   await run(c.env.DB, `UPDATE clients SET ${updates.join(", ")} WHERE id = ?`, params);
 
+  await audit(c.env, { userId: c.get("userId"), action: "client.updated", detail: `${id}: ${JSON.stringify(parsed.data)}`, ip: clientIp(c.req) });
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [id]);
   return c.json({
     id: String(row!.id),
@@ -166,6 +181,8 @@ clientsRouter.patch("/:id", async (c) => {
     max_accounts: Number(row!.max_accounts),
     can_view_all_incidents: !!row!.can_view_all_incidents,
     can_share_publicly: !!row!.can_share_publicly,
+    alert_email_domains: row!.alert_email_domains != null ? String(row!.alert_email_domains) : "",
+    alert_signal_numbers: row!.alert_signal_numbers != null ? String(row!.alert_signal_numbers) : "",
     logo_data: row!.logo_data != null ? String(row!.logo_data) : null,
   });
 });
@@ -198,6 +215,8 @@ clientsRouter.get("/:id", async (c) => {
     max_accounts: Number(row.max_accounts),
     can_view_all_incidents: !!row.can_view_all_incidents,
     can_share_publicly: !!row.can_share_publicly,
+    alert_email_domains: row.alert_email_domains != null ? String(row.alert_email_domains) : "",
+    alert_signal_numbers: row.alert_signal_numbers != null ? String(row.alert_signal_numbers) : "",
     logo_data: row.logo_data != null ? String(row.logo_data) : null,
     account_count: countRow?.count ?? 0,
     created_at: String(row.created_at),
@@ -239,6 +258,7 @@ clientsRouter.put("/:id/quotas", async (c) => {
   const existing = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [clientId]);
   if (!existing) return c.json({ error: "Not found" }, 404);
   await run(c.env.DB, `UPDATE clients SET quota_json = ? WHERE id = ?`, [Object.keys(clean).length ? JSON.stringify(clean) : null, clientId]);
+  await audit(c.env, { userId: c.get("userId"), action: "quotas.set", detail: `${clientId}: ${JSON.stringify(clean)}`, ip: clientIp(c.req) });
   return c.json({ ok: true, overrides: clean });
 });
 
@@ -289,6 +309,7 @@ clientsRouter.post("/:id/accounts", async (c) => {
     `INSERT INTO users (id, username, password_hash, display_name, role, client_id, is_client_admin, read_only, created_at) VALUES (?,?,?,?,'client',?,0,?,?)`,
     [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, clientId, parsed.data.read_only ? 1 : 0, nowIso()]
   );
+  await audit(c.env, { userId: c.get("userId"), action: "account.created", detail: `${parsed.data.username} on client ${clientId}${parsed.data.read_only ? " (viewer)" : ""}`, ip: clientIp(c.req) });
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [id]);
   return c.json(rowToUser(row!), 201);
 });
@@ -341,6 +362,7 @@ clientsRouter.patch("/:id/accounts/:userId", async (c) => {
   params.push(targetId);
   await run(c.env.DB, `UPDATE users SET ${updates.join(", ")} WHERE id = ?`, params);
   forgetGate(targetId);
+  await audit(c.env, { userId: c.get("userId"), action: "account.updated", detail: `${targetId}: ${JSON.stringify(parsed.data)}`, ip: clientIp(c.req) });
 
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [targetId]);
   return c.json(rowToUser(row!));
@@ -366,6 +388,7 @@ clientsRouter.delete("/:id/accounts/:userId", async (c) => {
   if ((countRow?.count ?? 0) <= 1) return c.json({ error: "Can't remove the last account on a client — delete the client instead." }, 400);
 
   await run(c.env.DB, `DELETE FROM users WHERE id = ?`, [targetId]);
+  await audit(c.env, { userId: c.get("userId"), action: "account.removed", detail: targetId, ip: clientIp(c.req) });
   return c.json({ ok: true });
 });
 

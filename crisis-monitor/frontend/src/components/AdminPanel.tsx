@@ -53,6 +53,8 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
 
       <AccessRequestsSection />
 
+      <ActivityLogSection />
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0" }}>
         <div className="eyebrow">CLIENTS ({clients.length})</div>
       </div>
@@ -102,6 +104,88 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
  *  rendered at all once a fetch confirms there's at least one pending
  *  request, so this doesn't add visual clutter for an admin who never
  *  gets any. */
+/** Sign-ins (including refused ones), account changes and sharing, newest first. */
+function ActivityLogSection() {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof api.getAuditLog>>>([]);
+  const [filter, setFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    api.getAuditLog({ limit: 200, action: filter || undefined }).then(setRows).catch(() => setError("Couldn't load the activity log."));
+  }, [open, filter]);
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <button onClick={() => setOpen((v) => !v)} style={backBtnStyle}>
+        {open ? "Hide activity log" : "Activity log"}
+      </button>
+      {open && (
+        <div className="panel" style={{ marginTop: 10, padding: "10px 14px" }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+            {[["", "All"], ["login", "Sign-ins"], ["login.failed", "Failed"], ["login.locked", "Locked"], ["share", "Sharing"], ["account", "Accounts"]].map(([v, label]) => (
+              <button key={v} onClick={() => setFilter(v)} style={{ ...backBtnStyle, color: filter === v ? "var(--text-primary)" : "var(--text-muted)" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>{error}</div>}
+          <div style={{ maxHeight: 320, overflowY: "auto", fontSize: 11.5 }} className="mono">
+            {rows.length === 0 && !error && <div style={{ color: "var(--text-muted)" }}>Nothing recorded yet.</div>}
+            {rows.map((r) => (
+              <div key={r.id} style={{ display: "flex", gap: 10, padding: "3px 0", borderBottom: "1px solid var(--border-soft)" }}>
+                <span style={{ color: "var(--text-faint)", width: 135, flexShrink: 0 }}>{new Date(r.at).toLocaleString()}</span>
+                <span style={{ width: 110, flexShrink: 0 }}>{r.username ?? "—"}</span>
+                <span style={{ width: 120, flexShrink: 0, color: r.action.includes("fail") || r.action.includes("lock") || r.action.includes("block") ? "var(--critical)" : undefined }}>{r.action}</span>
+                <span style={{ color: "var(--text-muted)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.detail ?? ""}>
+                  {r.detail ?? ""} {r.ip ? `· ${r.ip}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Where this client's alerts may be delivered. Empty means nowhere but their own browser. */
+function AlertDestinationsSection({ client, onSaved }: { client: ClientOrg; onSaved: () => void }) {
+  const [domains, setDomains] = useState(client.alert_email_domains ?? "");
+  const [numbers, setNumbers] = useState(client.alert_signal_numbers ?? "");
+  const [msg, setMsg] = useState<string | null>(null);
+  async function save() {
+    try {
+      await api.updateClient(client.id, { alert_email_domains: domains, alert_signal_numbers: numbers });
+      setMsg("Saved.");
+      onSaved();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Couldn't save.");
+    }
+  }
+  return (
+    <>
+      <div className="eyebrow" style={{ marginTop: 20, marginBottom: 10 }}>
+        ALERT DESTINATIONS
+      </div>
+      <div className="panel" style={{ padding: "12px 14px", marginBottom: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+          Alerts carry analysis the client is licensed to read, so they can only be sent to the client's own email domain(s) and to Signal numbers you approve. Leave empty to allow browser notifications only.
+        </div>
+        <input placeholder="Email domains, e.g. acme.org" value={domains} onChange={(e) => setDomains(e.target.value)} style={inputStyle} />
+        <input placeholder="Approved Signal numbers, e.g. +254712345678" value={numbers} onChange={(e) => setNumbers(e.target.value)} style={inputStyle} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={save} style={primaryBtnStyle}>
+            Save
+          </button>
+          {msg && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{msg}</span>}
+        </div>
+      </div>
+    </>
+  );
+}
+
 function AccessRequestsSection() {
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -482,6 +566,8 @@ function ClientDetail({
               </div>
             </div>
           </label>
+
+          <AlertDestinationsSection client={client} onSaved={load} />
 
           <AllowancesSection clientId={clientId} />
 

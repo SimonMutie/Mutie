@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, nowIso } from "../db";
 import { newId } from "../ids";
+import { audit, clientIp } from "../lib/audit";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, fetchMonthlyGroups, teamOwnerIds } from "./incidents";
@@ -372,6 +373,9 @@ customDashboardsRouter.patch("/:id", async (c) => {
   params.push(id);
 
   await c.env.DB.prepare(`UPDATE custom_dashboards SET ${updates.join(", ")} WHERE id = ?`).bind(...params).run();
+  if (parsed.data.is_public !== undefined) {
+    await audit(c.env, { userId: ownerId, action: parsed.data.is_public ? "share.on" : "share.off", detail: id, ip: clientIp(c.req) });
+  }
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [id]);
   return c.json(rowToDashboard(row!));
 });
