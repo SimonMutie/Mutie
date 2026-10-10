@@ -4,7 +4,7 @@ import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
 import { audit, clientIp } from "../lib/audit";
-import { countryName, ensureRegister, KINDS, listRegister, regionOf, seedRegister, type SourceKind } from "../lib/sourceRegister";
+import { countryName, ensureRegister, KINDS, listRegister, regionOf, seedRegister, assessmentFor, OWNERSHIP_LABEL, RELIABILITY_LABEL, type SourceKind } from "../lib/sourceRegister";
 import type { Env } from "../bindings";
 
 /**
@@ -25,12 +25,24 @@ const entrySchema = z.object({
   role: z.enum(["pulled", "reference"]),
   notes: z.string().trim().max(500).nullable().optional(),
   active: z.boolean().optional(),
+  reliability: z.enum(["A", "B", "C", "D", "E", "F"]).optional(),
+  ownership: z.enum(Object.keys(OWNERSHIP_LABEL) as [string, ...string[]]).optional(),
+  orientation: z.string().trim().max(200).nullable().optional(),
+  rating_note: z.string().trim().max(500).nullable().optional(),
 });
+
+/** Who is rating: the signed-in admin's login name. */
+async function raterName(c: { env: Env; get: (k: "userId") => string }): Promise<string> {
+  const u = await first<{ username: string }>(c.env.DB, "SELECT username FROM users WHERE id = ?", [c.get("userId")]);
+  return u?.username ?? "admin";
+}
 
 sourceRegisterRouter.get("/", async (c) => {
   const entries = await listRegister(c.env);
   return c.json({
     kinds: KINDS,
+    reliability_labels: RELIABILITY_LABEL,
+    ownership_labels: OWNERSHIP_LABEL,
     entries: entries.map((e) => ({ ...e, active: !!e.active, country_name: countryName(e.country) })),
   });
 });
@@ -44,8 +56,14 @@ sourceRegisterRouter.post("/", async (c) => {
   if (dup) return c.json({ error: "That link is already in the register." }, 409);
   const id = newId();
   const now = nowIso();
-  await run(c.env.DB, `INSERT INTO source_register (id, name, url, country, region, kind, role, notes, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, [
-    id, d.name, d.url, d.country, regionOf(d.country), d.kind, d.role, d.notes ?? null, d.active === false ? 0 : 1, now, now,
+  const base = assessmentFor(d.url, d.kind);
+  const rated = d.reliability !== undefined || d.ownership !== undefined || d.orientation !== undefined || d.rating_note !== undefined;
+  const who = rated ? await raterName(c) : null;
+  await run(c.env.DB, `INSERT INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+    id, d.name, d.url, d.country, regionOf(d.country), d.kind, d.role, d.notes ?? null,
+    d.reliability ?? base.reliability, d.ownership ?? base.ownership, d.orientation ?? base.orientation, d.rating_note ?? base.rating_note,
+    rated ? "reviewed" : base.rating_basis, rated ? who : base.rating_basis === "desk" ? "Afrilens desk baseline" : null, rated || base.rating_basis === "desk" ? now : null,
+    d.active === false ? 0 : 1, now, now,
   ]);
   await audit(c.env, { userId: c.get("userId"), action: "sources.added", detail: `${d.name} (${d.country})`, ip: clientIp(c.req) });
   const row = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM source_register WHERE id = ?", [id]);
@@ -80,6 +98,15 @@ sourceRegisterRouter.patch("/:id", async (c) => {
   if (d.role !== undefined) add("role", d.role);
   if (d.notes !== undefined) add("notes", d.notes);
   if (d.active !== undefined) add("active", d.active ? 1 : 0);
+  if (d.reliability !== undefined) add("reliability", d.reliability);
+  if (d.ownership !== undefined) add("ownership", d.ownership);
+  if (d.orientation !== undefined) add("orientation", d.orientation);
+  if (d.rating_note !== undefined) add("rating_note", d.rating_note);
+  if (d.reliability !== undefined || d.ownership !== undefined || d.orientation !== undefined || d.rating_note !== undefined) {
+    add("rating_basis", "reviewed");
+    add("rated_by", await raterName(c));
+    add("rated_at", nowIso());
+  }
   if (sets.length === 0) return c.json({ error: "Nothing to update" }, 400);
   add("updated_at", nowIso());
   params.push(id);

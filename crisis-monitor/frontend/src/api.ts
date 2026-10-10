@@ -30,6 +30,15 @@ export interface SourceRegisterEntry {
   /** "pulled": the platform reads from it. "reference": used to check reporting, nothing is pulled. */
   role: "pulled" | "reference";
   notes: string | null;
+  /** Admiralty source reliability A–F (F = cannot be judged yet). */
+  reliability: "A" | "B" | "C" | "D" | "E" | "F";
+  ownership: string;
+  orientation: string | null;
+  rating_note: string | null;
+  /** desk: baseline; reviewed: an analyst has checked it; unassessed. */
+  rating_basis: "desk" | "reviewed" | "unassessed";
+  rated_by: string | null;
+  rated_at: string | null;
   active: boolean;
 }
 
@@ -1555,7 +1564,7 @@ export const api = {
     if (params.username) q.set("username", params.username);
     return req<{ id: number; at: string; user_id: string | null; username: string | null; action: string; detail: string | null; ip: string | null }[]>(`/api/auth/audit?${q}`);
   },
-  getSourceRegister: () => req<{ kinds: Record<string, string>; entries: SourceRegisterEntry[] }>("/api/source-register"),
+  getSourceRegister: () => req<{ kinds: Record<string, string>; reliability_labels: Record<string, string>; ownership_labels: Record<string, string>; entries: SourceRegisterEntry[] }>("/api/source-register"),
   addSource: (d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>("/api/source-register", { method: "POST", body: JSON.stringify(d) }),
   updateSource: (id: string, d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>(`/api/source-register/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
   deleteSource: (id: string) => req<{ ok: boolean }>(`/api/source-register/${id}`, { method: "DELETE" }),

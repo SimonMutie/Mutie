@@ -4,6 +4,7 @@ import { newId } from "../ids";
 import { AFRICA_SOURCES, PAN_AFRICAN, INSTITUTION, GLOBAL_AFRICA_DESK } from "../data/africaSources";
 import { SOURCE_NAMES, STATE_MEDIA } from "../data/sourceNames";
 import { AFRICA_GEO_COUNTRIES } from "./africaGeo";
+import { RATINGS, OWNERSHIP_LABEL, RELIABILITY_LABEL, type Ownership, type Reliability } from "../data/sourceRatings";
 
 /**
  * The Sources Register: the outlets, institutions and data providers behind
@@ -41,6 +42,17 @@ export interface RegisterEntry {
   kind: SourceKind;
   role: SourceRole;
   notes: string | null;
+  /** Admiralty source reliability, A to F (F = cannot be judged yet). */
+  reliability: Reliability;
+  ownership: Ownership;
+  /** Editorial orientation in a few words. */
+  orientation: string | null;
+  /** Why it is rated as it is, and what to watch for. */
+  rating_note: string | null;
+  /** "desk": baseline assessment; "reviewed": an analyst has checked it; "unassessed". */
+  rating_basis: "desk" | "reviewed" | "unassessed";
+  rated_by: string | null;
+  rated_at: string | null;
   active: number;
   created_at: string;
   updated_at: string;
@@ -82,7 +94,34 @@ function nameFor(url: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-type Seed = Omit<RegisterEntry, "id" | "created_at" | "updated_at" | "active">;
+type Seed = Omit<RegisterEntry, "id" | "created_at" | "updated_at" | "active" | "reliability" | "ownership" | "orientation" | "rating_note" | "rating_basis" | "rated_by" | "rated_at">;
+
+export interface Assessment {
+  reliability: Reliability;
+  ownership: Ownership;
+  orientation: string | null;
+  rating_note: string | null;
+  rating_basis: "desk" | "unassessed";
+}
+
+/** The baseline assessment for a link: looked up by host, then by host plus first path segment, else "not yet assessed". */
+export function assessmentFor(url: string, kind: SourceKind): Assessment {
+  const host = hostOf(url);
+  const r = RATINGS[host];
+  if (r) return { reliability: r[0], ownership: r[1], orientation: r[2] ?? null, rating_note: r[3] ?? null, rating_basis: "desk" };
+  if (kind === "state_media") {
+    return { reliability: "C", ownership: "state", orientation: "Official line; strong on routine events and statements", rating_note: "State-owned or state-run; not yet individually assessed. Weigh politically sensitive claims accordingly.", rating_basis: "desk" };
+  }
+  return {
+    reliability: "F",
+    ownership: "unassessed",
+    orientation: null,
+    rating_note: "Not yet assessed. Held at F until a track record is reviewed.",
+    rating_basis: "unassessed",
+  };
+}
+
+export { OWNERSHIP_LABEL, RELIABILITY_LABEL };
 
 /** Outlets wired up directly in lib/osintFeed.ts (read as live feeds), beyond the Africa Wire list. */
 const WIRE_FEED_SEEDS: Seed[] = [
@@ -172,8 +211,21 @@ export async function ensureRegister(env: Env): Promise<void> {
           kind TEXT NOT NULL, role TEXT NOT NULL, notes TEXT, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
         )`
       );
+      // Columns added after the first release of the register.
+      const added: [string, string][] = [
+        ["reliability", "TEXT"], ["ownership", "TEXT"], ["orientation", "TEXT"], ["rating_note", "TEXT"],
+        ["rating_basis", "TEXT"], ["rated_by", "TEXT"], ["rated_at", "TEXT"],
+      ];
+      for (const [col, def] of added) {
+        try {
+          await env.DB.prepare(`SELECT ${col} FROM source_register LIMIT 0`).all();
+        } catch {
+          await env.DB.prepare(`ALTER TABLE source_register ADD COLUMN ${col} ${def}`).run().catch(() => {});
+        }
+      }
       const row = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM source_register");
       if ((row?.n ?? 0) === 0) await seedRegister(env);
+      await backfillAssessments(env);
     })().catch((err) => {
       tableReady = null;
       throw err;
@@ -182,14 +234,28 @@ export async function ensureRegister(env: Env): Promise<void> {
   await tableReady;
 }
 
+/** Gives every row that has no assessment yet its baseline one (rows an analyst has rated are never touched). */
+async function backfillAssessments(env: Env): Promise<void> {
+  const rows = await all<{ id: string; url: string; kind: SourceKind }>(env.DB, "SELECT id, url, kind FROM source_register WHERE rating_basis IS NULL");
+  const now = nowIso();
+  const stmts = rows.map((r) => {
+    const a = assessmentFor(r.url, r.kind);
+    return env.DB.prepare("UPDATE source_register SET reliability = ?, ownership = ?, orientation = ?, rating_note = ?, rating_basis = ?, rated_by = ?, rated_at = ? WHERE id = ? AND rating_basis IS NULL").bind(
+      a.reliability, a.ownership, a.orientation, a.rating_note, a.rating_basis, a.rating_basis === "desk" ? "Afrilens desk baseline" : null, a.rating_basis === "desk" ? now : null, r.id
+    );
+  });
+  for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+}
+
 export async function seedRegister(env: Env): Promise<number> {
   const now = nowIso();
   const entries = defaultEntries();
-  const stmts = entries.map((e) =>
-    env.DB.prepare(`INSERT OR IGNORE INTO source_register (id, name, url, country, region, kind, role, notes, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,1,?,?)`).bind(
-      newId(), e.name, e.url, e.country, e.region, e.kind, e.role, e.notes, now, now
-    )
-  );
+  const stmts = entries.map((e) => {
+    const a = assessmentFor(e.url, e.kind);
+    return env.DB.prepare(`INSERT OR IGNORE INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)`).bind(
+      newId(), e.name, e.url, e.country, e.region, e.kind, e.role, e.notes, a.reliability, a.ownership, a.orientation, a.rating_note, a.rating_basis, a.rating_basis === "desk" ? "Afrilens desk baseline" : null, a.rating_basis === "desk" ? now : null, now, now
+    );
+  });
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
   return entries.length;
 }

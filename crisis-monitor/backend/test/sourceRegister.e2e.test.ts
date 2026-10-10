@@ -13,8 +13,8 @@ let client: Record<string, string>;
 
 beforeAll(async () => {
   const d1 = fakeD1();
-  d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);
-              INSERT INTO users (id) VALUES ('a'), ('c');`);
+  d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);
+              INSERT INTO users (id, username) VALUES ('a', 'admin'), ('c', 'client');`);
   env = { DB: d1.DB, SESSION_SECRET: "s" } as unknown as Env;
   admin = { Authorization: `Bearer ${await createSessionToken("a", "admin", "s")}` };
   client = { Authorization: `Bearer ${await createSessionToken("c", "client", "s")}` };
@@ -40,6 +40,34 @@ describe("sources register", () => {
     expect(body.entries.find((e) => e.name.startsWith("ACLED"))!.role).toBe("reference");
     expect(body.entries.find((e) => e.url.includes("aps.dz"))!.kind).toBe("state_media");
     expect(new Set(body.entries.map((e) => e.url.toLowerCase().replace(/\/+$/, ""))).size).toBe(body.entries.length);
+  });
+
+  it("rates sources honestly: wires B, official data A, state outlets flagged, unknowns not guessed", async () => {
+    const res = await call("/", { headers: admin });
+    const body = (await res.json()) as { entries: { name: string; url: string; reliability: string; ownership: string; rating_basis: string }[] };
+    const by = (frag: string) => body.entries.find((e) => e.url.includes(frag))!;
+    expect(by("reuters.com")).toMatchObject({ reliability: "B", ownership: "independent" });
+    expect(by("frankfurter")).toMatchObject({ reliability: "A", ownership: "data" });
+    expect(by("tass.com")).toMatchObject({ reliability: "D", ownership: "state" });
+    expect(by("aps.dz")).toMatchObject({ ownership: "state" });
+    expect(by("herald.co.zw")).toMatchObject({ reliability: "D", ownership: "state" });
+    expect(by("gdeltproject")).toMatchObject({ reliability: "C" });
+    // Nothing is left without a grade, and anything not individually assessed is F, never an invented grade.
+    for (const e of body.entries) {
+      expect(["A", "B", "C", "D", "E", "F"]).toContain(e.reliability);
+      if (e.rating_basis === "unassessed") expect(e.reliability).toBe("F");
+    }
+    // The grades are not all the same: the register discriminates.
+    expect(new Set(body.entries.map((e) => e.reliability)).size).toBeGreaterThanOrEqual(4);
+  });
+
+  it("records who reviewed a rating and when", async () => {
+    const list = (await (await call("/", { headers: admin })).json()) as { entries: { id: string; url: string }[] };
+    const id = list.entries.find((e) => e.url.includes("punchng"))!.id;
+    const res = await call(`/${id}`, { method: "PATCH", headers: { ...admin, "content-type": "application/json" }, body: JSON.stringify({ reliability: "B", rating_note: "Reviewed against 12 months of coverage." }) });
+    const row = (await res.json()) as { reliability: string; rating_basis: string; rated_by: string; rated_at: string };
+    expect(row).toMatchObject({ reliability: "B", rating_basis: "reviewed", rated_by: "admin" });
+    expect(row.rated_at).toBeTruthy();
   });
 
   it("has a proper display name for every outlet the platform crawls", () => {
