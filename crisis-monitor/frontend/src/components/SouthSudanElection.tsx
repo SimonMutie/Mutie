@@ -107,7 +107,7 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
             <ElectionSafety isAdmin={isAdmin} watch={SS_WATCH_CONFIG} />
           </Section>
 
-          <Section id="candidates" kicker="Who is running" title="The field" intro={<p>No candidate is confirmed in the material we hold. The field is open. Candidates appear here as analysts confirm a declaration, an exclusion or a withdrawal from a named source.</p>}>
+          <Section id="candidates" kicker="Who is running" title="The field" intro={<p>Candidates appear here once a named, dated source confirms a declaration, nomination, exclusion or withdrawal. Other candidates have not yet been confirmed in the material we hold.</p>}>
             <Field live={live} />
           </Section>
 

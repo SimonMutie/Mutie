@@ -175,6 +175,21 @@ export const BENCH_LABEL: Record<BenchStatus, string> = {
   not_reported: "Not reported",
 };
 
+/* ── the field ────────────────────────────────────────────── */
+
+/** Candidates confirmed by a named, dated source. Others are added through Manage as they are confirmed. */
+export const CANDIDATES_BASE: { id: string; name: string; party?: string; standing: string; date: string; note?: string; source?: { label: string; url: string } }[] = [
+  {
+    id: "kiir",
+    name: "Salva Kiir Mayardit",
+    party: "SPLM (ruling party)",
+    standing: "Declared",
+    date: "2026-07-23",
+    note: "Declared in an interview with Citizen TV: “I will be on the ballot.” The SPLM summit had earlier nominated him as its sole presidential candidate for 2026 (Eye Radio, 8 Jul 2026).",
+    source: { label: "Kiir declares presidential bid (Dawan Africa, 23 Jul 2026)", url: "https://www.dawan.africa/news/kiir-declares-presidential-bid-as-south-sudan-prepares-for-first-ever-election" },
+  },
+];
+
 /* ── outlook (analysis, not forecast) ─────────────────────── */
 
 export const SCENARIOS = [

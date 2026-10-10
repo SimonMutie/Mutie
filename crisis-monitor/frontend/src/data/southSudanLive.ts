@@ -1,6 +1,6 @@
 import { createContext } from "react";
 import type { EwContent } from "../api";
-import { BENCHMARKS, HOLDERS, TIMELINE, type Benchmark, type Holder, type Milestone } from "./southSudanElection";
+import { BENCHMARKS, CANDIDATES_BASE, HOLDERS, TIMELINE, type Benchmark, type Holder, type Milestone } from "./southSudanElection";
 import { overlay } from "./electionLive";
 
 /**
@@ -29,7 +29,7 @@ export function mergeSsLive(content: EwContent | null): SsLive {
   const offices = overlay<Holder>(HOLDERS, (h) => h.id, content?.office, (d, id, prev) => ({ ...(prev ?? ({} as Holder)), ...(d as unknown as Holder), id }));
   const benchmarks = overlay<Benchmark>(BENCHMARKS, (b) => b.id, content?.benchmark, (d, id, prev) => ({ ...(prev ?? ({} as Benchmark)), ...(d as unknown as Benchmark), id }));
   const timeline = overlay<Milestone>(TIMELINE, (m) => m.id, content?.milestone, (d, id, prev) => ({ ...(prev ?? ({} as Milestone)), ...(d as unknown as Milestone), id })).sort((a, b) => a.date.localeCompare(b.date));
-  const candidates = overlay<SsCandidate>([], (c) => c.id, content?.candidate, (d, id, prev) => ({ ...(prev ?? ({} as SsCandidate)), ...(d as unknown as SsCandidate), id }));
+  const candidates = overlay<SsCandidate>(CANDIDATES_BASE, (c) => c.id, content?.candidate, (d, id, prev) => ({ ...(prev ?? ({} as SsCandidate)), ...(d as unknown as SsCandidate), id }));
   return { offices, benchmarks, timeline, candidates };
 }
 
