@@ -55,6 +55,7 @@ clientsRouter.get("/", async (c) => {
       can_view_all_incidents: !!row.can_view_all_incidents,
       can_share_publicly: !!row.can_share_publicly,
       can_screen_people: !!row.can_screen_people,
+      can_view_spotlight: !!row.can_view_spotlight,
       account_count: countByClient.get(String(row.id)) ?? 0,
       created_at: String(row.created_at),
     }))
@@ -122,6 +123,7 @@ const updateClientSchema = z.object({
   can_view_all_incidents: z.boolean().optional(),
   can_share_publicly: z.boolean().optional(),
   can_screen_people: z.boolean().optional(),
+  can_view_spotlight: z.boolean().optional(),
   /** Space/comma separated: the email domains this client's alerts may go to. */
   alert_email_domains: z.string().max(500).optional(),
   /** Space/comma separated: Signal numbers approved for this client's alerts. */
@@ -167,6 +169,10 @@ clientsRouter.patch("/:id", async (c) => {
     updates.push("can_screen_people = ?");
     params.push(parsed.data.can_screen_people ? 1 : 0);
   }
+  if (parsed.data.can_view_spotlight !== undefined) {
+    updates.push("can_view_spotlight = ?");
+    params.push(parsed.data.can_view_spotlight ? 1 : 0);
+  }
   if (parsed.data.alert_email_domains !== undefined) {
     updates.push("alert_email_domains = ?");
     params.push(splitList(parsed.data.alert_email_domains).join(", ") || null);
@@ -188,6 +194,7 @@ clientsRouter.patch("/:id", async (c) => {
     can_view_all_incidents: !!row!.can_view_all_incidents,
     can_share_publicly: !!row!.can_share_publicly,
     can_screen_people: !!row!.can_screen_people,
+    can_view_spotlight: !!row!.can_view_spotlight,
     alert_email_domains: row!.alert_email_domains != null ? String(row!.alert_email_domains) : "",
     alert_signal_numbers: row!.alert_signal_numbers != null ? String(row!.alert_signal_numbers) : "",
     logo_data: row!.logo_data != null ? String(row!.logo_data) : null,
@@ -223,6 +230,7 @@ clientsRouter.get("/:id", async (c) => {
     can_view_all_incidents: !!row.can_view_all_incidents,
     can_share_publicly: !!row.can_share_publicly,
     can_screen_people: !!row.can_screen_people,
+    can_view_spotlight: !!row.can_view_spotlight,
     alert_email_domains: row.alert_email_domains != null ? String(row.alert_email_domains) : "",
     alert_signal_numbers: row.alert_signal_numbers != null ? String(row.alert_signal_numbers) : "",
     logo_data: row.logo_data != null ? String(row.logo_data) : null,

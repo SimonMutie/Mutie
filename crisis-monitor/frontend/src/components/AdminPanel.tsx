@@ -592,6 +592,31 @@ function ClientDetail({
             </div>
           </label>
 
+          <label
+            className="panel"
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
+          >
+            <input
+              type="checkbox"
+              checked={!!client.can_view_spotlight}
+              onChange={async () => {
+                setError(null);
+                try {
+                  await api.updateClient(clientId, { can_view_spotlight: !client.can_view_spotlight });
+                  await load();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
+                }
+              }}
+            />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Share Regional Spotlight</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                Off by default. When on, this client's logins can open Regional Spotlight: the published publications, the country pages and the Kenya Election Watch.
+              </div>
+            </div>
+          </label>
+
           <AlertDestinationsSection client={client} onSaved={load} />
 
           <AllowancesSection clientId={clientId} />

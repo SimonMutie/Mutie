@@ -31,6 +31,7 @@ class FakeStmt {
 let env: Env;
 let admin: Record<string, string>;
 let client: Record<string, string>;
+let closed: Record<string, string>;
 const call = (who: Record<string, string>, method: string, path: string, body?: unknown) =>
   spotlightRouter.request(path, { method, headers: { ...who, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }, env);
 const json = async <T>(res: Response | Promise<Response>) => (await (await res).json()) as T;
@@ -51,8 +52,22 @@ beforeAll(async () => {
   resetSpotlightTableCheck();
   const db = new DatabaseSync(":memory:");
   env = { DB: { prepare: (sql: string) => new FakeStmt(db, sql) }, SESSION_SECRET: "test-secret" } as unknown as Env;
+  db.exec(`CREATE TABLE clients (id TEXT PRIMARY KEY, can_view_spotlight INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE users (id TEXT PRIMARY KEY, client_id TEXT, read_only INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0, tokens_valid_after INTEGER NOT NULL DEFAULT 0);
+    INSERT INTO clients VALUES ('c-shared', 1), ('c-closed', 0);
+    INSERT INTO users (id, client_id) VALUES ('u-admin', NULL), ('u-client', 'c-shared'), ('u-closed', 'c-closed'), ('u-solo', NULL);`);
+  closed = { Authorization: `Bearer ${await createSessionToken("u-closed", "client", "test-secret")}` };
   admin = { Authorization: `Bearer ${await createSessionToken("u-admin", "admin", "test-secret")}` };
   client = { Authorization: `Bearer ${await createSessionToken("u-client", "client", "test-secret")}` };
+});
+
+describe("Regional Spotlight is shared client by client", () => {
+  it("is closed to a client the admin has not shared it with, and to logins with no client", async () => {
+    for (const path of ["/", "/regions", "/anything"]) expect((await call(closed, "GET", path)).status).toBe(403);
+    const solo = { Authorization: `Bearer ${await createSessionToken("u-solo", "client", "test-secret")}` };
+    expect((await call(solo, "GET", "/")).status).toBe(403);
+    expect((await call(admin, "GET", "/")).status).toBe(200);
+  });
 });
 
 describe("Regional Spotlight", () => {

@@ -91,7 +91,7 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
           {/* Commercial and individual due diligence. Hovering shows both; see DueDiligenceMenu. */}
           <DueDiligenceMenu current={view === "due-diligence" ? ddKind : null} onSelect={onOpenDueDiligence} buttonStyle={navBtnStyle(view === "due-diligence")} />
           {/* Publications by region. Hovering shows the regions; see SpotlightMenu. */}
-          <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />
+          {(user.role === "admin" || user.can_view_spotlight) && <SpotlightMenu current={spotlightScope} onSelect={onOpenSpotlight} buttonStyle={navBtnStyle(view === "spotlight")} />}
         </nav>
 
         <AccountMenu user={user} view={view} onNavigate={onNavigate} onLogout={onLogout} />

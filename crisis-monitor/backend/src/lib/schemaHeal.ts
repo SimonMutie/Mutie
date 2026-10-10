@@ -52,6 +52,7 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
     ["alert_signal_numbers", "TEXT"], // Signal numbers the admin has approved
     ["quota_json", "TEXT"], // per-client allowance overrides (see lib/quota.ts)
     ["can_share_publicly", "INTEGER NOT NULL DEFAULT 0"], // public links are off until the admin allows them
+    ["can_view_spotlight", "INTEGER NOT NULL DEFAULT 0"], // Regional Spotlight is shared with a client only when the admin switches it on
   ],
   map_routes: [["visible", "INTEGER NOT NULL DEFAULT 1"]], // 019
   map_shapes: [["visible", "INTEGER NOT NULL DEFAULT 1"]],

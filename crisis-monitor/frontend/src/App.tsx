@@ -250,7 +250,7 @@ export default function App() {
           />
         )}
 
-        {spotlightScope && <RegionalSpotlight user={user} scope={spotlightScope} onScopeChange={(scope) => setView({ spotlight: scope })} />}
+        {spotlightScope && (user.role === "admin" || user.can_view_spotlight) && <RegionalSpotlight user={user} scope={spotlightScope} onScopeChange={(scope) => setView({ spotlight: scope })} />}
 
         {view === "new-query" && <QueryEditor mode="create" onCancel={backToMonitoring} onSaved={(q) => handleSaved(q, true)} />}
 

@@ -64,12 +64,14 @@ async function userWithClientLogo(db: D1Database, row: Record<string, unknown>) 
   const user = rowToUser(row);
   let clientLogo: string | null = null;
   let canShare = user.role === "admin";
+  let canSpotlight = user.role === "admin";
   if (user.client_id) {
-    const client = await first<{ logo_data: string | null; can_share_publicly: number | null }>(db, "SELECT logo_data, can_share_publicly FROM clients WHERE id = ?", [user.client_id]);
+    const client = await first<{ logo_data: string | null; can_share_publicly: number | null; can_view_spotlight: number | null }>(db, "SELECT logo_data, can_share_publicly, can_view_spotlight FROM clients WHERE id = ?", [user.client_id]);
     clientLogo = client?.logo_data ?? null;
+    if (user.role !== "admin") canSpotlight = !!client?.can_view_spotlight;
     if (user.role !== "admin") canShare = !!client?.can_share_publicly && !user.read_only;
   }
-  return { ...user, client_logo: clientLogo, can_share_publicly: canShare };
+  return { ...user, client_logo: clientLogo, can_share_publicly: canShare, can_view_spotlight: canSpotlight };
 }
 
 /** Five wrong passwords in a row lock a login for 15 minutes. A right password resets the count. */

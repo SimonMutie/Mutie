@@ -92,6 +92,24 @@ export function resetSpotlightTableCheck(): void {
 }
 
 spotlightRouter.use("*", requireAuth);
+
+/** Regional Spotlight is shared client by client: a client's logins see it only
+ *  once the admin switches it on for that client. Admins always can. */
+export async function canViewSpotlight(env: Env, userId: string, role: string): Promise<boolean> {
+  if (role === "admin") return true;
+  try {
+    const row = await first<{ can_view_spotlight: number | null }>(env.DB, `SELECT c.can_view_spotlight AS can_view_spotlight FROM users u LEFT JOIN clients c ON u.client_id = c.id WHERE u.id = ?`, [userId]);
+    return !!row?.can_view_spotlight;
+  } catch {
+    return false;
+  }
+}
+spotlightRouter.use("*", async (c, next) => {
+  if (!(await canViewSpotlight(c.env, c.get("userId"), c.get("role")))) {
+    return c.json({ error: "Regional Spotlight hasn't been shared with your organisation. Ask your Afrilens contact." }, 403);
+  }
+  await next();
+});
 spotlightRouter.use("*", async (c, next) => {
   await ensureSpotlightTable(c.env);
   await next();

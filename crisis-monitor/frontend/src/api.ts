@@ -114,6 +114,8 @@ export interface AuthUser {
   disabled?: boolean;
   /** Whether this login may create public (no-sign-in) dashboard links. */
   can_share_publicly?: boolean;
+  /** Whether this login may open Regional Spotlight (admins always; clients only when shared with them). */
+  can_view_spotlight?: boolean;
   /** This login's client organization's logo, if any and if set — a base64
    *  data URL, ready to use directly as an <img src>. */
   client_logo: string | null;
@@ -165,6 +167,8 @@ export interface ClientOrg {
   can_share_publicly?: boolean;
   /** Whether this client's logins may run due-diligence screenings (off by default). */
   can_screen_people?: boolean;
+  /** Whether Regional Spotlight is shared with this client (off by default). */
+  can_view_spotlight?: boolean;
   /** Email domains this client's alerts may be sent to (space/comma separated). */
   alert_email_domains?: string;
   /** Signal numbers approved for this client's alerts. */
@@ -1670,7 +1674,7 @@ export const api = {
   getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
   createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string }) =>
     req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
-  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean; can_screen_people?: boolean; alert_email_domains?: string; alert_signal_numbers?: string }) =>
+  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean; can_screen_people?: boolean; can_view_spotlight?: boolean; alert_email_domains?: string; alert_signal_numbers?: string }) =>
     req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
   updateClientLogo: (clientId: string, logoData: string | null) =>
