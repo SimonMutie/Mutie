@@ -1,0 +1,247 @@
+/* Kenya Election Watch. Built on the app's tokens (theme.css). */
+
+.el-page { flex: 1; min-height: 0; overflow-y: auto; background: var(--base); color: var(--text-primary); font-family: var(--font-body); }
+.el-wrap { max-width: 1240px; margin: 0 auto; padding: 0 32px; }
+.el-muted { color: var(--text-muted); }
+.el-faint { color: var(--text-faint); }
+.el-small { font-size: 12.5px; line-height: 1.5; }
+.el-kicker { margin: 0 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--signal); }
+.el-notice { padding: 40px 12px; text-align: center; color: var(--text-muted); font-size: 14px; }
+.el-link { background: none; border: none; color: var(--info); font: inherit; font-size: 13px; cursor: pointer; padding: 4px 0; margin: 0 0 8px; }
+.el-link:hover { text-decoration: underline; }
+
+/* hero */
+.el-hero { background: linear-gradient(180deg, color-mix(in srgb, var(--signal) 10%, var(--panel)) 0%, var(--base) 100%); border-bottom: 1px solid var(--border-soft); padding: 28px 0 28px; }
+.el-back { background: none; border: none; color: var(--text-muted); font: inherit; font-size: 13px; cursor: pointer; padding: 0; margin-bottom: 20px; }
+.el-back:hover { color: var(--text-primary); }
+.el-hero h1 { margin: 0; font-family: var(--font-display); font-size: clamp(36px, 6vw, 64px); line-height: 1; letter-spacing: -0.02em; font-weight: 700; }
+.el-lede { max-width: 62ch; margin: 14px 0 26px; font-size: 17px; line-height: 1.5; color: var(--text-muted); }
+.el-stats { display: grid; grid-template-columns: 1.15fr repeat(3, 1fr); gap: 12px; }
+.el-stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; display: flex; flex-direction: column; gap: 3px; }
+.el-stat strong { font-family: var(--font-display); font-size: 32px; line-height: 1.05; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.el-stat span { font-size: 13.5px; font-weight: 600; }
+.el-stat small { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+.el-stat--lead { background: var(--text-primary); color: var(--base); border-color: transparent; }
+.el-stat--lead small { color: color-mix(in srgb, var(--base) 70%, transparent); }
+.el-stat--lead strong { font-size: 44px; }
+.el-next { margin: 18px 0 0; font-size: 14.5px; }
+.el-flag { margin: 12px 0 0; padding: 12px 14px; border-left: 3px solid var(--elevated); background: color-mix(in srgb, var(--elevated) 9%, var(--panel)); border-radius: 0 8px 8px 0; font-size: 13.5px; line-height: 1.55; max-width: 100ch; }
+.el-asof { margin: 10px 0 0; font-size: 12px; color: var(--text-faint); }
+
+/* nav */
+.el-nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--panel) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border); }
+.el-nav__in { display: flex; gap: 4px; overflow-x: auto; padding-top: 0; padding-bottom: 0; }
+.el-nav button { background: none; border: none; border-bottom: 2px solid transparent; padding: 13px 12px; font: inherit; font-size: 13.5px; font-weight: 500; color: var(--text-muted); cursor: pointer; white-space: nowrap; }
+.el-nav button:hover { color: var(--text-primary); }
+.el-nav button[aria-current="true"] { color: var(--text-primary); border-bottom-color: var(--signal); font-weight: 600; }
+
+/* sections */
+.el-section { padding: 56px 0 8px; scroll-margin-top: 52px; }
+.el-section h2 { margin: 0; font-family: var(--font-display); font-size: clamp(26px, 3.2vw, 36px); line-height: 1.1; letter-spacing: -0.015em; }
+.el-intro { max-width: 78ch; color: var(--text-muted); font-size: 15px; line-height: 1.6; margin: 10px 0 24px; }
+.el-intro p { margin: 0; }
+.el-section h3 { font-family: var(--font-display); font-size: 17px; margin: 0 0 8px; }
+.el-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin: 18px 0 8px; }
+
+.el-callouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.el-callouts > div { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.el-callouts strong { font-family: var(--font-display); font-size: 24px; line-height: 1.1; }
+.el-callouts span { font-size: 13px; color: var(--text-muted); line-height: 1.45; }
+
+.el-chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; background: var(--panel-raised); color: var(--text-muted); border: 1px solid var(--border-soft); }
+.el-chip--gazetted { background: var(--signal-dim); color: #0a5d56; border-color: transparent; }
+.el-chip--constitution { background: color-mix(in srgb, var(--info) 14%, var(--panel)); color: var(--info); border-color: transparent; }
+.el-chip--next { background: var(--critical); color: #fff; border-color: transparent; }
+.el-chip--s-incumbent { background: var(--text-primary); color: var(--base); border-color: transparent; }
+.el-chip--s-declared { background: var(--signal-dim); color: #0a5d56; border-color: transparent; }
+.el-chip--s-not { background: color-mix(in srgb, var(--elevated) 16%, var(--panel)); color: var(--elevated); border-color: transparent; }
+
+/* timeline */
+.el-strip { margin: 0 0 20px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; overflow-x: auto; }
+.el-strip svg { width: 100%; min-width: 760px; height: auto; display: block; }
+.el-phase { opacity: 0.9; }
+.el-phase--a { fill: color-mix(in srgb, var(--info) 24%, var(--panel)); }
+.el-phase--b { fill: color-mix(in srgb, var(--signal) 30%, var(--panel)); }
+.el-phase--c { fill: color-mix(in srgb, var(--elevated) 30%, var(--panel)); }
+.el-phase--d { fill: color-mix(in srgb, var(--critical) 22%, var(--panel)); }
+.el-phase--e { fill: color-mix(in srgb, var(--positive) 28%, var(--panel)); }
+.el-strip__phase { font-size: 11px; font-weight: 600; fill: var(--text-primary); }
+.el-strip__month { font-size: 10px; fill: var(--text-faint); }
+.el-strip__key { font-size: 10.5px; font-weight: 600; fill: var(--text-primary); }
+.el-strip__today { font-size: 11px; font-weight: 700; fill: var(--critical); }
+
+.el-timeline { list-style: none; margin: 0; padding: 0; }
+.el-timeline li { display: grid; grid-template-columns: 110px 22px 1fr; gap: 0 14px; position: relative; padding-bottom: 20px; }
+.el-timeline li::before { content: ""; position: absolute; left: 124px; top: 14px; bottom: -2px; width: 2px; background: var(--border); }
+.el-timeline li:last-child::before { display: none; }
+.el-timeline__date { text-align: right; padding-top: 2px; line-height: 1.2; }
+.el-timeline__date strong { display: block; font-family: var(--font-display); font-size: 18px; }
+.el-timeline__date span, .el-timeline__date em { display: block; font-size: 12px; color: var(--text-muted); font-style: normal; }
+.el-timeline__dot { width: 12px; height: 12px; border-radius: 50%; background: var(--panel); border: 2px solid var(--text-faint); margin: 6px 0 0 -1px; z-index: 1; }
+.is-key .el-timeline__dot { border-color: var(--text-primary); background: var(--text-primary); }
+.is-next .el-timeline__dot { border-color: var(--critical); background: var(--critical); box-shadow: 0 0 0 5px color-mix(in srgb, var(--critical) 20%, transparent); }
+.is-past { opacity: 0.6; }
+.el-timeline__body { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+.is-next .el-timeline__body { border-color: var(--critical); }
+.is-key .el-timeline__body { border-left: 3px solid var(--text-primary); }
+.el-timeline__body h3 { margin: 4px 0 4px; font-size: 16px; }
+.el-timeline__body p { margin: 0; font-size: 13.5px; color: var(--text-muted); line-height: 1.55; }
+.el-timeline__body .el-timeline__meta { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 0; }
+
+/* map */
+.el-map__tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 3px; background: var(--panel-raised); border-radius: 10px; width: fit-content; max-width: 100%; }
+.el-map__tabs button { border: none; background: none; padding: 7px 14px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 500; color: var(--text-muted); cursor: pointer; }
+.el-map__tabs button[aria-selected="true"] { background: var(--panel); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.el-map__note { margin: 12px 0 14px; max-width: 80ch; font-size: 13.5px; color: var(--text-muted); line-height: 1.5; min-height: 2.8em; }
+.el-map__grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr); gap: 20px; align-items: start; }
+.el-map__stage { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px 12px 14px; }
+.el-map__stage svg { width: 100%; height: auto; max-height: 560px; display: block; margin: 0 auto; }
+.el-map__stage path:focus-visible { stroke: var(--text-primary); stroke-width: 2; }
+.el-map__legend { padding: 8px 10px 0; }
+.el-map__ramp { display: flex; height: 10px; border-radius: 5px; overflow: hidden; }
+.el-map__ramp i { flex: 1; }
+.el-map__ramp-labels { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
+.el-map__legend-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; font-size: 12.5px; color: var(--text-muted); }
+.el-map__nodata { display: inline-flex; align-items: center; gap: 6px; }
+.el-map__nodata i { width: 16px; height: 10px; border: 1px solid var(--border); border-radius: 2px; display: inline-block; }
+.el-map__side { display: flex; flex-direction: column; gap: 14px; }
+.el-map__card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-height: 172px; }
+.el-map__card h4 { font-family: var(--font-display); font-size: 22px; text-transform: none; letter-spacing: 0; color: var(--text-primary); margin: 0 0 8px; }
+.el-map__card .el-kicker { margin-bottom: 2px; }
+.el-map__card dl { margin: 0; display: grid; gap: 5px; }
+.el-map__card dl div { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; border-bottom: 1px solid var(--border-soft); padding-bottom: 4px; }
+.el-map__card dt { color: var(--text-muted); }
+.el-map__card dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.el-rank { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.el-rank li { display: grid; grid-template-columns: 112px 1fr 56px; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; cursor: pointer; }
+.el-rank li:hover, .el-rank li.is-on { background: var(--panel-hover); }
+.el-rank__bar { height: 8px; background: var(--panel-raised); border-radius: 4px; overflow: hidden; }
+.el-rank__bar i { display: block; height: 100%; background: var(--signal); border-radius: 4px; }
+.el-rank__val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+.el-regions { margin-top: 28px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+.el-regions ul { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.el-regions li { display: grid; grid-template-columns: 190px 1fr minmax(210px, auto); gap: 14px; align-items: center; font-size: 13.5px; }
+.el-regions__name em { font-style: normal; color: var(--text-faint); font-size: 12px; margin-left: 4px; }
+.el-regions__track { height: 12px; background: var(--panel-raised); border-radius: 6px; overflow: hidden; }
+.el-regions__track i { display: block; height: 100%; background: linear-gradient(90deg, var(--signal), #2b958b); border-radius: 6px; }
+.el-regions__val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.el-regions__val small { font-weight: 400; color: var(--text-muted); }
+
+/* candidates */
+.el-chips, .el-toggle { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.el-chips button, .el-toggle button { border: 1px solid var(--border); background: var(--panel); border-radius: 99px; padding: 6px 14px; font: inherit; font-size: 13px; color: var(--text-muted); cursor: pointer; }
+.el-chips button[aria-pressed="true"], .el-toggle button[aria-pressed="true"] { background: var(--text-primary); color: var(--base); border-color: var(--text-primary); }
+.el-cands { list-style: none; margin: 0 0 14px; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+.el-cand { width: 100%; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center; text-align: left; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; font: inherit; color: inherit; cursor: pointer; transition: border-color .15s, transform .15s; }
+.el-cand:hover { border-color: var(--signal); transform: translateY(-1px); }
+.el-cand__body { display: flex; flex-direction: column; gap: 3px; min-width: 0; align-items: flex-start; }
+.el-cand__body strong { font-family: var(--font-display); font-size: 18px; line-height: 1.15; }
+.el-cand__party { font-size: 12.5px; color: var(--text-primary); }
+.el-cand__role { font-size: 12px; color: var(--text-muted); line-height: 1.35; }
+.el-cand__poll { text-align: right; display: flex; flex-direction: column; align-items: flex-end; max-width: 80px; }
+.el-cand__poll b { font-family: var(--font-display); font-size: 24px; }
+.el-cand__poll small { font-size: 11px; color: var(--text-muted); line-height: 1.3; }
+.el-portrait { position: relative; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; overflow: hidden; color: #fff; font-family: var(--font-display); font-weight: 700; flex: none; box-shadow: 0 0 0 3px var(--panel), 0 0 0 4px var(--border); }
+.el-portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+
+.el-modal { position: fixed; inset: 0; z-index: 100; background: rgba(8, 12, 20, 0.55); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.el-modal__panel { position: relative; background: var(--panel); color: var(--text-primary); width: min(680px, 100%); max-height: 90vh; overflow-y: auto; border-radius: 16px; padding: 26px 28px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.el-modal__close { position: absolute; top: 12px; right: 14px; background: none; border: none; font-size: 26px; line-height: 1; color: var(--text-muted); cursor: pointer; }
+.el-profile__head { display: flex; gap: 18px; align-items: center; margin-bottom: 14px; }
+.el-profile__head h3 { font-size: 26px; margin: 6px 0 2px; }
+.el-profile__head p { margin: 0; font-size: 14px; }
+.el-profile__bio { font-size: 14.5px; line-height: 1.6; }
+.el-profile__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.el-profile__cols ul, .el-plain { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.55; display: grid; gap: 4px; }
+.el-profile__polls { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.el-profile__polls li { display: grid; grid-template-columns: 1fr 120px 48px; gap: 10px; align-items: center; font-size: 13px; }
+.el-bar { height: 8px; background: var(--panel-raised); border-radius: 4px; overflow: hidden; }
+.el-bar i { display: block; height: 100%; background: var(--signal); }
+
+/* polls */
+.el-pollchart { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; margin-bottom: 18px; }
+.el-pollchart ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.el-pollchart li { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: center; }
+.el-pollchart__name { font-weight: 600; font-size: 14px; }
+.el-pollchart__bars { display: grid; gap: 3px; }
+.el-pollchart__row { display: flex; align-items: center; gap: 8px; height: 14px; }
+.el-pollchart__row i { display: block; height: 100%; border-radius: 3px; min-width: 2px; transition: width .3s; }
+.el-pollchart__row b { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--text-muted); font-weight: 600; }
+.el-pollchart__key { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-soft); font-size: 12.5px; color: var(--text-muted); }
+.el-pollchart__key i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -2px; }
+.el-pollcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.el-pollcard { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; }
+.el-pollcard header { display: flex; justify-content: space-between; gap: 12px; }
+.el-pollcard h3 { margin: 0; }
+.el-pollcard p { margin: 0; font-size: 13.5px; line-height: 1.55; }
+.el-pollcard dl { margin: 0; display: grid; gap: 4px; font-size: 12.5px; }
+.el-pollcard dl div { display: grid; grid-template-columns: 78px 1fr; gap: 8px; }
+.el-pollcard dt { color: var(--text-muted); }
+.el-pollcard dd { margin: 0; }
+.el-pollcard a { font-size: 12.5px; color: var(--info); text-decoration: none; margin-top: auto; }
+.el-pollcard a:hover { text-decoration: underline; }
+.el-grade { text-align: center; border-radius: 10px; padding: 6px 12px; min-width: 76px; align-self: flex-start; background: var(--panel-raised); }
+.el-grade b { display: block; font-family: var(--font-display); font-size: 26px; line-height: 1; }
+.el-grade span { font-size: 11px; font-weight: 600; }
+.el-grade--A, .el-grade--B { background: color-mix(in srgb, var(--positive) 16%, var(--panel)); color: var(--positive); }
+.el-grade--C { background: color-mix(in srgb, var(--elevated) 16%, var(--panel)); color: var(--elevated); }
+.el-grade--D { background: color-mix(in srgb, var(--critical) 14%, var(--panel)); color: var(--critical); }
+.el-disclosed { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.el-disclosed li { font-size: 11.5px; padding: 2px 8px; border-radius: 99px; font-weight: 600; }
+.el-disclosed li.ok { background: color-mix(in srgb, var(--positive) 14%, var(--panel)); color: var(--positive); }
+.el-disclosed li.ok::before { content: "✓ "; }
+.el-disclosed li.no { background: color-mix(in srgb, var(--critical) 12%, var(--panel)); color: var(--critical); }
+.el-disclosed li.no::before { content: "✕ "; }
+.el-lesson { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.el-lesson > div { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+.el-lesson p { font-size: 13.5px; line-height: 1.55; margin: 0 0 10px; }
+.el-lesson ul:not(.el-plain) { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; font-size: 13px; }
+.el-lesson ul:not(.el-plain) li { padding: 8px 10px; border-radius: 8px; line-height: 1.4; }
+.el-lesson li.no { background: color-mix(in srgb, var(--critical) 9%, var(--panel)); }
+.el-lesson li.ok { background: color-mix(in srgb, var(--positive) 10%, var(--panel)); }
+.el-lesson li span { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.el-take { margin: 16px 0 0; padding: 14px 16px; background: var(--signal-dim); color: #073f3a; border-radius: 10px; font-size: 14px; line-height: 1.55; }
+
+/* outlook */
+.el-rule { display: grid; grid-template-columns: 1.2fr 1fr; gap: 14px; margin-bottom: 18px; }
+.el-rule > div { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+.el-rule p { margin: 0; font-size: 14px; line-height: 1.6; }
+.el-calc label { display: block; font-size: 13.5px; margin-bottom: 10px; }
+.el-calc input[type="range"] { width: 100%; accent-color: var(--signal); display: block; margin-top: 6px; }
+.el-calc dl { margin: 0 0 8px; display: grid; gap: 5px; }
+.el-calc dl div { display: flex; justify-content: space-between; font-size: 13.5px; border-bottom: 1px solid var(--border-soft); padding-bottom: 4px; }
+.el-calc dd { margin: 0; font-variant-numeric: tabular-nums; }
+.el-scen { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.el-scen__card { background: var(--panel); border: 1px solid var(--border); border-top: 4px solid var(--text-faint); border-radius: 14px; padding: 18px 20px; }
+.el-scen__card--high { border-top-color: var(--signal); }
+.el-scen__card--mid { border-top-color: var(--elevated); }
+.el-scen__card p { font-size: 13.5px; line-height: 1.55; margin: 8px 0; }
+.el-scen__card ul { margin: 0; padding-left: 18px; font-size: 13px; display: grid; gap: 3px; }
+.el-scen__lean { margin: 0 !important; font-size: 12px !important; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.el-drivers, .el-signposts { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px 22px; margin-bottom: 14px; }
+.el-drivers ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; font-size: 14px; line-height: 1.55; }
+.el-signposts ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.el-signposts li { display: grid; grid-template-columns: 190px 1fr; gap: 14px; font-size: 13.5px; padding-bottom: 8px; border-bottom: 1px solid var(--border-soft); }
+.el-signposts li:last-child { border: none; }
+
+.el-sources { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+.el-sources li { display: grid; grid-template-columns: minmax(280px, 1.2fr) 1fr; gap: 14px; font-size: 13px; padding: 8px 0; border-bottom: 1px solid var(--border-soft); }
+.el-sources a { color: var(--info); text-decoration: none; }
+.el-sources a:hover { text-decoration: underline; }
+.el-sources span { color: var(--text-muted); }
+.el-page main { padding-bottom: 80px; }
+
+@media (max-width: 900px) {
+  .el-wrap { padding: 0 16px; }
+  .el-stats { grid-template-columns: 1fr 1fr; }
+  .el-map__grid, .el-lesson, .el-rule { grid-template-columns: 1fr; }
+  .el-regions li { grid-template-columns: 1fr; gap: 4px; }
+  .el-pollchart li { grid-template-columns: 1fr; gap: 6px; }
+  .el-timeline li { grid-template-columns: 1fr; }
+  .el-timeline li::before, .el-timeline__dot { display: none; }
+  .el-timeline__date { text-align: left; display: flex; gap: 8px; align-items: baseline; }
+  .el-signposts li, .el-sources li, .el-profile__cols { grid-template-columns: 1fr; }
+  .el-cands { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) { .el-cand, .el-pollchart__row i { transition: none; } }

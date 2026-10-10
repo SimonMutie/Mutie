@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type AuthUser, type SpotlightEntry, type SpotlightEntryInput } from "../api";
 import { SPOTLIGHT_PRODUCT_TYPES, SPOTLIGHT_REGIONS, spotlightRegionName, type SpotlightRegionSlug, type SpotlightScope } from "../spotlightRegions";
 import SpotlightArticle from "./SpotlightArticle";
+import { CountryDirectory, CountryPage } from "./SpotlightCountries";
 import { RichTextEditor } from "./SpotlightRichText";
 import { uploadImageFile } from "../imageUpload";
 import "./Spotlight.css";
+
+const KenyaElection = lazy(() => import("./KenyaElection"));
 
 /**
  * Regional Spotlight: publications filed by region.
@@ -26,7 +29,7 @@ interface Props {
   onScopeChange: (scope: SpotlightScope) => void;
 }
 
-type Screen = { kind: "index" } | { kind: "read"; id: string } | { kind: "edit"; id: string | null };
+type Screen = { kind: "index" } | { kind: "read"; id: string } | { kind: "edit"; id: string | null } | { kind: "country"; iso2: string } | { kind: "election"; iso2: string };
 type Notice = { text: string; error?: boolean } | null;
 
 const errorText = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
@@ -113,6 +116,27 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
     );
   }
 
+  if (screen.kind === "election") {
+    return (
+      <Suspense fallback={<div className="spotlight-page"><div className="spotlight-wrap"><div className="spotlight-empty">Loading…</div></div></div>}>
+        <KenyaElection onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
+      </Suspense>
+    );
+  }
+
+  if (screen.kind === "country") {
+    return (
+      <CountryPage
+        iso2={screen.iso2}
+        entries={entries}
+        isAdmin={isAdmin}
+        onBack={() => setScreen({ kind: "index" })}
+        onOpenEntry={(id) => setScreen({ kind: "read", id })}
+        onOpenProduct={() => setScreen({ kind: "election", iso2: screen.iso2 })}
+      />
+    );
+  }
+
   if (screen.kind === "read") {
     return (
       <SpotlightReader
@@ -154,6 +178,7 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
       onNew={() => setScreen({ kind: "edit", id: null })}
       onEdit={(id) => setScreen({ kind: "edit", id })}
       onSetStatus={setStatus}
+      onOpenCountry={(iso2) => setScreen({ kind: "country", iso2 })}
     />
   );
 }
@@ -175,6 +200,7 @@ function SpotlightIndex(props: {
   onNew: () => void;
   onEdit: (id: string) => void;
   onSetStatus: (entry: SpotlightEntry, status: "draft" | "published") => void;
+  onOpenCountry: (iso2: string) => void;
 }) {
   const { scope, isAdmin, entries, search, typeFilter } = props;
   const regionName = scope === "all" ? "All regions" : spotlightRegionName(scope);
@@ -234,6 +260,8 @@ function SpotlightIndex(props: {
               ))}
           </div>
         )}
+
+        {scope === "africa" && <CountryDirectory entries={entries} onOpen={props.onOpenCountry} />}
 
         {entries === null && !props.loadError && <div className="spotlight-empty">Loading…</div>}
 
