@@ -19,6 +19,20 @@ export function getToken(): string | null {
 
 export type UserRole = "admin" | "client";
 
+export interface SourceRegisterEntry {
+  id: string;
+  name: string;
+  url: string;
+  country: string;
+  country_name: string;
+  region: string;
+  kind: string;
+  /** "pulled": the platform reads from it. "reference": used to check reporting, nothing is pulled. */
+  role: "pulled" | "reference";
+  notes: string | null;
+  active: boolean;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
@@ -1541,6 +1555,11 @@ export const api = {
     if (params.username) q.set("username", params.username);
     return req<{ id: number; at: string; user_id: string | null; username: string | null; action: string; detail: string | null; ip: string | null }[]>(`/api/auth/audit?${q}`);
   },
+  getSourceRegister: () => req<{ kinds: Record<string, string>; entries: SourceRegisterEntry[] }>("/api/source-register"),
+  addSource: (d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>("/api/source-register", { method: "POST", body: JSON.stringify(d) }),
+  updateSource: (id: string, d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>(`/api/source-register/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
+  deleteSource: (id: string) => req<{ ok: boolean }>(`/api/source-register/${id}`, { method: "DELETE" }),
+  restoreSourceDefaults: () => req<{ added: number }>("/api/source-register/restore-defaults", { method: "POST" }),
   logoutAll: () => req<{ ok: boolean }>("/api/auth/logout-all", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),

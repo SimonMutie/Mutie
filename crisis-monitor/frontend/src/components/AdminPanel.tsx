@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import SourcesRegister from "./SourcesRegister";
 import { api, type AccessRequest, type ClientOrg, type ClientSharedItem, type AuthUser } from "../api";
 
 interface Props {
@@ -6,7 +7,7 @@ interface Props {
   onBack: () => void;
 }
 
-type View = "list" | { clientId: string };
+type View = "list" | "sources" | { clientId: string };
 
 export default function AdminPanel({ user, onBack }: Props) {
   const isPlatformAdmin = user.role === "admin";
@@ -41,6 +42,8 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
     if (view === "list") loadClients();
   }, [view]);
 
+  if (view === "sources") return <SourcesRegister onBack={() => setView("list")} />;
+
   if (view !== "list") {
     return <ClientDetail clientId={view.clientId} isPlatformAdmin onBack={() => setView("list")} onClientChanged={loadClients} />;
   }
@@ -52,6 +55,13 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
       </button>
 
       <AccessRequestsSection />
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
+        <button onClick={() => setView("sources")} style={primaryBtnStyle}>
+          Sources register
+        </button>
+        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>The outlets and bodies behind our reporting, by country, with links.</span>
+      </div>
 
       <ActivityLogSection />
 
