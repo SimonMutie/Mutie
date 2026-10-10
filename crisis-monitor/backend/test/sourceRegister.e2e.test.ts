@@ -136,3 +136,13 @@ describe("register expansion and link checks", () => {
     }
   });
 });
+
+describe("languages and think tanks", () => {
+  it("records languages and covers the non-English press and think tanks", async () => {
+    const body = (await (await call("/", { headers: admin })).json()) as { entries: { language: string | null; kind: string; country_name: string; url: string }[] };
+    const langs = new Set(body.entries.flatMap((e) => (e.language ?? "").split(/[\/,]/).map((x) => x.trim()).filter(Boolean)));
+    for (const l of ["Arabic", "French", "Amharic", "Somali", "Swahili", "Portuguese", "Spanish", "Russian"]) expect(langs.has(l)).toBe(true);
+    expect(body.entries.filter((e) => e.kind === "institution").length).toBeGreaterThan(200);
+    expect(body.entries.find((e) => e.country_name === "Russia")).toBeTruthy();
+  });
+});

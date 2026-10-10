@@ -81,7 +81,7 @@ export const regionOf = (code: string): string => REGION_OF[code] ?? (code === "
 /** Home countries of non-African outlets and think tanks (grouped under "International"). */
 const FOREIGN: Record<string, string> = {
   RU: "Russia", CN: "China", IN: "India", GB: "United Kingdom", US: "United States", BE: "Belgium", FR: "France", DE: "Germany", ES: "Spain", PT: "Portugal",
-  NL: "Netherlands", CH: "Switzerland", NO: "Norway", SE: "Sweden", DK: "Denmark", FI: "Finland", IT: "Italy", CA: "Canada", AU: "Australia", JP: "Japan", UA: "Ukraine", BR: "Brazil", AT: "Austria",
+  NL: "Netherlands", CH: "Switzerland", NO: "Norway", SE: "Sweden", DK: "Denmark", FI: "Finland", IT: "Italy", CA: "Canada", AU: "Australia", JP: "Japan", UA: "Ukraine", BR: "Brazil", AT: "Austria", RE: "Réunion (France)", MO: "Macau", EH: "Western Sahara", LU: "Luxembourg", TW: "Taiwan", KR: "South Korea", PK: "Pakistan",
 };
 export const FOREIGN_CODES = new Set(Object.keys(FOREIGN));
 
