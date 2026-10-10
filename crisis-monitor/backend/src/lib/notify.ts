@@ -34,6 +34,10 @@ export interface NotificationSection {
   /** The interpretive reading: why it matters, what it suggests. */
   analysis: string;
   links: NotificationLink[];
+  /** The escalation incident this section is about, so a map can be attached to it. */
+  incidentId?: string;
+  /** A static map of where it happened, sent as an inline image in emails. */
+  map?: { cid: string; base64: string; caption: string };
 }
 
 export interface Notification {
@@ -116,6 +120,7 @@ export function toHtml(n: Notification): string {
   for (const s of n.sections) {
     parts.push(`<div style="border-top:1px solid #d8dce6;padding-top:10px;margin-top:12px">`);
     parts.push(`<div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#6b7385;font-weight:700">${esc(s.heading)}</div>`);
+    if (s.map) parts.push(`<div style="margin:8px 0"><img src="cid:${esc(s.map.cid)}" width="640" alt="Map of where this happened" style="display:block;width:100%;max-width:640px;height:auto;border-radius:6px;border:1px solid #d8dce6"><div style="font-size:11px;color:#6b7385;margin-top:4px">${esc(s.map.caption)}</div></div>`);
     parts.push(`<p style="margin:6px 0;line-height:1.55"><strong>What changed.</strong> ${esc(s.changed)}</p>`);
     if (s.analysis) parts.push(`<p style="margin:6px 0;line-height:1.55"><strong>Analysis.</strong> ${esc(s.analysis)}</p>`);
     if (s.links.length) parts.push(`<ul style="margin:6px 0 0;padding-left:18px;font-size:13px">${s.links.map(linkHtml).join("")}</ul>`);
@@ -145,7 +150,17 @@ export async function sendEmail(env: Env, to: string, n: Notification): Promise<
     const res = await postJson(
       "https://api.resend.com/emails",
       { Authorization: `Bearer ${env.RESEND_API_KEY}` },
-      { from: env.ALERT_EMAIL_FROM, to: [to], subject: n.subject.slice(0, 200), html: toHtml(n), text: toText(n) }
+      {
+        from: env.ALERT_EMAIL_FROM,
+        to: [to],
+        subject: n.subject.slice(0, 200),
+        html: toHtml(n),
+        text: toText(n),
+        // Inline images the HTML points at with cid:
+        ...(n.sections.some((s) => s.map)
+          ? { attachments: n.sections.filter((s) => s.map).map((s) => ({ filename: `${s.map!.cid}.png`, content: s.map!.base64, content_type: "image/png", content_id: s.map!.cid })) }
+          : {}),
+      }
     );
     if (res.ok) return { ok: true };
     const detail = (await res.text().catch(() => "")).slice(0, 200);

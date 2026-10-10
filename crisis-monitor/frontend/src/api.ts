@@ -1893,6 +1893,7 @@ export const api = {
   // numbers were rebuilt rather than copied.
   getSpaceWeather: () => req<SpaceWeather>("/api/global-status/space-weather"),
   getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
+  getIncidentMap: (id: string) => req<{ svg: string; caption: string; province: string | null }>(`/api/live-layers/conflict-escalation/incidents/${encodeURIComponent(id)}/map`),
   getConflictZones: () => req<ConflictZones>("/api/live-layers/conflict-zones"),
   getMarketsBoard: () => req<MarketsBoard>("/api/global-status/markets-board"),
   getMarkets: () => req<MarketsStatus>("/api/global-status/markets"),

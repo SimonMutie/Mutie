@@ -1,3 +1,4 @@
+import { buildMapScene, mapCaption, sceneToPng, toBase64 } from "./staticMap";
 import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
 import type { Env } from "../bindings";
@@ -143,7 +144,7 @@ function incidentSection(c: Change): NotificationSection {
     .filter(Boolean)
     .join(" ");
   const links: NotificationLink[] = i.sources.slice(0, 5).map((s) => ({ title: s.title ?? s.domain, url: s.url, source: s.domain }));
-  return { heading: `${i.level.toUpperCase()} · ${place}`, changed: tidy(changed), analysis: tidy(analysis), links };
+  return { heading: `${i.level.toUpperCase()} · ${place}`, changed: tidy(changed), analysis: tidy(analysis), links, incidentId: i.id };
 }
 
 export function buildEscalationNotification(changes: Change[], testing = false): Notification {
@@ -161,6 +162,27 @@ export function buildEscalationNotification(changes: Change[], testing = false):
     links: [],
     footer: "The Lens · Afrilens Consulting. Manage these alerts in Settings.",
   };
+}
+
+/** Adds the static map of where each incident happened to an escalation email. A map that cannot be drawn is
+ *  skipped; the alert still goes. Only email shows images, so other channels are left as they are. */
+export async function attachMaps(n: Notification, incidents: IncidentView[]): Promise<Notification> {
+  const byId = new Map(incidents.map((i) => [i.id, i]));
+  const sections = await Promise.all(
+    n.sections.map(async (s) => {
+      const i = s.incidentId ? byId.get(s.incidentId) : undefined;
+      if (!i) return s;
+      try {
+        const scene = buildMapScene({ lat: i.lat, lon: i.lon, level: i.level, precision: i.geoPrecision, countryCode: i.countryCode });
+        const png = await sceneToPng(scene);
+        return { ...s, map: { cid: `map-${i.id.replace(/[^a-z0-9]/gi, "").slice(0, 24)}`, base64: toBase64(png), caption: mapCaption({ locationLabel: i.locationLabel, countryName: i.countryName, precision: i.geoPrecision }, scene) } };
+      } catch (err) {
+        console.error("[alerts] map failed", err);
+        return s;
+      }
+    })
+  );
+  return { ...n, sections };
 }
 
 async function loadSeen(env: Env, subId: string): Promise<Map<string, { level: string; report_count: number }>> {
@@ -214,7 +236,9 @@ async function runEscalationSub(env: Env, sub: Subscription, flagged: IncidentVi
   const urgent = changes.some((c) => c.kind !== "updated" && c.incident.level === "critical");
   if (!urgent && sub.last_sent_at && now - Date.parse(sub.last_sent_at) < sub.frequency_minutes * 60_000) return;
 
-  const result = await sendNotification(env, sub.channel, sub.destination, buildEscalationNotification(changes));
+  let message = buildEscalationNotification(changes);
+  if (sub.channel === "email") message = await attachMaps(message, changes.map((c) => c.incident));
+  const result = await sendNotification(env, sub.channel, sub.destination, message);
   await recordSend(env, sub, result);
   if (result.ok) await markSeen(env, sub.id, changes.map((c) => c.incident));
 }
@@ -434,7 +458,10 @@ export async function sendTestMessage(env: Env, sub: Subscription): Promise<{ ok
       const r = await sendNotification(env, sub.channel, sub.destination, sample);
       return { ...r, note: "No incident is flagged right now, so a plain test message was sent." };
     }
-    return sendNotification(env, sub.channel, sub.destination, buildEscalationNotification(flagged.slice(0, 3).map((incident) => ({ incident, kind: "new" as const })), true));
+    const shown = flagged.slice(0, 3);
+    let message = buildEscalationNotification(shown.map((incident) => ({ incident, kind: "new" as const })), true);
+    if (sub.channel === "email") message = await attachMaps(message, shown);
+    return sendNotification(env, sub.channel, sub.destination, message);
   }
   const query = sub.query_id ? await first<{ id: string; name: string; boolean_query: string }>(env.DB, "SELECT id, name, boolean_query FROM monitoring_queries WHERE id = ?", [sub.query_id]) : null;
   if (!query) return { ok: false, error: "This query no longer exists." };

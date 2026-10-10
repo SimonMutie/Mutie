@@ -12,14 +12,14 @@ import { countryName } from "./africaGeo";
  * Borders: Natural Earth (public domain), and geoBoundaries (CC BY 4.0) for the DR Congo's current provinces.
  */
 type Ring = [number, number][]; // [lon, lat]
-interface Province {
+export interface Province {
   country: string;
   name: string;
   rings: Ring[];
   bbox: [number, number, number, number]; // minLon, minLat, maxLon, maxLat
 }
 
-const PROVINCES: Province[] = (provincesJson as unknown as [string, string, Ring[]][]).map(([country, name, rings]) => {
+export const PROVINCES: Province[] = (provincesJson as unknown as [string, string, Ring[]][]).map(([country, name, rings]) => {
   let minLon = Infinity, minLat = Infinity, maxLon = -Infinity, maxLat = -Infinity;
   for (const r of rings) for (const [lon, lat] of r) {
     if (lon < minLon) minLon = lon;

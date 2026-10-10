@@ -1,3 +1,4 @@
+import { EscalationMap } from "./EscalationMap";
 import type { ConflictProvince } from "../api";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -1072,7 +1073,7 @@ function CitedText({ text, incident }: { text: string; incident: EscalationIncid
   );
 }
 
-/** "5 Oct, 14:20" — when a source was published, to the minute: only reports from the last 24 hours count. */
+/** "5 Oct, 14:20" — when a source was published, to the minute: only reports from the last 48 hours count. */
 const publishedAt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 const shortDate = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
 
@@ -1092,6 +1093,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
       <div className="osiris-popup-layer">{where}</div>
       <div className={`osiris-incident-precision osiris-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
       {incident.preliminary && <div className="osiris-incident-preliminary">PRELIMINARY · FROM HEADLINES · NOT YET READ IN FULL</div>}
+      <EscalationMap incidentId={incident.id} />
       <a className="osiris-popup-link" href={liveuamap.url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8 }}>
         [ OPEN {liveuamap.mapName.toUpperCase()} ON LIVEUAMAP ↗ ]
       </a>
@@ -1102,7 +1104,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
           <div className={`osiris-popup-value osiris-popup-value--${incident.level}`}>{LEVEL_LABEL[incident.level]}</div>
         </div>
         <div>
-          <div className="osiris-popup-label">EVENT DATE · LAST 24 H</div>
+          <div className="osiris-popup-label">EVENT DATE · LAST 48 H</div>
           <div className="osiris-popup-value">{dates}</div>
         </div>
         <div>

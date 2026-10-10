@@ -41,12 +41,16 @@ def area(r):
 
 def rings_of(geom):
     polys = [geom["coordinates"]] if geom["type"] == "Polygon" else geom["coordinates"]
+    xs = [x for poly in polys for x, _ in poly[0]]
+    ys = [y for poly in polys for _, y in poly[0]]
+    # Simplify less for small areas (Gaza, Jerusalem...), so they keep their shape.
+    tol = max(0.002, min(TOL, ((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2) ** 0.5 / 40))
     out = []
     for poly in polys:
         r = poly[0]  # outer ring only; holes are not needed for shading
-        s = dp([(x, y) for x, y in r], TOL)
-        if len(s) >= 4 and area(s) > 0.004:
-            out.append([[round(x, 2), round(y, 2)] for x, y in s])
+        s = dp([(x, y) for x, y in r], tol)
+        if len(s) >= 4 and area(s) > 0.0004:
+            out.append([[round(x, 3), round(y, 3)] for x, y in s])
     return out
 
 ne = json.load(open(sys.argv[1]))["features"]

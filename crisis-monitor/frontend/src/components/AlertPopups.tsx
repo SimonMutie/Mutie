@@ -1,3 +1,4 @@
+import { EscalationMap } from "./EscalationMap";
 import { useEffect, useRef, useState } from "react";
 import type { AlertItem } from "../api";
 import RealisticEye from "./RealisticEye";
@@ -142,6 +143,7 @@ export default function AlertPopups({
             </div>
             <div style={{ fontWeight: 700, marginBottom: 3 }}>{al.title}</div>
             {al.geo_label && <div style={{ color: "#f0d060", fontSize: 12, marginBottom: 3 }}>📍 {al.geo_label}</div>}
+            {snap?.incidentId && (al.level === "elevated" || al.level === "critical") && <EscalationMap incidentId={snap.incidentId} />}
             {al.description && <div style={{ opacity: 0.9, marginBottom: 4 }}>{al.description.length > 320 ? `${al.description.slice(0, 320)}…` : al.description}</div>}
             {snap?.criteriaMet && snap.criteriaMet.length > 0 && (
               <ul style={{ margin: "4px 0", paddingLeft: 18, opacity: 0.8, fontSize: 12 }}>

@@ -11,6 +11,7 @@ import { getFlaggedIncidents, getIncident, getAuditLog, getPipelineStatus, type 
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
 import { conflictProvinces, type EscalationPoint } from "../lib/conflictZones";
+import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
@@ -500,6 +501,15 @@ liveLayersRouter.get("/conflict-escalation/incidents/:id", async (c) => {
   const incident = await getIncident(c.env, c.req.param("id"));
   if (!incident) return c.json({ error: "Incident not found" }, 404);
   return c.json(incident);
+});
+
+/** A static map of where an escalation incident happened: the province it is in, shaded, with a pin. SVG for the
+ *  app, plus the caption that goes beside it. Drawn from bundled borders, so nothing is fetched from a map service. */
+liveLayersRouter.get("/conflict-escalation/incidents/:id/map", async (c) => {
+  const i = await getIncident(c.env, c.req.param("id"));
+  if (!i) return c.json({ error: "Incident not found" }, 404);
+  const scene = buildMapScene({ lat: i.lat, lon: i.lon, level: i.level, precision: i.geoPrecision, countryCode: i.countryCode });
+  return cachedJson(c.req.raw, async () => ({ svg: sceneToSvg(scene), caption: mapCaption({ locationLabel: i.locationLabel, countryName: i.countryName, precision: i.geoPrecision }, scene), province: scene.provinceName }), 300);
 });
 
 /** Kept for clients built before incidents existed, which ask for a
