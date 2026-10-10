@@ -5,7 +5,7 @@ import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { fieldsOf, runQuery, QueryError, type FilterSpec, type QueryResult, type QuerySpec, type Source } from "../lib/analytics";
 import { canReadDataset, loadDatasetSchema } from "./datasets";
-import { effectiveScope } from "./incidents";
+import { effectiveScope, effectiveReadScope, effectiveCountryScope } from "./incidents";
 import { vizQuerySchema } from "./customDashboards";
 
 /**
@@ -152,7 +152,11 @@ publicAnalyticsRouter.post("/:token", async (c) => {
   if (viz.source === "incidents") {
     // The same scope the rest of the shared view uses: the owner's own incidents, in the dashboard's date range.
     if (!dashboard.owner_id) return c.json({ error: "Not found" }, 404);
-    source = { kind: "incidents", ownerIds: [dashboard.owner_id], countries: dashboard.country ? [dashboard.country] : null, dateFrom: dashboard.date_range_from, dateTo: dashboard.date_range_to };
+    const ownerRow = await first<{ role: string }>(c.env.DB, `SELECT role FROM users WHERE id = ?`, [dashboard.owner_id]);
+    const ownerIds = ownerRow ? await effectiveReadScope(c.env.DB, ownerRow.role, dashboard.owner_id) : [dashboard.owner_id];
+    const allowed = ownerRow ? await effectiveCountryScope(c.env.DB, ownerRow.role, dashboard.owner_id) : null;
+    const countries = dashboard.country ? (allowed && !allowed.some((a) => a.toLowerCase() === dashboard.country!.toLowerCase()) ? ["\u0000none"] : [dashboard.country]) : allowed;
+    source = { kind: "incidents", ownerIds, countries, dateFrom: dashboard.date_range_from, dateTo: dashboard.date_range_to };
   } else {
     const id = viz.source.startsWith("dataset:") ? viz.source.slice(8) : "";
     const dataset = id ? await loadDatasetSchema(c.env.DB, id) : null;

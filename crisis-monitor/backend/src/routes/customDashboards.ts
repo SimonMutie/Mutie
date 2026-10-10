@@ -5,7 +5,7 @@ import { newId } from "../ids";
 import { audit, clientIp } from "../lib/audit";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
-import { isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, fetchMonthlyGroups, teamOwnerIds } from "./incidents";
+import { effectiveReadScope, effectiveCountryScope, isPivotable, buildScopeClause, fetchIncidentsBreakdown, fetchIncidentsCrosstab, fetchVictimGroups, fetchMonthlyGroups, teamOwnerIds } from "./incidents";
 import { loadDatasetSchema, fetchDatasetBreakdown, fetchDatasetCrosstab, fetchDatasetSummary, fetchDatasetDaily } from "./datasets";
 
 export const customDashboardsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -398,8 +398,8 @@ customDashboardsRouter.delete("/:id", async (c) => {
  *  dashboard's owner (not any viewer — there isn't one, this is public).
  *  Uses the exact same clause-building helper as the authenticated route, so
  *  the two can't quietly drift into different date-filtering behavior. */
-async function computeStatsForOwner(db: D1Database, ownerId: string | null, dateFrom?: string | null, dateTo?: string | null, countries?: string[] | null) {
-  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries);
+async function computeStatsForOwner(db: D1Database, ownerIds: string[] | null, dateFrom?: string | null, dateTo?: string | null, countries?: string[] | null) {
+  const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerIds, dateFrom ?? undefined, dateTo ?? undefined, countries);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
     first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
@@ -494,9 +494,19 @@ publicDashboardsRouter.get("/:token", async (c) => {
   const dateFrom = dashboard.date_range_from as string | null;
   const dateTo = dashboard.date_range_to as string | null;
   const country = (dashboard.country as string | null) || null;
-  const countries = country ? [country] : null;
-  const stats = await computeStatsForOwner(c.env.DB, dashboard.owner_id as string | null, dateFrom, dateTo, countries);
   const ownerId = dashboard.owner_id as string | null;
+  // The link shows what its owner sees in the app: the platform admin sees every incident, a client sees its team's
+  // (or the shared pool if granted), and any country restriction on the owner still applies. Using only the owner's
+  // own uploads here, as before, made a dashboard that was full in the app open empty through its link.
+  const ownerRow = ownerId ? await first<{ role: string }>(c.env.DB, `SELECT role FROM users WHERE id = ?`, [ownerId]) : null;
+  const ownerIds: string[] | null = ownerId && ownerRow ? await effectiveReadScope(c.env.DB, ownerRow.role, ownerId) : ownerId ? [ownerId] : null;
+  const allowedCountries = ownerId && ownerRow ? await effectiveCountryScope(c.env.DB, ownerRow.role, ownerId) : null;
+  const countries = country
+    ? allowedCountries && !allowedCountries.some((a) => a.toLowerCase() === country.toLowerCase())
+      ? ["\u0000none"]
+      : [country]
+    : allowedCountries;
+  const stats = await computeStatsForOwner(c.env.DB, ownerIds, dateFrom, dateTo, countries);
 
   // Only fetched if a map widget is actually present — no point pulling
   // thousands of rows for a purely chart-based dashboard.
@@ -505,7 +515,7 @@ publicDashboardsRouter.get("/:token", async (c) => {
   let incidents: Record<string, unknown>[] = [];
   if (hasMapWidget) {
     if (ownerId) {
-      const scope = buildScopeClause([ownerId], dateFrom ?? undefined, dateTo ?? undefined, countries);
+      const scope = buildScopeClause(ownerIds, dateFrom ?? undefined, dateTo ?? undefined, countries);
       incidents = await all(
         c.env.DB,
         `SELECT id, latitude, longitude, severity, actor, interest_group, sector, operation, target, tactic, occurred_date, city, province, precise_location, substr(details, 1, 400) AS details, civilian_death_child, civilian_death_female, civilian_death_male, civilian_death_unknown, civilian_injury_female, civilian_injury_male, civilian_injury_unknown FROM incidents ${scope.whereClause ? scope.whereClause + " AND" : "WHERE"} latitude IS NOT NULL LIMIT 20000`,
@@ -559,18 +569,18 @@ publicDashboardsRouter.get("/:token", async (c) => {
     const primary = w.dataField ? DATA_FIELD_TO_COLUMN[w.dataField] : undefined;
     if (primary && isPivotable(primary) && isPivotable(w.secondaryField)) {
       const key = `${primary}|${w.secondaryField}`;
-      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerId ? [ownerId] : null, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined, countries);
+      if (!(key in crosstabs)) crosstabs[key] = await fetchIncidentsCrosstab(c.env.DB, ownerIds, primary, w.secondaryField, dateFrom ?? undefined, dateTo ?? undefined, countries);
     } else if (primary && isPivotable(primary) && !("by_" + primary in stats)) {
-      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerId ? [ownerId] : null, primary, dateFrom ?? undefined, dateTo ?? undefined, countries);
+      if (!(primary in breakdowns)) breakdowns[primary] = await fetchIncidentsBreakdown(c.env.DB, ownerIds, primary, dateFrom ?? undefined, dateTo ?? undefined, countries);
     }
   }
 
   const victimGroups = widgets.some((w) => w.type === "victims")
-    ? await fetchVictimGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
+    ? await fetchVictimGroups(c.env.DB, ownerIds, dateFrom ?? undefined, dateTo ?? undefined, countries)
     : [];
 
   const monthlyGroups = widgets.some((w) => w.type === "calendar" && !w.datasetId)
-    ? await fetchMonthlyGroups(c.env.DB, ownerId ? [ownerId] : null, dateFrom ?? undefined, dateTo ?? undefined, countries)
+    ? await fetchMonthlyGroups(c.env.DB, ownerIds, dateFrom ?? undefined, dateTo ?? undefined, countries)
     : [];
 
   return c.json({
