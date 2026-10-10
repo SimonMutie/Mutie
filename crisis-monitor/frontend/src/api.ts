@@ -19,6 +19,41 @@ export function getToken(): string | null {
 
 export type UserRole = "admin" | "client";
 
+export interface BroadcastAudience {
+  mode: "all_clients" | "clients" | "list_only";
+  client_ids?: string[];
+  channels: ("email" | "signal" | "push")[];
+  extras?: string;
+}
+export interface BroadcastMessage {
+  subject: string;
+  message: string;
+  severity: "info" | "advisory" | "urgent";
+  country?: string | null;
+  link?: string | null;
+}
+export interface BroadcastPreview {
+  total: number;
+  counts: Record<string, number>;
+  skipped: { destination: string; reason: string }[];
+  skipped_total: number;
+  over_limit: boolean;
+  limit: number;
+}
+export interface BroadcastRow {
+  id: string;
+  subject: string;
+  severity: string;
+  country: string | null;
+  channels: string;
+  status: string;
+  total: number;
+  sent: number;
+  failed: number;
+  created_at: string;
+  completed_at: string | null;
+}
+
 export interface SourceRegisterEntry {
   id: string;
   name: string;
@@ -1573,6 +1608,16 @@ export const api = {
   addSource: (d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>("/api/source-register", { method: "POST", body: JSON.stringify(d) }),
   updateSource: (id: string, d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>(`/api/source-register/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
   deleteSource: (id: string) => req<{ ok: boolean }>(`/api/source-register/${id}`, { method: "DELETE" }),
+  listBroadcasts: () => req<{ channels: Record<string, boolean>; broadcasts: BroadcastRow[] }>("/api/broadcasts"),
+  previewBroadcast: (a: BroadcastAudience) => req<BroadcastPreview>("/api/broadcasts/preview", { method: "POST", body: JSON.stringify(a) }),
+  testBroadcast: (d: BroadcastMessage & { channel: "email" | "signal"; destination: string }) => req<{ ok: boolean }>("/api/broadcasts/test", { method: "POST", body: JSON.stringify(d) }),
+  createBroadcast: (d: BroadcastMessage & BroadcastAudience & { confirm_total: number }) => req<{ id: string; total: number }>("/api/broadcasts", { method: "POST", body: JSON.stringify(d) }),
+  sendBroadcastBatch: (id: string) => req<{ sent: number; failed: number; remaining: number; status: string }>(`/api/broadcasts/${id}/send`, { method: "POST" }),
+  cancelBroadcast: (id: string) => req<{ ok: boolean }>(`/api/broadcasts/${id}/cancel`, { method: "POST" }),
+  getBroadcast: (id: string) => req<{ broadcast: BroadcastRow; failures: { channel: string; destination: string; error: string }[] }>(`/api/broadcasts/${id}`),
+  listSuppressions: () => req<{ destination: string; note: string | null; added_at: string }[]>("/api/broadcasts/suppressions"),
+  addSuppression: (destination: string, note?: string) => req<{ ok: boolean }>("/api/broadcasts/suppressions", { method: "POST", body: JSON.stringify({ destination, note }) }),
+  removeSuppression: (destination: string) => req<{ ok: boolean }>(`/api/broadcasts/suppressions/${encodeURIComponent(destination)}`, { method: "DELETE" }),
   checkSourceLinks: () => req<{ checked: number; remaining: number; dead: number }>("/api/source-register/check-links", { method: "POST" }),
   restoreSourceDefaults: () => req<{ added: number }>("/api/source-register/restore-defaults", { method: "POST" }),
   logoutAll: () => req<{ ok: boolean }>("/api/auth/logout-all", { method: "POST" }),

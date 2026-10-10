@@ -115,7 +115,7 @@ function linkHtml(l: NotificationLink): string {
 export function toHtml(n: Notification): string {
   const parts: string[] = [];
   parts.push(`<h2 style="margin:0 0 8px;font-size:18px">${esc(n.subject)}</h2>`);
-  parts.push(`<p style="margin:0 0 12px;line-height:1.55">${esc(n.overview)}</p>`);
+  parts.push(`<p style="margin:0 0 12px;line-height:1.55;white-space:pre-line">${esc(n.overview)}</p>`);
   if (n.analysis) parts.push(`<p style="margin:0 0 12px;line-height:1.55"><strong>Analysis.</strong> ${esc(n.analysis)}</p>`);
   for (const s of n.sections) {
     parts.push(`<div style="border-top:1px solid #d8dce6;padding-top:10px;margin-top:12px">`);

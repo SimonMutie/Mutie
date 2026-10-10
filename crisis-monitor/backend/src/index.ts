@@ -23,6 +23,7 @@ import { listeningQueriesRouter } from "./routes/listeningQueries";
 import { spotlightRouter, publicSpotlightRouter } from "./routes/spotlight";
 import { alertSubscriptionsRouter } from "./routes/alertSubscriptions";
 import { sourceRegisterRouter } from "./routes/sourceRegister";
+import { broadcastsRouter } from "./routes/broadcasts";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
 import { refreshStaleLists } from "./lib/dd/sanctionsLists";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
@@ -112,6 +113,7 @@ app.route("/api/listening-queries", listeningQueriesRouter);
 app.route("/api/spotlight", spotlightRouter);
 app.route("/api/alert-subscriptions", alertSubscriptionsRouter);
 app.route("/api/source-register", sourceRegisterRouter);
+app.route("/api/broadcasts", broadcastsRouter);
 app.route("/api/due-diligence", dueDiligenceRouter);
 app.route("/api/public/spotlight", publicSpotlightRouter);
 
