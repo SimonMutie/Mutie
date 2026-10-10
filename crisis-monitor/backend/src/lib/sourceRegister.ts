@@ -4,6 +4,7 @@ import { newId } from "../ids";
 import { AFRICA_SOURCES, PAN_AFRICAN, INSTITUTION, GLOBAL_AFRICA_DESK } from "../data/africaSources";
 import { SOURCE_NAMES, STATE_MEDIA } from "../data/sourceNames";
 import { AFRICA_GEO_COUNTRIES } from "./africaGeo";
+import { EXPANSION, EXPANSION_VERSION, RERATED } from "../data/registerExpansion";
 import { RATINGS, OWNERSHIP_LABEL, RELIABILITY_LABEL, type Ownership, type Reliability } from "../data/sourceRatings";
 
 /**
@@ -104,11 +105,16 @@ export interface Assessment {
   rating_basis: "desk" | "unassessed";
 }
 
+/** Ratings from the country-by-country expansion and the re-rated outlets, keyed like RATINGS. */
+const EXTRA_RATINGS: Record<string, [Reliability, Ownership, string | null, string | null]> = {};
+for (const [, , url, , rel, own, orient, note] of EXPANSION) EXTRA_RATINGS[hostOf(url)] = [rel, own, orient, note];
+for (const [host, rel, own, orient, note] of RERATED) EXTRA_RATINGS[host] = [rel, own, orient, note];
+
 /** The baseline assessment for a link: looked up by host, then by host plus first path segment, else "not yet assessed". */
 export function assessmentFor(url: string, kind: SourceKind): Assessment {
   const host = hostOf(url);
-  const r = RATINGS[host];
-  if (r) return { reliability: r[0], ownership: r[1], orientation: r[2] ?? null, rating_note: r[3] ?? null, rating_basis: "desk" };
+  const r = RATINGS[host] ?? EXTRA_RATINGS[host];
+  if (r && !(r[0] === "F" && r[1] === "unassessed")) return { reliability: r[0], ownership: r[1], orientation: r[2] ?? null, rating_note: r[3] ?? null, rating_basis: "desk" };
   if (kind === "state_media") {
     return { reliability: "C", ownership: "state", orientation: "Official line; strong on routine events and statements", rating_note: "State-owned or state-run; not yet individually assessed. Weigh politically sensitive claims accordingly.", rating_basis: "desk" };
   }
@@ -165,6 +171,13 @@ const REFERENCE_SEEDS: Seed[] = [
   { name: "African Union Peace and Security Council", url: "https://papsrepository.africa-union.org/", country: "INST", region: "Institutions", kind: "government", role: "reference", notes: "Official communiqués on peace and security." },
 ];
 
+/** Outlets from the country-by-country research. They are references: the platform does not crawl them. */
+function expansionSeeds(): Seed[] {
+  return EXPANSION.map(([country, name, url, kind]) => ({
+    name, url, country, region: regionOf(country), kind, role: "reference" as const, notes: kind === "state_media" ? "State-owned or state-run; read with that in mind." : null,
+  }));
+}
+
 /** All default entries, built from the lists the platform reads from. */
 export function defaultEntries(): Seed[] {
   const out: Seed[] = [];
@@ -184,7 +197,7 @@ export function defaultEntries(): Seed[] {
       notes: kind === "state_media" ? "State-owned or state-run; read with that in mind." : null,
     });
   }
-  out.push(...WIRE_FEED_SEEDS, ...DATA_SEEDS, ...REFERENCE_SEEDS);
+  out.push(...WIRE_FEED_SEEDS, ...DATA_SEEDS, ...REFERENCE_SEEDS, ...expansionSeeds());
   // One entry per link.
   const seen = new Set<string>();
   return out.filter((e) => {
@@ -225,6 +238,7 @@ export async function ensureRegister(env: Env): Promise<void> {
       }
       const row = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM source_register");
       if ((row?.n ?? 0) === 0) await seedRegister(env);
+      await addExpansion(env);
       await backfillAssessments(env);
     })().catch((err) => {
       tableReady = null;
@@ -234,13 +248,33 @@ export async function ensureRegister(env: Env): Promise<void> {
   await tableReady;
 }
 
+/** Adds the researched outlets to a register that was seeded before they existed (once per expansion version). Never overwrites or re-adds what an admin has edited or deleted. */
+async function addExpansion(env: Env): Promise<void> {
+  await run(env.DB, "CREATE TABLE IF NOT EXISTS source_register_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  const done = await first<{ value: string }>(env.DB, "SELECT value FROM source_register_meta WHERE key = 'expansion_version'");
+  if (Number(done?.value ?? 0) >= EXPANSION_VERSION) return;
+  const have = new Set((await all<{ url: string }>(env.DB, "SELECT url FROM source_register")).map((r) => hostOf(r.url)));
+  const now = nowIso();
+  const fresh = expansionSeeds().filter((e) => !have.has(hostOf(e.url)));
+  const stmts = fresh.map((e) => {
+    const a = assessmentFor(e.url, e.kind);
+    return env.DB.prepare(`INSERT OR IGNORE INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`).bind(
+      newId(), e.name, e.url, e.country, e.region, e.kind, e.role, e.notes, a.reliability, a.ownership, a.orientation, a.rating_note, a.rating_basis, a.rating_basis === "desk" ? "Afrilens desk baseline" : null, a.rating_basis === "desk" ? now : null, now, now
+    );
+  });
+  for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+  await run(env.DB, "INSERT INTO source_register_meta (key, value) VALUES ('expansion_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [String(EXPANSION_VERSION)]);
+}
+
 /** Gives every row that has no assessment yet its baseline one (rows an analyst has rated are never touched). */
 async function backfillAssessments(env: Env): Promise<void> {
-  const rows = await all<{ id: string; url: string; kind: SourceKind }>(env.DB, "SELECT id, url, kind FROM source_register WHERE rating_basis IS NULL");
+  const rows = await all<{ id: string; url: string; kind: SourceKind; rating_basis: string | null }>(env.DB, "SELECT id, url, kind, rating_basis FROM source_register WHERE rating_basis IS NULL OR rating_basis = 'unassessed'");
   const now = nowIso();
-  const stmts = rows.map((r) => {
+  const stmts = rows.flatMap((r) => {
     const a = assessmentFor(r.url, r.kind);
-    return env.DB.prepare("UPDATE source_register SET reliability = ?, ownership = ?, orientation = ?, rating_note = ?, rating_basis = ?, rated_by = ?, rated_at = ? WHERE id = ? AND rating_basis IS NULL").bind(
+    if (a.rating_basis === "unassessed" && r.rating_basis === "unassessed") return [];
+    return env.DB.prepare("UPDATE source_register SET reliability = ?, ownership = ?, orientation = ?, rating_note = ?, rating_basis = ?, rated_by = ?, rated_at = ? WHERE id = ? AND (rating_basis IS NULL OR rating_basis = 'unassessed')").bind(
       a.reliability, a.ownership, a.orientation, a.rating_note, a.rating_basis, a.rating_basis === "desk" ? "Afrilens desk baseline" : null, a.rating_basis === "desk" ? now : null, r.id
     );
   });

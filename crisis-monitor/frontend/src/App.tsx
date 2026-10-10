@@ -12,6 +12,7 @@ import { speakWelcomeIfPending } from "./intro";
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
 const AdminPanel = lazy(() => import("./components/AdminPanel"));
+const SourcesRegister = lazy(() => import("./components/SourcesRegister"));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const IncidentsDashboard = lazy(() => import("./components/IncidentsDashboard"));
 const DueDiligenceView = lazy(() => import("./components/DueDiligenceView"));
@@ -38,7 +39,7 @@ type BootState = "checking" | "bootstrap" | "login" | "authed";
  *  its queries are listed and toggled in the Monitor tool on the map, and a
  *  query's dashboard / editor are the three object-or-"new-query" views
  *  here, reached from that tool and returning to it. */
-type View = { queryId: string } | "admin" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-osint" | "due-diligence" | { spotlight: SpotlightScope };
+type View = { queryId: string } | "admin" | "sources" | "settings" | "new-query" | { editQueryId: string } | "incidents" | "live-osint" | "due-diligence" | { spotlight: SpotlightScope };
 
 /** Minimal, single-purpose routing: this app is otherwise entirely
  *  state-driven (no URLs for any authenticated view), but a "share for live
@@ -202,7 +203,7 @@ export default function App() {
       <TopBar
         connected={connected}
         user={user}
-        view={view === "admin" || view === "settings" || view === "incidents" || view === "live-osint" || view === "due-diligence" ? view : spotlightScope ? "spotlight" : "monitoring"}
+        view={view === "admin" || view === "sources" || view === "settings" || view === "incidents" || view === "live-osint" || view === "due-diligence" ? view : spotlightScope ? "spotlight" : "monitoring"}
         spotlightScope={spotlightScope}
         ddKind={ddKind}
         onOpenDueDiligence={(k) => {
@@ -226,6 +227,8 @@ export default function App() {
 
       <Suspense fallback={viewLoadingFallback}>
         {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-osint")} />}
+
+        {view === "sources" && user.role === "admin" && <SourcesRegister onBack={() => setView("live-osint")} />}
 
         {view === "settings" && <SettingsPanel user={user} onBack={() => setView("live-osint")} />}
 

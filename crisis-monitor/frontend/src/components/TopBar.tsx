@@ -9,8 +9,8 @@ import type { SpotlightScope } from "../spotlightRegions";
 interface Props {
   connected: boolean;
   user: AuthUser;
-  view: "monitoring" | "admin" | "settings" | "incidents" | "live-osint" | "due-diligence" | "spotlight";
-  onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
+  view: "monitoring" | "admin" | "sources" | "settings" | "incidents" | "live-osint" | "due-diligence" | "spotlight";
+  onNavigate: (view: "admin" | "sources" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
   /** The Regional Spotlight region on screen, or null when another section is open. */
   spotlightScope: SpotlightScope | null;
   /** The kind of due diligence on screen, and how to open one. */
@@ -119,8 +119,8 @@ function AccountMenu({
   onLogout,
 }: {
   user: AuthUser;
-  view: "monitoring" | "admin" | "settings" | "incidents" | "live-osint" | "due-diligence" | "spotlight";
-  onNavigate: (view: "admin" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
+  view: "monitoring" | "admin" | "sources" | "settings" | "incidents" | "live-osint" | "due-diligence" | "spotlight";
+  onNavigate: (view: "admin" | "sources" | "settings" | "incidents" | "live-osint" | "due-diligence") => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -143,7 +143,7 @@ function AccountMenu({
     };
   }, [open]);
 
-  function go(target: "admin" | "settings") {
+  function go(target: "admin" | "sources" | "settings") {
     onNavigate(target);
     setOpen(false);
   }
@@ -191,6 +191,11 @@ function AccountMenu({
           {canManageTeam && (
             <button role="menuitem" onClick={() => go("admin")} style={menuItemStyle(view === "admin")}>
               {user.role === "admin" ? "Clients" : "My Team"}
+            </button>
+          )}
+          {user.role === "admin" && (
+            <button role="menuitem" onClick={() => go("sources")} style={menuItemStyle(view === "sources")}>
+              Sources
             </button>
           )}
           <button role="menuitem" onClick={() => go("settings")} style={menuItemStyle(view === "settings")}>

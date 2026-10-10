@@ -188,7 +188,7 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
       <style>{`@media print { .sr-noprint { display: none !important; } .sources-register { overflow: visible !important; } }`}</style>
       <div className="sr-noprint" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
         <button onClick={onBack} style={btn}>
-          ← Admin
+          ← Back
         </button>
         <button onClick={() => setPresenting((v) => !v)} style={presenting ? primary : btn} title="Hides the editing controls and anything you've switched off, for showing a client">
           {presenting ? "Client view: on" : "Client view"}
