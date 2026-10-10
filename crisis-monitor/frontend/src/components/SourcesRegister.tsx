@@ -46,6 +46,8 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
   const [role, setRole] = useState<"" | "pulled" | "reference">("");
   const [grade, setGrade] = useState("");
   const [owner, setOwner] = useState("");
+  const [linkFilter, setLinkFilter] = useState("");
+  const [checking, setChecking] = useState<string | null>(null);
   const [presenting, setPresenting] = useState(false);
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [draft, setDraft] = useState(EMPTY);
@@ -68,7 +70,8 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
     load();
   }, []);
 
-  const pool = useMemo(() => entries.filter((e) => !presenting || e.active), [entries, presenting]);
+  // In client view a link that is known to be dead is left out rather than shown.
+  const pool = useMemo(() => entries.filter((e) => !presenting || (e.active && e.link_status !== "dead")), [entries, presenting]);
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -77,9 +80,11 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
       if (role && e.role !== role) return false;
       if (grade && e.reliability !== grade) return false;
       if (owner && e.ownership !== owner) return false;
+      if (linkFilter === "problem" && e.link_status !== "dead" && e.link_status !== "error") return false;
+      if (linkFilter === "unchecked" && e.link_status) return false;
       return !needle || `${e.name} ${e.url} ${e.country_name} ${e.orientation ?? ""} ${e.rating_note ?? ""}`.toLowerCase().includes(needle);
     });
-  }, [pool, q, region, role, grade, owner]);
+  }, [pool, q, region, role, grade, owner, linkFilter]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, SourceRegisterEntry[]>();
@@ -128,6 +133,22 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
   async function remove(e: SourceRegisterEntry) {
     if (!window.confirm(`Remove "${e.name}" from the register?`)) return;
     await api.deleteSource(e.id).catch((err) => setError(err instanceof Error ? err.message : "Couldn't remove."));
+    await load();
+  }
+  async function checkLinks() {
+    setError(null);
+    let done = 0;
+    try {
+      for (let guard = 0; guard < 200; guard++) {
+        const r = await api.checkSourceLinks();
+        done += r.checked;
+        setChecking(`Checking links… ${done} done, ${r.remaining} to go`);
+        if (r.remaining === 0 || r.checked === 0) break;
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't check the links.");
+    }
+    setChecking(null);
     await load();
   }
   async function toggleActive(e: SourceRegisterEntry) {
@@ -192,6 +213,9 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
         </button>
         <button onClick={() => setPresenting((v) => !v)} style={presenting ? primary : btn} title="Hides the editing controls and anything you've switched off, for showing a client">
           {presenting ? "Client view: on" : "Client view"}
+        </button>
+        <button onClick={checkLinks} disabled={checking !== null} style={btn} title="Opens every link to see whether it is alive. Dead ones are flagged, and left out of the client view.">
+          {checking ?? "Check links"}
         </button>
         <button onClick={download} style={btn}>
           Download CSV
@@ -272,6 +296,7 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
         {select(region, setRegion, [["", "All regions"], ...REGION_ORDER.map((r) => [r, r] as [string, string])])}
         {select(grade, setGrade, [["", "All grades"], ...GRADES.map((g) => [g, `${g}: ${gradeLabels[g] ?? ""}`] as [string, string])])}
         {select(owner, setOwner, [["", "All ownership"], ...Object.entries(ownerLabels)])}
+        {!presenting && select(linkFilter, setLinkFilter, [["", "All links"], ["problem", "Dead / failing links"], ["unchecked", "Not yet checked"]])}
         {select(role, (v) => setRole(v as "" | "pulled" | "reference"), [["", "All uses"], ["pulled", "Feeds the platform"], ["reference", "Verification reference"]])}
         {!presenting && (
           <>
@@ -317,6 +342,11 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
                       <a href={e.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--signal)", fontWeight: 600, textDecoration: "none" }}>
                         {e.name}
                       </a>
+                      {!presenting && e.link_status && e.link_status !== "ok" && (
+                        <span className="sr-noprint" title={e.link_status === "blocked" ? "The site is up but refuses automated checks" : "This link did not open when checked. Fix or remove it."} style={{ marginLeft: 6, fontSize: 10, color: e.link_status === "blocked" ? "var(--text-faint)" : "var(--critical)" }}>
+                          {e.link_status === "blocked" ? "● bot-blocked" : "● link down"}
+                        </span>
+                      )}
                       <div className="mono" style={{ color: "var(--text-faint)", fontSize: 10.5 }}>{e.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</div>
                     </td>
                     <td style={td}>{e.country_name}</td>

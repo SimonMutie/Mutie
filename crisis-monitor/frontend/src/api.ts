@@ -39,6 +39,9 @@ export interface SourceRegisterEntry {
   rating_basis: "desk" | "reviewed" | "unassessed";
   rated_by: string | null;
   rated_at: string | null;
+  /** Last live check of the link. blocked = the site is up but refuses automated visits. */
+  link_status: "ok" | "blocked" | "dead" | "error" | null;
+  link_checked_at: string | null;
   active: boolean;
 }
 
@@ -1568,6 +1571,7 @@ export const api = {
   addSource: (d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>("/api/source-register", { method: "POST", body: JSON.stringify(d) }),
   updateSource: (id: string, d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>(`/api/source-register/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
   deleteSource: (id: string) => req<{ ok: boolean }>(`/api/source-register/${id}`, { method: "DELETE" }),
+  checkSourceLinks: () => req<{ checked: number; remaining: number; dead: number }>("/api/source-register/check-links", { method: "POST" }),
   restoreSourceDefaults: () => req<{ added: number }>("/api/source-register/restore-defaults", { method: "POST" }),
   logoutAll: () => req<{ ok: boolean }>("/api/auth/logout-all", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>

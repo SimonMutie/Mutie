@@ -54,6 +54,10 @@ export interface RegisterEntry {
   rating_basis: "desk" | "reviewed" | "unassessed";
   rated_by: string | null;
   rated_at: string | null;
+  /** Result of the last live check of the link: ok, blocked (site is up but refuses automated checks), dead, error. */
+  link_status: "ok" | "blocked" | "dead" | "error" | null;
+  link_code: number | null;
+  link_checked_at: string | null;
   active: number;
   created_at: string;
   updated_at: string;
@@ -95,7 +99,7 @@ function nameFor(url: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-type Seed = Omit<RegisterEntry, "id" | "created_at" | "updated_at" | "active" | "reliability" | "ownership" | "orientation" | "rating_note" | "rating_basis" | "rated_by" | "rated_at">;
+type Seed = Omit<RegisterEntry, "id" | "created_at" | "updated_at" | "active" | "reliability" | "ownership" | "orientation" | "rating_note" | "rating_basis" | "rated_by" | "rated_at" | "link_status" | "link_code" | "link_checked_at">;
 
 export interface Assessment {
   reliability: Reliability;
@@ -228,6 +232,7 @@ export async function ensureRegister(env: Env): Promise<void> {
       const added: [string, string][] = [
         ["reliability", "TEXT"], ["ownership", "TEXT"], ["orientation", "TEXT"], ["rating_note", "TEXT"],
         ["rating_basis", "TEXT"], ["rated_by", "TEXT"], ["rated_at", "TEXT"],
+        ["link_status", "TEXT"], ["link_code", "INTEGER"], ["link_checked_at", "TEXT"],
       ];
       for (const [col, def] of added) {
         try {
@@ -297,4 +302,44 @@ export async function seedRegister(env: Env): Promise<number> {
 export async function listRegister(env: Env): Promise<RegisterEntry[]> {
   await ensureRegister(env);
   return all<RegisterEntry>(env.DB, "SELECT * FROM source_register ORDER BY region, country, name");
+}
+
+export type LinkStatus = "ok" | "blocked" | "dead" | "error";
+
+/** Opens one link the way a browser would and says whether it is alive. Sites that refuse automated visits count as "blocked", not dead. */
+export async function checkLink(url: string): Promise<{ status: LinkStatus; code: number | null }> {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: AbortSignal.timeout(8000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; AfrilensSourceCheck/1.0)", Accept: "text/html,*/*" },
+    });
+    const code = res.status;
+    void res.body?.cancel().catch(() => {});
+    if (code >= 200 && code < 400) return { status: "ok", code };
+    if ([401, 403, 405, 406, 429, 451, 999].includes(code)) return { status: "blocked", code };
+    if (code === 404 || code === 410 || code >= 500) return { status: "dead", code };
+    return { status: "error", code };
+  } catch {
+    // DNS failure, refused connection, timeout, bad certificate.
+    return { status: "dead", code: null };
+  }
+}
+
+/** Checks the next batch of links, never-checked first, then oldest check. Returns how many are still waiting. */
+export async function checkNextLinks(env: Env, limit: number, staleBefore: string): Promise<{ checked: number; remaining: number; dead: number }> {
+  await ensureRegister(env);
+  const rows = await all<{ id: string; url: string }>(
+    env.DB,
+    "SELECT id, url FROM source_register WHERE active = 1 AND (link_checked_at IS NULL OR link_checked_at < ?) ORDER BY link_checked_at IS NOT NULL, link_checked_at LIMIT ?",
+    [staleBefore, limit]
+  );
+  const results = await Promise.all(rows.map(async (r) => ({ id: r.id, ...(await checkLink(r.url)) })));
+  const now = nowIso();
+  for (let i = 0; i < results.length; i += 50) {
+    await env.DB.batch(results.slice(i, i + 50).map((r) => env.DB.prepare("UPDATE source_register SET link_status = ?, link_code = ?, link_checked_at = ? WHERE id = ?").bind(r.status, r.code, now, r.id)));
+  }
+  const left = await first<{ n: number }>(env.DB, "SELECT COUNT(*) AS n FROM source_register WHERE active = 1 AND (link_checked_at IS NULL OR link_checked_at < ?)", [staleBefore]);
+  return { checked: results.length, remaining: Math.max(0, (left?.n ?? 0) - 0), dead: results.filter((r) => r.status === "dead").length };
 }

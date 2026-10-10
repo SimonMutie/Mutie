@@ -4,7 +4,7 @@ import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
 import { audit, clientIp } from "../lib/audit";
-import { countryName, ensureRegister, KINDS, listRegister, regionOf, seedRegister, assessmentFor, OWNERSHIP_LABEL, RELIABILITY_LABEL, type SourceKind } from "../lib/sourceRegister";
+import { countryName, ensureRegister, KINDS, listRegister, regionOf, seedRegister, checkNextLinks, assessmentFor, OWNERSHIP_LABEL, RELIABILITY_LABEL, type SourceKind } from "../lib/sourceRegister";
 import type { Env } from "../bindings";
 
 /**
@@ -121,6 +121,14 @@ sourceRegisterRouter.delete("/:id", async (c) => {
   await run(c.env.DB, "DELETE FROM source_register WHERE id = ?", [c.req.param("id")]);
   await audit(c.env, { userId: c.get("userId"), action: "sources.removed", detail: c.req.param("id"), ip: clientIp(c.req) });
   return c.json({ ok: true });
+});
+
+/** Opens the next batch of links and records which are alive. Call repeatedly until "remaining" is 0. */
+sourceRegisterRouter.post("/check-links", async (c) => {
+  // A check from the last 20 minutes counts as fresh, so one full run does not loop forever.
+  const staleBefore = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const r = await checkNextLinks(c.env, 20, staleBefore);
+  return c.json(r);
 });
 
 /** Adds any default entry that is missing (never changes or removes yours). Useful after the platform adds a new feed. */

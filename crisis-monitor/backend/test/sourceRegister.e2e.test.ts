@@ -88,3 +88,51 @@ describe("sources register", () => {
     expect((await call("/", { method: "POST", headers: { ...admin, "content-type": "application/json" }, body: JSON.stringify({ name: "x", url: "javascript:alert(1)", country: "KE", kind: "local_media", role: "pulled" }) })).status).toBe(400);
   });
 });
+
+import { EXPANSION, RERATED } from "../src/data/registerExpansion";
+import { vi } from "vitest";
+
+describe("register expansion and link checks", () => {
+  it("every researched outlet is well formed and rated", () => {
+    expect(EXPANSION.length).toBeGreaterThan(300);
+    const hosts = new Set<string>();
+    for (const [country, name, url, , rel] of EXPANSION) {
+      expect(country).toMatch(/^[A-Z]{2,5}$/);
+      expect(name.length).toBeGreaterThan(1);
+      expect(url).toMatch(/^https?:\/\/[^/]+\/$/);
+      expect("ABCDEF").toContain(rel);
+      const h = new URL(url).hostname.replace(/^www\./, "");
+      expect(hosts.has(h)).toBe(false);
+      hosts.add(h);
+    }
+    for (const [host] of RERATED) expect(host).not.toContain("/");
+  });
+
+  it("adds them to the register as references, with their own ratings", async () => {
+    const body = (await (await call("/", { headers: admin })).json()) as { entries: { url: string; role: string; reliability: string; rating_basis: string }[] };
+    const [, , url, , rel] = EXPANSION[0];
+    const row = body.entries.find((e) => e.url === url)!;
+    expect(row.role).toBe("reference");
+    expect(row.reliability).toBe(rel);
+    expect(body.entries.length).toBeGreaterThan(700);
+  });
+
+  it("checks links in batches and tells dead from bot-blocked", async () => {
+    const fake = vi.fn(async (u: string | URL | Request) => {
+      const url = String(u);
+      if (url.includes("nation.africa")) return new Response("ok", { status: 200 });
+      if (url.includes("aps.dz")) return new Response("no", { status: 403 });
+      return new Response("gone", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fake);
+    try {
+      const first = (await (await call("/check-links", { method: "POST", headers: admin })).json()) as { checked: number; remaining: number };
+      expect(first.checked).toBe(20);
+      expect(first.remaining).toBeGreaterThan(600);
+      const all = (await (await call("/", { headers: admin })).json()) as { entries: { link_status: string | null }[] };
+      expect(all.entries.filter((e) => e.link_status === "dead").length).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
