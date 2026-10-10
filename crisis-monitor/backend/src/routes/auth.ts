@@ -5,7 +5,8 @@ import { newId } from "../ids";
 import { hashPassword, verifyPassword, createSessionToken } from "../auth";
 import { rowToUser } from "../mappers";
 import { requireAuth, requireAdmin, forgetGate, type AuthedVariables } from "../middleware";
-import { sendEmail } from "../lib/notify";
+import { sendEmail, sendRawEmail } from "../lib/notify";
+import { accessReplyEmail, ACCESS_INBOX } from "../lib/accessEmail";
 import { audit, clientIp, readAudit } from "../lib/audit";
 import { passwordSchema } from "../lib/passwordPolicy";
 import type { Env } from "../bindings";
@@ -271,7 +272,6 @@ const requestAccessSchema = z.object({
  *  admin to review below; doesn't create an account or send any
  *  notification email (this app has no email-sending infrastructure), so
  *  the admin needs to actually check the queue rather than being paged. */
-const ACCESS_REQUEST_INBOX = "info@afrilensconsulting.org";
 const accessAttempts = new Map<string, { start: number; n: number }>();
 
 authRouter.post("/request-access", async (c) => {
@@ -297,7 +297,7 @@ authRouter.post("/request-access", async (c) => {
   );
   // Tell Afrilens straight away. The request is already saved, so a mail failure doesn't lose it.
   const d = parsed.data;
-  const sent = await sendEmail(c.env, ACCESS_REQUEST_INBOX, {
+  const sent = await sendEmail(c.env, ACCESS_INBOX, {
     subject: `Access request: ${d.name}${d.organization ? ` (${d.organization})` : ""}`.replace(/[\r\n]+/g, " "),
     overview: `${d.name} <${d.email}> has asked for access to The Lens.`,
     sections: [
@@ -312,6 +312,9 @@ authRouter.post("/request-access", async (c) => {
     footer: "Reply to the email address above. The request is also in the admin Access Requests queue.",
   });
   if (!sent.ok) console.error("[access-request] notification email failed:", sent.error);
+  // The requester's own confirmation, signed by the Managing Director.
+  const reply = await sendRawEmail(c.env, d.email, accessReplyEmail(d.name));
+  if (!reply.ok) console.error("[access-request] confirmation email failed:", reply.error);
   await audit(c.env, { username: d.email, action: "access.requested", detail: sent.ok ? "emailed" : "email failed", ip });
   return c.json({ ok: true }, 201);
 });

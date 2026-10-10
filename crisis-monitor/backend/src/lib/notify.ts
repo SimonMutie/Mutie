@@ -144,6 +144,23 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   });
 }
 
+/** A ready-made email (own HTML and text), optionally with a Reply-To. */
+export async function sendRawEmail(env: Env, to: string, msg: { subject: string; html: string; text: string; replyTo?: string }): Promise<SendResult> {
+  if (!env.RESEND_API_KEY || !env.ALERT_EMAIL_FROM) return { ok: false, error: "Email delivery is not set up on this platform yet (RESEND_API_KEY / ALERT_EMAIL_FROM)." };
+  try {
+    const res = await postJson(
+      "https://api.resend.com/emails",
+      { Authorization: `Bearer ${env.RESEND_API_KEY}` },
+      { from: env.ALERT_EMAIL_FROM, to: [to], subject: msg.subject.replace(/[\r\n]+/g, " ").slice(0, 200), html: msg.html, text: msg.text, ...(msg.replyTo ? { reply_to: msg.replyTo } : {}) }
+    );
+    if (res.ok) return { ok: true };
+    const detail = (await res.text().catch(() => "")).slice(0, 200);
+    return { ok: false, error: `Email provider answered ${res.status}${detail ? `: ${detail}` : ""}` };
+  } catch (err) {
+    return { ok: false, error: `Email send failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export async function sendEmail(env: Env, to: string, n: Notification): Promise<SendResult> {
   if (!env.RESEND_API_KEY || !env.ALERT_EMAIL_FROM) return { ok: false, error: "Email delivery is not set up on this platform yet (RESEND_API_KEY / ALERT_EMAIL_FROM)." };
   try {
