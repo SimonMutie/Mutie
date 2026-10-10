@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type BroadcastPreview, type BroadcastRow, type ClientOrg } from "../api";
+import { api, type BroadcastPreview, type BroadcastRow, type ClientOrg, type ContactGroup } from "../api";
+import ContactGroups from "./ContactGroups";
 
 const btn: React.CSSProperties = { fontSize: 12.5, padding: "6px 10px", background: "transparent", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer" };
 const primary: React.CSSProperties = { ...btn, background: "var(--signal-dim)", border: "1px solid var(--signal)", color: "var(--text-primary)", fontWeight: 600 };
@@ -10,7 +11,7 @@ const th: React.CSSProperties = { textAlign: "left", fontSize: 10.5, letterSpaci
 const td: React.CSSProperties = { padding: "7px 8px", fontSize: 12.5, borderBottom: "1px solid var(--border-soft)", verticalAlign: "top" };
 
 const SEVERITY_NOTE = { info: "Routine information", advisory: "Advisory: flagged in the subject", urgent: "Urgent: flagged in the subject" } as const;
-type Channel = "email" | "signal" | "push";
+type Channel = "email" | "sms" | "signal" | "push";
 
 /** Super-admin page: write one alert and send it to many people at once. */
 export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
@@ -21,6 +22,9 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [channels, setChannels] = useState<Channel[]>(["email"]);
   const [extras, setExtras] = useState("");
+  const [groups, setGroups] = useState<ContactGroup[]>([]);
+  const [pickedGroups, setPickedGroups] = useState<string[]>([]);
+  const [tab, setTab] = useState<"send" | "contacts">("send");
   const [severity, setSeverity] = useState<"info" | "advisory" | "urgent">("advisory");
   const [country, setCountry] = useState("");
   const [subject, setSubject] = useState("");
@@ -35,6 +39,8 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
   const [stop, setStop] = useState<{ destination: string; note: string | null }[]>([]);
   const [newStop, setNewStop] = useState("");
 
+  const reloadGroups = () => api.listContactGroups().then(setGroups).catch(() => {});
+
   async function loadHistory() {
     const r = await api.listBroadcasts().catch(() => null);
     if (r) {
@@ -46,14 +52,19 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
     api.listClients().then(setClients).catch(() => {});
     loadHistory();
     api.listSuppressions().then(setStop).catch(() => {});
-  }, []);
+    reloadGroups();
+  }, [tab]);
 
   // Any change to the audience or channels invalidates the preview, so a send always matches what was confirmed.
-  const audience = useMemo(() => ({ mode, client_ids: mode === "clients" ? picked : [], channels, extras }), [mode, picked, channels, extras]);
+  const audience = useMemo(() => ({ mode, client_ids: mode === "clients" ? picked : [], group_ids: pickedGroups, channels, extras }), [mode, picked, pickedGroups, channels, extras]);
   useEffect(() => setPreview(null), [audience]);
 
   const msg = { subject: subject.trim(), message: message.trim(), severity, country: country.trim() || null, link: link.trim() || null };
   const messageOk = msg.subject.length >= 3 && msg.message.length >= 5;
+  const smsLength = msg.subject.length + msg.message.replace(/\s*\n+\s*/g, " ").length + (msg.link ? msg.link.length + 1 : 0) + 24;
+  // Plain text fits 160 characters in one part, then 153 per part; messages with non-GSM characters fit 70 and 67.
+  const smsPerPart = /[^\x20-\x7e\n]/.test(msg.subject + msg.message) ? [70, 67] : [160, 153];
+  const smsParts = Math.min(3, smsLength <= smsPerPart[0] ? 1 : Math.ceil(smsLength / smsPerPart[1]));
   const toggleChannel = (c: Channel) => setChannels((cur) => (cur.includes(c) ? cur.filter((x) => x !== c) : [...cur, c]));
 
   async function doPreview() {
@@ -73,7 +84,7 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
     setNote(null);
     setBusy("Sending the test…");
     try {
-      await api.testBroadcast({ ...msg, channel: testTo.includes("@") ? "email" : "signal", destination: testTo.trim() });
+      await api.testBroadcast({ ...msg, channel: testTo.includes("@") ? "email" : channels.includes("sms") || !channels.includes("signal") ? "sms" : "signal", destination: testTo.trim() });
       setNote(`A test was sent to ${testTo.trim()}.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The test could not be sent.");
@@ -146,10 +157,21 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
         ← Back
       </button>
       <div style={{ fontSize: 21, fontWeight: 700, marginTop: 14 }}>Broadcast alerts</div>
+      <div style={{ display: "flex", gap: 8, margin: "12px 0 0" }}>
+        <button onClick={() => setTab("send")} style={tab === "send" ? primary : btn}>
+          Send an alert
+        </button>
+        <button onClick={() => setTab("contacts")} style={tab === "contacts" ? primary : btn}>
+          Contact groups
+        </button>
+      </div>
       <div style={{ fontSize: 13, color: "var(--text-muted)", margin: "6px 0 16px", maxWidth: 740, lineHeight: 1.6 }}>
         Write one alert and send it to many people at once: every client organisation, chosen ones, and/or a pasted list of extra contacts. Client members are reached at the destinations they registered themselves, within each organisation's approved alert domains and numbers. You see exactly who will receive it before anything is sent.
       </div>
 
+      {tab === "contacts" && <ContactGroups onChanged={reloadGroups} />}
+      {tab === "send" && (
+        <>
       {error && <div style={{ color: "var(--critical)", fontSize: 13, margin: "8px 0" }}>{error}</div>}
       {note && <div style={{ color: "var(--signal)", fontSize: 13, margin: "8px 0" }}>{note}</div>}
 
@@ -172,7 +194,7 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
           [
             ["all_clients", "Every client organisation"],
             ["clients", "Selected organisations"],
-            ["list_only", "Only the contacts I paste below"],
+            ["list_only", "Only the contact groups and contacts I choose below"],
           ] as const
         ).map(([v, t]) => (
           <label key={v} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, margin: "4px 0" }}>
@@ -188,6 +210,20 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
             ))}
           </div>
         )}
+        <div style={{ ...label, marginTop: 10 }}>CONTACT GROUPS</div>
+        {groups.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+            No groups yet. <button onClick={() => setTab("contacts")} style={{ ...btn, padding: "2px 8px" }}>Create a contact group</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px" }}>
+            {groups.map((g) => (
+              <label key={g.id} style={{ fontSize: 12.5, display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="checkbox" checked={pickedGroups.includes(g.id)} onChange={() => setPickedGroups((cur) => (cur.includes(g.id) ? cur.filter((x) => x !== g.id) : [...cur, g.id]))} /> {g.name} <span style={{ color: "var(--text-faint)" }}>({g.members})</span>
+              </label>
+            ))}
+          </div>
+        )}
         <textarea placeholder="Extra contacts (optional): email addresses and Signal numbers like +254712345678, separated by commas, spaces or new lines" value={extras} onChange={(e) => setExtras(e.target.value)} rows={3} style={{ ...field, marginTop: 8, resize: "vertical" }} />
 
         <div style={label}>3. CHANNELS</div>
@@ -195,6 +231,7 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
           {(
             [
               ["email", "Email"],
+              ["sms", "SMS (groups and pasted numbers)"],
               ["signal", "Signal"],
               ["push", "Device notifications (members only)"],
             ] as const
@@ -220,9 +257,14 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
           {busy && <span style={{ fontSize: 12.5, color: "var(--text-muted)" }}>{busy}</span>}
         </div>
 
+        {channels.includes("sms") && (
+          <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)" }}>
+            SMS is billed per message part by the provider. This one is about {smsParts} part{smsParts === 1 ? "" : "s"} per recipient. SMS keeps to the subject, the first lines of the message and the link.
+          </div>
+        )}
         {preview && (
           <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.6 }}>
-            <strong>{preview.total}</strong> recipient{preview.total === 1 ? "" : "s"}: {preview.counts.email ?? 0} email, {preview.counts.signal ?? 0} Signal, {preview.counts.push ?? 0} device
+            <strong>{preview.total}</strong> recipient{preview.total === 1 ? "" : "s"}: {preview.counts.email ?? 0} email, {preview.counts.sms ?? 0} SMS, {preview.counts.signal ?? 0} Signal, {preview.counts.push ?? 0} device
             {preview.over_limit && <span style={{ color: "var(--critical)" }}> · over the limit of {preview.limit} per send; split it into smaller groups</span>}
             {preview.skipped_total > 0 && (
               <details style={{ marginTop: 4 }}>
@@ -328,6 +370,8 @@ export default function BroadcastAlerts({ onBack }: { onBack: () => void }) {
           </span>
         ))}
       </div>
+        </>
+      )}
     </div>
   );
 }

@@ -145,6 +145,15 @@ export interface Env {
   SIGNAL_API_URL?: string;
   SIGNAL_SENDER_NUMBER?: string;
   SIGNAL_API_TOKEN?: string;
+  /** SMS delivery (lib/notify.ts), through Africa's Talking (africastalking.com),
+   *  which reaches Kenyan and most African networks. AT_USERNAME is the account
+   *  username, AT_API_KEY a secret, AT_SENDER_ID an optional registered sender
+   *  name or shortcode (leave unset to send from the provider's default), and
+   *  AT_SANDBOX "1" to use their test environment. Unset = SMS shows as not set up. */
+  AT_USERNAME?: string;
+  AT_API_KEY?: string;
+  AT_SENDER_ID?: string;
+  AT_SANDBOX?: string;
   /** How many AI analytical summaries (the query dashboard's Analyst
    *  Notebook, lib/notebook.ts) may be drafted per UTC day across the
    *  platform. Default 30. They run inside the daily AI budget. "0" switches

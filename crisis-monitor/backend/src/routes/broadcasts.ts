@@ -14,7 +14,8 @@ broadcastsRouter.use("*", requireAuth, requireAdmin);
 const audienceSchema = z.object({
   mode: z.enum(["all_clients", "clients", "list_only"]),
   client_ids: z.array(z.string()).max(500).optional(),
-  channels: z.array(z.enum(["email", "signal", "push"])).min(1),
+  group_ids: z.array(z.string()).max(100).optional(),
+  channels: z.array(z.enum(["email", "sms", "signal", "push"])).min(1),
   extras: z.string().max(60_000).optional(),
 });
 
@@ -44,11 +45,11 @@ broadcastsRouter.post("/preview", async (c) => {
 
 /** One test message to one address, so the admin can see exactly what recipients will get. */
 broadcastsRouter.post("/test", async (c) => {
-  const parsed = messageSchema.extend({ channel: z.enum(["email", "signal"]), destination: z.string().min(3).max(200) }).safeParse(await c.req.json().catch(() => null));
+  const parsed = messageSchema.extend({ channel: z.enum(["email", "sms", "signal"]), destination: z.string().min(3).max(200) }).safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Check the message and the address." }, 400);
   const d = parsed.data;
   const dest = cleanDestination(d.channel, d.destination);
-  if (!dest) return c.json({ error: d.channel === "email" ? "That is not a valid email address." : "Signal numbers need the country code, like +254712345678." }, 400);
+  if (!dest) return c.json({ error: d.channel === "email" ? "That is not a valid email address." : "Phone numbers need the country code, like +254712345678." }, 400);
   const n = buildNotification({ subject: d.subject, message: d.message, severity: d.severity, country: d.country ?? null, link: d.link ?? null });
   n.subject = `[TEST] ${n.subject}`;
   const res = await sendNotification(c.env, d.channel as Channel, dest, n);
@@ -60,7 +61,7 @@ broadcastsRouter.post("/", async (c) => {
   const parsed = sendSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "Check the subject, message, audience and channels." }, 400);
   const d = parsed.data;
-  const audience: AudienceInput = { mode: d.mode, client_ids: d.client_ids, channels: d.channels, extras: d.extras };
+  const audience: AudienceInput = { mode: d.mode, client_ids: d.client_ids, group_ids: d.group_ids, channels: d.channels, extras: d.extras };
   const r = await resolveAudience(c.env, audience);
   if (r.recipients.length === 0) return c.json({ error: "Nobody would receive this. Check the audience and channels." }, 400);
   if (r.recipients.length > MAX_RECIPIENTS) return c.json({ error: `That is ${r.recipients.length} recipients; the limit is ${MAX_RECIPIENTS} per send. Split it into smaller groups.` }, 400);

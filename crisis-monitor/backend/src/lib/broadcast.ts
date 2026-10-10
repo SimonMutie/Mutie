@@ -1,6 +1,7 @@
 import type { Env } from "../bindings";
 import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
+import { ensureContactTables } from "./contacts";
 import { cleanDestination, sendNotification, type Channel, type Notification } from "./notify";
 import { destinationRefusal } from "./alertPolicy";
 import { countryName } from "./sourceRegister";
@@ -30,6 +31,8 @@ export interface AudienceInput {
   mode: "all_clients" | "clients" | "list_only";
   client_ids?: string[];
   channels: Channel[];
+  /** Contact groups to include (see lib/contacts.ts). */
+  group_ids?: string[];
   /** Pasted addresses and numbers, separated by commas, semicolons, spaces or new lines. */
   extras?: string;
 }
@@ -38,7 +41,7 @@ export interface Recipient {
   channel: Channel;
   destination: string;
   client_id: string | null;
-  source: "subscriber" | "extra";
+  source: "subscriber" | "extra" | "group";
 }
 
 export interface Resolved {
@@ -46,6 +49,8 @@ export interface Resolved {
   skipped: { destination: string; reason: string }[];
   counts: Record<Channel, number>;
 }
+
+const CHANNEL_ORDER: Channel[] = ["email", "sms", "signal", "push"];
 
 let ready: Promise<unknown> | null = null;
 export function resetBroadcastCheck() {
@@ -89,14 +94,16 @@ export async function resolveAudience(env: Env, a: AudienceInput): Promise<Resol
 
   if (a.mode !== "list_only") {
     const ids = a.mode === "clients" ? (a.client_ids ?? []).filter(Boolean) : [];
-    if (a.mode === "clients" && ids.length === 0) return { recipients: [], skipped, counts: { email: 0, signal: 0, push: 0 } };
+    if (a.mode === "clients" && ids.length === 0) return { recipients: [], skipped, counts: { email: 0, sms: 0, signal: 0, push: 0 } };
     const where = a.mode === "clients" ? `u.client_id IN (${ids.map(() => "?").join(",")})` : "u.client_id IS NOT NULL";
-    const rows = await all<{ owner_id: string; channel: Channel; destination: string; client_id: string; disabled: number | null }>(
+    // Members register email, Signal and device destinations for alerts; SMS is never sent to a number given for something else.
+    const memberChannels = a.channels.filter((ch) => ch !== "sms");
+    const rows = await all<{ owner_id: string; channel: "email" | "signal" | "push"; destination: string; client_id: string; disabled: number | null }>(
       env.DB,
       `SELECT s.owner_id AS owner_id, s.channel AS channel, s.destination AS destination, u.client_id AS client_id, u.disabled AS disabled
          FROM alert_subscriptions s JOIN users u ON u.id = s.owner_id
-        WHERE s.enabled = 1 AND ${where} AND s.channel IN (${a.channels.map(() => "?").join(",") || "''"})`,
-      [...ids, ...a.channels]
+        WHERE s.enabled = 1 AND ${where} AND s.channel IN (${memberChannels.map(() => "?").join(",") || "''"})`,
+      [...ids, ...memberChannels]
     ).catch(() => []);
     for (const r of rows) {
       if (r.disabled) continue;
@@ -109,24 +116,48 @@ export async function resolveAudience(env: Env, a: AudienceInput): Promise<Resol
     }
   }
 
+  const groupIds = (a.group_ids ?? []).filter(Boolean);
+  if (groupIds.length) {
+    await ensureContactTables(env);
+    const people = await all<{ id: string; name: string; email: string | null; phone: string | null }>(
+      env.DB,
+      `SELECT DISTINCT c.id AS id, c.name AS name, c.email AS email, c.phone AS phone FROM contacts c JOIN contact_group_members m ON m.contact_id = c.id
+        WHERE c.active = 1 AND m.group_id IN (${groupIds.map(() => "?").join(",")})`,
+      groupIds
+    );
+    for (const p of people) {
+      let reached = false;
+      for (const ch of a.channels) {
+        const dest = ch === "email" ? p.email : ch === "sms" || ch === "signal" ? p.phone : null;
+        if (!dest) continue;
+        reached = true;
+        add({ channel: ch, destination: dest, client_id: null, source: "group" });
+      }
+      if (!reached) skipped.push({ destination: p.name, reason: "Has no address for the selected channels" });
+    }
+  }
+
   const tokens = String(a.extras ?? "").split(/[\s,;]+/).map((t) => t.trim()).filter(Boolean);
   if (tokens.length > MAX_EXTRAS) skipped.push({ destination: `${tokens.length - MAX_EXTRAS} more`, reason: `Only the first ${MAX_EXTRAS} pasted contacts are used per send` });
   for (const t of tokens.slice(0, MAX_EXTRAS)) {
-    const channel: Channel = t.includes("@") ? "email" : "signal";
-    if (!a.channels.includes(channel)) {
-      skipped.push({ destination: t, reason: `${channel === "email" ? "Email" : "Signal"} is not selected` });
+    // An address goes by email; a number goes by every phone channel that is selected (SMS, Signal).
+    const targets: Channel[] = t.includes("@") ? (a.channels.includes("email") ? ["email"] : []) : a.channels.filter((ch) => ch === "sms" || ch === "signal");
+    if (targets.length === 0) {
+      skipped.push({ destination: t, reason: t.includes("@") ? "Email is not selected" : "SMS and Signal are not selected" });
       continue;
     }
-    const cleaned = cleanDestination(channel, t);
-    if (!cleaned) {
-      skipped.push({ destination: t, reason: channel === "email" ? "Not a valid email address" : "Not a valid number (use +country code)" });
-      continue;
+    for (const channel of targets) {
+      const cleaned = cleanDestination(channel, t);
+      if (!cleaned) {
+        skipped.push({ destination: t, reason: channel === "email" ? "Not a valid email address" : "Not a valid number (use +country code)" });
+        break;
+      }
+      add({ channel, destination: cleaned, client_id: null, source: "extra" });
     }
-    add({ channel, destination: cleaned, client_id: null, source: "extra" });
   }
 
   const recipients = [...out.values()];
-  const counts: Record<Channel, number> = { email: 0, signal: 0, push: 0 };
+  const counts: Record<Channel, number> = { email: 0, sms: 0, signal: 0, push: 0 };
   for (const r of recipients) counts[r.channel]++;
   return { recipients, skipped, counts };
 }
@@ -185,7 +216,7 @@ export async function createBroadcast(env: Env, userId: string, input: { subject
   const id = newId();
   const now = nowIso();
   await run(env.DB, "INSERT INTO broadcasts (id, created_by, subject, message, severity, country, link, channels, audience, status, total, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", [
-    id, userId, input.subject, input.message, input.severity, input.country, input.link, audience.channels.join(","), JSON.stringify({ mode: audience.mode, client_ids: audience.client_ids ?? [], extras: (audience.extras ?? "").length ? "pasted" : "" }), "sending", recipients.length, now,
+    id, userId, input.subject, input.message, input.severity, input.country, input.link, audience.channels.join(","), JSON.stringify({ mode: audience.mode, client_ids: audience.client_ids ?? [], group_ids: audience.group_ids ?? [], extras: (audience.extras ?? "").length ? "pasted" : "" }), "sending", recipients.length, now,
   ]);
   const stmts = recipients.map((r) => env.DB.prepare("INSERT INTO broadcast_recipients (id, broadcast_id, channel, destination, client_id, source) VALUES (?,?,?,?,?,?)").bind(newId(), id, r.channel, r.destination, r.client_id, r.source));
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));

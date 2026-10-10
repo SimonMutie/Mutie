@@ -22,8 +22,25 @@ export type UserRole = "admin" | "client";
 export interface BroadcastAudience {
   mode: "all_clients" | "clients" | "list_only";
   client_ids?: string[];
-  channels: ("email" | "signal" | "push")[];
+  group_ids?: string[];
+  channels: ("email" | "sms" | "signal" | "push")[];
   extras?: string;
+}
+export interface ContactGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  members: number;
+}
+export interface Contact {
+  id: string;
+  name: string;
+  organisation: string | null;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+  active: boolean;
+  group_ids: string[];
 }
 export interface BroadcastMessage {
   subject: string;
@@ -1608,9 +1625,18 @@ export const api = {
   addSource: (d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>("/api/source-register", { method: "POST", body: JSON.stringify(d) }),
   updateSource: (id: string, d: Partial<SourceRegisterEntry>) => req<SourceRegisterEntry>(`/api/source-register/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
   deleteSource: (id: string) => req<{ ok: boolean }>(`/api/source-register/${id}`, { method: "DELETE" }),
+  listContactGroups: () => req<ContactGroup[]>("/api/contacts/groups"),
+  createContactGroup: (name: string, description?: string) => req<ContactGroup>("/api/contacts/groups", { method: "POST", body: JSON.stringify({ name, description: description || null }) }),
+  updateContactGroup: (id: string, d: { name?: string; description?: string | null }) => req<{ ok: boolean }>(`/api/contacts/groups/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
+  deleteContactGroup: (id: string) => req<{ ok: boolean }>(`/api/contacts/groups/${id}`, { method: "DELETE" }),
+  listContacts: (opts: { group_id?: string; q?: string } = {}) => req<Contact[]>(`/api/contacts?${new URLSearchParams(Object.entries(opts).filter(([, v]) => v) as [string, string][]).toString()}`),
+  createContact: (d: Partial<Contact>) => req<{ id: string }>("/api/contacts", { method: "POST", body: JSON.stringify(d) }),
+  updateContact: (id: string, d: Partial<Contact>) => req<{ ok: boolean }>(`/api/contacts/${id}`, { method: "PATCH", body: JSON.stringify(d) }),
+  deleteContact: (id: string) => req<{ ok: boolean }>(`/api/contacts/${id}`, { method: "DELETE" }),
+  importContacts: (text: string, group_id?: string | null) => req<{ added: number; reused: number; rejected: { line: string; reason: string }[]; rejected_total: number }>("/api/contacts/import", { method: "POST", body: JSON.stringify({ text, group_id: group_id || null }) }),
   listBroadcasts: () => req<{ channels: Record<string, boolean>; broadcasts: BroadcastRow[] }>("/api/broadcasts"),
   previewBroadcast: (a: BroadcastAudience) => req<BroadcastPreview>("/api/broadcasts/preview", { method: "POST", body: JSON.stringify(a) }),
-  testBroadcast: (d: BroadcastMessage & { channel: "email" | "signal"; destination: string }) => req<{ ok: boolean }>("/api/broadcasts/test", { method: "POST", body: JSON.stringify(d) }),
+  testBroadcast: (d: BroadcastMessage & { channel: "email" | "sms" | "signal"; destination: string }) => req<{ ok: boolean }>("/api/broadcasts/test", { method: "POST", body: JSON.stringify(d) }),
   createBroadcast: (d: BroadcastMessage & BroadcastAudience & { confirm_total: number }) => req<{ id: string; total: number }>("/api/broadcasts", { method: "POST", body: JSON.stringify(d) }),
   sendBroadcastBatch: (id: string) => req<{ sent: number; failed: number; remaining: number; status: string }>(`/api/broadcasts/${id}/send`, { method: "POST" }),
   cancelBroadcast: (id: string) => req<{ ok: boolean }>(`/api/broadcasts/${id}/cancel`, { method: "POST" }),

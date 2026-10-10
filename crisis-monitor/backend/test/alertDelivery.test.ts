@@ -153,7 +153,7 @@ describe("dispatch", () => {
     sub({});
     match("a", "x story here");
     const bare = { DB: env.DB } as unknown as Env;
-    expect(channelsAvailable(bare)).toEqual({ email: false, signal: false, push: true });
+    expect(channelsAvailable(bare)).toEqual({ email: false, signal: false, push: true, sms: false });
     await dispatchAlertSubscriptions(bare);
     expect(sent).toHaveLength(0);
     const row = db.prepare("SELECT last_error FROM alert_subscriptions WHERE id='s1'").get() as { last_error: string };

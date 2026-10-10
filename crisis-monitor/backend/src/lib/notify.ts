@@ -17,7 +17,7 @@ import type { Env } from "../bindings";
  * and a send to it fails with a clear message rather than silently.
  */
 
-export type Channel = "email" | "signal" | "push";
+export type Channel = "email" | "signal" | "push" | "sms";
 
 export interface NotificationLink {
   title: string;
@@ -65,6 +65,7 @@ export function channelsAvailable(env: Env): Record<Channel, boolean> {
     push: true,
     email: !!(env.RESEND_API_KEY && env.ALERT_EMAIL_FROM),
     signal: !!(env.SIGNAL_API_URL && env.SIGNAL_SENDER_NUMBER),
+    sms: !!(env.AT_USERNAME && env.AT_API_KEY),
   };
 }
 
@@ -204,6 +205,39 @@ export async function sendSignal(env: Env, recipient: string, n: Notification): 
   }
 }
 
+/** A short text for SMS: what happened and where to look, within about three message parts. */
+export function toSms(n: Notification): string {
+  const parts = [n.subject, n.overview.replace(/\s*\n+\s*/g, " ").trim()];
+  const link = n.links[0]?.url;
+  if (link) parts.push(link);
+  parts.push("- Afrilens Consulting");
+  const text = parts.join("\n");
+  return text.length <= 450 ? text : `${text.slice(0, 410).trimEnd()}…\n${link ?? ""}\n- Afrilens Consulting`.replace(/\n\n/g, "\n");
+}
+
+/** SMS through Africa's Talking. A recipient is "sent" when the provider accepts it (status 101 or 100 = processed/queued). */
+export async function sendSms(env: Env, to: string, n: Notification): Promise<SendResult> {
+  if (!env.AT_USERNAME || !env.AT_API_KEY) return { ok: false, error: "SMS delivery is not set up on this platform yet (AT_USERNAME / AT_API_KEY)." };
+  try {
+    const host = env.AT_SANDBOX === "1" ? "api.sandbox.africastalking.com" : "api.africastalking.com";
+    const form = new URLSearchParams({ username: env.AT_USERNAME, to, message: toSms(n) });
+    if (env.AT_SENDER_ID) form.set("from", env.AT_SENDER_ID);
+    const res = await fetch(`https://${host}/version1/messaging`, {
+      method: "POST",
+      headers: { apiKey: env.AT_API_KEY, Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+    const body = (await res.json().catch(() => null)) as { SMSMessageData?: { Message?: string; Recipients?: { statusCode: number; status: string }[] } } | null;
+    if (!res.ok) return { ok: false, error: `SMS provider answered ${res.status}${body?.SMSMessageData?.Message ? `: ${body.SMSMessageData.Message}` : ""}`.slice(0, 250) };
+    const r = body?.SMSMessageData?.Recipients?.[0];
+    if (r && (r.statusCode === 101 || r.statusCode === 100 || r.statusCode === 102)) return { ok: true };
+    return { ok: false, error: `SMS not delivered: ${r?.status ?? body?.SMSMessageData?.Message ?? "no recipient result"}`.slice(0, 250) };
+  } catch (err) {
+    return { ok: false, error: `SMS send failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 export function sendNotification(env: Env, channel: Channel, destination: string, n: Notification): Promise<SendResult> {
-  return channel === "email" ? sendEmail(env, destination, n) : channel === "push" ? sendPush(env, destination, n) : sendSignal(env, destination, n);
+  return channel === "email" ? sendEmail(env, destination, n) : channel === "push" ? sendPush(env, destination, n) : channel === "sms" ? sendSms(env, destination, n) : sendSignal(env, destination, n);
 }
