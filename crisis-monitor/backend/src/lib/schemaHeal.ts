@@ -37,6 +37,11 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
   users: [
     ["client_id", "TEXT REFERENCES clients(id) ON DELETE SET NULL"], // 014
     ["is_client_admin", "INTEGER NOT NULL DEFAULT 0"],
+    ["read_only", "INTEGER NOT NULL DEFAULT 0"], // viewer logins: can look, cannot change or export
+    ["disabled", "INTEGER NOT NULL DEFAULT 0"],
+    ["tokens_valid_after", "INTEGER NOT NULL DEFAULT 0"], // unix seconds; older sessions are rejected
+    ["failed_logins", "INTEGER NOT NULL DEFAULT 0"],
+    ["locked_until", "TEXT"],
   ],
   clients: [
     ["can_view_all_incidents", "INTEGER NOT NULL DEFAULT 0"], // 015

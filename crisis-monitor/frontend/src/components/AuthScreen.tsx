@@ -59,8 +59,8 @@ export default function AuthScreen({ mode, onAuthenticated }: Props) {
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (newPassword.length < 8) {
-      setError("New password must be at least 8 characters.");
+    if (newPassword.length < 12) {
+      setError("New password must be at least 12 characters.");
       return;
     }
     if (newPassword !== confirmNewPassword) {

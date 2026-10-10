@@ -68,6 +68,8 @@ export interface SessionPayload {
   userId: string;
   role: "admin" | "client";
   exp: number; // unix seconds
+  /** Issued-at, unix seconds. Lets "sign out everywhere" invalidate older tokens. */
+  iat?: number;
 }
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
@@ -77,10 +79,11 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   ]);
 }
 
-const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60; // 30 days
+const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
 export async function createSessionToken(userId: string, role: "admin" | "client", secret: string): Promise<string> {
-  const payload: SessionPayload = { userId, role, exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS };
+  const now = Math.floor(Date.now() / 1000);
+  const payload: SessionPayload = { userId, role, iat: now, exp: now + SESSION_MAX_AGE_SECONDS };
   const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
   const key = await hmacKey(secret);
   const signature = await crypto.subtle.sign("HMAC", key, payloadBytes);

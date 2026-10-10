@@ -29,6 +29,9 @@ export interface AuthUser {
   client_id: string | null;
   /** Whether this login can manage its own client's other logins. */
   is_client_admin: boolean;
+  /** Viewer login: can look, can't change, upload, share or export. */
+  read_only?: boolean;
+  disabled?: boolean;
   /** This login's client organization's logo, if any and if set — a base64
    *  data URL, ready to use directly as an <img src>. */
   client_logo: string | null;
@@ -1547,9 +1550,9 @@ export const api = {
     > & { default_filters?: Record<string, string> | null }
   ) => req<MapDefaultSettings>("/api/map-settings", { method: "PATCH", body: JSON.stringify(data) }),
   listClientAccounts: (clientId: string) => req<AuthUser[]>(`/api/clients/${clientId}/accounts`),
-  createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string }) =>
+  createClientAccount: (clientId: string, data: { username: string; password: string; display_name?: string; read_only?: boolean }) =>
     req<AuthUser>(`/api/clients/${clientId}/accounts`, { method: "POST", body: JSON.stringify(data) }),
-  updateClientAccount: (clientId: string, userId: string, data: { is_client_admin?: boolean; display_name?: string }) =>
+  updateClientAccount: (clientId: string, userId: string, data: { is_client_admin?: boolean; display_name?: string; read_only?: boolean; disabled?: boolean }) =>
     req<AuthUser>(`/api/clients/${clientId}/accounts/${userId}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClientAccount: (clientId: string, userId: string) => req<void>(`/api/clients/${clientId}/accounts/${userId}`, { method: "DELETE" }),
   listClientDashboards: (clientId: string) => req<ClientSharedItem[]>(`/api/clients/${clientId}/dashboards`),

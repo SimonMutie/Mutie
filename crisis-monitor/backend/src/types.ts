@@ -49,6 +49,10 @@ export interface UserRecord {
    *  remove, toggle this same flag on them) without needing platform-admin
    *  rights. Meaningless when client_id is null. */
   is_client_admin: boolean;
+  /** Viewer login: may read everything it is allowed to see, but every
+   *  write (create, edit, delete, upload, share) is refused server-side. */
+  read_only: boolean;
+  disabled: boolean;
   created_at: string;
 }
 

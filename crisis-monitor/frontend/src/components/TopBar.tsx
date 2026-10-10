@@ -164,7 +164,7 @@ function AccountMenu({
         }}
       >
         <div style={{ textAlign: "right" }}>
-          <div className="eyebrow">{user.role === "admin" ? "ADMIN" : "SIGNED IN"}</div>
+          <div className="eyebrow">{user.role === "admin" ? "ADMIN" : user.read_only ? "VIEWER" : "SIGNED IN"}</div>
           <div className="mono" style={{ fontSize: 13, color: "var(--text-primary)" }}>
             {user.display_name || user.username}
           </div>

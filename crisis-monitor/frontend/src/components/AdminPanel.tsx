@@ -182,8 +182,8 @@ function NewClientForm({ onCreated }: { onCreated: () => void }) {
     e.preventDefault();
     setError(null);
     if (!name.trim()) return setError("Client name is required.");
-    if (username.trim().length < 3 || password.length < 8) {
-      return setError("Username needs 3+ characters and password needs 8+ characters.");
+    if (username.trim().length < 3 || password.length < 12) {
+      return setError("Username needs 3+ characters and password needs 12+ characters.");
     }
     setSubmitting(true);
     try {
@@ -234,7 +234,7 @@ function NewClientForm({ onCreated }: { onCreated: () => void }) {
       </div>
       <input placeholder="Display name (optional)" value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={inputStyle} />
       <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} />
-      <input placeholder="Password (8+ characters)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+      <input placeholder="Password (12+ characters)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
       {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>{error}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
         <button type="submit" disabled={submitting} style={primaryBtnStyle}>
@@ -290,6 +290,16 @@ function ClientDetail({
     setError(null);
     try {
       await api.updateClientAccount(clientId, userId, { is_client_admin: !current });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update that account.");
+    }
+  }
+
+  async function handleToggle(userId: string, patch: { read_only?: boolean; disabled?: boolean }) {
+    setError(null);
+    try {
+      await api.updateClientAccount(clientId, userId, patch);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't update that account.");
@@ -382,8 +392,16 @@ function ClientDetail({
               </div>
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }}>
-              <input type="checkbox" checked={u.is_client_admin} onChange={() => handleToggleAdmin(u.id, u.is_client_admin)} />
+              <input type="checkbox" checked={u.is_client_admin} disabled={!!u.read_only} onChange={() => handleToggleAdmin(u.id, u.is_client_admin)} />
               Can manage team
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }} title="A viewer can look at everything they're allowed to see, but can't change, upload, share or export anything.">
+              <input type="checkbox" checked={!!u.read_only} onChange={() => handleToggle(u.id, { read_only: !u.read_only })} />
+              Viewer only
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: u.disabled ? "var(--critical)" : "var(--text-muted)", cursor: "pointer" }} title="Switches the login off and signs it out, without deleting anything.">
+              <input type="checkbox" checked={!!u.disabled} onChange={() => handleToggle(u.id, { disabled: !u.disabled })} />
+              Disabled
             </label>
             <button onClick={() => handleRemoveAccount(u.id, u.display_name || u.username)} style={dangerBtnStyle}>
               Remove
@@ -843,18 +861,19 @@ function NewAccountForm({ clientId, onCreated, onCancel }: { clientId: string; o
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [viewer, setViewer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (username.trim().length < 3 || password.length < 8) {
-      return setError("Username needs 3+ characters and password needs 8+ characters.");
+    if (username.trim().length < 3 || password.length < 12) {
+      return setError("Username needs 3+ characters and password needs 12+ characters.");
     }
     setSubmitting(true);
     try {
-      await api.createClientAccount(clientId, { username: username.trim(), password, display_name: displayName.trim() || undefined });
+      await api.createClientAccount(clientId, { username: username.trim(), password, display_name: displayName.trim() || undefined, read_only: viewer });
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add that account.");
@@ -867,7 +886,11 @@ function NewAccountForm({ clientId, onCreated, onCancel }: { clientId: string; o
     <form onSubmit={handleSubmit} className="panel" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 360 }}>
       <input placeholder="Display name (optional)" value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={inputStyle} />
       <input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} style={inputStyle} />
-      <input placeholder="Password (8+ characters)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+      <input placeholder="Password (12+ characters)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
+        <input type="checkbox" checked={viewer} onChange={(e) => setViewer(e.target.checked)} />
+        Viewer only (can look, can't change or export)
+      </label>
       {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>{error}</div>}
       <div style={{ display: "flex", gap: 8 }}>
         <button type="submit" disabled={submitting} style={primaryBtnStyle}>

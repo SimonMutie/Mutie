@@ -4,14 +4,15 @@ import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
 import { hashPassword, verifyPassword, createSessionToken } from "../auth";
 import { rowToUser } from "../mappers";
-import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
+import { requireAuth, requireAdmin, forgetGate, type AuthedVariables } from "../middleware";
+import { passwordSchema } from "../lib/passwordPolicy";
 import type { Env } from "../bindings";
 
 export const authRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 
 const credentialsSchema = z.object({
   username: z.string().min(3).max(64),
-  password: z.string().min(8),
+  password: passwordSchema,
   display_name: z.string().max(120).optional(),
 });
 
@@ -89,6 +90,15 @@ authRouter.get("/me", requireAuth, async (c) => {
   return c.json(await userWithClientLogo(c.env.DB, rows[0]));
 });
 
+/** Sign out everywhere: every session issued before now stops working,
+ *  on every device. Useful after a lost laptop or a shared computer. */
+authRouter.post("/logout-all", requireAuth, async (c) => {
+  const userId = c.get("userId");
+  await run(c.env.DB, "UPDATE users SET tokens_valid_after = ? WHERE id = ?", [Math.floor(Date.now() / 1000) + 1, userId]);
+  forgetGate(userId);
+  return c.json({ ok: true });
+});
+
 /** Admin-only: list every client account (for the admin panel). */
 authRouter.get("/users", requireAuth, requireAdmin, async (c) => {
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users ORDER BY created_at DESC");
@@ -103,6 +113,7 @@ authRouter.post("/users", requireAuth, requireAdmin, async (c) => {
 
   const roleRaw = (body as Record<string, unknown>).role;
   const role = roleRaw === "admin" ? "admin" : "client";
+  const readOnly = role === "client" && (body as Record<string, unknown>).read_only === true ? 1 : 0;
 
   const existing = await all<{ id: string }>(c.env.DB, "SELECT id FROM users WHERE username = ?", [parsed.data.username]);
   if (existing[0]) return c.json({ error: "Username already taken" }, 409);
@@ -111,8 +122,8 @@ authRouter.post("/users", requireAuth, requireAdmin, async (c) => {
   const passwordHash = await hashPassword(parsed.data.password);
   await run(
     c.env.DB,
-    `INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?,?,?,?,?,?)`,
-    [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, role, nowIso()]
+    `INSERT INTO users (id, username, password_hash, display_name, role, read_only, created_at) VALUES (?,?,?,?,?,?,?)`,
+    [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, role, readOnly, nowIso()]
   );
 
   const rows = await all<Record<string, unknown>>(c.env.DB, "SELECT * FROM users WHERE id = ?", [id]);
@@ -121,7 +132,7 @@ authRouter.post("/users", requireAuth, requireAdmin, async (c) => {
 
 const changePasswordSchema = z.object({
   current_password: z.string().min(1),
-  new_password: z.string().min(8),
+  new_password: passwordSchema,
 });
 
 /** Any authenticated user — platform admin or client, including a client's
@@ -154,7 +165,7 @@ authRouter.post("/change-password", requireAuth, async (c) => {
 const publicChangePasswordSchema = z.object({
   username: z.string().min(1),
   current_password: z.string().min(1),
-  new_password: z.string().min(8),
+  new_password: passwordSchema,
 });
 
 /** Public — no session required — but security-equivalent to the

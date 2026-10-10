@@ -5,6 +5,8 @@ import { newId } from "../ids";
 import { hashPassword } from "../auth";
 import { rowToUser } from "../mappers";
 import { requireAuth, type AuthedVariables } from "../middleware";
+import { passwordSchema } from "../lib/passwordPolicy";
+import { forgetGate } from "../middleware";
 import type { Env } from "../bindings";
 
 export const clientsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -58,7 +60,7 @@ const createClientSchema = z.object({
   name: z.string().min(1).max(200),
   max_accounts: z.number().int().min(1).max(50).default(3),
   username: z.string().min(3).max(64),
-  password: z.string().min(8),
+  password: passwordSchema,
   display_name: z.string().max(120).optional(),
 });
 
@@ -207,8 +209,10 @@ clientsRouter.get("/:id/accounts", async (c) => {
 
 const accountSchema = z.object({
   username: z.string().min(3).max(64),
-  password: z.string().min(8),
+  password: passwordSchema,
   display_name: z.string().max(120).optional(),
+  /** Viewer login: can look at everything it's allowed to see, can't change or export anything. */
+  read_only: z.boolean().optional(),
 });
 
 /** Admin, or that client's own client-admin: add a teammate login, capped at
@@ -235,8 +239,8 @@ clientsRouter.post("/:id/accounts", async (c) => {
   const passwordHash = await hashPassword(parsed.data.password);
   await run(
     c.env.DB,
-    `INSERT INTO users (id, username, password_hash, display_name, role, client_id, is_client_admin, created_at) VALUES (?,?,?,?,'client',?,0,?)`,
-    [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, clientId, nowIso()]
+    `INSERT INTO users (id, username, password_hash, display_name, role, client_id, is_client_admin, read_only, created_at) VALUES (?,?,?,?,'client',?,0,?,?)`,
+    [id, parsed.data.username, passwordHash, parsed.data.display_name ?? null, clientId, parsed.data.read_only ? 1 : 0, nowIso()]
   );
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [id]);
   return c.json(rowToUser(row!), 201);
@@ -245,6 +249,9 @@ clientsRouter.post("/:id/accounts", async (c) => {
 const updateAccountSchema = z.object({
   is_client_admin: z.boolean().optional(),
   display_name: z.string().max(120).optional(),
+  read_only: z.boolean().optional(),
+  /** Switch a login off (and end its sessions) without deleting its history. */
+  disabled: z.boolean().optional(),
 });
 
 /** Admin, or that client's own client-admin: toggle whether a teammate can
@@ -271,9 +278,22 @@ clientsRouter.patch("/:id/accounts/:userId", async (c) => {
     updates.push("display_name = ?");
     params.push(parsed.data.display_name);
   }
+  if (parsed.data.read_only !== undefined) {
+    updates.push("read_only = ?");
+    params.push(parsed.data.read_only ? 1 : 0);
+    // A viewer can't also manage the team.
+    if (parsed.data.read_only && parsed.data.is_client_admin === undefined) updates.push("is_client_admin = 0");
+    if (parsed.data.read_only && parsed.data.is_client_admin) return c.json({ error: "A viewer login can't manage the team." }, 400);
+  }
+  if (parsed.data.disabled !== undefined) {
+    if (targetId === c.get("userId")) return c.json({ error: "You can't disable your own login." }, 400);
+    updates.push("disabled = ?");
+    params.push(parsed.data.disabled ? 1 : 0);
+  }
   if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
   params.push(targetId);
   await run(c.env.DB, `UPDATE users SET ${updates.join(", ")} WHERE id = ?`, params);
+  forgetGate(targetId);
 
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [targetId]);
   return c.json(rowToUser(row!));

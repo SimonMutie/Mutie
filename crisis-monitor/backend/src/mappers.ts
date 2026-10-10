@@ -25,6 +25,8 @@ export function rowToUser(row: Record<string, unknown>): UserRecord {
     role: row.role === "admin" ? "admin" : "client",
     client_id: row.client_id != null ? String(row.client_id) : null,
     is_client_admin: Boolean(row.is_client_admin),
+    read_only: Boolean(row.read_only),
+    disabled: Boolean(row.disabled),
     created_at: String(row.created_at),
   };
 }
