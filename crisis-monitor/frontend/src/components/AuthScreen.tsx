@@ -197,6 +197,18 @@ export default function AuthScreen({ mode, onAuthenticated }: Props) {
             <button type="submit" disabled={submitting} style={primaryBtnStyle}>
               {submitting ? "Please wait…" : mode === "bootstrap" ? "Create admin account" : "Sign in"}
             </button>
+            {mode !== "bootstrap" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setTab("request-access");
+                }}
+                style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 6, padding: "8px 14px", cursor: "pointer", fontSize: 13 }}
+              >
+                Request access
+              </button>
+            )}
           </form>
         )}
 
@@ -250,7 +262,7 @@ export default function AuthScreen({ mode, onAuthenticated }: Props) {
           <>
             {requestSuccess ? (
               <div style={{ fontSize: 13, color: "var(--signal)", padding: "8px 0" }}>
-                Request submitted. An admin will review it and reach out with login details if approved.
+                Thank you. Afrilens Consulting will be in touch as soon as possible.
               </div>
             ) : (
               <form onSubmit={handleRequestAccess} style={{ display: "flex", flexDirection: "column", gap: 12 }}>

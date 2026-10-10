@@ -5,6 +5,7 @@ import { newId } from "../ids";
 import { hashPassword, verifyPassword, createSessionToken } from "../auth";
 import { rowToUser } from "../mappers";
 import { requireAuth, requireAdmin, forgetGate, type AuthedVariables } from "../middleware";
+import { sendEmail } from "../lib/notify";
 import { audit, clientIp, readAudit } from "../lib/audit";
 import { passwordSchema } from "../lib/passwordPolicy";
 import type { Env } from "../bindings";
@@ -270,7 +271,20 @@ const requestAccessSchema = z.object({
  *  admin to review below; doesn't create an account or send any
  *  notification email (this app has no email-sending infrastructure), so
  *  the admin needs to actually check the queue rather than being paged. */
+const ACCESS_REQUEST_INBOX = "info@afrilensconsulting.org";
+const accessAttempts = new Map<string, { start: number; n: number }>();
+
 authRouter.post("/request-access", async (c) => {
+  // Public form: allow a handful per hour from one address so it can't be used to flood the inbox.
+  const ip = clientIp(c.req) ?? "unknown";
+  const slot = accessAttempts.get(ip);
+  if (!slot || Date.now() - slot.start > 3_600_000) {
+    if (accessAttempts.size > 2000) accessAttempts.clear();
+    accessAttempts.set(ip, { start: Date.now(), n: 1 });
+  } else if (++slot.n > 5) {
+    return c.json({ error: "Too many requests from this connection. Please try again later." }, 429);
+  }
+
   const body = await c.req.json().catch(() => null);
   const parsed = requestAccessSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -281,6 +295,24 @@ authRouter.post("/request-access", async (c) => {
     `INSERT INTO access_requests (id, name, email, organization, reason, status, created_at) VALUES (?,?,?,?,?,'pending',?)`,
     [id, parsed.data.name, parsed.data.email, parsed.data.organization ?? null, parsed.data.reason ?? null, nowIso()]
   );
+  // Tell Afrilens straight away. The request is already saved, so a mail failure doesn't lose it.
+  const d = parsed.data;
+  const sent = await sendEmail(c.env, ACCESS_REQUEST_INBOX, {
+    subject: `Access request: ${d.name}${d.organization ? ` (${d.organization})` : ""}`.replace(/[\r\n]+/g, " "),
+    overview: `${d.name} <${d.email}> has asked for access to The Lens.`,
+    sections: [
+      {
+        heading: "REQUEST DETAILS",
+        changed: `Name: ${d.name}\nEmail: ${d.email}\nOrganisation: ${d.organization ?? "not given"}`,
+        analysis: d.reason ? `Reason given: ${d.reason}` : "No reason given.",
+        links: [],
+      },
+    ],
+    links: [],
+    footer: "Reply to the email address above. The request is also in the admin Access Requests queue.",
+  });
+  if (!sent.ok) console.error("[access-request] notification email failed:", sent.error);
+  await audit(c.env, { username: d.email, action: "access.requested", detail: sent.ok ? "emailed" : "email failed", ip });
   return c.json({ ok: true }, 201);
 });
 
