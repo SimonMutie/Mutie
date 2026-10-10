@@ -33,6 +33,7 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
     ["date_range_to", "TEXT"],
     ["theme", "TEXT"], // dashboard themes (no hand-run migration)
     ["country", "TEXT"], // a dashboard tied to one country (the Country Dashboard)
+    ["share_expires_at", "TEXT"], // public links lapse on their own
   ],
   users: [
     ["client_id", "TEXT REFERENCES clients(id) ON DELETE SET NULL"], // 014
@@ -46,6 +47,7 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
   clients: [
     ["can_view_all_incidents", "INTEGER NOT NULL DEFAULT 0"], // 015
     ["logo_data", "TEXT"], // 016
+    ["can_share_publicly", "INTEGER NOT NULL DEFAULT 0"], // public links are off until the admin allows them
   ],
   map_routes: [["visible", "INTEGER NOT NULL DEFAULT 1"]], // 019
   map_shapes: [["visible", "INTEGER NOT NULL DEFAULT 1"]],

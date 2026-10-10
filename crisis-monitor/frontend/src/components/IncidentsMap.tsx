@@ -1,3 +1,4 @@
+import { exportAllowed, stampCanvas } from "../exportGuard";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LeafletMapControls from "./LeafletMapControls";
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, ScaleControl, useMapEvents, useMap } from "react-leaflet";
@@ -1578,14 +1579,14 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
   }
 
   async function exportPng() {
-    if (!mapContainerRef.current) return;
+    if (!mapContainerRef.current || !exportAllowed()) return;
     setExportingPng(true);
     try {
       // Map tiles are cross-origin images; some tile servers don't send CORS
       // headers permitting canvas export, so the base tiles may come out blank
       // depending on the basemap — markers/routes/shapes (drawn locally, not
       // loaded as images) always capture fine regardless.
-      const canvas = await html2canvas(mapContainerRef.current, { useCORS: true, allowTaint: false, logging: false });
+      const canvas = stampCanvas(await html2canvas(mapContainerRef.current, { useCORS: true, allowTaint: false, logging: false }));
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
@@ -1605,7 +1606,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
    *  animation in motion — the whole reason this exists alongside the
    *  plain PNG export above. */
   async function exportGif() {
-    if (!mapContainerRef.current) return;
+    if (!mapContainerRef.current || !exportAllowed()) return;
     setGifProgress({ phase: "capturing", current: 0, total: 24 });
     try {
       const blob = await captureElementAsGif(mapContainerRef.current, setGifProgress);

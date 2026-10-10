@@ -458,6 +458,31 @@ function ClientDetail({
             </div>
           </label>
 
+          <label
+            className="panel"
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
+          >
+            <input
+              type="checkbox"
+              checked={!!client.can_share_publicly}
+              onChange={async () => {
+                setError(null);
+                try {
+                  await api.updateClient(clientId, { can_share_publicly: !client.can_share_publicly });
+                  await load();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
+                }
+              }}
+            />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Allow public share links</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                Off by default. When on, this client's logins can create dashboard links that work without signing in; each link expires (7 days unless they choose up to 90) and can be switched off at any time.
+              </div>
+            </div>
+          </label>
+
           <CountryAccessSection clientId={clientId} />
 
           <SharedItemsSection

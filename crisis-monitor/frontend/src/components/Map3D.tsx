@@ -410,7 +410,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
       // viewer to zoom in first to see anything.
       center: [40, 12],
       zoom: 3.4,
-      attributionControl: { compact: true },
+      attributionControl: { compact: true, customAttribution: ["Boundaries: Natural Earth, geoBoundaries (CC BY 4.0)", "Events: GDELT"] },
     });
     mapRef.current = map;
     map.on("rotate", () => setBearing(map.getBearing()));

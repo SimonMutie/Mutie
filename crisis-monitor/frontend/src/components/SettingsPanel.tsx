@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type AuthUser, type EscalationPipelineStatus } from "../api";
+import { api, setToken, type AuthUser, type EscalationPipelineStatus } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled } from "../intro";
 
@@ -42,9 +42,60 @@ export default function SettingsPanel({ onBack, user }: Props) {
         </div>
       )}
 
+      <SignOutEverywhereCard />
+
+      <CreditsCard />
+
       <OpeningSequenceCard />
 
       {user.role === "admin" && <AiUsageCard />}
+    </div>
+  );
+}
+
+/** Ends every session this login has, on every device. */
+function SignOutEverywhereCard() {
+  const [busy, setBusy] = useState(false);
+  async function go() {
+    if (!window.confirm("Sign out on every device, including this one?")) return;
+    setBusy(true);
+    try {
+      await api.logoutAll();
+    } catch {
+      /* the session may already be gone */
+    }
+    setToken(null);
+    window.location.reload();
+  }
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Sign out everywhere</div>
+      <p style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--text-muted)", margin: "8px 0 12px" }}>
+        Use this after losing a device or signing in on a shared computer. Every session ends and you sign in again with your password.
+      </p>
+      <button onClick={go} disabled={busy} style={backBtnStyle}>
+        {busy ? "Signing out…" : "Sign out on all devices"}
+      </button>
+    </div>
+  );
+}
+
+/** Where the platform's data comes from, with the credits those sources ask for. */
+function CreditsCard() {
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600 }}>Data sources and use</div>
+      <ul style={{ fontSize: 12.5, lineHeight: 1.7, color: "var(--text-muted)", margin: "8px 0 10px", paddingLeft: 18 }}>
+        <li>Base maps © OpenStreetMap contributors; satellite imagery © Esri and its providers.</li>
+        <li>Province boundaries: Natural Earth (public domain) and geoBoundaries (CC BY 4.0).</li>
+        <li>Economic indicators: World Bank Open Data (CC BY 4.0).</li>
+        <li>Event data: GDELT Project. News headlines link to their original publishers.</li>
+        <li>Currency rates: European Central Bank via Frankfurter. Crypto prices: CoinGecko. Energy and interest rates: US Federal Reserve (FRED).</li>
+        <li>Escalation assessments are produced with AI assistance from public reporting and can be wrong; check the linked sources before acting on them.</li>
+      </ul>
+      <div style={{ fontSize: 12, color: "var(--text-faint)" }}>
+        Afrilens Consulting analysis for the named client's internal use. Not to be resold or redistributed. Exports carry this notice.
+      </div>
     </div>
   );
 }

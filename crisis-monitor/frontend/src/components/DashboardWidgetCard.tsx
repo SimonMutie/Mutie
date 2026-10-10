@@ -1,3 +1,4 @@
+import { exportAllowed, stampCanvas } from "../exportGuard";
 import L from "leaflet";
 import { ACTOR_CATEGORIES, classifyIncident, pinSvg } from "./actorTheme";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -696,10 +697,10 @@ export default function DashboardWidgetCard({
    *  action, there's no reason to gate it the way those are. */
   async function downloadWidgetImage() {
     setShowDownloadMenu(false);
-    if (!cardRef.current) return;
+    if (!cardRef.current || !exportAllowed()) return;
     setDownloadingImage(true);
     try {
-      const canvas = await html2canvas(cardRef.current, { useCORS: true, allowTaint: false, logging: false });
+      const canvas = stampCanvas(await html2canvas(cardRef.current, { useCORS: true, allowTaint: false, logging: false }));
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);

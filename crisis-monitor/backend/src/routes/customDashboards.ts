@@ -285,6 +285,8 @@ const updateSchema = z.object({
   name: z.string().min(1).optional(),
   widgets: z.array(widgetSchema).optional(),
   is_public: z.boolean().optional(),
+  /** How long a new public link lives, in days. Defaults to 7. */
+  share_days: z.number().int().min(1).max(90).optional(),
   locked: z.boolean().optional(),
   // Nullable (not just optional) so the filter can be explicitly cleared —
   // undefined means "don't touch this field", null means "remove the date
@@ -324,13 +326,25 @@ customDashboardsRouter.patch("/:id", async (c) => {
     params.push(JSON.stringify(parsed.data.widgets));
   }
   if (parsed.data.is_public !== undefined) {
+    if (parsed.data.is_public && !isAdmin) {
+      // Public links are an admin-granted capability, off by default per client.
+      const me = await first<{ client_id: string | null; read_only: number }>(c.env.DB, `SELECT client_id, read_only FROM users WHERE id = ?`, [ownerId]);
+      const client = me?.client_id ? await first<{ can_share_publicly: number }>(c.env.DB, `SELECT can_share_publicly FROM clients WHERE id = ?`, [me.client_id]) : null;
+      if (!client?.can_share_publicly) {
+        return c.json({ error: "Public sharing isn't switched on for your account. Ask your Afrilens contact to enable it." }, 403);
+      }
+    }
     updates.push("is_public = ?");
     params.push(parsed.data.is_public ? 1 : 0);
-    // Mint a share token the first time a dashboard goes public; keep the
-    // same token across future toggles so a previously-shared link keeps working.
-    if (parsed.data.is_public && !existing.share_token) {
-      updates.push("share_token = ?");
-      params.push(newId());
+    if (parsed.data.is_public) {
+      // A fresh token and expiry every time sharing is switched on, so an old
+      // link that was switched off can never come back to life.
+      const days = parsed.data.share_days ?? 7;
+      updates.push("share_token = ?", "share_expires_at = ?");
+      params.push(newId(), new Date(Date.now() + days * 86_400_000).toISOString());
+    } else {
+      // Switching off revokes the link for good.
+      updates.push("share_token = NULL", "share_expires_at = NULL");
     }
   }
   if (parsed.data.locked !== undefined) {
@@ -468,8 +482,8 @@ publicDashboardsRouter.get("/:token", async (c) => {
   const token = c.req.param("token");
   const dashboard = await first<Record<string, unknown>>(
     c.env.DB,
-    `SELECT * FROM custom_dashboards WHERE share_token = ? AND is_public = 1`,
-    [token]
+    `SELECT * FROM custom_dashboards WHERE share_token = ? AND is_public = 1 AND (share_expires_at IS NULL OR share_expires_at > ?)`,
+    [token, nowIso()]
   );
   if (!dashboard) return c.json({ error: "Not found" }, 404);
 
@@ -571,5 +585,6 @@ publicDashboardsRouter.get("/:token", async (c) => {
     datasetSummaries,
     incidents,
     updated_at: dashboard.updated_at,
+    share_expires_at: (dashboard.share_expires_at as string | null) ?? null,
   });
 });

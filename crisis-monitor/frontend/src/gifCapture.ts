@@ -1,3 +1,4 @@
+import { exportAllowed, stampCanvas } from "./exportGuard";
 import GIF from "gif.js";
 import gifWorkerUrl from "gif.js/dist/gif.worker.js?url";
 import html2canvas from "html2canvas";
@@ -45,7 +46,7 @@ export function captureElementAsGif(
       try {
         for (let i = 0; i < frameCount; i++) {
           onProgress({ phase: "capturing", current: i + 1, total: frameCount });
-          const canvas = await html2canvas(element, { useCORS: true, allowTaint: false, logging: false });
+          const canvas = stampCanvas(await html2canvas(element, { useCORS: true, allowTaint: false, logging: false }));
           gif.addFrame(canvas, { delay: frameDelayMs });
           // No wait needed after the very last frame — nothing left to let
           // the animation advance for.

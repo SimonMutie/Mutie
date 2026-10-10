@@ -1,3 +1,4 @@
+import { exportAllowed, stampCanvas } from "../../exportGuard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardWidget } from "../../api";
 import { useOwnSelection, useViz } from "./context";
@@ -101,12 +102,13 @@ export default function VizCard({ widget, editable, onEdit, onRemove, onRename, 
   };
 
   async function download(format: "csv" | "xlsx" | "png") {
+    if (!exportAllowed()) return;
     setBusy(true);
     setFailed(null);
     try {
       if (format === "png") {
         const html2canvas = (await import("html2canvas")).default;
-        const canvas = await html2canvas(card.current!, { useCORS: true, logging: false, backgroundColor: ctx.theme.surface, scale: 2, onclone: flattenForCapture });
+        const canvas = stampCanvas(await html2canvas(card.current!, { useCORS: true, logging: false, backgroundColor: ctx.theme.surface, scale: 2, onclone: flattenForCapture }));
         await new Promise<void>((done) => canvas.toBlob((blob) => (blob && saveBlob(blob, "image/png", `${name}.png`), done())));
       } else if (format === "csv") {
         const cell = (v: string | number | null) => {

@@ -50,6 +50,7 @@ clientsRouter.get("/", async (c) => {
       name: String(row.name),
       max_accounts: Number(row.max_accounts),
       can_view_all_incidents: !!row.can_view_all_incidents,
+      can_share_publicly: !!row.can_share_publicly,
       account_count: countByClient.get(String(row.id)) ?? 0,
       created_at: String(row.created_at),
     }))
@@ -115,6 +116,7 @@ const updateClientSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   max_accounts: z.number().int().min(1).max(50).optional(),
   can_view_all_incidents: z.boolean().optional(),
+  can_share_publicly: z.boolean().optional(),
 });
 
 /** Platform-admin only: rename a client, change its account limit, or
@@ -148,6 +150,10 @@ clientsRouter.patch("/:id", async (c) => {
     updates.push("can_view_all_incidents = ?");
     params.push(parsed.data.can_view_all_incidents ? 1 : 0);
   }
+  if (parsed.data.can_share_publicly !== undefined) {
+    updates.push("can_share_publicly = ?");
+    params.push(parsed.data.can_share_publicly ? 1 : 0);
+  }
   if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
   params.push(id);
   await run(c.env.DB, `UPDATE clients SET ${updates.join(", ")} WHERE id = ?`, params);
@@ -158,6 +164,7 @@ clientsRouter.patch("/:id", async (c) => {
     name: String(row!.name),
     max_accounts: Number(row!.max_accounts),
     can_view_all_incidents: !!row!.can_view_all_incidents,
+    can_share_publicly: !!row!.can_share_publicly,
     logo_data: row!.logo_data != null ? String(row!.logo_data) : null,
   });
 });
@@ -189,6 +196,7 @@ clientsRouter.get("/:id", async (c) => {
     name: String(row.name),
     max_accounts: Number(row.max_accounts),
     can_view_all_incidents: !!row.can_view_all_incidents,
+    can_share_publicly: !!row.can_share_publicly,
     logo_data: row.logo_data != null ? String(row.logo_data) : null,
     account_count: countRow?.count ?? 0,
     created_at: String(row.created_at),

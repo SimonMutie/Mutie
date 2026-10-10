@@ -32,6 +32,8 @@ export interface AuthUser {
   /** Viewer login: can look, can't change, upload, share or export. */
   read_only?: boolean;
   disabled?: boolean;
+  /** Whether this login may create public (no-sign-in) dashboard links. */
+  can_share_publicly?: boolean;
   /** This login's client organization's logo, if any and if set — a base64
    *  data URL, ready to use directly as an <img src>. */
   client_logo: string | null;
@@ -79,6 +81,8 @@ export interface ClientOrg {
   /** Whether this client's accounts can see the full shared incidents pool,
    *  not just what they've personally uploaded — read-only visibility. */
   can_view_all_incidents: boolean;
+  /** Whether this client's logins may create public share links (off by default). */
+  can_share_publicly?: boolean;
   /** This client's logo, if set — a base64 data URL. Only present on the
    *  single-client GET/PATCH responses, not the platform-admin list (kept
    *  off that one to avoid bloating a list of many clients with full image
@@ -639,6 +643,7 @@ export interface CustomDashboard {
    *  and all drag/resize, regardless of any individual widget's own lock state. */
   locked: boolean;
   share_token: string | null;
+  share_expires_at?: string | null;
   /** A dashboard-wide date filter, applied to every Incidents-sourced widget
    *  at once. Set once by whoever builds the dashboard, persisted so it's
    *  still in effect on reload and for public share viewers. Doesn't affect
@@ -683,6 +688,8 @@ export interface MonthlyGroupRow {
 
 export interface PublicDashboardData {
   name: string;
+  /** When this public link stops working (ISO), if it has an expiry. */
+  share_expires_at?: string | null;
   country?: string | null;
   victimGroups?: VictimGroupRow[];
   monthlyGroups?: MonthlyGroupRow[];
@@ -1512,6 +1519,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   me: () => req<AuthUser>("/api/auth/me"),
+  logoutAll: () => req<{ ok: boolean }>("/api/auth/logout-all", { method: "POST" }),
   changePassword: (currentPassword: string, newPassword: string) =>
     req<{ ok: boolean }>("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) }),
   changePasswordPublic: (username: string, currentPassword: string, newPassword: string) =>
@@ -1535,7 +1543,7 @@ export const api = {
   getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
   createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string }) =>
     req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
-  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean }) =>
+  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean }) =>
     req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
   updateClientLogo: (clientId: string, logoData: string | null) =>
@@ -1774,7 +1782,7 @@ export const api = {
   getCustomDashboard: (id: string) => req<CustomDashboard>(`/api/custom-dashboards/${id}`),
   updateCustomDashboard: (
     id: string,
-    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null; country?: string | null }
+    data: { name?: string; widgets?: DashboardWidget[]; is_public?: boolean; share_days?: number; locked?: boolean; date_range_from?: string | null; date_range_to?: string | null; theme?: string | null; country?: string | null }
   ) =>
     req<CustomDashboard>(`/api/custom-dashboards/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 

@@ -60,11 +60,13 @@ authRouter.post("/bootstrap", async (c) => {
 async function userWithClientLogo(db: D1Database, row: Record<string, unknown>) {
   const user = rowToUser(row);
   let clientLogo: string | null = null;
+  let canShare = user.role === "admin";
   if (user.client_id) {
-    const client = await first<{ logo_data: string | null }>(db, "SELECT logo_data FROM clients WHERE id = ?", [user.client_id]);
+    const client = await first<{ logo_data: string | null; can_share_publicly: number | null }>(db, "SELECT logo_data, can_share_publicly FROM clients WHERE id = ?", [user.client_id]);
     clientLogo = client?.logo_data ?? null;
+    if (user.role !== "admin") canShare = !!client?.can_share_publicly && !user.read_only;
   }
-  return { ...user, client_logo: clientLogo };
+  return { ...user, client_logo: clientLogo, can_share_publicly: canShare };
 }
 
 authRouter.post("/login", async (c) => {

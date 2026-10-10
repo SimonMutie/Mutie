@@ -1,3 +1,4 @@
+import { exportAllowed, stampCanvas } from "../exportGuard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LeafletMapControls from "./LeafletMapControls";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
@@ -145,7 +146,7 @@ export default function IncidentSearch() {
   }
 
   async function downloadPng() {
-    if (!mapContainerRef.current) return;
+    if (!mapContainerRef.current || !exportAllowed()) return;
     setDownloadingPng(true);
     try {
       // useCORS lets html2canvas read cross-origin tile images where the tile
@@ -154,7 +155,7 @@ export default function IncidentSearch() {
       // the base tiles themselves might come out blank on a server that
       // withholds CORS headers. This varies by basemap/tile provider and isn't
       // something we can guarantee from here.
-      const canvas = await html2canvas(mapContainerRef.current, { useCORS: true, allowTaint: false, logging: false });
+      const canvas = stampCanvas(await html2canvas(mapContainerRef.current, { useCORS: true, allowTaint: false, logging: false }));
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);

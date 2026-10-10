@@ -1,3 +1,4 @@
+import { exportAllowed, stampCanvas } from "../exportGuard";
 import { MarketsPanel } from "./MarketsPanel";
 import { EconomyPanel } from "./EconomyPanel";
 import { STANDING_HOTSPOTS } from "../standingHotspots";
@@ -1588,6 +1589,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // fresh at click-time so the export always reflects "Search" having been
   // pressed, not whatever's mid-edit in the draft.
   async function handleIncidentExport(format: "xlsx" | "csv") {
+    if (!exportAllowed()) return;
     setIncidentExporting(format);
     try {
       const rows = await api.getIncidents({ ...incidentFilters, limit: 250000 });

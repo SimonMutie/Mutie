@@ -1,3 +1,5 @@
+import { exportAllowed, stampCanvas } from "../exportGuard";
+import { useCapabilities } from "../session";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
@@ -90,6 +92,8 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   const [widgets, setWidgets] = useState<DashboardWidget[]>([]);
   const [backendId, setBackendId] = useState<string | null>(mode.kind === "bespoke" ? mode.id : null);
   const [isPublic, setIsPublic] = useState(false);
+  const [shareExpiry, setShareExpiry] = useState<string | null>(null);
+  const caps = useCapabilities();
   const [shareToken, setShareToken] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   // The editing controls stay tucked away until asked for, so the dashboard itself stays clean.
@@ -185,11 +189,11 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
    *  scrolled-off widgets outside the current viewport aren't included,
    *  same limitation html2canvas has everywhere else it's used here. */
   async function downloadDashboardImage() {
-    if (!dashboardCaptureRef.current) return;
+    if (!dashboardCaptureRef.current || !exportAllowed()) return;
     setDownloadingImage(true);
     try {
       // A dashboard with a look of its own is photographed on that look's page colour; the default stays transparent as before.
-      const canvas = await html2canvas(dashboardCaptureRef.current, { useCORS: true, allowTaint: false, logging: false, backgroundColor: themeKey ? theme.page : null, onclone: flattenForCapture });
+      const canvas = stampCanvas(await html2canvas(dashboardCaptureRef.current, { useCORS: true, allowTaint: false, logging: false, backgroundColor: themeKey ? theme.page : null, onclone: flattenForCapture }));
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
@@ -208,7 +212,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   const [gifError, setGifError] = useState<string | null>(null);
 
   async function downloadDashboardGif() {
-    if (!dashboardCaptureRef.current) return;
+    if (!dashboardCaptureRef.current || !exportAllowed()) return;
     setGifError(null);
     setGifProgress({ phase: "capturing", current: 0, total: 24 });
     try {
@@ -461,6 +465,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
       setBackendId(d.id);
       setIsPublic(d.is_public);
       setShareToken(d.share_token);
+      setShareExpiry(d.share_expires_at ?? null);
       setLocked(d.locked);
       setDashCountry(d.country ?? null);
       setDateRangeFrom(d.date_range_from ?? undefined);
@@ -659,9 +664,25 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   async function toggleShare() {
     if (!backendId) await save();
     if (!backendId) return;
-    const updated = await api.updateCustomDashboard(backendId, { is_public: !isPublic });
-    setIsPublic(updated.is_public);
-    setShareToken(updated.share_token);
+    try {
+      let days: number | undefined;
+      if (!isPublic) {
+        const answer = window.prompt(
+          "Anyone with this link can view the dashboard without signing in. Treat it as a published document: share it only with people entitled to see it.\n\nHow many days should the link work for? (1–90)",
+          "7"
+        );
+        if (answer === null) return;
+        days = Math.min(90, Math.max(1, Math.round(Number(answer)) || 7));
+      } else if (!window.confirm("Turn off sharing? The current link stops working for good.")) {
+        return;
+      }
+      const updated = await api.updateCustomDashboard(backendId, { is_public: !isPublic, share_days: days });
+      setIsPublic(updated.is_public);
+      setShareToken(updated.share_token);
+      setShareExpiry(updated.share_expires_at ?? null);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Couldn't change sharing.");
+    }
   }
 
   function copyShareLink() {
@@ -931,9 +952,9 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
         <button onClick={toggleLock} title={locked ? "Unlock to edit again" : "Lock once you're done editing, to prevent accidental changes"} style={locked ? liveBtnStyle : secondaryBtnStyle}>
           {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}
         </button>
-        {!locked && (
-          <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle}>
-            {isPublic ? "● Live shared" : "Share for live viewing"}
+        {!locked && (caps.canSharePublicly || isPublic) && !caps.viewer && (
+          <button onClick={toggleShare} style={isPublic ? liveBtnStyle : secondaryBtnStyle} title={isPublic && shareExpiry ? `Link expires ${new Date(shareExpiry).toLocaleDateString()} — click to turn off` : undefined}>
+            {isPublic ? "● Shared (public link)" : "Create public link"}
           </button>
         )}
         {isPublic && shareToken && (

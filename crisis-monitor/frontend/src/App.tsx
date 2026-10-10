@@ -1,3 +1,4 @@
+import { setSessionUser } from "./session";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import AlertPopups from "./components/AlertPopups";
 import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
@@ -65,7 +66,11 @@ export default function App() {
   const [bootState, setBootState] = useState<BootState>("checking");
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootTry, setBootTry] = useState(0);
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const [user, setUserState] = useState<AuthUser | null>(null);
+  const setUser = (u: AuthUser | null) => {
+    setSessionUser(u);
+    setUserState(u);
+  };
   const [view, setView] = useState<View>("live-osint");
   // Set when coming back from a monitoring page, so the map reopens with
   // the Monitor tool showing instead of dropping the user on a bare map.
