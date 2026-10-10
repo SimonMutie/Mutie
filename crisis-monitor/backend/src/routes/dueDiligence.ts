@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, run, nowIso } from "../db";
 import { requireAuth, type AuthedVariables } from "../middleware";
+import { audit, clientIp } from "../lib/audit";
 import { consumeQuota } from "../lib/quota";
 import { runDueDiligence, type DdResult } from "../lib/dd/run";
 import { LIST_SOURCES, listStatuses, refreshList, type ListId } from "../lib/dd/sanctionsLists";
@@ -15,6 +16,24 @@ import type { Env } from "../bindings";
  */
 export const dueDiligenceRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 dueDiligenceRouter.use("*", requireAuth);
+
+/** Screening names of people and companies is sensitive work (and personal data under the Kenya Data Protection Act and GDPR),
+ *  so it is off for a client until the admin switches it on for that client. */
+dueDiligenceRouter.use("*", async (c, next) => {
+  if (c.get("role") === "admin") return next();
+  let allowed = false;
+  try {
+    const row = await first<{ can_screen_people: number | null }>(c.env.DB, `SELECT c.can_screen_people AS can_screen_people FROM users u LEFT JOIN clients c ON u.client_id = c.id WHERE u.id = ?`, [c.get("userId")]);
+    allowed = !!row?.can_screen_people;
+  } catch {
+    allowed = false;
+  }
+  if (!allowed) return c.json({ error: "Due-diligence screening isn't switched on for your account. Ask your Afrilens contact." }, 403);
+  return next();
+});
+
+/** Cases kept by client logins are removed after this long, so the platform doesn't hold a standing file on named people. */
+const CLIENT_CASE_RETENTION_DAYS = 90;
 
 const DEFAULT_RUNS_PER_DAY = 40;
 let ready = false;
@@ -107,6 +126,8 @@ dueDiligenceRouter.post("/", async (c) => {
   }
   const id = newId();
   const now = nowIso();
+  await audit(c.env, { userId: c.get("userId"), action: "dd.run", detail: `${d.subject_type}: ${d.name}`.slice(0, 200), ip: clientIp(c.req) });
+  await run(c.env.DB, `DELETE FROM due_diligence_cases WHERE created_at < ? AND owner_id IN (SELECT id FROM users WHERE role != 'admin')`, [new Date(Date.now() - CLIENT_CASE_RETENTION_DAYS * 86_400_000).toISOString()]);
   await run(c.env.DB, "INSERT INTO due_diligence_cases (id, owner_id, name, subject_type, country, aliases, identifiers, reference, outcome, result, summary, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", [
     id, c.get("userId"), d.name, d.subject_type, d.country || null, JSON.stringify(d.aliases ?? []), d.identifiers || null, d.reference || null, result.outcome, JSON.stringify(result), result.summary.text, now, now,
   ]);

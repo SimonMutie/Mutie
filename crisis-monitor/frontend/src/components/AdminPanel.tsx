@@ -567,6 +567,31 @@ function ClientDetail({
             </div>
           </label>
 
+          <label
+            className="panel"
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
+          >
+            <input
+              type="checkbox"
+              checked={!!client.can_screen_people}
+              onChange={async () => {
+                setError(null);
+                try {
+                  await api.updateClient(clientId, { can_screen_people: !client.can_screen_people });
+                  await load();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
+                }
+              }}
+            />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>Allow due-diligence screening</div>
+              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
+                Off by default. It looks up named people and companies, which is personal data. Each run is logged, and this client's saved cases are deleted after 90 days.
+              </div>
+            </div>
+          </label>
+
           <AlertDestinationsSection client={client} onSaved={load} />
 
           <AllowancesSection clientId={clientId} />

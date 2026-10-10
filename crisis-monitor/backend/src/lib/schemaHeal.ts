@@ -47,6 +47,7 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
   clients: [
     ["can_view_all_incidents", "INTEGER NOT NULL DEFAULT 0"], // 015
     ["logo_data", "TEXT"], // 016
+    ["can_screen_people", "INTEGER NOT NULL DEFAULT 0"], // due-diligence screening is off until the admin allows it
     ["alert_email_domains", "TEXT"], // where this client's alert emails may go (e.g. "acme.org")
     ["alert_signal_numbers", "TEXT"], // Signal numbers the admin has approved
     ["quota_json", "TEXT"], // per-client allowance overrides (see lib/quota.ts)
