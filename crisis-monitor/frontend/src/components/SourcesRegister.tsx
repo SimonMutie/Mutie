@@ -20,7 +20,7 @@ const primary: React.CSSProperties = { ...btn, background: "var(--signal-dim)", 
 const th: React.CSSProperties = { textAlign: "left", fontSize: 10.5, letterSpacing: "0.06em", color: "var(--text-faint)", fontWeight: 600, padding: "6px 8px", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "7px 8px", fontSize: 12.5, borderBottom: "1px solid var(--border-soft)", verticalAlign: "top" };
 
-const EMPTY = { name: "", url: "", country: "", kind: "local_media", role: "pulled" as "pulled" | "reference", notes: "", reliability: "F", ownership: "unassessed", orientation: "", rating_note: "" };
+const EMPTY = { name: "", url: "", country: "", kind: "local_media", role: "pulled" as "pulled" | "reference", notes: "", reliability: "F", ownership: "unassessed", orientation: "", rating_note: "", language: "" };
 
 const csvCell = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
@@ -47,6 +47,8 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
   const [grade, setGrade] = useState("");
   const [owner, setOwner] = useState("");
   const [linkFilter, setLinkFilter] = useState("");
+  const [language, setLanguage] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
   const [checking, setChecking] = useState<string | null>(null);
   const [presenting, setPresenting] = useState(false);
   const [editing, setEditing] = useState<string | "new" | null>(null);
@@ -80,11 +82,15 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
       if (role && e.role !== role) return false;
       if (grade && e.reliability !== grade) return false;
       if (owner && e.ownership !== owner) return false;
+      if (kindFilter && e.kind !== kindFilter) return false;
+      if (language && !(e.language ?? "").split(/[\/,]/).map((x) => x.trim()).includes(language)) return false;
       if (linkFilter === "problem" && e.link_status !== "dead" && e.link_status !== "error") return false;
       if (linkFilter === "unchecked" && e.link_status) return false;
-      return !needle || `${e.name} ${e.url} ${e.country_name} ${e.orientation ?? ""} ${e.rating_note ?? ""}`.toLowerCase().includes(needle);
+      return !needle || `${e.name} ${e.url} ${e.country_name} ${e.orientation ?? ""} ${e.rating_note ?? ""} ${e.language ?? ""}`.toLowerCase().includes(needle);
     });
-  }, [pool, q, region, role, grade, owner, linkFilter]);
+  }, [pool, q, region, role, grade, owner, linkFilter, kindFilter, language]);
+
+  const languages = useMemo(() => [...new Set(entries.flatMap((e) => (e.language ?? "").split(/[\/,]/).map((x) => x.trim()).filter(Boolean)))].sort(), [entries]);
 
   const grouped = useMemo(() => {
     const m = new Map<string, SourceRegisterEntry[]>();
@@ -105,8 +111,8 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
 
   function download() {
     const rows = [
-      ["Region", "Country", "Source", "Type", "Ownership", "Orientation", "Reliability", "How we use it", "Basis", "Notes", "Link"],
-      ...visible.map((e) => [e.region, e.country_name, e.name, kinds[e.kind] ?? e.kind, ownerLabels[e.ownership] ?? e.ownership, e.orientation ?? "", `${e.reliability} - ${gradeLabels[e.reliability] ?? ""}`, e.role === "pulled" ? "Feeds the platform" : "Verification reference", e.rating_basis === "reviewed" ? "Analyst reviewed" : e.rating_basis === "desk" ? "Desk baseline" : "Not yet assessed", e.rating_note ?? e.notes ?? "", e.url]),
+      ["Region", "Country", "Source", "Type", "Ownership", "Orientation", "Language", "Reliability", "How we use it", "Basis", "Notes", "Link"],
+      ...visible.map((e) => [e.region, e.country_name, e.name, kinds[e.kind] ?? e.kind, ownerLabels[e.ownership] ?? e.ownership, e.orientation ?? "", e.language ?? "", `${e.reliability} - ${gradeLabels[e.reliability] ?? ""}`, e.role === "pulled" ? "Feeds the platform" : "Verification reference", e.rating_basis === "reviewed" ? "Analyst reviewed" : e.rating_basis === "desk" ? "Desk baseline" : "Not yet assessed", e.rating_note ?? e.notes ?? "", e.url]),
     ];
     const blob = new Blob([`﻿${rows.map((r) => r.map(csvCell).join(",")).join("\r\n")}`], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
@@ -119,7 +125,7 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
   async function save() {
     setError(null);
     try {
-      const body = { name: draft.name, url: draft.url, country: draft.country, kind: draft.kind, role: draft.role, notes: draft.notes || null, reliability: draft.reliability, ownership: draft.ownership, orientation: draft.orientation || null, rating_note: draft.rating_note || null };
+      const body = { name: draft.name, url: draft.url, country: draft.country, kind: draft.kind, role: draft.role, notes: draft.notes || null, reliability: draft.reliability, ownership: draft.ownership, orientation: draft.orientation || null, rating_note: draft.rating_note || null, language: draft.language || null };
       if (editing === "new") await api.addSource(body as never);
       else if (editing) await api.updateSource(editing, body as never);
       setEditing(null);
@@ -189,6 +195,7 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
       </div>
       <input placeholder="Orientation, e.g. Independent; critical of government" value={draft.orientation} onChange={(e) => setDraft({ ...draft, orientation: e.target.value })} style={field} />
       <input placeholder="Why this grade, and what to watch for" value={draft.rating_note} onChange={(e) => setDraft({ ...draft, rating_note: e.target.value })} style={field} />
+      <input placeholder="Language(s), e.g. Amharic, Arabic/French, Somali" value={draft.language} onChange={(e) => setDraft({ ...draft, language: e.target.value })} style={field} />
       <input placeholder="Other notes (optional)" value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} style={field} />
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={save} style={primary}>
@@ -296,6 +303,8 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
         {select(region, setRegion, [["", "All regions"], ...REGION_ORDER.map((r) => [r, r] as [string, string])])}
         {select(grade, setGrade, [["", "All grades"], ...GRADES.map((g) => [g, `${g}: ${gradeLabels[g] ?? ""}`] as [string, string])])}
         {select(owner, setOwner, [["", "All ownership"], ...Object.entries(ownerLabels)])}
+        {select(kindFilter, setKindFilter, [["", "All types"], ...Object.entries(kinds)])}
+        {languages.length > 0 && select(language, setLanguage, [["", "All languages"], ...languages.map((l) => [l, l] as [string, string])])}
         {!presenting && select(linkFilter, setLinkFilter, [["", "All links"], ["problem", "Dead / failing links"], ["unchecked", "Not yet checked"]])}
         {select(role, (v) => setRole(v as "" | "pulled" | "reference"), [["", "All uses"], ["pulled", "Feeds the platform"], ["reference", "Verification reference"]])}
         {!presenting && (
@@ -350,7 +359,7 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
                       <div className="mono" style={{ color: "var(--text-faint)", fontSize: 10.5 }}>{e.url.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")}</div>
                     </td>
                     <td style={td}>{e.country_name}</td>
-                    <td style={{ ...td, color: "var(--text-muted)" }}>{kinds[e.kind] ?? e.kind}</td>
+                    <td style={{ ...td, color: "var(--text-muted)" }}>{kinds[e.kind] ?? e.kind}{e.language && <div style={{ fontSize: 10.5, color: "var(--text-faint)" }}>{e.language}</div>}</td>
                     <td style={td}>
                       <span style={{ fontSize: 11.5, padding: "1px 6px", borderRadius: 4, border: `1px solid ${e.ownership === "state" ? GRADE_STYLE.D.bg : "var(--border)"}`, color: e.ownership === "state" ? GRADE_STYLE.D.bg : "var(--text-primary)", whiteSpace: "nowrap" }}>
                         {ownerLabels[e.ownership] ?? e.ownership}
@@ -371,7 +380,7 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
                         <button
                           onClick={() => {
                             setEditing(e.id);
-                            setDraft({ name: e.name, url: e.url, country: e.country, kind: e.kind, role: e.role, notes: e.notes ?? "", reliability: e.reliability, ownership: e.ownership, orientation: e.orientation ?? "", rating_note: e.rating_note ?? "" });
+                            setDraft({ name: e.name, url: e.url, country: e.country, kind: e.kind, role: e.role, notes: e.notes ?? "", reliability: e.reliability, ownership: e.ownership, orientation: e.orientation ?? "", rating_note: e.rating_note ?? "", language: e.language ?? "" });
                             window.scrollTo?.({ top: 0 });
                           }}
                           style={btn}

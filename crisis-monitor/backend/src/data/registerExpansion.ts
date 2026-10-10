@@ -9,7 +9,7 @@ import type { SourceKind } from "../lib/sourceRegister";
 
 export const EXPANSION_VERSION = 2;
 
-export type ExpansionRow = [country: string, name: string, url: string, kind: SourceKind, reliability: Reliability, ownership: Ownership, orientation: string | null, note: string | null];
+export type ExpansionRow = [country: string, name: string, url: string, kind: SourceKind, reliability: Reliability, ownership: Ownership, orientation: string | null, note: string | null, language?: string | null];
 export const EXPANSION: ExpansionRow[] = [
   ["AE","Gulf News","https://gulfnews.com/","local_media","C","independent","Dubai-based; operates within UAE press law",null],
   ["AE","The National","https://thenationalnews.com/","state_media","C","state","Abu Dhabi-owned; follows UAE foreign-policy line",null],

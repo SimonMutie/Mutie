@@ -29,6 +29,7 @@ const entrySchema = z.object({
   ownership: z.enum(Object.keys(OWNERSHIP_LABEL) as [string, ...string[]]).optional(),
   orientation: z.string().trim().max(200).nullable().optional(),
   rating_note: z.string().trim().max(500).nullable().optional(),
+  language: z.string().trim().max(60).nullable().optional(),
 });
 
 /** Who is rating: the signed-in admin's login name. */
@@ -59,11 +60,11 @@ sourceRegisterRouter.post("/", async (c) => {
   const base = assessmentFor(d.url, d.kind);
   const rated = d.reliability !== undefined || d.ownership !== undefined || d.orientation !== undefined || d.rating_note !== undefined;
   const who = rated ? await raterName(c) : null;
-  await run(c.env.DB, `INSERT INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+  await run(c.env.DB, `INSERT INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, language, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
     id, d.name, d.url, d.country, regionOf(d.country), d.kind, d.role, d.notes ?? null,
     d.reliability ?? base.reliability, d.ownership ?? base.ownership, d.orientation ?? base.orientation, d.rating_note ?? base.rating_note,
     rated ? "reviewed" : base.rating_basis, rated ? who : base.rating_basis === "desk" ? "Afrilens desk baseline" : null, rated || base.rating_basis === "desk" ? now : null,
-    d.active === false ? 0 : 1, now, now,
+    d.language ?? null, d.active === false ? 0 : 1, now, now,
   ]);
   await audit(c.env, { userId: c.get("userId"), action: "sources.added", detail: `${d.name} (${d.country})`, ip: clientIp(c.req) });
   const row = await first<Record<string, unknown>>(c.env.DB, "SELECT * FROM source_register WHERE id = ?", [id]);
@@ -102,6 +103,7 @@ sourceRegisterRouter.patch("/:id", async (c) => {
   if (d.ownership !== undefined) add("ownership", d.ownership);
   if (d.orientation !== undefined) add("orientation", d.orientation);
   if (d.rating_note !== undefined) add("rating_note", d.rating_note);
+  if (d.language !== undefined) add("language", d.language);
   if (d.reliability !== undefined || d.ownership !== undefined || d.orientation !== undefined || d.rating_note !== undefined) {
     add("rating_basis", "reviewed");
     add("rated_by", await raterName(c));

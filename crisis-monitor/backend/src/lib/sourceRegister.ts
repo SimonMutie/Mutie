@@ -54,6 +54,8 @@ export interface RegisterEntry {
   rating_basis: "desk" | "reviewed" | "unassessed";
   rated_by: string | null;
   rated_at: string | null;
+  /** Main publishing language(s), e.g. "Amharic" or "Arabic/French". Null = not recorded yet. */
+  language: string | null;
   /** Result of the last live check of the link: ok, blocked (site is up but refuses automated checks), dead, error. */
   link_status: "ok" | "blocked" | "dead" | "error" | null;
   link_code: number | null;
@@ -76,7 +78,15 @@ put("East Africa", "SD SS");
 
 export const regionOf = (code: string): string => REGION_OF[code] ?? (code === "PAN" ? "Pan-African" : code === "INST" ? "Institutions" : code === "DATA" ? "Data providers" : "International");
 
+/** Home countries of non-African outlets and think tanks (grouped under "International"). */
+const FOREIGN: Record<string, string> = {
+  RU: "Russia", CN: "China", IN: "India", GB: "United Kingdom", US: "United States", BE: "Belgium", FR: "France", DE: "Germany", ES: "Spain", PT: "Portugal",
+  NL: "Netherlands", CH: "Switzerland", NO: "Norway", SE: "Sweden", DK: "Denmark", FI: "Finland", IT: "Italy", CA: "Canada", AU: "Australia", JP: "Japan", UA: "Ukraine", BR: "Brazil", AT: "Austria",
+};
+export const FOREIGN_CODES = new Set(Object.keys(FOREIGN));
+
 export function countryName(code: string): string {
+  if (FOREIGN[code]) return FOREIGN[code];
   if (code === "PAN") return "Pan-African";
   if (code === "INST") return "Research bodies and institutions";
   if (code === "INT") return "International";
@@ -99,7 +109,7 @@ function nameFor(url: string): string {
   return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
-type Seed = Omit<RegisterEntry, "id" | "created_at" | "updated_at" | "active" | "reliability" | "ownership" | "orientation" | "rating_note" | "rating_basis" | "rated_by" | "rated_at" | "link_status" | "link_code" | "link_checked_at">;
+type Seed = Omit<RegisterEntry, "id" | "created_at" | "updated_at" | "active" | "reliability" | "ownership" | "orientation" | "rating_note" | "rating_basis" | "rated_by" | "rated_at" | "language" | "link_status" | "link_code" | "link_checked_at">;
 
 export interface Assessment {
   reliability: Reliability;
@@ -176,8 +186,9 @@ const REFERENCE_SEEDS: Seed[] = [
 ];
 
 /** Outlets from the country-by-country research. They are references: the platform does not crawl them. */
-function expansionSeeds(): Seed[] {
-  return EXPANSION.map(([country, name, url, kind]) => ({
+function expansionSeeds(): (Seed & { language: string | null })[] {
+  return EXPANSION.map(([country, name, url, kind, , , , , language]) => ({
+    language: language ?? null,
     name, url, country, region: regionOf(country), kind, role: "reference" as const, notes: kind === "state_media" ? "State-owned or state-run; read with that in mind." : null,
   }));
 }
@@ -232,7 +243,7 @@ export async function ensureRegister(env: Env): Promise<void> {
       const added: [string, string][] = [
         ["reliability", "TEXT"], ["ownership", "TEXT"], ["orientation", "TEXT"], ["rating_note", "TEXT"],
         ["rating_basis", "TEXT"], ["rated_by", "TEXT"], ["rated_at", "TEXT"],
-        ["link_status", "TEXT"], ["link_code", "INTEGER"], ["link_checked_at", "TEXT"],
+        ["language", "TEXT"], ["link_status", "TEXT"], ["link_code", "INTEGER"], ["link_checked_at", "TEXT"],
       ];
       for (const [col, def] of added) {
         try {
@@ -263,12 +274,15 @@ async function addExpansion(env: Env): Promise<void> {
   const fresh = expansionSeeds().filter((e) => !have.has(hostOf(e.url)));
   const stmts = fresh.map((e) => {
     const a = assessmentFor(e.url, e.kind);
-    return env.DB.prepare(`INSERT OR IGNORE INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, active, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`).bind(
-      newId(), e.name, e.url, e.country, e.region, e.kind, e.role, e.notes, a.reliability, a.ownership, a.orientation, a.rating_note, a.rating_basis, a.rating_basis === "desk" ? "Afrilens desk baseline" : null, a.rating_basis === "desk" ? now : null, now, now
+    return env.DB.prepare(`INSERT OR IGNORE INTO source_register (id, name, url, country, region, kind, role, notes, reliability, ownership, orientation, rating_note, rating_basis, rated_by, rated_at, language, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`).bind(
+      newId(), e.name, e.url, e.country, e.region, e.kind, e.role, e.notes, a.reliability, a.ownership, a.orientation, a.rating_note, a.rating_basis, a.rating_basis === "desk" ? "Afrilens desk baseline" : null, a.rating_basis === "desk" ? now : null, e.language, now, now
     );
   });
   for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
+  // Rows from an earlier version of the expansion have no language yet: fill it in, never overwriting an edit.
+  const langStmts = expansionSeeds().filter((e) => e.language).map((e) => env.DB.prepare("UPDATE source_register SET language = ? WHERE lower(url) = lower(?) AND language IS NULL").bind(e.language, e.url));
+  for (let i = 0; i < langStmts.length; i += 50) await env.DB.batch(langStmts.slice(i, i + 50));
   await run(env.DB, "INSERT INTO source_register_meta (key, value) VALUES ('expansion_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [String(EXPANSION_VERSION)]);
 }
 

@@ -39,6 +39,8 @@ export interface SourceRegisterEntry {
   rating_basis: "desk" | "reviewed" | "unassessed";
   rated_by: string | null;
   rated_at: string | null;
+  /** Main publishing language(s); null = not recorded yet. */
+  language: string | null;
   /** Last live check of the link. blocked = the site is up but refuses automated visits. */
   link_status: "ok" | "blocked" | "dead" | "error" | null;
   link_checked_at: string | null;
