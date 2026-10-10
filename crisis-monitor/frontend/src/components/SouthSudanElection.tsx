@@ -6,6 +6,9 @@ import { SS_WATCH_CONFIG } from "../data/watchConfig";
 import ElectionSafety from "./ElectionSafety";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
+import SouthSudanLedger from "./SouthSudanLedger";
+import { Portrait } from "./Portrait";
+import { PEOPLE } from "../data/southSudanPeople";
 import "./Election.css";
 
 /**
@@ -20,6 +23,7 @@ const SECTIONS: { id: string; label: string; admin?: boolean }[] = [
   { id: "overview", label: "Overview" },
   { id: "calendar", label: "Calendar" },
   { id: "government", label: "Government" },
+  { id: "ledger", label: "Ledger" },
   { id: "agreement", label: "Agreement" },
   { id: "conflict", label: "Conflict" },
   { id: "candidates", label: "Candidates" },
@@ -94,8 +98,14 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
             <CalendarList />
           </Section>
 
-          <Section id="government" kicker="Musical chairs" title="Who holds which post" intro={<p>Every change in the record since February 2025, on one timeline. Decrees are read on state broadcaster SSBC, and the record shows only what the reports say.</p>}>
+          <Section id="government" kicker="Musical chairs" title="Who holds which post" intro={<p>Every change in the record since February 2025, on one timeline, up to the 22 September 2026 order that dissolved the transitional government. Decrees are read on state broadcaster SSBC, and the record shows only what the reports say.</p>}>
             <GovernmentChanges live={live} />
+            <h3 className="el-subhead">Who they are</h3>
+            <PeopleGallery />
+          </Section>
+
+          <Section id="ledger" kicker="Decrees monitor" title="The reshuffle ledger" intro={<p>The appointments, dismissals and reinstatements by decree from January 2023 to 2 October 2026, as an analyst compilation. We have not verified its counts; they are floors. Read them as the shape of the record, not as an audited total.</p>}>
+            <SouthSudanLedger />
           </Section>
 
           <Section id="agreement" kicker="Revitalised Agreement" title="How far the agreement is implemented" intro={<p>Each benchmark shows its latest status, the date of the finding, and the source. Where no source in our material reports on an area, it says so rather than guessing. Statuses are as reported, not Afrilens judgements, except where marked.</p>}>
@@ -124,7 +134,7 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
               ))}
             </div>
             <p className="el-flag">
-              <b>Funding and the law are the first tests.</b> NEC says about {usd(FUNDING_NEED_USD)} is needed and that the law still has contradictions to amend. Both were open when this page was last updated.
+              <b>Funding and the register are the first tests.</b> NEC says about {usd(FUNDING_NEED_USD)} is needed. The election law was amended on 21 September; the register has not been published. Both were open when this page was last updated.
             </p>
           </Section>
 
@@ -207,7 +217,7 @@ function Overview({ live }: { live: SsLive }) {
         </p>
       )}
       <p className="el-flag">
-        <b>The date is set, the conditions are not.</b> NEC has given the six months’ notice the law requires for 22 December. It also says the law still needs amending, the money is mostly unfound, and the voter register has not been published. Treat the date as the working plan, not a certainty.
+        <b>The date is set, the conditions are not.</b> NEC has given the six months’ notice the law requires for 22 December. Kiir amended the election law on 21 September, removing the link to a permanent constitution and a census, and on 22 September he dissolved the transitional government. The money is mostly unfound, and the voter register has not been published. Treat the date as the working plan, not a certainty.
       </p>
       <LatestCoverage />
       <p className="el-asof">Data as of {fmtDate(AS_OF)}. Sources are listed at the foot of the page.</p>
@@ -339,13 +349,35 @@ function Field({ live }: { live: SsLive }) {
   return (
     <ul className="el-leads">
       {live.candidates.map((c) => (
-        <li key={c.id}>
+        <li key={c.id} className="ss-cand">
+          <Portrait name={c.name} wiki={PEOPLE.find((p) => p.name === c.name)?.wiki} guard={PEOPLE.find((p) => p.name === c.name)?.guard} size={64} />
           <b>{c.name}</b> <span className="el-chip">{c.standing}</span>
           {c.party && <span className="el-muted"> · {c.party}</span>}
           {c.note && <small>{c.note}</small>}
           {c.source && <a href={c.source.url} target="_blank" rel="noreferrer noopener">{c.source.label}</a>}
         </li>
       ))}
+    </ul>
+  );
+}
+
+/* ── who they are ─────────────────────────────────────────── */
+
+function PeopleGallery() {
+  return (
+    <ul className="ss-people">
+      {PEOPLE.map((p) => (
+        <li key={p.name} className="ss-person">
+          <Portrait name={p.name} wiki={p.wiki} guard={p.guard} size={72} />
+          <div>
+            <b>{p.name}</b>
+            <p>{p.role}</p>
+          </div>
+        </li>
+      ))}
+      <li className="ss-people__note el-muted el-small">
+        Portraits are the lead image of each person’s Wikipedia article, loaded when the page opens. Where we have no article we are confident of, initials are shown. Roles are as the sources in this page state them, and are dated where the source gives a date.
+      </li>
     </ul>
   );
 }
