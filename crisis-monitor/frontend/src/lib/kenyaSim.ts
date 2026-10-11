@@ -131,65 +131,85 @@ export interface SimCandidate {
   strongholds: Record<string, number>;
 }
 
-export type Groups = Record<string, string | null>;
+/**
+ * A ticket: one presidential candidate, an optional running mate, and any other
+ * candidates who back it. A candidate in no ticket runs alone.
+ */
+export interface TicketSpec {
+  head: string;
+  deputy: string | null;
+  backers: string[];
+}
+export type Arrangement = TicketSpec[];
+export const MAX_TICKETS = 4;
 
 export interface Ticket {
   key: string;
   label: string;
   members: string[];
-  leader: string;
+  head: string;
+  deputy: string | null;
+  backers: string[];
   share: number;
   mobilisation: number;
   backyard: Set<string>;
   strongholds: Record<string, number>;
 }
 
-export function buildTickets(cands: SimCandidate[], groups: Groups, transfer: number): Ticket[] {
+/** Each ticket's vote: the presidential candidate in full, and the running mate and backers at the transfer rate. Votes that do not move return to every ticket in proportion. */
+export function buildTickets(cands: SimCandidate[], arrangement: Arrangement, transfer: number): Ticket[] {
   const byId = new Map(cands.map((c) => [c.id, c]));
-  const groupKeys = [...new Set(cands.map((c) => groups[c.id]).filter((g): g is string => !!g))].sort();
+  const used = new Set<string>();
   const tickets: Ticket[] = [];
-  const grouped = new Set<string>();
-  for (const g of groupKeys) {
-    const members = cands.filter((c) => groups[c.id] === g).sort((a, b) => b.share - a.share);
-    if (members.length === 0) continue;
-    members.forEach((m) => grouped.add(m.id));
-    const leader = members[0];
-    const carried = members.reduce((s, m) => s + (m.id === leader.id ? m.share : m.share * transfer), 0);
-    const total = members.reduce((s, m) => s + m.share, 0);
-    const mob = total > 0 ? members.reduce((s, m) => s + m.share * m.mobilisation, 0) / total : leader.mobilisation;
+  let lost = 0;
+
+  arrangement.forEach((spec, i) => {
+    const head = byId.get(spec.head);
+    if (!head || used.has(head.id)) return;
+    used.add(head.id);
+    const deputy = spec.deputy && spec.deputy !== head.id && byId.has(spec.deputy) && !used.has(spec.deputy) ? spec.deputy : null;
+    if (deputy) used.add(deputy);
+    const backers = [...new Set(spec.backers)].filter((id) => id !== head.id && byId.has(id) && !used.has(id));
+    backers.forEach((id) => used.add(id));
+    const partners = [...(deputy ? [deputy] : []), ...backers].map((id) => byId.get(id)!);
+    const members = [head, ...partners];
+    lost += partners.reduce((sum, m) => sum + m.share * (1 - transfer), 0);
+    const carried = head.share + partners.reduce((sum, m) => sum + m.share * transfer, 0);
+    const total = members.reduce((sum, m) => sum + m.share, 0);
+    const mob = total > 0 ? members.reduce((sum, m) => sum + m.share * m.mobilisation, 0) / total : head.mobilisation;
     const strong: Record<string, number> = {};
     for (const r of REGIONS) strong[r] = Math.max(...members.map((m) => m.strongholds[r] ?? 0));
+    const label = deputy ? `${head.short} & ${byId.get(deputy)!.short}` : head.name;
     tickets.push({
-      key: `group-${g}`,
-      label: members.length === 1 ? leader.name : `${leader.short} ticket (with ${members.slice(1).map((m) => m.short).join(", ")})`,
+      key: `ticket-${i}`,
+      label,
       members: members.map((m) => m.id),
-      leader: leader.id,
+      head: head.id,
+      deputy,
+      backers,
       share: carried,
       mobilisation: mob,
       backyard: new Set(members.flatMap((m) => m.backyard)),
       strongholds: strong,
     });
-  }
+  });
+
   for (const c of cands) {
-    if (grouped.has(c.id)) continue;
+    if (used.has(c.id)) continue;
     tickets.push({
       key: c.id,
       label: c.name,
       members: [c.id],
-      leader: c.id,
+      head: c.id,
+      deputy: null,
+      backers: [],
       share: c.share,
       mobilisation: c.mobilisation,
-      backyard: new Set(byId.get(c.id)?.backyard ?? []),
+      backyard: new Set(c.backyard),
       strongholds: c.strongholds,
     });
   }
-  // Votes that did not carry from the members who left return to every ticket in proportion.
-  const lost = cands.reduce((s, c) => {
-    if (!groups[c.id]) return s;
-    const members = cands.filter((m) => groups[m.id] === groups[c.id]);
-    const leader = [...members].sort((a, b) => b.share - a.share)[0];
-    return s + (c.id === leader.id ? 0 : c.share * (1 - transfer));
-  }, 0);
+
   const base = tickets.reduce((s, t) => s + t.share, 0);
   if (base > 0 && lost > 0) for (const t of tickets) t.share += lost * (t.share / base);
   const sum = tickets.reduce((s, t) => s + t.share, 0);
@@ -268,6 +288,9 @@ export interface TicketOutcome {
   key: string;
   label: string;
   members: string[];
+  head: string;
+  deputy: string | null;
+  backers: string[];
   central: number; // national share in the central run
   p10: number;
   p50: number;
@@ -292,7 +315,7 @@ export interface SimResult {
 }
 
 export interface SimSettings {
-  groups: Groups;
+  arrangement: Arrangement;
   transfer?: number;
   turnout?: number;
   draws?: number;
@@ -303,7 +326,7 @@ export function simulate(cands: SimCandidate[], settings: SimSettings): SimResul
   const transfer = settings.transfer ?? TRANSFER_DEFAULT;
   const turnout = settings.turnout ?? TURNOUT_DEFAULT;
   const draws = Math.max(1, settings.draws ?? 1500);
-  const tickets = buildTickets(cands, settings.groups, transfer);
+  const tickets = buildTickets(cands, settings.arrangement, transfer);
   const central = distribute(tickets, turnout);
   const rng = mulberry32(settings.seed ?? 2027);
   const T = tickets.length;
@@ -334,6 +357,9 @@ export function simulate(cands: SimCandidate[], settings: SimSettings): SimResul
       key: t.key,
       label: t.label,
       members: t.members,
+      head: t.head,
+      deputy: t.deputy,
+      backers: t.backers,
       central: central.national[b],
       p10: q(0.1),
       p50: q(0.5),
@@ -362,30 +388,14 @@ export function simulate(cands: SimCandidate[], settings: SimSettings): SimResul
   return { tickets: outcomes, pFirstRound: firstRound, pRunoff: 1 - firstRound, regions, leaderHistogram: bins, draws, turnout, transfer };
 }
 
-/* ── scenarios ────────────────────────────────────────────────── */
-
-export interface Scenario {
-  id: string;
-  name: string;
-  blurb: string;
-  groups: Groups;
-}
-
-const OPPOSITION = ["kalonzo", "gachagua", "matiangi", "karua", "wamalwa"];
-const pick = (ids: string[], g: string | null = "A"): Groups => Object.fromEntries(ids.map((id) => [id, g]));
-
-export const SCENARIOS: Scenario[] = [
-  { id: "separate", name: "Separate tickets", blurb: "Every candidate runs alone. The baseline the polls measure.", groups: {} },
-  { id: "united", name: "United opposition", blurb: "Kalonzo, Gachagua, Matiang’i, Karua and Wamalwa run one ticket, led by the strongest member.", groups: pick(OPPOSITION) },
-  { id: "united-sifuna", name: "United opposition with Sifuna", blurb: "The united opposition plus Edwin Sifuna, whose Nairobi base is the largest single city vote.", groups: pick([...OPPOSITION, "sifuna"]) },
-  { id: "mt-kenya-ukambani", name: "Mt Kenya and Ukambani", blurb: "Gachagua and Kalonzo only. Tests whether two regional bases add up.", groups: pick(["gachagua", "kalonzo"]) },
-];
+export type TicketRole = "head" | "deputy" | "backer";
 
 export interface Realignment {
   id: string;
   date: string; // ISO day the change was announced or took effect
   candidate: string;
   ticket: string | null; // null = leaves its ticket and runs alone
+  role: TicketRole;
   note: string;
   source: string;
 }
@@ -404,11 +414,60 @@ export function candidatesFrom(seeds: CandidateSeed[], polls: Poll[], asOf: stri
   }));
 }
 
-/** Groups from a live arrangement: realignments dated on or before the as-of date, latest wins. */
-export function groupsFromRealignments(events: Pick<Realignment, "date" | "candidate" | "ticket">[], asOf: string): Groups {
-  const groups: Groups = {};
-  for (const e of [...events].filter((x) => x.date <= asOf).sort((a, b) => a.date.localeCompare(b.date))) {
-    groups[e.candidate] = e.ticket;
+/* ── scenarios ────────────────────────────────────────────────── */
+
+export interface Scenario {
+  id: string;
+  name: string;
+  blurb: string;
+  arrangement: Arrangement;
+}
+
+/** Every opposition candidate in the field. Ruto is the only one outside it. */
+export const OPPOSITION_FIELD = ["kalonzo", "gachagua", "matiangi", "sifuna", "karua", "maraga", "wamalwa", "muturi", "omtatah", "mwangi", "wajackoyah"];
+const backersExcept = (...ids: string[]) => OPPOSITION_FIELD.filter((id) => !ids.includes(id));
+
+export const SCENARIOS: Scenario[] = [
+  {
+    id: "separate",
+    name: "No alliances",
+    blurb: "Every candidate runs alone. This is the baseline the polls measure.",
+    arrangement: [],
+  },
+  {
+    id: "ruto-wamalwa",
+    name: "Ruto with Wamalwa",
+    blurb: "Ruto runs with Eugene Wamalwa as running mate. No one else backs the ticket.",
+    arrangement: [{ head: "ruto", deputy: "wamalwa", backers: [] }],
+  },
+  {
+    id: "kalonzo-gachagua",
+    name: "Kalonzo with Gachagua",
+    blurb: "Kalonzo Musyoka runs for president with Rigathi Gachagua as running mate. Every other opposition candidate backs the ticket.",
+    arrangement: [{ head: "kalonzo", deputy: "gachagua", backers: backersExcept("kalonzo", "gachagua") }],
+  },
+  {
+    id: "sifuna-gachagua",
+    name: "Sifuna with Gachagua",
+    blurb: "Edwin Sifuna runs for president with Rigathi Gachagua as running mate. Every other opposition candidate backs the ticket.",
+    arrangement: [{ head: "sifuna", deputy: "gachagua", backers: backersExcept("sifuna", "gachagua") }],
+  },
+];
+
+/** The arrangement on the record: the latest change per candidate, dated on or before the as-of day. */
+export function arrangementFromRealignments(events: Pick<Realignment, "date" | "candidate" | "ticket" | "role">[], asOf: string): Arrangement {
+  const latest = new Map<string, (typeof events)[number]>();
+  for (const e of [...events].filter((x) => x.date <= asOf).sort((a, b) => a.date.localeCompare(b.date))) latest.set(e.candidate, e);
+  const byTicket = new Map<string, { head?: string; deputy?: string; backers: string[] }>();
+  for (const [candidate, e] of latest) {
+    if (!e.ticket) continue;
+    const t = byTicket.get(e.ticket) ?? { backers: [] };
+    if (e.role === "head") t.head = candidate;
+    else if (e.role === "deputy") t.deputy = candidate;
+    else t.backers.push(candidate);
+    byTicket.set(e.ticket, t);
   }
-  return groups;
+  return [...byTicket.values()]
+    .filter((t) => t.head)
+    .map((t) => ({ head: t.head!, deputy: t.deputy ?? null, backers: t.backers.filter((id) => id !== t.head && id !== t.deputy) }));
 }

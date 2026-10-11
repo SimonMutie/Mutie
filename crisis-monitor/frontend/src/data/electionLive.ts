@@ -69,7 +69,7 @@ export function mergeLive(content: EwContent | null): Live {
 /**
  * Simulator inputs. Rows: "candidate-input" (id = candidate, {mobilisation, backyard}),
  * "stronghold" (id = candidate-region, {candidate, region, level 0-2}) and
- * "realignment" (id = date-candidate, {date, candidate, ticket, note, source}).
+ * "realignment" (id = date-candidate, {date, candidate, ticket, role: head | deputy | backer, note, source}).
  */
 export function mergeSim(content: EwContent | null): SimLive {
   const seeds: CandidateSeed[] = CANDIDATE_SEEDS.map((s) => ({ ...s, backyard: [...s.backyard], strongholds: { ...s.strongholds } }));
@@ -103,6 +103,7 @@ export function mergeSim(content: EwContent | null): SimLive {
     date: String(d.date ?? ""),
     candidate: String(d.candidate ?? ""),
     ticket: d.ticket ? String(d.ticket) : null,
+    role: d.role === "head" || d.role === "deputy" ? d.role : "backer",
     note: String(d.note ?? ""),
     source: String(d.source ?? ""),
   }))
