@@ -74,6 +74,7 @@ export default function ElectionMap<U extends MapUnit = County>({
   caption,
   detail,
   rankLabel,
+  withBubbles = true,
   units,
   geoUrl = "/KEN-counties.json",
   labelCodes = KE_LABELS,
@@ -85,6 +86,8 @@ export default function ElectionMap<U extends MapUnit = County>({
   caption?: string;
   detail?: (c: U) => [string, string][];
   rankLabel?: string;
+  /** Kenya’s map needs the bubble layer for Nairobi and Mombasa; other maps do not. */
+  withBubbles?: boolean;
   /** What is drawn. Defaults to Kenya's 47 counties. */
   units?: U[];
   geoUrl?: string;
@@ -235,7 +238,7 @@ export default function ElectionMap<U extends MapUnit = County>({
             </div>
             <div className="el-map__legend-row">
               <label>
-                <input type="checkbox" checked={bubbles} onChange={(e) => setBubbles(e.target.checked)} /> Show bubbles (makes Nairobi and Mombasa visible)
+                {withBubbles && <label><input type="checkbox" checked={bubbles} onChange={(e) => setBubbles(e.target.checked)} /> Show bubbles (makes Nairobi and Mombasa visible)</label>}
               </label>
               {missing > 0 && (
                 <span className="el-map__nodata">
@@ -278,7 +281,7 @@ export default function ElectionMap<U extends MapUnit = County>({
               </li>
             ))}
           </ol>
-          <p className="el-muted el-small">{rankLabel ?? "Top 12"} of {ranked.length}. {caption}</p>
+          <p className="el-muted el-small">{ranked.length > 12 ? `${rankLabel ?? "Top 12"} of ${ranked.length}` : `All ${ranked.length}`}. {caption}</p>
         </aside>
       </div>
     </div>

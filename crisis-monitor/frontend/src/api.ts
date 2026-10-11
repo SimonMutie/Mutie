@@ -2126,6 +2126,58 @@ export const watchApi = (k: WatchKey) => {
 };
 
 
+/* ── monthly reports ──────────────────────────────────────── */
+
+export interface RptPeriod {
+  period: string;
+  reports: number;
+  events: number;
+  verified: number;
+  fatalities: number;
+  byCategory: Record<string, number>;
+  byPlace: Record<string, number>;
+}
+export interface RptSection {
+  id: string;
+  kind: "narrative" | "figures" | "map" | "trend" | "categories";
+  title: string;
+  body?: string;
+  carried?: boolean;
+}
+export interface RptReport {
+  country: string;
+  period: string;
+  title: string;
+  status: "draft" | "published";
+  sections: RptSection[];
+  snapshot: RptPeriod | null;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+  updated_by: string | null;
+}
+export interface RptListItem {
+  period: string;
+  title: string;
+  status: "draft" | "published";
+  updated_at: string;
+  published_at: string | null;
+}
+
+export const reportApi = (k: WatchKey) => {
+  const base = `/api/reports/${k}`;
+  const send = (path: string, method: string, body?: unknown) => req<{ ok: boolean; error?: string }>(`${base}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+  return {
+    series: () => req<{ updated_at: string; periods: RptPeriod[] }>(`${base}/series`),
+    list: () => req<RptListItem[]>(`${base}/`),
+    get: (period: string) => req<{ report: RptReport | null; title: string; can_edit?: boolean }>(`${base}/${period}`),
+    start: (period: string) => send(`/${period}/start`, "POST"),
+    save: (period: string, data: { title: string; sections: RptSection[] }) => send(`/${period}`, "PUT", data),
+    publish: (period: string) => send(`/${period}/publish`, "POST"),
+    reopen: (period: string) => send(`/${period}/reopen`, "POST"),
+  };
+};
+
 export function connectLiveFeed(onMessage: (type: string, payload: unknown) => void): () => void {
   let ws: WebSocket | null = null;
   let closedByUser = false;

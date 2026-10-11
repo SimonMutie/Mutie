@@ -20,6 +20,7 @@ import { ElectionDataCtx, mergeLive, type Live } from "../data/electionLive";
 import { watchApi } from "../api";
 import ElectionSafety from "./ElectionSafety";
 import ElectionManage from "./ElectionManage";
+import MonthlyReport from "./MonthlyReport";
 import "./Election.css";
 
 /**
@@ -33,6 +34,7 @@ import "./Election.css";
 
 const SECTIONS = [
   { id: "overview", label: "Overview" },
+  { id: "report", label: "Monthly report" },
   { id: "timeline", label: "Timeline" },
   { id: "voters", label: "Voters" },
   { id: "population", label: "Population" },
@@ -110,6 +112,9 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
       </nav>
 
       <main className="el-wrap">
+        <Section id="report" kicker="Monthly report" title="Animate across the months" intro={<p>The month in one report: scrub or play through the months to watch the figures, map and trend move, then read the written analysis for each month. Figures are counted from the platform’s collected reports and frozen when a month is published.</p>}>
+          <MonthlyReport country="ke" isAdmin={isAdmin} />
+        </Section>
         <TimelineSection />
         <VotersSection />
         <PopulationSection />

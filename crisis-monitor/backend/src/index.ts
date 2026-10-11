@@ -26,6 +26,7 @@ import { sourceRegisterRouter } from "./routes/sourceRegister";
 import { broadcastsRouter } from "./routes/broadcasts";
 import { contactsRouter } from "./routes/contacts";
 import { electionWatchRouter, southSudanWatchRouter } from "./routes/electionWatch";
+import { keReportRouter, ssReportRouter } from "./routes/monthlyReports";
 import { collectElectionItems, KE_WATCH } from "./lib/electionWatch";
 import { SS_WATCH } from "./lib/southSudanWatch";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
@@ -121,6 +122,8 @@ app.route("/api/broadcasts", broadcastsRouter);
 app.route("/api/contacts", contactsRouter);
 app.route("/api/election-watch/ke", electionWatchRouter);
 app.route("/api/election-watch/ss", southSudanWatchRouter);
+app.route("/api/reports/ke", keReportRouter);
+app.route("/api/reports/ss", ssReportRouter);
 app.route("/api/due-diligence", dueDiligenceRouter);
 app.route("/api/public/spotlight", publicSpotlightRouter);
 

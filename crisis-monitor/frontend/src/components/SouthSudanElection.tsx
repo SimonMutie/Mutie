@@ -7,6 +7,7 @@ import ElectionSafety from "./ElectionSafety";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
 import SouthSudanLedger from "./SouthSudanLedger";
+import MonthlyReport from "./MonthlyReport";
 import { Portrait } from "./Portrait";
 import { PEOPLE } from "../data/southSudanPeople";
 import "./Election.css";
@@ -21,6 +22,7 @@ import "./Election.css";
 
 const SECTIONS: { id: string; label: string; admin?: boolean }[] = [
   { id: "overview", label: "Overview" },
+  { id: "report", label: "Monthly report" },
   { id: "calendar", label: "Calendar" },
   { id: "government", label: "Government" },
   { id: "ledger", label: "Ledger" },
@@ -94,6 +96,9 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
         </nav>
 
         <main className="el-wrap">
+          <Section id="report" kicker="Monthly report" title="Animate across the months" intro={<p>The month in one report: scrub or play through the months to watch the figures, map and trend move, then read the written analysis for each month. Figures are counted from the platform’s collected reports and frozen when a month is published.</p>}>
+            <MonthlyReport country="ss" isAdmin={isAdmin} />
+          </Section>
           <Section id="calendar" kicker="Calendar" title="The road to 22 December 2026" intro={<p>Dates come from NEC, the agreement and UN and RJMEC reporting. Dates that the sources do not give exactly are marked “c.”.</p>}>
             <CalendarList />
           </Section>
