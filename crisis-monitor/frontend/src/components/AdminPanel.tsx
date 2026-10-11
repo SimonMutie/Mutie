@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type AccessRequest, type ClientOrg, type ClientSharedItem, type AuthUser } from "../api";
 
 interface Props {
@@ -28,6 +28,9 @@ export default function AdminPanel({ user, onBack }: Props) {
 
 function PlatformAdminView({ onBack }: { onBack: () => void }) {
   const [view, setView] = useState<View>("list");
+  // The access request being answered by a new account, if any. Its form is pre-filled from the request.
+  const [fromRequest, setFromRequest] = useState<AccessRequest | null>(null);
+  const [requestsKey, setRequestsKey] = useState(0);
   const [clients, setClients] = useState<ClientOrg[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -51,7 +54,11 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
         ← All queries
       </button>
 
-      <AccessRequestsSection />
+      <AccessRequestsSection
+        key={requestsKey}
+        onCreateAccount={(r) => setFromRequest(r)}
+        onDeny={() => setRequestsKey((k) => k + 1)}
+      />
 
       <ActivityLogSection />
 
@@ -59,7 +66,14 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
         <div className="eyebrow">CLIENTS ({clients.length})</div>
       </div>
 
-      <NewClientForm onCreated={loadClients} />
+      <NewClientForm
+        onCreated={loadClients}
+        fromRequest={fromRequest}
+        onFinished={() => {
+          setFromRequest(null);
+          setRequestsKey((k) => k + 1);
+        }}
+      />
 
       {loading ? (
         <div style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 16 }}>Loading…</div>
@@ -186,7 +200,7 @@ function AlertDestinationsSection({ client, onSaved }: { client: ClientOrg; onSa
   );
 }
 
-function AccessRequestsSection() {
+function AccessRequestsSection({ onCreateAccount, onDeny }: { onCreateAccount: (r: AccessRequest) => void; onDeny: () => void }) {
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expanded, setExpanded] = useState(true);
@@ -200,9 +214,9 @@ function AccessRequestsSection() {
     load();
   }, []);
 
-  async function review(id: string, status: "approved" | "denied") {
-    await api.reviewAccessRequest(id, status);
-    load();
+  async function deny(id: string) {
+    await api.reviewAccessRequest(id, "denied");
+    onDeny();
   }
 
   if (!loaded) return null;
@@ -228,10 +242,10 @@ function AccessRequestsSection() {
                 <div style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 4 }}>{new Date(r.created_at).toLocaleString()}</div>
               </div>
               <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                <button onClick={() => review(r.id, "approved")} style={{ ...backBtnStyle, borderColor: "var(--signal)" }}>
-                  Approve
+                <button onClick={() => onCreateAccount(r)} style={{ ...backBtnStyle, borderColor: "var(--signal)" }}>
+                  Create account
                 </button>
-                <button onClick={() => review(r.id, "denied")} style={{ ...backBtnStyle, color: "var(--critical)" }}>
+                <button onClick={() => deny(r.id)} style={{ ...backBtnStyle, color: "var(--critical)" }}>
                   Deny
                 </button>
               </div>
@@ -243,8 +257,30 @@ function AccessRequestsSection() {
   );
 }
 
-function NewClientForm({ onCreated }: { onCreated: () => void }) {
+/** A username from an email address: lower case, letters, digits and . _ - only, at least three characters. */
+function usernameFrom(email: string) {
+  const base = email.split("@")[0].toLowerCase().replace(/[^a-z0-9._-]/g, "");
+  return base.length >= 3 ? base.slice(0, 40) : "";
+}
+
+function NewClientForm({ onCreated, fromRequest, onFinished }: { onCreated: () => void; fromRequest?: AccessRequest | null; onFinished?: () => void }) {
   const [open, setOpen] = useState(false);
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Opening from a request fills in what the request says. The admin still sets the password and the client's details.
+  useEffect(() => {
+    if (!fromRequest) return;
+    setRequestId(fromRequest.id);
+    setName(fromRequest.organization || fromRequest.name);
+    setDisplayName(fromRequest.name);
+    setUsername(usernameFrom(fromRequest.email));
+    setPassword("");
+    setError(null);
+    setOpen(true);
+    requestAnimationFrame(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromRequest?.id]);
   const [name, setName] = useState("");
   const [maxAccounts, setMaxAccounts] = useState(3);
   const [username, setUsername] = useState("");
@@ -277,10 +313,13 @@ function NewClientForm({ onCreated }: { onCreated: () => void }) {
         username: username.trim(),
         password,
         display_name: displayName.trim() || undefined,
+        access_request_id: requestId ?? undefined,
       });
       reset();
+      setRequestId(null);
       setOpen(false);
       await onCreated();
+      onFinished?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create client");
     } finally {
@@ -297,10 +336,15 @@ function NewClientForm({ onCreated }: { onCreated: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="panel" style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 400 }}>
+    <form ref={formRef} onSubmit={handleSubmit} className="panel" style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 8, maxWidth: 400 }}>
       <div className="eyebrow" style={{ marginBottom: 4 }}>
-        NEW CLIENT
+        {requestId ? "CREATE ACCOUNT FOR ACCESS REQUEST" : "NEW CLIENT"}
       </div>
+      {requestId && fromRequest && (
+        <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.45, marginBottom: 4 }}>
+          From {fromRequest.name} ({fromRequest.email}). The request is marked approved once this account is created.
+        </div>
+      )}
       <input placeholder="Client name (e.g. Acme Corp)" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text-muted)" }}>
         Max accounts
@@ -328,7 +372,9 @@ function NewClientForm({ onCreated }: { onCreated: () => void }) {
           type="button"
           onClick={() => {
             reset();
+            setRequestId(null);
             setOpen(false);
+            onFinished?.();
           }}
           style={backBtnStyle}
         >

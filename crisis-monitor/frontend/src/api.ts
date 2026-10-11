@@ -1718,7 +1718,7 @@ export const api = {
   requestAccess: (data: { name: string; email: string; organization?: string; reason?: string }) =>
     req<{ ok: boolean }>("/api/auth/request-access", { method: "POST", body: JSON.stringify(data) }),
   listAccessRequests: () => req<AccessRequest[]>("/api/auth/access-requests"),
-  reviewAccessRequest: (id: string, status: "approved" | "denied") =>
+  reviewAccessRequest: (id: string, status: "denied") =>
     req<{ ok: boolean }>(`/api/auth/access-requests/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   listUsers: () => req<AuthUser[]>("/api/auth/users"),
   createUser: (username: string, password: string, display_name?: string, role: UserRole = "client") =>
@@ -1729,7 +1729,7 @@ export const api = {
 
   listClients: () => req<ClientOrg[]>("/api/clients"),
   getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
-  createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string }) =>
+  createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string; access_request_id?: string }) =>
     req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
   updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean; can_screen_people?: boolean; can_view_spotlight?: boolean; alert_email_domains?: string; alert_signal_numbers?: string }) =>
     req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),

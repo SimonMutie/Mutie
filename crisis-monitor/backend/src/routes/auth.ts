@@ -327,19 +327,17 @@ authRouter.get("/access-requests", requireAuth, requireAdmin, async (c) => {
   return c.json(rows);
 });
 
-const reviewAccessRequestSchema = z.object({ status: z.enum(["approved", "denied"]) });
+const reviewAccessRequestSchema = z.object({ status: z.enum(["denied"]) });
 
-/** Admin-only: marks a request reviewed. Deliberately doesn't create an
- *  account itself — approving here just means "the admin has seen and
- *  agreed to this", the actual account still gets created through the
- *  normal client-management flow, which needs a username/password/client
- *  assignment this request doesn't carry. */
+/** Admin-only: denies a request. A request is approved only by creating its
+ *  account (POST /api/clients with access_request_id), which marks it approved
+ *  in the same step, so an approval always has an account behind it. */
 authRouter.patch("/access-requests/:id", requireAuth, requireAdmin, async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json().catch(() => null);
   const parsed = reviewAccessRequestSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
-  await run(c.env.DB, "UPDATE access_requests SET status = ?, reviewed_at = ? WHERE id = ?", [parsed.data.status, nowIso(), id]);
+  await run(c.env.DB, "UPDATE access_requests SET status = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'", [parsed.data.status, nowIso(), id]);
   return c.json({ ok: true });
 });

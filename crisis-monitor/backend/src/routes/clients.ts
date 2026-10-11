@@ -68,6 +68,8 @@ const createClientSchema = z.object({
   username: z.string().min(3).max(64),
   password: passwordSchema,
   display_name: z.string().max(120).optional(),
+  /** Set when the account is created to answer an access request: that request is then marked approved. */
+  access_request_id: z.string().max(64).optional(),
 });
 
 /** Platform-admin only: create a client org plus its first login in one step. */
@@ -76,6 +78,13 @@ clientsRouter.post("/", async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = createClientSchema.safeParse(body);
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const requestId = parsed.data.access_request_id;
+  if (requestId) {
+    const request = await first<{ status: string }>(c.env.DB, `SELECT status FROM access_requests WHERE id = ?`, [requestId]);
+    if (!request) return c.json({ error: "Access request not found" }, 404);
+    if (request.status !== "pending") return c.json({ error: "This access request has already been decided" }, 409);
+  }
 
   const existingUsername = await first<{ id: string }>(c.env.DB, `SELECT id FROM users WHERE username = ?`, [parsed.data.username]);
   if (existingUsername) return c.json({ error: "Username already taken" }, 409);
@@ -102,6 +111,17 @@ clientsRouter.post("/", async (c) => {
     `INSERT INTO users (id, username, password_hash, display_name, role, client_id, is_client_admin, created_at) VALUES (?,?,?,?,'client',?,1,?)`,
     [userId, parsed.data.username, passwordHash, parsed.data.display_name ?? null, clientId, now]
   );
+
+  if (requestId) {
+    // Only now, with the account made, does the request count as approved.
+    await run(c.env.DB, `UPDATE access_requests SET status = 'approved', reviewed_at = ? WHERE id = ? AND status = 'pending'`, [now, requestId]);
+  }
+  await audit(c.env, {
+    userId: c.get("userId"),
+    action: "client.created",
+    detail: `${clientId} ${parsed.data.username}${requestId ? ` from access request ${requestId}` : ""}`,
+    ip: clientIp(c.req),
+  });
 
   const userRow = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM users WHERE id = ?`, [userId]);
   return c.json(
