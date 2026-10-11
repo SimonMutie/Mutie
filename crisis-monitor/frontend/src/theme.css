@@ -172,3 +172,15 @@ details[open] > summary::before {
 *:has(> .maplibregl-map) {
   isolation: isolate;
 }
+
+/* Phones: decorative map status strips step aside so the map controls stay readable. */
+@media (max-width: 760px) {
+  .hud-hide-phone { display: none !important; }
+}
+
+/* The view area: on desktop it adds no box of its own. On phones it becomes a fixed-height area that scrolls
+   sideways, so wide dashboards scroll inside the page instead of pushing the whole page off screen. */
+.lens-view-shell { display: contents; }
+@media (max-width: 760px) {
+  .lens-view-shell { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; overflow-x: auto; overflow-y: auto; }
+}

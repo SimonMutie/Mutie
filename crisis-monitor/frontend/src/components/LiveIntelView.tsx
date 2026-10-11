@@ -3252,6 +3252,7 @@ function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapM
 function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Date }) {
   return (
     <div
+      className="hud-hide-phone"
       style={{
         ...glassPanel({ borderRadius: 8 }),
         position: "absolute",
@@ -3314,6 +3315,7 @@ function GlobalStatusTicker() {
 
   return (
     <div
+      className="hud-hide-phone"
       style={{
         ...glassPanel({ borderRadius: 8 }),
         position: "absolute",

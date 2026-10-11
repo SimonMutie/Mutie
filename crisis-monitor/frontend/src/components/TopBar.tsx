@@ -23,6 +23,7 @@ interface Props {
 export default function TopBar({ connected, user, view, onNavigate, spotlightScope, onOpenSpotlight, ddKind, onOpenDueDiligence, onLogout }: Props) {
   return (
     <header
+      className="lens-topbar"
       style={{
         display: "flex",
         alignItems: "center",
@@ -32,7 +33,7 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
         background: "var(--panel)",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div className="lens-topbar__brand" style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
         <div style={{ position: "relative" }}>
           <Logo size={30} />
           <span
@@ -64,7 +65,7 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
           >
             The <span style={{ color: "var(--signal)" }}>Lens</span>
           </h1>
-          <span style={{ marginTop: 3 }}>
+          <span className="lens-topbar__tagline" style={{ marginTop: 3 }}>
             <Tagline />
           </span>
         </div>
@@ -76,8 +77,8 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
         )}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-        <nav style={{ display: "flex", gap: 6 }}>
+      <div className="lens-topbar__right" style={{ display: "flex", alignItems: "center", gap: 20, minWidth: 0 }}>
+        <nav className="lens-topbar__nav" style={{ display: "flex", gap: 6 }}>
           {/* Datasets now lives inside Trends & Patterns (its own tab there),
            *  and Live Monitoring inside Live OSINT (the Monitor tool, plus
            *  each query's dashboard and editor) — so a monitoring query's
@@ -101,6 +102,17 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.4; }
+        }
+        /* Phones: the bar wraps, the tagline steps aside, and the tabs scroll sideways instead of spilling off screen. */
+        .lens-topbar { flex-wrap: wrap; row-gap: 10px; }
+        .lens-topbar__right { min-width: 0; }
+        .lens-topbar__nav { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+        .lens-topbar__nav::-webkit-scrollbar { display: none; }
+        .lens-topbar__nav > * { flex: none; }
+        @media (max-width: 760px) {
+          .lens-topbar { padding: 10px 12px !important; }
+          .lens-topbar__tagline { display: none; }
+          .lens-topbar__right { gap: 10px !important; width: 100%; justify-content: space-between; }
         }
       `}</style>
     </header>

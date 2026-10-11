@@ -242,6 +242,7 @@ export default function App() {
       <PushPrompt />
       <AlertPopups liveMessage={liveMessage} onOpenQuery={(queryId) => setView({ queryId })} onShowOnMap={() => { setOpenMonitorTool(false); setView("live-osint"); }} />
 
+      <div className="lens-view-shell">
       <Suspense fallback={viewLoadingFallback}>
         {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-osint")} />}
 
@@ -301,6 +302,7 @@ export default function App() {
             <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
           ))}
       </Suspense>
+      </div>
     </div>
   );
 }
