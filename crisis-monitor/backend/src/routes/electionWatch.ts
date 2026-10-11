@@ -7,6 +7,7 @@ import { canViewSpotlight } from "./spotlight";
 import { audit, clientIp } from "../lib/audit";
 import { buildDashboard, clusterFor, collectElectionItems, ensureElectionWatchTables, KE_WATCH, type ItemRow, type Watch } from "../lib/electionWatch";
 import { SS_WATCH } from "../lib/southSudanWatch";
+import { approveProposal, pendingProposals, rejectProposal } from "../lib/electionProposals";
 import type { Env } from "../bindings";
 
 /**
@@ -216,6 +217,45 @@ export function watchRouter(W: Watch) {
     await run(c.env.DB, `UPDATE ${T.leads} SET status = ? WHERE id = ?`, [body.data.status, c.req.param("id")]);
     return c.json({ ok: true });
   });
+
+  /* ── proposals from news (Kenya only): a person approves each change ── */
+
+  if (W.key === "ke") {
+    r.get("/proposals", async (c) => {
+      const denied = adminOnly(c);
+      if (denied) return denied;
+      return c.json(await pendingProposals(c.env, W));
+    });
+
+    r.post("/proposals/:id/approve", async (c) => {
+      const denied = adminOnly(c);
+      if (denied) return denied;
+      const body = z
+        .object({
+          candidate: z.string().regex(/^[a-z0-9-]{1,40}$/),
+          ticket: z.enum(["A", "B", "C", "D"]).nullable(),
+          role: z.enum(["head", "deputy", "backer"]),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          note: z.string().max(400).default(""),
+          source: z.string().max(400).default(""),
+        })
+        .safeParse(await c.req.json().catch(() => null));
+      if (!body.success) return c.json({ error: "Check the candidate, ticket, role and date" }, 400);
+      const result = await approveProposal(c.env, c.req.param("id"), body.data, c.get("userId"), W);
+      if (!result.ok) return c.json({ error: result.error }, result.status);
+      await audit(c.env, { userId: c.get("userId"), action: `${W.key}_watch.proposal_approved`, detail: `${c.req.param("id")} ${body.data.candidate} ${body.data.ticket ?? "alone"} ${body.data.role}`, ip: clientIp(c.req) });
+      return c.json({ ok: true });
+    });
+
+    r.post("/proposals/:id/reject", async (c) => {
+      const denied = adminOnly(c);
+      if (denied) return denied;
+      const result = await rejectProposal(c.env, c.req.param("id"), c.get("userId"), W);
+      if (!result.ok) return c.json({ error: result.error }, result.status);
+      await audit(c.env, { userId: c.get("userId"), action: `${W.key}_watch.proposal_rejected`, detail: c.req.param("id"), ip: clientIp(c.req) });
+      return c.json({ ok: true });
+    });
+  }
 
   // Re-codes reports the rules placed, which no analyst has checked, under the current rules. Verified and rejected reports are never touched.
   r.post("/recode", async (c) => {

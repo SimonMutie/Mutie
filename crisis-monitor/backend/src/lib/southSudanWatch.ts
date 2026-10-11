@@ -237,7 +237,7 @@ export function southSudanLeadKind(title: string, summary: string): string | nul
 export const SS_WATCH: Watch = {
   key: "ss",
   csvName: "south-sudan-watch",
-  t: { items: "ss_items", leads: "ss_leads", content: "ss_content", state: "ss_state" },
+  t: { items: "ss_items", leads: "ss_leads", content: "ss_content", state: "ss_state", proposals: "ss_proposals" },
   categories: SS_CATEGORIES,
   labels: SS_LABELS,
   placeRe: /^(CE|EE|JG|LK|NBG|UN|UP|WR|WBG|WE|AB)$/,

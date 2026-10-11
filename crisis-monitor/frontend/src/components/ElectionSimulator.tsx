@@ -19,7 +19,7 @@ import {
   type TicketRole,
   type TicketSpec,
 } from "../lib/kenyaSim";
-import { watchApi } from "../api";
+import { watchApi, type EwProposal } from "../api";
 import { useCountUp } from "../lib/motion";
 import { VBars } from "./charts";
 
@@ -37,6 +37,8 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const pct = (n: number, d = 0) => `${(n * 100).toFixed(d)}%`;
 const DRAWS = 500;
 const TRANSFER_STEPS = [0.5, 0.7, 0.85, 1];
+
+const ROLE_LABEL: Record<TicketRole, string> = { head: "presidential candidate", deputy: "running mate", backer: "backs the ticket" };
 
 type Draft = { head: string | null; deputy: string | null; backers: string[] };
 interface MateRow { id: string | null; label: string; note: string; home: string | null; rutoHome: number | null; delta: number; rutoNational: number; counties: number }
@@ -662,29 +664,15 @@ function SimEditor({ live, onChanged, asOf, cands }: { live: Live; onChanged: ()
   const [err, setErr] = useState<string | null>(null);
   const seed = live.sim.seeds.find((s) => s.id === who);
   const [rz, setRz] = useState({ date: asOf, candidate: "", ticket: "A", role: "head" as TicketRole, note: "", source: "" });
-  const [queue, setQueue] = useState<{ id: string; kind: string; title: string; url: string; domain: string | null; published_at: string }[]>([]);
-  const loadQueue = () =>
-    watchApi("ke")
-      .leads()
-      .then((rows) => setQueue(rows.filter((r) => r.kind === "declaration" || r.kind === "poll")))
-      .catch(() => setQueue([]));
+  const [proposals, setProposals] = useState<EwProposal[]>([]);
+  const [picks, setPicks] = useState<Record<string, { candidate: string; ticket: string; role: TicketRole }>>({});
+  const loadProposals = () => watchApi("ke").proposals().then(setProposals).catch(() => setProposals([]));
   useEffect(() => {
-    if (open) loadQueue();
+    if (open) loadProposals();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-
-  /** The candidate a headline names, matched on surname, ignoring apostrophes and case. */
-  const matchCandidate = (title: string) => {
-    const t = title.replace(/[’']/g, "").toLowerCase();
-    return cands.find((c) => {
-      const surname = c.name.split(" ").pop() ?? c.name;
-      return t.includes(surname.replace(/[’']/g, "").toLowerCase());
-    });
-  };
-  const useLead = (l: { title: string; url: string; published_at: string }) => {
-    const hit = matchCandidate(l.title);
-    setRz({ date: l.published_at.slice(0, 10), candidate: hit?.id ?? "", ticket: "A", role: "head", note: l.title, source: l.url });
-  };
+  const pickFor = (p: EwProposal) => picks[p.id] ?? { candidate: p.candidate ?? "", ticket: "", role: p.suggestedRole };
+  const setPick = (p: EwProposal, patch: Partial<{ candidate: string; ticket: string; role: TicketRole }>) => setPicks((x) => ({ ...x, [p.id]: { ...pickFor(p), ...patch } }));
 
   const save = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -734,28 +722,59 @@ function SimEditor({ live, onChanged, asOf, cands }: { live: Live; onChanged: ()
             />
           )}
 
-          <h4 className="sim-editor__h">Review queue from public sources</h4>
-          <p className="sim-muted">The collector files declarations and poll reports it finds in news. Nothing reaches the simulator until someone checks it. Use one to fill in a change below, then choose its ticket and role.</p>
-          {queue.length === 0 ? (
-            <p className="sim-empty">Nothing waiting for review.</p>
+          <h4 className="sim-editor__h">Proposed from news</h4>
+          <p className="sim-muted">Filed each day from declarations the collector finds. Nothing reaches the simulator until you approve it. Read the source, then choose the candidate, ticket and role.</p>
+          {proposals.length === 0 ? (
+            <p className="sim-empty">Nothing waiting for approval.</p>
           ) : (
             <ul className="sim-queue">
-              {queue.map((l) => {
-                const hit = matchCandidate(l.title);
+              {proposals.map((p) => {
+                const k = pickFor(p);
                 return (
-                  <li key={l.id}>
-                    <div>
-                      <span className="sim-queue__kind">{l.kind === "poll" ? "Poll" : "Declaration"}</span>
-                      <p>{l.title}</p>
-                      <small className="sim-muted">{l.domain ?? "news"} · {l.published_at.slice(0, 10)}{hit ? ` · names ${hit.short}` : ""}</small>
+                  <li key={p.id} className="sim-proposal">
+                    <div className="sim-proposal__text">
+                      <p>{p.title}</p>
+                      <small className="sim-muted">
+                        {p.domain ?? "news"} · {p.date} · suggested: {ROLE_LABEL[p.suggestedRole]}
+                        {p.matches.length ? ` · names ${p.matches.map((id) => cands.find((c) => c.id === id)?.short ?? id).join(", ")}` : " · no candidate named"}
+                      </small>
+                      <a href={p.url} target="_blank" rel="noopener noreferrer" className="sim-link">Read the source</a>
                     </div>
-                    <div className="sim-queue__actions">
-                      {l.kind === "poll" ? (
-                        <small className="sim-muted">Enter the figures under Polls in Manage.</small>
-                      ) : (
-                        <button type="button" className="sim-reset" disabled={busy} onClick={() => useLead(l)}>Use for a change</button>
-                      )}
-                      <button type="button" className="sim-link" disabled={busy} onClick={() => save(() => watchApi("ke").setLead(l.id, "dismissed")).then(loadQueue)}>Dismiss</button>
+                    <div className="sim-proposal__form">
+                      <label>Candidate
+                        <select value={k.candidate} onChange={(e) => setPick(p, { candidate: e.target.value })}>
+                          <option value="">Choose</option>
+                          {cands.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </label>
+                      <label>Ticket
+                        <select value={k.ticket} onChange={(e) => setPick(p, { ticket: e.target.value })}>
+                          <option value="">Choose</option>
+                          {["A", "B", "C", "D"].map((t) => <option key={t} value={t}>Ticket {t}</option>)}
+                        </select>
+                      </label>
+                      <label>Role
+                        <select value={k.role} onChange={(e) => setPick(p, { role: e.target.value as TicketRole })}>
+                          <option value="head">Presidential candidate</option>
+                          <option value="deputy">Running mate</option>
+                          <option value="backer">Backs the ticket</option>
+                        </select>
+                      </label>
+                      <div className="sim-proposal__actions">
+                        <button
+                          type="button"
+                          className="sim-save"
+                          disabled={busy}
+                          onClick={() => {
+                            if (!k.candidate || !k.ticket) return setErr("Choose a candidate and a ticket before approving.");
+                            if (k.role === "head" && cands.find((c) => c.id === k.candidate)?.presidential === false) return setErr("A running mate cannot be the presidential candidate. Choose the role as running mate.");
+                            save(() => watchApi("ke").approveProposal(p.id, { candidate: k.candidate, ticket: k.ticket, role: k.role, date: p.date, note: p.title, source: p.url })).then(loadProposals);
+                          }}
+                        >
+                          Approve
+                        </button>
+                        <button type="button" className="sim-link sim-link--danger" disabled={busy} onClick={() => save(() => watchApi("ke").rejectProposal(p.id)).then(loadProposals)}>Reject</button>
+                      </div>
                     </div>
                   </li>
                 );

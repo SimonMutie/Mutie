@@ -1210,3 +1210,11 @@
 .sim-queue p { margin: 4px 0 2px; font-size: 13.5px; line-height: 1.45; }
 .sim-queue__kind { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--signal); }
 .sim-queue__actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+.sim-proposal { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px 18px; align-items: start; }
+.sim-proposal__text { display: grid; gap: 4px; }
+.sim-proposal__form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.sim-proposal__form label { display: grid; gap: 3px; font-size: 12px; color: var(--text-muted); }
+.sim-proposal__form select { font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border); background: var(--panel); color: var(--text-primary); }
+.sim-proposal__actions { grid-column: 1 / -1; display: flex; gap: 14px; align-items: center; }
+@media (max-width: 900px) { .sim-proposal { grid-template-columns: 1fr; } }

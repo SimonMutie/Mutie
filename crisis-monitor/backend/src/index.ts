@@ -28,6 +28,7 @@ import { contactsRouter } from "./routes/contacts";
 import { electionWatchRouter, southSudanWatchRouter } from "./routes/electionWatch";
 import { keReportRouter, publicReportRouter, ssReportRouter } from "./routes/monthlyReports";
 import { collectElectionItems, KE_WATCH } from "./lib/electionWatch";
+import { proposeFromLeads } from "./lib/electionProposals";
 import { SS_WATCH } from "./lib/southSudanWatch";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
 import { refreshStaleLists } from "./lib/dd/sanctionsLists";
@@ -245,6 +246,9 @@ export default {
         ctx.waitUntil(
           collectElectionItems(env, 30, W)
             .then((r) => r.inserted > 0 && console.log(`[election-watch:${W.key}] ${r.inserted} new items (${r.leads} leads) from ${r.scanned} scanned`))
+            // New declarations become proposals for an approver. Nothing is published from here.
+            .then(() => (W === KE_WATCH ? proposeFromLeads(env, W) : null))
+            .then((p) => p && p.filed > 0 && console.log(`[election-watch:${W.key}] ${p.filed} new proposals for review`))
             .catch((err) => console.error(`[election-watch:${W.key}] collection failed`, err))
         );
       }

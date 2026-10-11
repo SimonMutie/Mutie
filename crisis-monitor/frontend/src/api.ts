@@ -63,6 +63,19 @@ export interface EwLead {
 }
 export type EwContent = Record<string, { id: string; data: Record<string, unknown>; updated_at: string }[]>;
 
+/** A change the collector proposed from news, waiting for an approver. Nothing reaches the simulator until it is approved. */
+export interface EwProposal {
+  id: string;
+  created_at: string;
+  title: string;
+  url: string;
+  domain: string | null;
+  date: string;
+  candidate: string | null;
+  matches: string[];
+  suggestedRole: "head" | "deputy" | "backer";
+}
+
 export interface BroadcastAudience {
   mode: "all_clients" | "clients" | "list_only";
   client_ids?: string[];
@@ -2116,6 +2129,10 @@ export const watchApi = (k: WatchKey) => {
     content: () => req<EwContent>(`${base}/content`),
     saveContent: (kind: string, id: string, data: unknown) => req<{ ok: boolean }>(`${base}/content/${kind}/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     removeContent: (kind: string, id: string) => req<{ ok: boolean }>(`${base}/content/${kind}/${id}`, { method: "DELETE" }),
+    proposals: () => req<EwProposal[]>(`${base}/proposals`),
+    approveProposal: (id: string, data: { candidate: string; ticket: string | null; role: "head" | "deputy" | "backer"; date: string; note: string; source: string }) =>
+      req<{ ok: boolean }>(`${base}/proposals/${id}/approve`, { method: "POST", body: JSON.stringify(data) }),
+    rejectProposal: (id: string) => req<{ ok: boolean }>(`${base}/proposals/${id}/reject`, { method: "POST" }),
     leads: () => req<EwLead[]>(`${base}/leads`),
     setLead: (id: string, status: "pending" | "done" | "dismissed") => req<{ ok: boolean }>(`${base}/leads/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
     patchItem: (id: string, data: { status?: "auto" | "verified" | "rejected"; category?: EwCategory; county_code?: string | null; fatalities?: number | null }) => req<{ ok: boolean }>(`${base}/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),

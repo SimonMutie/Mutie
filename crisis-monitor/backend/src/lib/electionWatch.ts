@@ -198,6 +198,8 @@ export interface WatchTables {
   leads: string;
   content: string;
   state: string;
+  /** Changes the collector proposes from news, waiting for an approver. */
+  proposals: string;
 }
 
 /**
@@ -225,7 +227,7 @@ export interface Watch {
   places?: Map<string, string>;
 }
 
-const tablesFor = (prefix: string): WatchTables => ({ items: `${prefix}_items`, leads: `${prefix}_leads`, content: `${prefix}_content`, state: `${prefix}_state` });
+const tablesFor = (prefix: string): WatchTables => ({ items: `${prefix}_items`, leads: `${prefix}_leads`, content: `${prefix}_content`, state: `${prefix}_state`, proposals: `${prefix}_proposals` });
 
 /* ── storage ──────────────────────────────────────────────── */
 
@@ -251,6 +253,9 @@ export async function ensureElectionWatchTables(env: Env, W: Watch = KE_WATCH): 
         status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`);
       await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.content} (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (kind, id))`);
       await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.state} (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      await run(env.DB, `CREATE TABLE IF NOT EXISTS ${t.proposals} (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, lead_id TEXT UNIQUE, status TEXT NOT NULL DEFAULT 'pending',
+        data TEXT NOT NULL, created_at TEXT NOT NULL, decided_at TEXT, decided_by TEXT)`);
     })().catch((err) => {
       ready.delete(W.key);
       throw err;
