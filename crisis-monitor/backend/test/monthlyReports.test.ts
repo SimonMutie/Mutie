@@ -102,4 +102,16 @@ describe("report lifecycle", () => {
     const viewer = (await (await call(shared, "/")).json()) as { period: string }[];
     expect(viewer.map((x) => x.period)).toEqual(["2026-08"]);
   });
+  it("saves the theme and each section's text style, and rejects unknown styles", async () => {
+    const sections = [{ id: "summary", kind: "narrative", title: "Summary", body: "Text.", style: { font: "serif", size: "l", align: "justify" } }];
+    const ok = await call(admin, "/2026-09", "PUT", { title: "t", theme: "dusk", sections });
+    expect(ok.status).toBe(200);
+    const got = (await (await call(admin, "/2026-09")).json()) as { report: { theme: string; sections: { style?: unknown }[] } };
+    expect(got.report.theme).toBe("dusk");
+    expect(got.report.sections[0].style).toEqual({ font: "serif", size: "l", align: "justify" });
+    const bad = await call(admin, "/2026-09", "PUT", { title: "t", theme: "neon", sections });
+    expect(bad.status).toBe(400);
+    const badStyle = await call(admin, "/2026-09", "PUT", { title: "t", sections: [{ ...sections[0], style: { font: "comic" } }] });
+    expect(badStyle.status).toBe(400);
+  });
 });

@@ -16,6 +16,10 @@ import {
   seriesFor,
   ensureReportTables,
   REPORT_TABLE,
+  THEMES,
+  FONTS,
+  SIZES,
+  ALIGNS,
   type ReportSection,
 } from "../lib/monthlyReports";
 import { run, nowIso } from "../db";
@@ -31,6 +35,7 @@ const PERIOD = /^\d{4}-(0[1-9]|1[0-2])$/;
 const SECTION_KINDS = ["narrative", "figures", "map", "trend", "categories"] as const;
 const SaveBody = z.object({
   title: z.string().min(1).max(200),
+  theme: z.enum(THEMES).optional(),
   sections: z
     .array(
       z.object({
@@ -39,6 +44,9 @@ const SaveBody = z.object({
         title: z.string().min(1).max(200),
         body: z.string().max(20_000).optional(),
         carried: z.boolean().optional(),
+        style: z
+          .object({ font: z.enum(FONTS).optional(), size: z.enum(SIZES).optional(), align: z.enum(ALIGNS).optional() })
+          .optional(),
       }),
     )
     .min(1)
@@ -108,7 +116,7 @@ export function reportRouter(W: Watch) {
     if (existing.status === "published") return c.json({ error: "This report is published. Reopen it to make changes." }, 409);
     // Section ids must be unique, so the page can address each one.
     if (new Set(parsed.data.sections.map((s) => s.id)).size !== parsed.data.sections.length) return c.json({ error: "Section ids must be unique" }, 400);
-    await saveReport(c.env, country, period, { title: parsed.data.title, sections: parsed.data.sections.map((s) => ({ ...s, body: s.body ?? "" })) }, c.get("userId") ?? null);
+    await saveReport(c.env, country, period, { title: parsed.data.title, theme: parsed.data.theme ?? existing.theme, sections: parsed.data.sections.map((s) => ({ ...s, body: s.body ?? "" })) }, c.get("userId") ?? null);
     return c.json({ ok: true });
   });
 

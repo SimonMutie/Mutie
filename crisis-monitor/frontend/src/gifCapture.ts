@@ -31,7 +31,7 @@ export interface GifCaptureProgress {
 export function captureElementAsGif(
   element: HTMLElement,
   onProgress: (progress: GifCaptureProgress) => void,
-  options?: { frameCount?: number; frameDelayMs?: number }
+  options?: { frameCount?: number; frameDelayMs?: number; ignore?: (el: Element) => boolean }
 ): Promise<Blob> {
   const frameCount = options?.frameCount ?? 24;
   const frameDelayMs = options?.frameDelayMs ?? 125; // 8fps
@@ -46,7 +46,7 @@ export function captureElementAsGif(
       try {
         for (let i = 0; i < frameCount; i++) {
           onProgress({ phase: "capturing", current: i + 1, total: frameCount });
-          const canvas = stampCanvas(await html2canvas(element, { useCORS: true, allowTaint: false, logging: false }));
+          const canvas = stampCanvas(await html2canvas(element, { useCORS: true, allowTaint: false, logging: false, ignoreElements: options?.ignore }));
           gif.addFrame(canvas, { delay: frameDelayMs });
           // No wait needed after the very last frame — nothing left to let
           // the animation advance for.

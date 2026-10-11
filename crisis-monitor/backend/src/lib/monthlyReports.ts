@@ -15,6 +15,19 @@ export const REPORT_TABLE = "monthly_reports";
 
 export type SectionKind = "narrative" | "figures" | "map" | "trend" | "categories";
 
+export const THEMES = ["lens", "dusk", "sand"] as const;
+export type ReportTheme = (typeof THEMES)[number];
+export const FONTS = ["serif", "sans", "mono"] as const;
+export const SIZES = ["s", "m", "l", "xl"] as const;
+export const ALIGNS = ["left", "center", "right", "justify"] as const;
+
+/** How one section's text is set. Stored with the section, so every reader and every export sees the same page. */
+export interface SectionStyle {
+  font?: (typeof FONTS)[number];
+  size?: (typeof SIZES)[number];
+  align?: (typeof ALIGNS)[number];
+}
+
 export interface ReportSection {
   id: string;
   kind: SectionKind;
@@ -22,6 +35,7 @@ export interface ReportSection {
   body?: string;
   /** True when the text was carried over from the previous month and not yet reviewed. */
   carried?: boolean;
+  style?: SectionStyle;
 }
 
 export interface PeriodRow {
@@ -38,6 +52,7 @@ export interface ReportRow {
   country: string;
   period: string;
   title: string;
+  theme: ReportTheme;
   status: "draft" | "published";
   sections: ReportSection[];
   snapshot: PeriodRow | null;
@@ -50,13 +65,17 @@ export interface ReportRow {
 let ready: Promise<void> | null = null;
 export function ensureReportTables(env: Env): Promise<void> {
   if (!ready) {
-    ready = run(
-      env.DB,
-      `CREATE TABLE IF NOT EXISTS ${REPORT_TABLE} (
-        country TEXT NOT NULL, period TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
-        sections TEXT NOT NULL, snapshot TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-        published_at TEXT, updated_by TEXT, PRIMARY KEY (country, period))`,
-    ).catch((e) => {
+    ready = (async () => {
+      await run(
+        env.DB,
+        `CREATE TABLE IF NOT EXISTS ${REPORT_TABLE} (
+          country TEXT NOT NULL, period TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+          sections TEXT NOT NULL, snapshot TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          published_at TEXT, updated_by TEXT, PRIMARY KEY (country, period))`,
+      );
+      // Added after the first release: SQLite has no ADD COLUMN IF NOT EXISTS, so a duplicate column error means it is already there.
+      await run(env.DB, `ALTER TABLE ${REPORT_TABLE} ADD COLUMN theme TEXT NOT NULL DEFAULT 'lens'`).catch(() => {});
+    })().catch((e) => {
       ready = null;
       throw e;
     });
@@ -132,6 +151,7 @@ export function toReport(row: Record<string, unknown>): ReportRow {
     country: String(row.country),
     period: String(row.period),
     title: String(row.title),
+    theme: THEMES.includes(row.theme as ReportTheme) ? (row.theme as ReportTheme) : "lens",
     status: row.status === "published" ? "published" : "draft",
     sections: JSON.parse(String(row.sections)) as ReportSection[],
     snapshot: row.snapshot ? (JSON.parse(String(row.snapshot)) as PeriodRow) : null,
@@ -160,12 +180,12 @@ export function nextPeriod(period: string): string {
   return d.toISOString().slice(0, 7);
 }
 
-export async function saveReport(env: Env, country: string, period: string, data: { title: string; sections: ReportSection[] }, by: string | null) {
+export async function saveReport(env: Env, country: string, period: string, data: { title: string; theme: ReportTheme; sections: ReportSection[] }, by: string | null) {
   const now = nowIso();
   await run(
     env.DB,
-    `UPDATE ${REPORT_TABLE} SET title = ?, sections = ?, updated_at = ?, updated_by = ? WHERE country = ? AND period = ? AND status = 'draft'`,
-    [data.title, JSON.stringify(data.sections), now, by, country, period],
+    `UPDATE ${REPORT_TABLE} SET title = ?, theme = ?, sections = ?, updated_at = ?, updated_by = ? WHERE country = ? AND period = ? AND status = 'draft'`,
+    [data.title, data.theme, JSON.stringify(data.sections), now, by, country, period],
   );
 }
 

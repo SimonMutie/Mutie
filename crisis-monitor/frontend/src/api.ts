@@ -2137,10 +2137,17 @@ export interface RptPeriod {
   byCategory: Record<string, number>;
   byPlace: Record<string, number>;
 }
+export type RptTheme = "lens" | "dusk" | "sand";
+export interface RptStyle {
+  font?: "serif" | "sans" | "mono";
+  size?: "s" | "m" | "l" | "xl";
+  align?: "left" | "center" | "right" | "justify";
+}
 export interface RptSection {
   id: string;
   kind: "narrative" | "figures" | "map" | "trend" | "categories";
   title: string;
+  style?: RptStyle;
   body?: string;
   carried?: boolean;
 }
@@ -2148,6 +2155,7 @@ export interface RptReport {
   country: string;
   period: string;
   title: string;
+  theme: RptTheme;
   status: "draft" | "published";
   sections: RptSection[];
   snapshot: RptPeriod | null;
@@ -2172,7 +2180,7 @@ export const reportApi = (k: WatchKey) => {
     list: () => req<RptListItem[]>(`${base}/`),
     get: (period: string) => req<{ report: RptReport | null; title: string; can_edit?: boolean }>(`${base}/${period}`),
     start: (period: string) => send(`/${period}/start`, "POST"),
-    save: (period: string, data: { title: string; sections: RptSection[] }) => send(`/${period}`, "PUT", data),
+    save: (period: string, data: { title: string; theme: RptTheme; sections: RptSection[] }) => send(`/${period}`, "PUT", data),
     publish: (period: string) => send(`/${period}/publish`, "POST"),
     reopen: (period: string) => send(`/${period}/reopen`, "POST"),
   };
