@@ -831,7 +831,11 @@
 .rpt-page--cover .rpt-page__body { padding-top: clamp(26px, 5vw, 48px); }
 .rpt-page--cover .rpt-masthead { border-bottom: 2px solid var(--rp-ink); padding-bottom: 14px; margin: 0; }
 .rpt-page--cover .rpt-kicker { color: var(--rp-accent); }
-.rpt-page .rpt-two { display: grid; grid-template-columns: minmax(180px, 230px) 1fr; gap: 22px; align-items: center; }
+.rpt-page .rpt-two { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 26px; align-items: start; }
+/* On a report page the donut stacks over its legend, so the legend never runs into the bars beside it. */
+.rpt-page .rpt-two > * { min-width: 0; }
+.rpt-page .vz-donut { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.rpt-page .vz-donut__legend { grid-column: 1; grid-row: 2; width: 100%; }
 @media (max-width: 680px) { .rpt-page .rpt-two { grid-template-columns: 1fr; } }
 
 /* download menu on each page */
@@ -916,20 +920,39 @@
 .rpt-page__hidden { margin: 0; padding: 8px clamp(14px, 3vw, 26px); background: color-mix(in srgb, var(--critical) 12%, transparent); color: var(--critical); font-size: 12.5px; font-weight: 700; }
 @media print { .rpt-toggles { display: none !important; } }
 
-/* Backgrounds for the cover page, one motif per country: contour lines for Kenya, river lines for South Sudan. */
+/* Report backgrounds, one identity per country. Colours come from the chosen theme (--rp-*), so each theme keeps its own look.
+   Kenya: contour lines over a cool teal-and-blue wash. South Sudan: river lines over a warm horizon. */
+.rpt-doc { --country-glow: var(--rp-accent); --country-glow2: var(--rp-accent2); --motif-stroke: #5f7a8f; }
+.rpt-doc[data-country="ss"] { --country-glow: var(--rp-accent3); --country-glow2: var(--rp-accent); --motif-stroke: #8a6a4c; }
+.rpt-doc {
+  padding: clamp(10px, 2vw, 22px);
+  border-radius: 22px;
+  background:
+    radial-gradient(90% 55% at 100% 0%, color-mix(in srgb, var(--country-glow) 16%, transparent), transparent 72%),
+    radial-gradient(80% 55% at 0% 100%, color-mix(in srgb, var(--country-glow2) 13%, transparent), transparent 72%),
+    color-mix(in srgb, var(--rp-ink) 3%, var(--rp-paper));
+}
+.rpt-doc[data-country="ke"] .rpt-page {
+  background:
+    radial-gradient(70% 90% at 100% 0%, color-mix(in srgb, var(--rp-accent) 12%, transparent), transparent 70%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='800' height='400' viewBox='0 0 800 400'><g fill='none' stroke='%235f7a8f' stroke-opacity='.1' stroke-width='1.1'><path d='M400 30c120-30 240 40 270 130s-20 170-120 205-215-10-275-95S280 60 400 30z'/><path d='M400 75c95-22 180 30 200 112s-20 135-105 155-165 0-205-72 25-170 110-195z'/><path d='M400 122c62-12 115 25 125 88s-30 92-82 104-102 0-124-52 22-128 81-140z'/><path d='M402 170c30 0 52 22 54 52s-22 52-52 54-46-22-48-48 16-58 46-58z'/></g></svg>") right top / 760px auto no-repeat,
+    var(--rp-paper);
+}
+.rpt-doc[data-country="ss"] .rpt-page {
+  background:
+    radial-gradient(60% 70% at 0% 0%, color-mix(in srgb, var(--rp-accent3) 13%, transparent), transparent 70%),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='400' viewBox='0 0 900 400'><g fill='none' stroke='%238a6a4c' stroke-opacity='.1' stroke-width='1.2'><path d='M-20 120C120 60 200 180 340 120S560 40 700 120S860 200 920 150'/><path d='M-20 170C120 110 200 230 340 170S560 90 700 170S860 250 920 200'/><path d='M-20 220C120 160 200 280 340 220S560 140 700 220S860 300 920 250'/><path d='M-20 270C120 210 200 330 340 270S560 190 700 270S860 350 920 300'/></g></svg>") left bottom / 900px auto no-repeat,
+    var(--rp-paper);
+}
+/* The cover carries a stronger wash than the pages behind it. */
 .rpt-doc .rpt-page--cover .rpt-page__body { position: relative; overflow: hidden; }
 .rpt-doc[data-country="ke"] .rpt-page--cover .rpt-page__body {
-  background:
-    radial-gradient(70% 90% at 100% 0%, color-mix(in srgb, var(--rp-accent) 20%, transparent), transparent 70%),
-    radial-gradient(60% 80% at 0% 100%, color-mix(in srgb, var(--rp-accent2) 14%, transparent), transparent 70%),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='800' height='400' viewBox='0 0 800 400'><g fill='none' stroke='%237d8a9c' stroke-opacity='.26' stroke-width='1.2'><path d='M400 30c120-30 240 40 270 130s-20 170-120 205-215-10-275-95S280 60 400 30z'/><path d='M400 75c95-22 180 30 200 112s-20 135-105 155-165 0-205-72 25-170 110-195z'/><path d='M400 122c62-12 115 25 125 88s-30 92-82 104-102 0-124-52 22-128 81-140z'/><path d='M402 170c30 0 52 22 54 52s-22 52-52 54-46-22-48-48 16-58 46-58z'/></g></svg>") right top / 760px auto no-repeat;
+  background: radial-gradient(70% 90% at 100% 0%, color-mix(in srgb, var(--rp-accent) 22%, transparent), transparent 70%), radial-gradient(60% 80% at 0% 100%, color-mix(in srgb, var(--rp-accent2) 16%, transparent), transparent 70%);
 }
 .rpt-doc[data-country="ss"] .rpt-page--cover .rpt-page__body {
-  background:
-    radial-gradient(70% 90% at 0% 0%, color-mix(in srgb, var(--rp-accent3) 16%, transparent), transparent 70%),
-    radial-gradient(60% 80% at 100% 100%, color-mix(in srgb, var(--rp-accent) 18%, transparent), transparent 70%),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='400' viewBox='0 0 900 400'><g fill='none' stroke='%237d8a9c' stroke-opacity='.28' stroke-width='1.3'><path d='M-20 120C120 60 200 180 340 120S560 40 700 120S860 200 920 150'/><path d='M-20 170C120 110 200 230 340 170S560 90 700 170S860 250 920 200'/><path d='M-20 220C120 160 200 280 340 220S560 140 700 220S860 300 920 250'/><path d='M-20 270C120 210 200 330 340 270S560 190 700 270S860 350 920 300'/></g></svg>") left bottom / 900px auto no-repeat;
+  background: radial-gradient(70% 90% at 0% 0%, color-mix(in srgb, var(--rp-accent3) 20%, transparent), transparent 70%), radial-gradient(60% 80% at 100% 100%, color-mix(in srgb, var(--rp-accent) 18%, transparent), transparent 70%);
 }
+.rpt-doc[data-country] .rpt-page__band { box-shadow: inset 0 -3px 0 var(--country-glow); }
 
 /* ── lane timeline: one row per category, markers placed by date ── */
 .ltl { position: relative; margin: 6px 0 4px; }
