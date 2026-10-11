@@ -668,7 +668,7 @@ function Page({
     <section className={`rpt-page ${isCover ? "rpt-page--cover" : ""} ${hiddenNote ? "is-hidden" : ""}`} data-sid={id} style={style} aria-label={title || kicker}>
       <header className="rpt-page__band">
         <span className="rpt-page__mark"><Logo standalone size={28} /></span>
-        <span className="rpt-page__brand">Afrilens · The Lens</span>
+        <span className="rpt-page__brand">Afrilens</span>
         <span className="rpt-page__kicker">{kicker}</span>
         {onDownload && <PageDownload busy={busy} onPick={onDownload} formats={formats} />}
       </header>

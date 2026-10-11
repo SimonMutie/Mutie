@@ -140,7 +140,7 @@ export async function buildDocx(page: ExportPage, snap?: Snapshot, logo?: string
     );
   }
 
-  const mark = logo ? new Paragraph({ children: [new ImageRun({ type: "png", data: bytes(logo), transformation: { width: 34, height: 34 } }), new TextRun({ text: "  Afrilens · The Lens", font, size: 18, bold: true, color: color(pal.ink) })] }) : new Paragraph({ children: [] });
+  const mark = logo ? new Paragraph({ children: [new ImageRun({ type: "png", data: bytes(logo), transformation: { width: 34, height: 34 } }), new TextRun({ text: "  Afrilens", font, size: 18, bold: true, color: color(pal.ink) })] }) : new Paragraph({ children: [] });
   const doc = new Document({
     creator: "Afrilens Consulting",
     title: page.title,
@@ -182,7 +182,7 @@ export async function buildPptx(page: ExportPage, opts: { snap?: Snapshot; logo?
   // The band the Lens mark sits in, on every slide, as on every page of the report.
   slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: SLIDE_W, h: 0.9, fill: { color: pal.band.replace("#", "") }, line: { type: "none" }, objectName: "band" });
   if (opts.logo) slide.addImage({ data: opts.logo, x: 0.45, y: 0.14, w: 0.62, h: 0.62, objectName: "logo" });
-  slide.addText("Afrilens · The Lens", { x: 1.2, y: 0.22, w: 6, h: 0.46, fontFace: font, fontSize: 14, bold: true, color: pal.bandInk.replace("#", ""), objectName: "brand" });
+  slide.addText("Afrilens", { x: 1.2, y: 0.22, w: 6, h: 0.46, fontFace: font, fontSize: 14, bold: true, color: pal.bandInk.replace("#", ""), objectName: "brand" });
   slide.addText(page.kicker, { x: 6.5, y: 0.22, w: 6.4, h: 0.46, fontFace: font, fontSize: 11, color: pal.bandInk.replace("#", ""), align: "right", objectName: "kicker" });
 
   slide.addText(page.title, {
