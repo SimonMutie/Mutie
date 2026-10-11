@@ -35,6 +35,10 @@ export function captureElementAsGif(
 ): Promise<Blob> {
   const frameCount = options?.frameCount ?? 24;
   const frameDelayMs = options?.frameDelayMs ?? 125; // 8fps
+  // Frames are real snapshots, but html2canvas is too slow to catch the
+  // page's CSS transitions mid-flight: by the time it renders, they have
+  // finished and every frame is identical. So the transitions are paused
+  // and each frame is taken at its own point in time instead.
 
   return new Promise((resolve, reject) => {
     const gif = new GIF({ workers: 2, quality: 10, workerScript: gifWorkerUrl });
@@ -43,21 +47,69 @@ export function captureElementAsGif(
     gif.on("progress", (percent: number) => onProgress({ phase: "encoding", current: percent, total: 1 }));
 
     (async () => {
+      let anims: Animation[] = [];
       try {
+        // Let transitions started by the page's own mount/in-view logic appear.
+        await new Promise((r) => setTimeout(r, 180));
+        anims = sampleAnimations(element);
         for (let i = 0; i < frameCount; i++) {
           onProgress({ phase: "capturing", current: i + 1, total: frameCount });
-          const canvas = stampCanvas(await html2canvas(element, { useCORS: true, allowTaint: false, logging: false, ignoreElements: options?.ignore }));
+          const at = i * frameDelayMs;
+          anims.forEach((a) => (a.currentTime = at));
+          const canvas = stampCanvas(
+            await html2canvas(element, {
+              useCORS: true,
+              allowTaint: false,
+              logging: false,
+              ignoreElements: options?.ignore,
+              onclone: (doc) => resolveCloneColours(doc),
+            }),
+          );
           gif.addFrame(canvas, { delay: frameDelayMs });
-          // No wait needed after the very last frame — nothing left to let
-          // the animation advance for.
-          if (i < frameCount - 1) await new Promise((r) => setTimeout(r, frameDelayMs));
         }
+        anims.forEach((a) => a.play());
         gif.render();
       } catch (err) {
+        anims.forEach((a) => a.play());
         reject(err instanceof Error ? err : new Error("Couldn't capture frames for the GIF."));
       }
     })();
   });
+}
+
+/** html2canvas cannot parse modern colour functions. The report's stylesheet
+ *  uses color-mix() in many places, and the browser serialises those computed
+ *  values as color(srgb r g b / a), which html2canvas rejects, failing the
+ *  whole capture. This rewrites each such value on the snapshot's own copy of
+ *  the page as an rgba() colour, which is what html2canvas then reads. */
+const SRGB_COLOUR = /color\(\s*srgb\s+([\d.e-]+)\s+([\d.e-]+)\s+([\d.e-]+)(?:\s*\/\s*([\d.e-]+))?\s*\)/g;
+
+function toRgba(value: string): string {
+  return value.replace(SRGB_COLOUR, (_m, r: string, g: string, b: string, a?: string) => {
+    const ch = (x: string) => Math.round(Math.min(1, Math.max(0, Number(x))) * 255);
+    return `rgba(${ch(r)}, ${ch(g)}, ${ch(b)}, ${a === undefined ? 1 : Number(a)})`;
+  });
+}
+
+function resolveCloneColours(cloneDoc: Document) {
+  const win = cloneDoc.defaultView;
+  if (!win) return;
+  cloneDoc.querySelectorAll<HTMLElement>("*").forEach((el) => {
+    const cs = win.getComputedStyle(el);
+    for (let k = 0; k < cs.length; k++) {
+      const prop = cs[k];
+      const v = cs.getPropertyValue(prop);
+      if (v.includes("color(")) el.style.setProperty(prop, toRgba(v));
+    }
+  });
+}
+
+/** Pauses every CSS transition and animation inside the element and returns
+ *  them, so the recorder can seek each one to the frame's time. */
+function sampleAnimations(element: HTMLElement): Animation[] {
+  const found = element.getAnimations({ subtree: true });
+  found.forEach((a) => a.pause());
+  return found;
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

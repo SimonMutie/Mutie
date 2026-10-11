@@ -3,7 +3,7 @@ import { watchApi, type EwItem } from "../api";
 import { AS_OF, BENCH_LABEL, ELECTION_DAY, FUNDING_NEED_USD, SCENARIOS, SOURCES, type BenchStatus, type Benchmark, type Milestone } from "../data/southSudanElection";
 import { SsDataCtx, mergeSsLive, type SsLive } from "../data/southSudanLive";
 import { SS_WATCH_CONFIG } from "../data/watchConfig";
-import { StackBar, Timeline, type TimelineEvent } from "./charts";
+import { StackBar, StackedColumns, Timeline, type TimelineEvent } from "./charts";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
 import SouthSudanLedger from "./SouthSudanLedger";
@@ -352,6 +352,12 @@ function CalendarVisual() {
     <Timeline
       label="Election and transition calendar"
       events={events}
+      phases={[
+        { from: "2024-10-01", to: "2025-02-22", label: "Transition extended", tone: "#8a3ffc" },
+        { from: "2025-02-22", to: "2026-06-22", label: "Strained transition", tone: "#b3690b" },
+        { from: "2026-06-22", to: "2026-09-22", label: "Date fixed", tone: "#2f66f0" },
+        { from: "2026-09-22", to: "2026-12-22", label: "After dissolution", tone: "#d1352b" },
+      ]}
       start="2024-10-01"
       end="2026-12-31"
       today={AS_OF}
@@ -362,36 +368,87 @@ function CalendarVisual() {
 }
 
 /** Reported ceasefire and agreement breaches, on a timeline over the last 180 days. */
+/** Breach reports over the last 180 days: a weekly count by kind, then every report as a dated list. */
 function BreachTimeline() {
   const [items, setItems] = useState<EwItem[] | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
   useEffect(() => {
     const ss = watchApi("ss");
-    Promise.all([ss.items({ category: "agreement_breach", days: 180, limit: 40 }), ss.items({ category: "ceasefire_violation", days: 180, limit: 40 })])
+    Promise.all([ss.items({ category: "agreement_breach", days: 180, limit: 300 }), ss.items({ category: "ceasefire_violation", days: 180, limit: 300 })])
       .then(([a, b]) => setItems([...a, ...b].sort((x, y) => y.published_at.localeCompare(x.published_at))))
       .catch(() => setItems([]));
   }, []);
-  const events: TimelineEvent[] = (items ?? []).map((it) => ({
-    id: it.id,
-    date: it.published_at.slice(0, 10),
-    title: it.title,
-    color: SS_WATCH_CONFIG.colors[it.category] ?? "var(--text-faint)",
-    detail: (
-      <>
-        <p className="el-small el-muted">{SS_WATCH_CONFIG.labels[it.category] ?? it.category} · {it.domain} · {it.status === "verified" ? "Verified" : "Unverified"}</p>
-        <a href={it.url} target="_blank" rel="noreferrer noopener">Read the report</a>
-      </>
-    ),
-  }));
-  const today = AS_OF;
-  const start = new Date(Date.parse(`${today}T00:00:00Z`) - 180 * 86_400_000).toISOString().slice(0, 10);
+  const kinds = [
+    { key: "ceasefire_violation", label: SS_WATCH_CONFIG.labels.ceasefire_violation ?? "Ceasefire violations", color: SS_WATCH_CONFIG.colors.ceasefire_violation },
+    { key: "agreement_breach", label: SS_WATCH_CONFIG.labels.agreement_breach ?? "Agreement breaches", color: SS_WATCH_CONFIG.colors.agreement_breach },
+  ];
+  // Weeks run back from the as-of date, 26 of them, so the 180 days fill the chart.
+  const weeks = useMemo(() => {
+    const end = Date.parse(`${AS_OF}T00:00:00Z`);
+    const start = end - 26 * 7 * DAY + DAY;
+    const out = Array.from({ length: 26 }, (_, i) => {
+      const from = new Date(start + i * 7 * DAY);
+      return { label: from.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }), counts: Object.fromEntries(kinds.map((k) => [k.key, 0])) as Record<string, number> };
+    });
+    for (const it of items ?? []) {
+      const t = Date.parse(it.published_at);
+      const i = Math.floor((t - start) / (7 * DAY));
+      if (i >= 0 && i < out.length && out[i].counts[it.category] !== undefined) out[i].counts[it.category]++;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
+  const shown = all ? items ?? [] : (items ?? []).slice(0, 12);
+  const byKind = (k: string) => (items ?? []).filter((x) => x.category === k).length;
   return (
     <div className="ss-breach">
       <h3 className="el-subhead">Reported breaches, last 180 days</h3>
-      <p className="el-muted el-small">Ceasefire violations and breaches of the agreement, as reported in the feeds. Each is a report coded by rules until an analyst checks it. Select a point to read it.</p>
+      <p className="el-muted el-small">Ceasefire violations and breaches of the agreement, as reported in the feeds. Each is a report coded by rules until an analyst checks it. Counts are of events, not articles.</p>
       {items === null && <p className="el-muted">Loading…</p>}
       {items?.length === 0 && <p className="el-muted">No breach reports in the last 180 days.</p>}
-      {items && items.length > 0 && <Timeline label="Reported breaches over time" events={events} start={start} end={today} today={today} picked={picked} onPick={setPicked} />}
+      {items && items.length > 0 && (
+        <>
+          <div className="ss-breach__totals">
+            <div><strong>{items.length}</strong><span>reports</span></div>
+            {kinds.map((k) => (
+              <div key={k.key}><strong style={{ color: k.color }}>{byKind(k.key)}</strong><span>{k.label.toLowerCase()}</span></div>
+            ))}
+            <div><strong>{items.filter((x) => x.status === "verified").length}</strong><span>verified by an analyst</span></div>
+          </div>
+          <StackedColumns
+            label="Breach reports per week"
+            height={200}
+            unit="reports"
+            columns={weeks.map((w) => ({ label: w.label, segments: kinds.map((k) => ({ key: k.key, label: k.label, value: w.counts[k.key], color: k.color })) }))}
+          />
+          <ol className="ss-breach__list">
+            {shown.map((it, i) => (
+              <li key={it.id} className="ss-breach__item" style={{ animationDelay: `${Math.min(i, 12) * 55}ms` }}>
+                <time dateTime={it.published_at}>
+                  <strong>{new Date(it.published_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}</strong>
+                  <span>{new Date(it.published_at).toLocaleDateString("en-GB", { year: "numeric", timeZone: "UTC" })}</span>
+                </time>
+                <span className="ss-breach__dot" style={{ background: SS_WATCH_CONFIG.colors[it.category] ?? "var(--text-faint)" }} aria-hidden="true" />
+                <div className="ss-breach__body">
+                  <p className="ss-breach__meta">
+                    <span style={{ color: SS_WATCH_CONFIG.colors[it.category] }}>{SS_WATCH_CONFIG.labels[it.category] ?? it.category}</span>
+                    {it.county && <span>{it.county}</span>}
+                    <span>{it.status === "verified" ? "Verified" : "Unverified"}</span>
+                    {it.reports > 1 && <span>{it.reports} reports</span>}
+                  </p>
+                  <h4>{it.title}</h4>
+                  <a href={it.url} target="_blank" rel="noreferrer noopener">Read the report</a>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {items.length > 12 && (
+            <button type="button" className="el-link" onClick={() => setAll((v) => !v)}>
+              {all ? "Show fewer" : `Show all ${items.length} reports`}
+            </button>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -17,7 +17,25 @@ import type { Coding, Watch } from "./electionWatch";
  * the government timeline or the benchmarks automatically.
  */
 
-export const SS_CATEGORIES = ["armed_clash", "civilian_harm", "sexual_violence", "abduction", "displacement", "ceasefire_violation", "agreement_breach", "political_detention", "coverage"] as const;
+export const SS_CATEGORIES = [
+  "armed_clash",
+  "civilian_harm",
+  "sexual_violence",
+  "abduction",
+  "displacement",
+  "ceasefire_violation",
+  "agreement_breach",
+  "political_detention",
+  "aid_obstruction",
+  "aid_looted",
+  "aid_worker_abducted",
+  "aid_worker_killed",
+  "aid_worker_injured",
+  "health_attack",
+  "school_attack",
+  "utility_attack",
+  "coverage",
+] as const;
 
 export const SS_LABELS: Record<string, string> = {
   armed_clash: "Armed clashes",
@@ -28,6 +46,14 @@ export const SS_LABELS: Record<string, string> = {
   ceasefire_violation: "Ceasefire violations",
   agreement_breach: "Peace agreement breaches",
   political_detention: "Political detention",
+  aid_obstruction: "Aid work obstructed or restricted",
+  aid_looted: "Aid facilities looted",
+  aid_worker_abducted: "Aid workers abducted",
+  aid_worker_killed: "Aid workers killed",
+  aid_worker_injured: "Aid workers injured",
+  health_attack: "Attacks on health care",
+  school_attack: "Attacks on schools",
+  utility_attack: "Attacks on water and power",
   coverage: "Transition coverage",
 };
 
@@ -115,6 +141,19 @@ const CIVILIAN = /\b(civilians?|villages?|villagers?|women|children|cattle raid\
 const DISPLACE = /\b(displac\w*|fled|flee\w*|refugees?|idps?|exodus|uprooted)\b/i;
 const ELECTION = /\b(election|elections|electoral|nec|voter|voters|registration|census|constitution|campaign|candidates?|transition\w*|peace)\b/i;
 const EXPLAINER = /^(?:how|why|what|opinion|analysis|editorial|explainer|explained|comment|letters?)\b|\b(?:opinion|analysis|editorial|explainer):/i;
+/* Humanitarian work and critical infrastructure. Acronyms are matched in capitals only, so "who" is not "WHO". */
+const HUMAN_WORDS = /\b(aid workers?|aid staff|aid personnel|humanitarian (?:workers?|staff|personnel|agenc(?:y|ies)|convoys?|compounds?|premises|organi[sz]ations?|operations?|partners?|access)|UN staff|Doctors Without Borders|Médecins Sans Frontières|Medecins Sans Frontieres|Red Cross|Red Crescent)\b/i;
+const HUMAN_ACRO = /\b(WFP|UNICEF|OCHA|MSF|ICRC|IRC|NRC|WHO|NGOs?|UNHCR|IOM)\b/;
+const AID_SITE = /\b(warehouses?|aid (?:stores?|warehouses?|depots?|compounds?|premises|facilit(?:y|ies)|convoys?|supplies|trucks?)|humanitarian (?:compounds?|premises|warehouses?|facilit(?:y|ies)|convoys?|supplies|hubs?)|relief (?:supplies|stores?|warehouses?|items)|food (?:stores?|stocks?|warehouses?))\b/i;
+const LOOT = /\b(loots?|looted|looting|ransacked|plundered|pillaged|stripped|stole|stolen)\b/i;
+const ACCESS_DENY = /\b(denied (?:access|entry)|access (?:was |has been |remained |continues? to be )?(?:denied|restricted|blocked|obstructed|impeded|suspended)|restrict\w* (?:access|movement|aid)|block(?:ed|ing)? (?:aid|humanitarian|access|convoys?|deliveries)|obstruct\w* (?:aid|humanitarian|access|deliveries|operations)|impeded (?:aid|access)|suspend\w* (?:aid|humanitarian|operations|programmes?))\b/i;
+const KILLED = /\b(killed|dead|died|murdered|lynched|slain|shot dead|fatal\w*)\b/i;
+const INJURED = /\b(injur\w*|wounded)\b/i;
+const ATTACK = /\b(attack\w*|shell\w*|bomb\w*|air ?strikes?|struck|strikes?|raid\w*|burn\w*|torch\w*|destroy\w*|ransack\w*|targeted|targeting|fired|shot|seized|occupied|looted|looting)\b/i;
+const HEALTH = /\b(hospitals?|clinics?|health (?:centres?|centers?|facilit(?:y|ies)|posts?|workers?|staff|care)|healthcare (?:workers?|facilit(?:y|ies)|staff|centres?)|medical (?:staff|workers?|facilit(?:y|ies)|centres?|personnel|supplies)|ambulances?|maternity|nurses?|midwives?|doctors?)\b/i;
+const SCHOOL = /\b(schools?|classrooms?|universit(?:y|ies)|teachers?|pupils?|students?)\b/i;
+const UTILITY = /\b(water (?:points?|pumps?|stations?|supply|systems?|facilit(?:y|ies)|treatment|plants?|sources?)|boreholes?|power (?:stations?|plants?|lines?|grid|supply|infrastructure)|electricity|substations?|solar (?:plants?|panels?|farms?)|transmission (?:lines?|towers?)|telecoms?|mobile (?:towers?|networks?)|telecom masts?)\b/i;
+
 const DISPLACED_N = /(\d{1,3}(?:[ ,]\d{3})+|\d{4,7})\s+(?:\w+\s+){0,4}?(?:displaced|fled|uprooted)/i;
 
 const NUM = "(\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozens?|hundreds?)";
@@ -143,6 +182,8 @@ export function displacedStated(text: string): number | null {
   return Number.isFinite(n) && n > 0 && n < 10_000_000 ? n : null;
 }
 
+const SS_DEATH_CATEGORIES = ["armed_clash", "civilian_harm", "abduction", "aid_worker_abducted", "aid_worker_killed", "health_attack", "school_attack", "utility_attack"];
+
 export function codeSouthSudan(title: string, summary: string, domain: string): Coding | null {
   const text = `${title}. ${summary}`.replace(/\s+/g, " ");
   const stateCode = findState(title, summary);
@@ -151,8 +192,17 @@ export function codeSouthSudan(title: string, summary: string, domain: string): 
 
   let category: string | null = null;
   if (!explainer) {
+    const humanitarian = HUMAN_WORDS.test(text) || HUMAN_ACRO.test(text);
     if (SEXUAL.test(text)) category = "sexual_violence";
+    else if (humanitarian && ABDUCT.test(text)) category = "aid_worker_abducted";
+    else if (humanitarian && KILLED.test(text)) category = "aid_worker_killed";
+    else if (humanitarian && INJURED.test(text)) category = "aid_worker_injured";
+    else if (AID_SITE.test(text) && LOOT.test(text)) category = "aid_looted";
+    else if ((humanitarian && (DETAIN.test(text) || ACCESS_DENY.test(text))) || (AID_SITE.test(text) && ACCESS_DENY.test(text))) category = "aid_obstruction";
     else if (ABDUCT.test(text)) category = "abduction";
+    else if (HEALTH.test(text) && ATTACK.test(text)) category = "health_attack";
+    else if (SCHOOL.test(text) && ATTACK.test(text)) category = "school_attack";
+    else if (UTILITY.test(text) && ATTACK.test(text)) category = "utility_attack";
     else if (CEASEFIRE.test(text) && BREACH.test(text)) category = "ceasefire_violation";
     else if (AGREEMENT.test(text) && AGREEMENT_FAIL.test(text)) category = "agreement_breach";
     else if (DETAIN.test(text) && POLITICAL.test(text)) category = "political_detention";
@@ -166,7 +216,7 @@ export function codeSouthSudan(title: string, summary: string, domain: string): 
     if (!ELECTION.test(text) && southSudanLeadKind(title, summary) === null) return null;
     return { category: "coverage", severity: 1, fatalities: null, countyCode: stateCode };
   }
-  const deaths = ["armed_clash", "civilian_harm", "abduction"].includes(category) ? southSudanDeaths(text) : null;
+  const deaths = SS_DEATH_CATEGORIES.includes(category) ? southSudanDeaths(text) : null;
   const displaced = category === "displacement" ? displacedStated(text) : null;
   let severity: 1 | 2 | 3 = 1;
   if (deaths || (displaced && displaced >= 10_000)) severity = 3;
@@ -196,6 +246,6 @@ export const SS_WATCH: Watch = {
   leadKind: southSudanLeadKind,
   leadKinds: ["decree", "calendar", "benchmark", "court"],
   contentKinds: ["office", "benchmark", "milestone", "candidate"],
-  deathCategories: ["armed_clash", "civilian_harm", "abduction"],
+  deathCategories: SS_DEATH_CATEGORIES,
   places: SS_NAMES,
 };

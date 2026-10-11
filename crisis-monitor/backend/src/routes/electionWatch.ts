@@ -217,6 +217,28 @@ export function watchRouter(W: Watch) {
     return c.json({ ok: true });
   });
 
+  // Re-codes reports the rules placed, which no analyst has checked, under the current rules. Verified and rejected reports are never touched.
+  r.post("/recode", async (c) => {
+    const denied = adminOnly(c);
+    if (denied) return denied;
+    const days = Math.min(365, Math.max(1, Number((await c.req.json().catch(() => ({}))).days) || 180));
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+    await ensureElectionWatchTables(c.env, W);
+    const rows = await all<{ id: string; title: string; summary: string | null; domain: string | null; category: string }>(
+      c.env.DB,
+      `SELECT id, title, summary, domain, category FROM ${W.t.items} WHERE published_at >= ? AND method = 'rules' AND status = 'auto'`,
+      [since],
+    );
+    let changed = 0;
+    for (const row of rows) {
+      const coded = W.code(row.title, row.summary ?? "", row.domain ?? "");
+      if (!coded || coded.category === row.category) continue;
+      await run(c.env.DB, `UPDATE ${W.t.items} SET category = ?, severity = ?, fatalities = ? WHERE id = ?`, [coded.category, coded.severity, coded.fatalities, row.id]);
+      changed++;
+    }
+    return c.json({ checked: rows.length, changed });
+  });
+
   r.post("/collect", async (c) => {
     const denied = adminOnly(c);
     if (denied) return denied;

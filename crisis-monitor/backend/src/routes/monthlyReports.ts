@@ -44,6 +44,7 @@ const SaveBody = z.object({
         title: z.string().min(1).max(200),
         body: z.string().max(20_000).optional(),
         carried: z.boolean().optional(),
+        hidden: z.boolean().optional(),
         style: z
           .object({ font: z.enum(FONTS).optional(), size: z.enum(SIZES).optional(), align: z.enum(ALIGNS).optional() })
           .optional(),
@@ -83,6 +84,8 @@ export function reportRouter(W: Watch) {
     const canEdit = isAdmin(c.get("role"));
     // Viewers see only published reports; drafts are for the analysts.
     if (report && report.status !== "published" && !canEdit) return c.json({ report: null, title: monthName(period) });
+    // Sections the analysts have hidden are left out for readers.
+    if (report && !canEdit) report.sections = report.sections.filter((s) => !s.hidden);
     return c.json({ report, title: monthName(period), can_edit: canEdit });
   });
 

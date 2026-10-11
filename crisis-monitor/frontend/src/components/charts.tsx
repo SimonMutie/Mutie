@@ -477,28 +477,32 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
     return out;
   }, [events, t0, t1]);
   const active = events.find((e) => e.id === (hi ?? picked)) ?? null;
-  const cardTop = (side: 0 | 1, L: number) => (side === 0 ? TL.axis - TL.band - L * TL.gap - TL.card : TL.axis + 70 + L * TL.gap);
+  // With no key events there are no cards, so the axis sits high and the stage is short.
+  const compact = slots.size === 0;
+  const axisY = compact ? 62 : TL.axis;
+  const stageH = compact ? axisY + 84 : TL.stage;
+  const cardTop = (side: 0 | 1, L: number) => (side === 0 ? axisY - TL.band - L * TL.gap - TL.card : axisY + 70 + L * TL.gap);
   return (
     <div ref={ref} className={`vzt ${seen ? "is-in" : ""}`} role="group" aria-label={label}>
       <div className="vzt__scroll">
-        <div className="vzt__stage" style={{ height: TL.stage }}>
+        <div className="vzt__stage" style={{ height: stageH }}>
           {today && (
-            <div className="vzt__today" style={{ left: `${at(today)}%` }}>
+            <div className={`vzt__today ${at(today) > 84 ? "is-end" : ""}`} style={{ left: `${at(today)}%` }}>
               <span>Today</span>
             </div>
           )}
-          <div className="vzt__axis" style={{ top: TL.axis }} />
+          <div className="vzt__axis" style={{ top: axisY }} />
           {phases.map((p, i) => (
             <div
               key={p.label}
               className="vzt__phase"
-              style={{ top: TL.axis + TL.band, left: `${at(p.from)}%`, width: `${at(p.to) - at(p.from)}%`, background: p.tone ?? "var(--info)", transitionDelay: `${250 + i * 140}ms` }}
+              style={{ top: axisY + TL.band, left: `${at(p.from)}%`, width: `${at(p.to) - at(p.from)}%`, background: p.tone ?? "var(--info)", transitionDelay: `${250 + i * 140}ms` }}
             >
               <span>{p.label}</span>
             </div>
           ))}
           {ticks.map((t) => (
-            <span key={t.label + t.p} className={`vzt__tick ${t.year ? "is-year" : ""}`} style={{ left: `${t.p}%`, top: TL.axis + TL.band + 30 }}>
+            <span key={t.label + t.p} className={`vzt__tick ${t.year ? "is-year" : ""}`} style={{ left: `${t.p}%`, top: axisY + TL.band + 30 }}>
               {t.label}
             </span>
           ))}
@@ -516,8 +520,8 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
                       className={`vzt__stem ${slot.side === 0 ? "is-up" : "is-down"}`}
                       style={{
                         left: `${x}%`,
-                        top: slot.side === 0 ? cardTop(0, slot.level) + TL.card : TL.axis,
-                        height: slot.side === 0 ? TL.axis - (cardTop(0, slot.level) + TL.card) : cardTop(1, slot.level) - TL.axis,
+                        top: slot.side === 0 ? cardTop(0, slot.level) + TL.card : axisY,
+                        height: slot.side === 0 ? axisY - (cardTop(0, slot.level) + TL.card) : cardTop(1, slot.level) - axisY,
                         background: color,
                         transitionDelay: delay,
                       }}
@@ -540,7 +544,7 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
                 <button
                   type="button"
                   className={`vzt__dot ${e.key ? "is-key" : ""} ${on ? "is-on" : ""}`}
-                  style={{ left: `${x}%`, top: TL.axis, background: color, transitionDelay: delay }}
+                  style={{ left: `${x}%`, top: axisY, background: color, transitionDelay: delay }}
                   onMouseEnter={() => setHi(e.id)}
                   onMouseLeave={() => setHi(null)}
                   onFocus={() => setHi(e.id)}

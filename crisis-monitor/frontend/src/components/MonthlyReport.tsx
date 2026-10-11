@@ -75,6 +75,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
   const [mode, setMode] = useState<"live" | "month">("live");
   const [replay, setReplay] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState<Record<string, string>>({});
+  const [localHidden, setLocalHidden] = useState<Set<string>>(() => new Set());
   const [gifJob, setGifJob] = useState<{ sid: string; key: number } | null>(null);
   const picked = useRef(false);
 
@@ -239,12 +240,15 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
   const pages: { id: string; kind: string; section?: RptSection; index?: number }[] = [{ id: "cover", kind: "cover" }];
   if (mode === "live") pages.push({ id: "live", kind: "live" });
   sectionsShown.forEach((s, i) => {
+    // Readers' view: sections hidden by an analyst, or by this reader, are left out. Analysts see the first, marked.
+    if (!editing && ((s.hidden && !isAdmin) || localHidden.has(s.id))) return;
     if (s.kind === "narrative") {
       if (!editing && !(s.body ?? "").trim()) return;
       pages.push({ id: s.id, kind: "narrative", section: s, index: i });
     } else if (mode === "month") pages.push({ id: s.id, kind: s.kind, section: s, index: i });
   });
   const total = pages.length;
+  const toggleable = sectionsShown.filter((s) => s.kind !== "narrative" || editing || (s.body ?? "").trim());
 
   const pageDisplay = (s: RptSection | undefined): CSSProperties => {
     const st = resolveStyle(s?.style);
@@ -447,14 +451,44 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
         </div>
       )}
 
+      {/* ── show and hide sections ───────────────────────── */}
+      {!editing && toggleable.length > 1 && (
+        <div className="rpt-toggles rpt-noprint" role="group" aria-label="Show or hide sections">
+          <span className="rpt-toggles__lab">Sections</span>
+          {toggleable.map((s) => {
+            const on = !localHidden.has(s.id) && !(s.hidden && !isAdmin);
+            return (
+              <button
+                key={s.id}
+                type="button"
+                className={`rpt-toggle ${s.hidden ? "is-hidden" : ""}`}
+                aria-pressed={on}
+                disabled={Boolean(s.hidden && !isAdmin)}
+                onClick={() =>
+                  setLocalHidden((h) => {
+                    const next = new Set(h);
+                    if (next.has(s.id)) next.delete(s.id);
+                    else next.add(s.id);
+                    return next;
+                  })
+                }
+              >
+                <span aria-hidden="true">{on ? "●" : "○"}</span> {s.title}
+                {s.hidden && <small>{isAdmin ? "hidden from readers" : "hidden"}</small>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* ── the pages ─────────────────────────────────────── */}
-      <article className="rpt-doc" aria-label={`Monthly report, ${monthLabel(period)}`}>
+      <article className="rpt-doc" data-country={country} aria-label={`Monthly report, ${monthLabel(period)}`}>
         {pages.map((pg, n) => {
           const s = pg.section;
           const sid = pg.id;
           const pageNo = n + 1;
-          const dl = pg.kind !== "live";
-          const page = buildPage(pg, s);
+          const dl = true;
+          const page = buildPage(pg, s) ?? exportPageFor(undefined, "live", "live", `${cfg.heading}, live`, []);
           const replayKey = `${sid}-${replay[sid] ?? 0}`;
           return (
             <Page
@@ -467,10 +501,13 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
               footerLeft={footerLeft}
               title={pg.kind === "cover" ? title || `${monthLabel(period)} · ${cfg.heading}` : s?.title ?? ""}
               busy={busy[sid]}
+              formats={pg.kind === "live" ? ["pdf", "gif"] : undefined}
+              hiddenNote={Boolean(s?.hidden)}
               onDownload={dl ? (fmt) => download(sid, fmt, page) : undefined}
               editor={editing && s && pg.index !== undefined ? (
                 <PageEditor
                   s={s}
+                  onToggleShown={() => patch(pg.index!, { hidden: !s.hidden })}
                   index={pg.index}
                   count={draft.length}
                   onPatch={(p) => patch(pg.index!, p)}
@@ -606,6 +643,8 @@ function Page({
   title,
   busy,
   onDownload,
+  formats,
+  hiddenNote,
   editor,
   isCover,
   children,
@@ -619,18 +658,21 @@ function Page({
   title: string;
   busy?: string;
   onDownload?: (fmt: Fmt) => void;
+  formats?: Fmt[];
+  hiddenNote?: boolean;
   editor?: ReactNode;
   isCover: boolean;
   children: ReactNode;
 }) {
   return (
-    <section className={`rpt-page ${isCover ? "rpt-page--cover" : ""}`} data-sid={id} style={style} aria-label={title || kicker}>
+    <section className={`rpt-page ${isCover ? "rpt-page--cover" : ""} ${hiddenNote ? "is-hidden" : ""}`} data-sid={id} style={style} aria-label={title || kicker}>
       <header className="rpt-page__band">
         <span className="rpt-page__mark"><Logo standalone size={28} /></span>
         <span className="rpt-page__brand">Afrilens · The Lens</span>
         <span className="rpt-page__kicker">{kicker}</span>
-        {onDownload && <PageDownload busy={busy} onPick={onDownload} />}
+        {onDownload && <PageDownload busy={busy} onPick={onDownload} formats={formats} />}
       </header>
+      {hiddenNote && <p className="rpt-page__hidden rpt-noprint">Hidden from readers. Only analysts can see this page.</p>}
       {editor}
       <div className="rpt-page__body">
         {!isCover && title && <h3 className="rpt-h rpt-page__title">{title}</h3>}
@@ -645,7 +687,7 @@ function Page({
   );
 }
 
-function PageDownload({ busy, onPick }: { busy?: string; onPick: (fmt: Fmt) => void }) {
+function PageDownload({ busy, onPick, formats }: { busy?: string; onPick: (fmt: Fmt) => void; formats?: Fmt[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -666,7 +708,7 @@ function PageDownload({ busy, onPick }: { busy?: string; onPick: (fmt: Fmt) => v
       </button>
       {open && (
         <div role="menu" className="rpt-dl__menu">
-          {FORMATS.map((f) => (
+          {FORMATS.filter((f) => !formats || formats.includes(f.fmt)).map((f) => (
             <button
               key={f.fmt}
               role="menuitem"
@@ -695,8 +737,10 @@ function PageEditor({
   onStyle,
   onMove,
   onRemove,
+  onToggleShown,
 }: {
   s: RptSection;
+  onToggleShown: () => void;
   index: number;
   count: number;
   onPatch: (p: Partial<RptSection>) => void;
@@ -717,6 +761,10 @@ function PageEditor({
       <div className="rpt-pe__row">
         <input className="rpt-edit-title" value={s.title} onChange={(e) => onPatch({ title: e.target.value })} aria-label="Section title" />
         <span className="rpt-edit-kind">{s.kind === "narrative" ? "Written" : `Live: ${s.kind}`}</span>
+        <label className="rpt-switch">
+          <input type="checkbox" checked={!s.hidden} onChange={onToggleShown} />
+          <span>Show to readers</span>
+        </label>
         <button type="button" className="rpt-btn" onClick={() => onMove(-1)} disabled={index === 0} aria-label="Move up">↑</button>
         <button type="button" className="rpt-btn" onClick={() => onMove(1)} disabled={index === count - 1} aria-label="Move down">↓</button>
         <button type="button" className="rpt-btn" onClick={onRemove} aria-label="Remove section">Remove</button>

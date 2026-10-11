@@ -114,4 +114,17 @@ describe("report lifecycle", () => {
     const badStyle = await call(admin, "/2026-09", "PUT", { title: "t", sections: [{ ...sections[0], style: { font: "comic" } }] });
     expect(badStyle.status).toBe(400);
   });
+  it("hides sections from readers but not from analysts", async () => {
+    const sections = [
+      { id: "summary", kind: "narrative", title: "Summary", body: "Visible." },
+      { id: "secret", kind: "narrative", title: "Draft note", body: "Hidden from readers.", hidden: true },
+    ];
+    expect((await call(admin, "/2026-09", "PUT", { title: "t", sections })).status).toBe(200);
+    // The report is a draft, so a reader can't see it; publish it to test readers' view.
+    expect((await call(admin, "/2026-09/publish", "POST")).status).toBe(200);
+    const reader = (await (await call(shared, "/2026-09")).json()) as { report: { sections: { id: string }[] } };
+    expect(reader.report.sections.map((s) => s.id)).toEqual(["summary"]);
+    const analyst = (await (await call(admin, "/2026-09")).json()) as { report: { sections: { id: string; hidden?: boolean }[] } };
+    expect(analyst.report.sections.map((s) => s.id)).toEqual(["summary", "secret"]);
+  });
 });

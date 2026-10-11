@@ -36,6 +36,8 @@ export interface ReportSection {
   /** True when the text was carried over from the previous month and not yet reviewed. */
   carried?: boolean;
   style?: SectionStyle;
+  /** Left out of the report for readers. Admins still see it, marked. */
+  hidden?: boolean;
 }
 
 export interface PeriodRow {

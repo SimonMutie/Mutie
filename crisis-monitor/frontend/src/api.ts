@@ -2148,6 +2148,7 @@ export interface RptSection {
   kind: "narrative" | "figures" | "map" | "trend" | "categories";
   title: string;
   style?: RptStyle;
+  hidden?: boolean;
   body?: string;
   carried?: boolean;
 }
