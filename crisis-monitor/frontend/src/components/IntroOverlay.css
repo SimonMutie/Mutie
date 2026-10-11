@@ -82,29 +82,20 @@
 }
 
 /* ── the words ── */
-.intro__words h1 {
-  margin: 0;
+/* One passage of prose, set large enough to carry the screen on its own. */
+.intro__words p {
+  margin: 0 auto;
+  max-width: min(30em, 100%);
   font-family: var(--font-display);
-  font-size: clamp(30px, 5.2vmin, 54px);
-  font-weight: 700;
-  line-height: 1.08;
-  letter-spacing: -0.015em;
+  font-size: clamp(18px, 3vmin, 27px);
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: -0.005em;
+  color: #eef3f8;
+  text-wrap: pretty;
   opacity: 0;
   transform: translateY(10px);
   animation: intro-rise 0.6s ease-out 0.75s forwards;
-}
-.intro__words h1 span {
-  color: var(--intro-teal);
-}
-.intro__words p {
-  margin: 14px auto 0;
-  max-width: min(34em, 100%);
-  font-size: clamp(15px, 2.1vmin, 19px);
-  line-height: 1.55;
-  color: #a9b8ca;
-  opacity: 0;
-  transform: translateY(10px);
-  animation: intro-rise 0.6s ease-out 1.05s forwards;
 }
 
 /* ── leaving: through the pupil ── */
@@ -245,7 +236,6 @@
   .intro__ball,
   .intro__iris,
   .intro__pupil,
-  .intro__words h1,
   .intro__words p,
   .intro__controls {
     animation: none;

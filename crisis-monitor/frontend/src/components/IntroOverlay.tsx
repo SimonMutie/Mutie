@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
-import { REPLAY_EVENT, WELCOME_HEADING, WELCOME_LINE, introAlreadyShown, introAppliesHere, introSoundEnabled, markIntroShown, playOpeningTone, preloadWelcome, setIntroSoundEnabled, speakWelcome, stopWelcome } from "../intro";
+import { REPLAY_EVENT, WELCOME_HEADING, WELCOME_MESSAGE, introAlreadyShown, introAppliesHere, introSoundEnabled, markIntroShown, playOpeningTone, preloadWelcome, setIntroSoundEnabled, speakWelcome, stopWelcome } from "../intro";
 import RealisticEye from "./RealisticEye";
 import "./IntroOverlay.css";
 
@@ -16,7 +16,7 @@ import "./IntroOverlay.css";
 
 type Phase = "playing" | "leaving" | "skipped" | "gone";
 
-// The welcome is 24 words and is fully on screen about 1.7 s in. The zoom
+// The welcome is 24 words and is fully on screen about 1.4 s in. The zoom
 // waits long enough after that for it to be read at an unhurried pace
 // (roughly five seconds); anyone who has seen it can click to skip.
 const HOLD_MS = 6500;
@@ -149,10 +149,7 @@ export default function IntroOverlay() {
           <RealisticEye id="intro-eye" />
         </div>
         <div className="intro__words">
-          <h1>
-            Welcome to The <span>Lens</span>
-          </h1>
-          <p>{WELCOME_LINE}</p>
+          <p>{WELCOME_MESSAGE}</p>
         </div>
       </div>
       <div className="intro__controls">
