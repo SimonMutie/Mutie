@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, setToken, type AuthUser, type EscalationPipelineStatus } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
-import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled } from "../intro";
+import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled, introVoiceEnabled, setIntroVoiceEnabled } from "../intro";
 
 interface Props {
   onBack: () => void;
@@ -103,6 +103,7 @@ function CreditsCard() {
 /** The opening sequence's sound, per browser, and a way to see it again. */
 function OpeningSequenceCard() {
   const [sound, setSound] = useState(introSoundEnabled);
+  const [voice, setVoice] = useState(introVoiceEnabled);
   return (
     <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 380 }}>
       <div style={{ fontSize: 13.5, fontWeight: 600 }}>Opening sequence</div>
@@ -117,6 +118,18 @@ function OpeningSequenceCard() {
           }}
         />
         Play the opening tone on this browser
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginTop: 8, opacity: sound ? 1 : 0.5 }}>
+        <input
+          type="checkbox"
+          checked={voice}
+          disabled={!sound}
+          onChange={(e) => {
+            setVoice(e.target.checked);
+            setIntroVoiceEnabled(e.target.checked);
+          }}
+        />
+        Spoken welcome (British English, female voice)
       </label>
       <button type="button" onClick={() => window.dispatchEvent(new Event(REPLAY_EVENT))} style={{ ...backBtnStyle, marginTop: 12 }}>
         Play it now

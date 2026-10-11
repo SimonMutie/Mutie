@@ -1,12 +1,12 @@
 /**
  * The opening sequence's sound: a spoken welcome and a soft tone.
  *
- * The welcome is a recording — a British male voice, generated once with
- * the open-source Kokoro speech model and shipped with the site
- * (public/audio/welcome.mp3; see THIRD_PARTY_NOTICES.md). Because it is a
- * file, it sounds the same on every device and uses no service at run
- * time. If the file cannot be played, the visitor's browser reads the line
- * aloud itself, with the nearest British male voice the device has.
+ * The welcome is a recording — a female British English voice, generated
+ * once with the open-source Kokoro speech model (voice "bf_emma") and shipped
+ * with the site (public/audio/welcome-female.mp3). Because it is a file, it
+ * sounds the same on every device and uses no service at run time. If the
+ * file cannot be played, the visitor's browser reads the line aloud itself,
+ * with the nearest British female voice the device has.
  *
  * The tone is made on the spot by the browser's audio engine.
  *
@@ -19,9 +19,10 @@
 
 export const WELCOME_HEADING = "Welcome to The Lens";
 export const WELCOME_LINE = "We help you turn signals into insights and foresight, for risk anticipation and strategic decision-making.";
-const WELCOME_SPOKEN = "Welcome to The Lens, where we help you turn signals into insights and foresight, for risk anticipation and strategic decision making.";
+const WELCOME_SPOKEN = "Welcome to The Lens, your number one platform for crisis monitoring and risk anticipation. We help you turn signals into insights and foresight, for strategic decision-making.";
 
 const SOUND_KEY = "lens.intro.sound";
+const VOICE_KEY = "lens.intro.voice";
 const SHOWN_KEY = "lens.intro.shown";
 export const REPLAY_EVENT = "lens:replay-intro";
 
@@ -48,6 +49,15 @@ export function setIntroSoundEnabled(on: boolean): void {
   if (!on) stopWelcome();
 }
 
+/** The spoken welcome. On by default; it also needs the opening sound on. */
+export function introVoiceEnabled(): boolean {
+  return read(localStorage, VOICE_KEY) !== "off";
+}
+export function setIntroVoiceEnabled(on: boolean): void {
+  write(localStorage, VOICE_KEY, on ? "on" : "off");
+  if (!on) stopWelcome();
+}
+
 /** Once per browser tab: opening the site plays it, moving around inside
  *  the site or reloading the same tab does not. */
 export function introAlreadyShown(): boolean {
@@ -71,11 +81,7 @@ export function introAppliesHere(): boolean {
 
 /* ── voice ─────────────────────────────────────────────────────────── */
 
-const WELCOME_AUDIO_URL = "/audio/welcome.mp3";
-/** The spoken welcome is switched off for now, at Mutua's request (the
- *  opening plays with its tone only). The recording and everything below
- *  are kept, so setting this to true brings the voice back as it was. */
-const VOICE_ENABLED = false;
+const WELCOME_AUDIO_URL = "/audio/welcome-female.mp3";
 
 let welcomePending = false;
 let welcomeSpoken = false;
@@ -92,15 +98,18 @@ function getWelcomeAudio(): HTMLAudioElement {
 
 /** Starts fetching the recording, so it is ready by the time it is due. */
 export function preloadWelcome(): void {
-  if (VOICE_ENABLED && introSoundEnabled()) getWelcomeAudio().load();
+  if (welcomeAllowed()) getWelcomeAudio().load();
 }
 
 export type SpeakResult = "spoken" | "blocked" | "off";
 
+/** The welcome plays only when the opening sound and the spoken welcome are both on. */
+const welcomeAllowed = () => introSoundEnabled() && introVoiceEnabled();
+
 /** Plays the welcome. "blocked" means the browser refused because the
  *  visitor has not interacted with the page yet (it is then pending). */
 export async function speakWelcome(): Promise<SpeakResult> {
-  if (!VOICE_ENABLED || !introSoundEnabled()) return "off";
+  if (!welcomeAllowed()) return "off";
   const settle = (result: SpeakResult): SpeakResult => {
     welcomePending = result === "blocked";
     if (result === "spoken") welcomeSpoken = true;
@@ -120,16 +129,16 @@ export async function speakWelcome(): Promise<SpeakResult> {
   }
 }
 
-/** Fallback only: the device's own text-to-speech. A British male voice is
+/** Fallback only: the device's own text-to-speech. A British female voice is
  *  preferred, then any British voice, then any English one. */
 function pickVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
   const english = voices.filter((v) => /^en([-_]|$)/i.test(v.lang));
   if (english.length === 0) return null;
   const score = (v: SpeechSynthesisVoice) =>
     (/^en[-_]GB/i.test(v.lang) ? 8 : 0) +
-    (/\bmale\b|ryan|thomas|george|daniel|arthur|oliver|alfie|elliot|noah/i.test(v.name) && !/female/i.test(v.name) ? 6 : 0) +
+    (/female|sonia|libby|maisie|kate|serena|hazel|susan/i.test(v.name) ? 6 : 0) +
     (/natural|neural/i.test(v.name) ? 3 : 0) +
-    (/female|sonia|libby|maisie|kate|serena|hazel|susan/i.test(v.name) ? -4 : 0);
+    (/\bmale\b|ryan|thomas|george|daniel|arthur|oliver|alfie|elliot|noah/i.test(v.name) && !/female/i.test(v.name) ? -4 : 0);
   return [...english].sort((a, b) => score(b) - score(a))[0];
 }
 
