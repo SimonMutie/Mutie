@@ -51,6 +51,7 @@ import { api } from "../api";
 import { GEO_REGISTRY, findGeoHierarchy, getGeoLevel } from "../registry";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
+import { exportElement } from "../report/elementExport";
 import type { CrosstabRow, Dataset, DatasetColumn, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
 import { detectColumnType } from "./DatasetsPanel";
 
@@ -735,6 +736,24 @@ export default function DashboardWidgetCard({
     }
   }
 
+  /** PDF and PowerPoint: the widget as a picture with its text and table, the same export as a report page. */
+  async function downloadWidgetDocument(fmt: "pdf" | "pptx") {
+    setShowDownloadMenu(false);
+    if (!cardRef.current) return;
+    setDownloadingImage(true);
+    try {
+      await exportElement(cardRef.current, fmt, {
+        fileBase: `${widget.title.replace(/[^a-z0-9]+/gi, "_").toLowerCase() || "widget"}_${new Date().toISOString().slice(0, 10)}`,
+        title: widget.title || "Widget",
+        kicker: "Dashboard widget",
+      });
+    } catch {
+      setGifError("That download did not work. Try again.");
+    } finally {
+      setDownloadingImage(false);
+    }
+  }
+
   const gearRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -831,6 +850,8 @@ export default function DashboardWidgetCard({
                 menuRef={downloadMenuRef}
                 onDownloadPng={downloadWidgetImage}
                 onDownloadGif={downloadWidgetGif}
+                onDownloadPdf={() => void downloadWidgetDocument("pdf")}
+                onDownloadPptx={() => void downloadWidgetDocument("pptx")}
                 downloadingImage={downloadingImage}
                 gifProgress={gifProgress}
                 gifError={gifError}
@@ -850,6 +871,8 @@ export default function DashboardWidgetCard({
                 menuRef={downloadMenuRef}
                 onDownloadPng={downloadWidgetImage}
                 onDownloadGif={downloadWidgetGif}
+                onDownloadPdf={() => void downloadWidgetDocument("pdf")}
+                onDownloadPptx={() => void downloadWidgetDocument("pptx")}
                 downloadingImage={downloadingImage}
                 gifProgress={gifProgress}
                 gifError={gifError}
@@ -4865,6 +4888,8 @@ function DownloadMenu({
   menuRef,
   onDownloadPng,
   onDownloadGif,
+  onDownloadPdf,
+  onDownloadPptx,
   downloadingImage,
   gifProgress,
   gifError,
@@ -4875,6 +4900,8 @@ function DownloadMenu({
   menuRef: React.RefObject<HTMLDivElement>;
   onDownloadPng: () => void;
   onDownloadGif: () => void;
+  onDownloadPdf: () => void;
+  onDownloadPptx: () => void;
   downloadingImage: boolean;
   gifProgress: { phase: "capturing" | "encoding"; current: number; total: number } | null;
   gifError: string | null;
@@ -4905,6 +4932,12 @@ function DownloadMenu({
           </button>
           <button onClick={onDownloadGif} style={downloadMenuItemStyle}>
             Download as GIF (animated)
+          </button>
+          <button onClick={onDownloadPdf} style={downloadMenuItemStyle}>
+            Download as PDF
+          </button>
+          <button onClick={onDownloadPptx} style={downloadMenuItemStyle}>
+            Download as PowerPoint (animated)
           </button>
           {gifProgress && (
             <div style={{ fontSize: 10, color: "var(--text-faint)", padding: "5px 10px" }}>

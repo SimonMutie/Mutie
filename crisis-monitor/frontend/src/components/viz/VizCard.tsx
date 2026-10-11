@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../../exportGuard";
+import { exportElement } from "../../report/elementExport";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardWidget } from "../../api";
 import { useOwnSelection, useViz } from "./context";
@@ -101,12 +102,14 @@ export default function VizCard({ widget, editable, onEdit, onRemove, onRename, 
     return tidy([flat.columns, ...flat.rows]);
   };
 
-  async function download(format: "csv" | "xlsx" | "png") {
+  async function download(format: "csv" | "xlsx" | "png" | "pdf" | "pptx") {
     if (!exportAllowed()) return;
     setBusy(true);
     setFailed(null);
     try {
-      if (format === "png") {
+      if (format === "pdf" || format === "pptx") {
+        await exportElement(card.current!, format, { fileBase: name, title: widget.title || "Visual", kicker: "Dashboard visual", theme: "lens" });
+      } else if (format === "png") {
         const html2canvas = (await import("html2canvas")).default;
         const canvas = stampCanvas(await html2canvas(card.current!, { useCORS: true, logging: false, backgroundColor: ctx.theme.surface, scale: 2, onclone: flattenForCapture }));
         await new Promise<void>((done) => canvas.toBlob((blob) => (blob && saveBlob(blob, "image/png", `${name}.png`), done())));
@@ -196,6 +199,12 @@ export default function VizCard({ widget, editable, onEdit, onRemove, onRename, 
                   )}
                   <button type="button" role="menuitem" disabled={busy} onClick={() => download("png")}>
                     {busy ? "Preparing…" : "This visual, as an image"}
+                  </button>
+                  <button type="button" role="menuitem" disabled={busy} onClick={() => download("pdf")}>
+                    This visual, as a PDF
+                  </button>
+                  <button type="button" role="menuitem" disabled={busy} onClick={() => download("pptx")}>
+                    This visual, as PowerPoint (animated)
                   </button>
                   {failed && <div className="vz-menu__note">{failed}</div>}
                 </div>
