@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import { useInView } from "../lib/motion";
 
 /**
@@ -140,6 +140,7 @@ export function Donut({ slices, label, centre, size = 180, fmt = fmtDefault, sel
   const hovered = hi !== null ? slices[hi] : null;
   return (
     <div ref={ref} className="vz-donut" role="group" aria-label={label}>
+      <div className="vz-donut__ring" style={{ width: size, height: size }}>
       <svg viewBox="0 0 180 180" width={size} height={size} className="vz-donut__svg">
         <circle cx="90" cy="90" r={R} className="vz-donut__track" />
         {slices.map((s, i) => {
@@ -179,6 +180,7 @@ export function Donut({ slices, label, centre, size = 180, fmt = fmtDefault, sel
           centre
         )}
       </div>
+      </div>
       <ul className="vz-donut__legend">
         {slices.map((s, i) => (
           <li key={s.label + i} className={`${hi === i ? "is-hi" : hi !== null ? "is-dim" : ""} ${selected && selected === (s.key ?? s.label) ? "is-sel" : ""} ${onPick ? "is-click" : ""}`} onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)} onClick={() => onPick?.(s.key ?? s.label)}>
@@ -186,6 +188,137 @@ export function Donut({ slices, label, centre, size = 180, fmt = fmtDefault, sel
             <span>{s.label}</span>
             <strong>{fmt(s.value)}</strong>
           </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export interface SunGroup {
+  label: string;
+  color: string;
+  children: Datum[];
+}
+
+/** Two rings: families of categories on the inner ring, the categories themselves on the outer. Each arc is a stroked circle, so it draws in and reacts to hover like the donut. */
+export function Sunburst({ groups, label, centre, size = 210, fmt = fmtDefault, selected, onPick }: { groups: SunGroup[]; label: string; centre?: ReactNode; size?: number; fmt?: (n: number) => string; selected?: string | null; onPick?: (key: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const seen = useInView(ref, 0.2);
+  const [hi, setHi] = useState<{ g: number; c: number | null } | null>(null);
+  const sum = (ds: Datum[]) => ds.reduce((a, d) => a + d.value, 0);
+  const total = Math.max(1, sum(groups.flatMap((g) => g.children)));
+  const VB = 252;
+  const RI = 58;
+  const RO = 108;
+  const W = 36;
+  const CI = 2 * Math.PI * RI;
+  const CO = 2 * Math.PI * RO;
+  let acc = 0;
+  const arcs = groups.map((g, gi) => {
+    const gv = sum(g.children);
+    const gStart = acc;
+    acc += gv / total;
+    // Outer arcs are laid out from the same start, so each child sits inside its family.
+    let kStart = gStart;
+    const kids = g.children.map((c, ci) => {
+      const frac = c.value / total;
+      const out = { c, ci, start: kStart, frac };
+      kStart += frac;
+      return out;
+    });
+    return { g, gi, gv, gStart, frac: gv / total, kids };
+  });
+  const hovered = hi === null ? null : hi.c === null ? { label: groups[hi.g].label, value: arcs[hi.g].gv } : { label: groups[hi.g].children[hi.c].label, value: groups[hi.g].children[hi.c].value };
+  const dimmedInner = (gi: number) => (hi !== null && !(hi.g === gi) ? "is-dim" : hi !== null && hi.g === gi ? "is-hi" : "");
+  const dimmedOuter = (gi: number, ci: number) => {
+    if (hi === null) return "";
+    const on = hi.g === gi && (hi.c === null || hi.c === ci);
+    return on ? "is-hi" : "is-dim";
+  };
+  return (
+    <div ref={ref} className="vz-donut vz-sun" role="group" aria-label={label}>
+      <div className="vz-donut__ring" style={{ width: size, height: size }}>
+        <svg viewBox={`0 0 ${VB} ${VB}`} width={size} height={size} className="vz-donut__svg">
+          <circle cx={VB / 2} cy={VB / 2} r={RI} className="vz-sun__track" strokeWidth={W} />
+          <circle cx={VB / 2} cy={VB / 2} r={RO} className="vz-sun__track" strokeWidth={W} />
+          {arcs.map((a) => (
+            <circle
+              key={`g-${a.g.label}`}
+              cx={VB / 2}
+              cy={VB / 2}
+              r={RI}
+              strokeWidth={W}
+              className={`vz-sun__seg ${dimmedInner(a.gi)}`}
+              stroke={a.g.color}
+              strokeDasharray={seen && a.frac > 0 ? `${Math.max(0, a.frac * CI - 1.5)} ${CI}` : `0 ${CI}`}
+              strokeDashoffset={-a.gStart * CI}
+              style={{ transitionDelay: `${a.gi * 120}ms` }}
+              onMouseEnter={() => setHi({ g: a.gi, c: null })}
+              onMouseLeave={() => setHi(null)}
+              tabIndex={0}
+              onFocus={() => setHi({ g: a.gi, c: null })}
+              onBlur={() => setHi(null)}
+              aria-label={`${a.g.label}: ${fmt(a.gv)}`}
+            />
+          ))}
+          {arcs.flatMap((a) =>
+            a.kids.map((k) => (
+              <circle
+                key={`k-${a.g.label}-${k.c.key ?? k.c.label}`}
+                cx={VB / 2}
+                cy={VB / 2}
+                r={RO}
+                strokeWidth={W}
+                className={`vz-sun__seg ${dimmedOuter(a.gi, k.ci)} ${selected && selected === (k.c.key ?? k.c.label) ? "is-sel" : ""} ${onPick ? "is-click" : ""}`}
+                stroke={k.c.color ?? "var(--info)"}
+                strokeDasharray={seen && k.frac > 0 ? `${Math.max(0, k.frac * CO - 1.5)} ${CO}` : `0 ${CO}`}
+                strokeDashoffset={-k.start * CO}
+                style={{ transitionDelay: `${240 + k.ci * 70}ms` }}
+                onMouseEnter={() => setHi({ g: a.gi, c: k.ci })}
+                onMouseLeave={() => setHi(null)}
+                onFocus={() => setHi({ g: a.gi, c: k.ci })}
+                onBlur={() => setHi(null)}
+                onClick={() => onPick?.(k.c.key ?? k.c.label)}
+                tabIndex={0}
+                aria-label={`${k.c.label}: ${fmt(k.c.value)}`}
+              />
+            )),
+          )}
+        </svg>
+        <div className="vz-donut__centre">
+          {hovered ? (
+            <>
+              <strong>{fmt(hovered.value)}</strong>
+              <span>{hovered.label}</span>
+              <small>{Math.round((hovered.value / total) * 100)}%</small>
+            </>
+          ) : (
+            centre
+          )}
+        </div>
+      </div>
+      <ul className="vz-donut__legend vz-sun__legend">
+        {arcs.map((a) => (
+          <Fragment key={a.g.label}>
+            <li className={`vz-sun__group ${hi !== null && hi.g === a.gi && hi.c === null ? "is-hi" : hi !== null && hi.g !== a.gi ? "is-dim" : ""}`} onMouseEnter={() => setHi({ g: a.gi, c: null })} onMouseLeave={() => setHi(null)}>
+              <i style={{ background: a.g.color }} />
+              <span>{a.g.label}</span>
+              <strong>{fmt(a.gv)}</strong>
+            </li>
+            {a.kids.map((k) => (
+              <li
+                key={k.c.key ?? k.c.label}
+                className={`vz-sun__kid ${dimmedOuter(a.gi, k.ci) === "is-hi" ? "is-hi" : dimmedOuter(a.gi, k.ci) === "is-dim" ? "is-dim" : ""} ${selected && selected === (k.c.key ?? k.c.label) ? "is-sel" : ""} ${onPick ? "is-click" : ""}`}
+                onMouseEnter={() => setHi({ g: a.gi, c: k.ci })}
+                onMouseLeave={() => setHi(null)}
+                onClick={() => onPick?.(k.c.key ?? k.c.label)}
+              >
+                <i style={{ background: k.c.color ?? "var(--info)" }} />
+                <span>{k.c.label}</span>
+                <strong>{fmt(k.c.value)}</strong>
+              </li>
+            ))}
+          </Fragment>
         ))}
       </ul>
     </div>

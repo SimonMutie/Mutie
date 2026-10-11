@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getToken, watchApi, type EwDashboard, type EwItem, type WatchKey } from "../api";
-import { Donut, Spark, StackedColumns } from "./charts";
+import { Donut, Spark, StackedColumns, Sunburst } from "./charts";
 import ElectionMap, { type Metric, type MapUnit } from "./ElectionMap";
 import { KE_WATCH_CONFIG, type WatchConfig } from "../data/watchConfig";
 
@@ -32,6 +32,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
   const CATS = watch.categories;
   const COLORS = watch.colors;
   const [days, setDays] = useState(90);
+  const [ring, setRing] = useState<"sun" | "donut">("sun");
   const [dash, setDash] = useState<EwDashboard | null>(null);
   const [items, setItems] = useState<EwItem[] | null>(null);
   const [cat, setCat] = useState<string>("");
@@ -160,19 +161,45 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         </div>
         <div className="el-card">
           <h3>By type</h3>
-          <Donut
-            label="Events by type"
-            size={170}
-            slices={CATS.filter((k) => k !== "coverage").map((k) => ({ key: k, label: L[k], value: dash?.byCategory[k] ?? 0, color: COLORS[k] }))}
-            selected={cat || null}
-            onPick={(k) => setCat(cat === k ? "" : k)}
-            centre={
-              <>
-                <strong>{dash?.events ?? 0}</strong>
-                <span>events</span>
-              </>
-            }
-          />
+          <div className="el-toggle el-toggle--tight" role="group" aria-label="Chart style">
+            <button type="button" aria-pressed={ring === "sun"} onClick={() => setRing("sun")}>Sunburst</button>
+            <button type="button" aria-pressed={ring === "donut"} onClick={() => setRing("donut")}>Donut</button>
+          </div>
+          {ring === "sun" ? (
+            <Sunburst
+              label="Events by type, grouped into families"
+              size={210}
+              groups={watch.groups
+                .map((g) => ({
+                  label: g.label,
+                  color: COLORS[g.members[0]] ?? "var(--info)",
+                  children: g.members.filter((k) => CATS.includes(k) && k !== "coverage").map((k) => ({ key: k, label: L[k], value: dash?.byCategory[k] ?? 0, color: COLORS[k] })),
+                }))
+                .filter((g) => g.children.length > 0)}
+              selected={cat || null}
+              onPick={(k) => setCat(cat === k ? "" : k)}
+              centre={
+                <>
+                  <strong>{dash?.events ?? 0}</strong>
+                  <span>events</span>
+                </>
+              }
+            />
+          ) : (
+            <Donut
+              label="Events by type"
+              size={170}
+              slices={CATS.filter((k) => k !== "coverage").map((k) => ({ key: k, label: L[k], value: dash?.byCategory[k] ?? 0, color: COLORS[k] }))}
+              selected={cat || null}
+              onPick={(k) => setCat(cat === k ? "" : k)}
+              centre={
+                <>
+                  <strong>{dash?.events ?? 0}</strong>
+                  <span>events</span>
+                </>
+              }
+            />
+          )}
           <p className="el-muted el-small">Click a type to filter the reports below.</p>
         </div>
       </div>

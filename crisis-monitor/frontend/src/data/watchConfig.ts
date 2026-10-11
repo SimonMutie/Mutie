@@ -13,6 +13,8 @@ export interface WatchConfig {
   labels: Record<string, string>;
   help: Record<string, string>;
   colors: Record<string, string>;
+  /** Families of categories, drawn as the inner ring of the sunburst. */
+  groups: { label: string; members: string[] }[];
   /** Every place a report can be filed under (the filter and form lists). */
   places: { code: string; name: string }[];
   /** The units drawn on the map. */
@@ -61,6 +63,11 @@ export const KE_WATCH_CONFIG: WatchConfig = {
     hate_speech: "#c2185b",
     disinformation: "#0d9488",
   },
+  groups: [
+    { label: "Violence", members: ["political_violence", "protest_policing", "abduction"] },
+    { label: "Intimidation and speech", members: ["intimidation", "hate_speech", "disinformation"] },
+    { label: "Election administration", members: ["election_admin"] },
+  ],
   places: COUNTIES.map((c) => ({ code: c.code, name: c.name })),
   mapUnits: COUNTIES.map((c) => ({ code: c.code, name: c.name })),
   geoUrl: "/KEN-counties.json",
@@ -109,6 +116,11 @@ export const SS_WATCH_CONFIG: WatchConfig = {
     agreement_breach: "#c2185b",
     political_detention: "#6b7280",
   },
+  groups: [
+    { label: "Violence against people", members: ["armed_clash", "civilian_harm", "sexual_violence", "abduction"] },
+    { label: "Displacement", members: ["displacement"] },
+    { label: "Agreement and detention", members: ["ceasefire_violation", "agreement_breach", "political_detention"] },
+  ],
   places: PLACES,
   mapUnits: STATES,
   geoUrl: "/SSD-states.geojson",
