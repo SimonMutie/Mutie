@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { reportApi, type RptPeriod, type RptReport, type RptSection, type WatchKey } from "../api";
 import { WATCH_CONFIG } from "../data/watchConfig";
 import ElectionMap from "./ElectionMap";
+import { Donut, HBars, LineArea } from "./charts";
 import { Reveal, useCountUp } from "../lib/motion";
 import "./Election.css";
 
@@ -106,7 +107,6 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
 
   const categories = (cfg.categories as string[]).filter((c) => c !== "coverage");
   const catRows = categories.map((c) => ({ key: c, n: row.byCategory[c] ?? 0 })).sort((a, b) => b.n - a.n);
-  const maxCat = Math.max(1, ...catRows.map((c) => c.n));
 
   const trend = useMemo(() => {
     const idx = months.indexOf(period);
@@ -314,25 +314,36 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
         {/* trend */}
         <section className="rpt-section" aria-labelledby="rpt-trend">
           <h3 id="rpt-trend" className="rpt-h">Twelve months in view</h3>
-          <Trend points={trend} max={trendMax} current={period} />
+          <LineArea
+            label="Events per month over the last twelve months"
+            height={190}
+            current={trend.findIndex((t) => t.p === period)}
+            points={trend.map((t) => ({ label: shortLabel(t.p), value: t.v }))}
+          />
           {trend.length < 3 && <p className="rpt-note">The trend fills in as each month adds to the record.</p>}
         </section>
 
         {/* categories */}
         <section className="rpt-section" aria-labelledby="rpt-cats">
           <h3 id="rpt-cats" className="rpt-h">What kind of events</h3>
-          <div className="rpt-bars">
-            {catRows.map((c) => (
-              <div key={c.key} className="rpt-bar">
-                <span className="rpt-bar__label">{cfg.labels[c.key] ?? c.key}</span>
-                <span className="rpt-bar__track">
-                  <span className="rpt-bar__fill" style={{ width: `${(c.n / maxCat) * 100}%`, background: cfg.colors[c.key] ?? "var(--info)" }} />
-                </span>
-                <span className="rpt-bar__n">{c.n}</span>
-              </div>
-            ))}
-            {catRows.every((c) => c.n === 0) && <p className="rpt-note">No events were placed in this month.</p>}
+          <div className="rpt-two">
+            <Donut
+              label="Share of events by kind"
+              size={170}
+              slices={catRows.filter((c) => c.n > 0).map((c) => ({ key: c.key, label: cfg.labels[c.key] ?? c.key, value: c.n, color: cfg.colors[c.key] ?? "var(--info)" }))}
+              centre={
+                <>
+                  <strong>{row.events}</strong>
+                  <span>events</span>
+                </>
+              }
+            />
+            <HBars
+              label="Events by kind"
+              data={catRows.map((c) => ({ label: cfg.labels[c.key] ?? c.key, value: c.n, color: cfg.colors[c.key] ?? "var(--info)" }))}
+            />
           </div>
+          {catRows.every((c) => c.n === 0) && <p className="rpt-note">No events were placed in this month.</p>}
         </section>
 
         {/* the written report */}
@@ -398,35 +409,6 @@ function Kpi({ n, label, delta, prev }: { n: number; label: string; delta?: numb
         </small>
       )}
     </div>
-  );
-}
-
-function Trend({ points, max, current }: { points: { p: string; v: number }[]; max: number; current: string }) {
-  const W = 640;
-  const H = 170;
-  const pad = 24;
-  const x = (i: number) => pad + (i * (W - pad * 2)) / Math.max(1, points.length - 1);
-  const y = (v: number) => H - pad - (v / max) * (H - pad * 2);
-  const d = points.map((pt, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(pt.v).toFixed(1)}`).join(" ");
-  const cur = points.findIndex((pt) => pt.p === current);
-  const ref = useRef<SVGPathElement>(null);
-  const [drawn, setDrawn] = useState(false);
-  useEffect(() => {
-    const t = setTimeout(() => setDrawn(true), 60);
-    return () => clearTimeout(t);
-  }, []);
-  return (
-    <svg className="rpt-trend" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Events per month over the last twelve months">
-      <line x1={pad} x2={W - pad} y1={H - pad} y2={H - pad} className="rpt-axis" />
-      <path ref={ref} d={d} pathLength={1} className={`rpt-trend__line ${drawn ? "is-drawn" : ""}`} fill="none" />
-      {points.map((pt, i) => (
-        <g key={pt.p}>
-          <circle cx={x(i)} cy={y(pt.v)} r={i === cur ? 6 : 3.5} className={i === cur ? "rpt-trend__dot is-on" : "rpt-trend__dot"} />
-          <text x={x(i)} y={H - 6} textAnchor="middle" className="rpt-trend__lab">{shortLabel(pt.p)}</text>
-          {i === cur && <text x={x(i)} y={y(pt.v) - 12} textAnchor="middle" className="rpt-trend__val">{pt.v}</text>}
-        </g>
-      ))}
-    </svg>
   );
 }
 

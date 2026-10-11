@@ -3,6 +3,7 @@ import { watchApi, type EwItem } from "../api";
 import { AS_OF, BENCH_LABEL, ELECTION_DAY, FUNDING_NEED_USD, SCENARIOS, SOURCES, type BenchStatus, type Benchmark, type Milestone } from "../data/southSudanElection";
 import { SsDataCtx, mergeSsLive, type SsLive } from "../data/southSudanLive";
 import { SS_WATCH_CONFIG } from "../data/watchConfig";
+import { StackBar, Timeline, type TimelineEvent } from "./charts";
 import ElectionSafety from "./ElectionSafety";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
@@ -100,7 +101,11 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
             <MonthlyReport country="ss" isAdmin={isAdmin} />
           </Section>
           <Section id="calendar" kicker="Calendar" title="The road to 22 December 2026" intro={<p>Dates come from NEC, the agreement and UN and RJMEC reporting. Dates that the sources do not give exactly are marked “c.”.</p>}>
-            <CalendarList />
+            <CalendarVisual />
+            <details className="ss-more">
+              <summary>Read the calendar as a list</summary>
+              <CalendarList />
+            </details>
           </Section>
 
           <Section id="government" kicker="Musical chairs" title="Who holds which post" intro={<p>Every change in the record since February 2025, on one timeline, up to the 22 September 2026 order that dissolved the transitional government. Decrees are read on state broadcaster SSBC, and the record shows only what the reports say.</p>}>
@@ -114,12 +119,13 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
           </Section>
 
           <Section id="agreement" kicker="Revitalised Agreement" title="How far the agreement is implemented" intro={<p>Each benchmark shows its latest status, the date of the finding, and the source. Where no source in our material reports on an area, it says so rather than guessing. Statuses are as reported, not Afrilens judgements, except where marked.</p>}>
+            <BenchmarkSummary live={live} />
             <BenchmarkGrid live={live} />
-            <Violations />
           </Section>
 
           <Section id="conflict" kicker="Live monitoring" title="Conflict dashboard" intro={<p>Fighting, attacks on civilians, sexual violence, abductions, displacement, ceasefire and agreement breaches, and political detention, collected from the platform’s feeds every 15 minutes and coded by state. Counts are of events, not articles, and they undercount: they measure what is reported.</p>}>
-            <ElectionSafety isAdmin={isAdmin} watch={SS_WATCH_CONFIG} />
+            <ElectionSafety isAdmin={isAdmin} watch={SS_WATCH_CONFIG} embedded />
+            <BreachTimeline />
           </Section>
 
           <Section id="candidates" kicker="Who is running" title="The field" intro={<p>Candidates appear here once a named, dated source confirms a declaration, nomination, exclusion or withdrawal. Other candidates have not yet been confirmed in the material we hold.</p>}>
@@ -311,36 +317,88 @@ function BenchmarkGrid({ live }: { live: SsLive }) {
   );
 }
 
-function Violations() {
+const STATUS_COLOR: Record<BenchStatus, string> = {
+  done: "var(--signal)",
+  partial: "var(--info)",
+  stalled: "var(--elevated)",
+  violated: "var(--critical)",
+  contested: "var(--elevated)",
+  not_reported: "var(--text-faint)",
+};
+
+function BenchmarkSummary({ live }: { live: SsLive }) {
+  const order: BenchStatus[] = ["done", "partial", "stalled", "contested", "violated", "not_reported"];
+  const segs = order
+    .map((k) => ({ key: k, label: BENCH_LABEL[k], value: live.benchmarks.filter((b) => b.status === k).length, color: STATUS_COLOR[k] }))
+    .filter((x) => x.value > 0);
+  return (
+    <div className="ss-bsum">
+      <p className="el-muted el-small">Status of the {live.benchmarks.length} R-ARCSS benchmarks, as reported. Hover a segment to see its count.</p>
+      <StackBar label="R-ARCSS benchmarks by status" segments={segs} />
+    </div>
+  );
+}
+
+function CalendarVisual() {
+  const { timeline } = useContext(SsDataCtx);
+  const [picked, setPicked] = useState<string | null>(null);
+  const events: TimelineEvent[] = timeline.map((m) => ({
+    id: m.id,
+    date: m.date,
+    title: m.title,
+    color: m.key ? "var(--critical)" : "var(--info)",
+    key: m.key,
+    detail: (
+      <>
+        <p>{m.detail}</p>
+        <p className="el-small"><a href={SOURCES[m.source].url} target="_blank" rel="noreferrer noopener">{SOURCES[m.source].publisher}, {SOURCES[m.source].date}</a></p>
+      </>
+    ),
+  }));
+  return (
+    <Timeline
+      label="Election and transition calendar"
+      events={events}
+      start="2024-10-01"
+      end="2026-12-31"
+      today={AS_OF}
+      picked={picked}
+      onPick={setPicked}
+    />
+  );
+}
+
+/** Reported ceasefire and agreement breaches, on a timeline over the last 180 days. */
+function BreachTimeline() {
   const [items, setItems] = useState<EwItem[] | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
     const ss = watchApi("ss");
-    Promise.all([ss.items({ category: "agreement_breach", days: 180, limit: 8 }), ss.items({ category: "ceasefire_violation", days: 180, limit: 8 })])
-      .then(([a, b]) => setItems([...a, ...b].sort((x, y) => y.published_at.localeCompare(x.published_at)).slice(0, 10)))
+    Promise.all([ss.items({ category: "agreement_breach", days: 180, limit: 40 }), ss.items({ category: "ceasefire_violation", days: 180, limit: 40 })])
+      .then(([a, b]) => setItems([...a, ...b].sort((x, y) => y.published_at.localeCompare(x.published_at))))
       .catch(() => setItems([]));
   }, []);
+  const events: TimelineEvent[] = (items ?? []).map((it) => ({
+    id: it.id,
+    date: it.published_at.slice(0, 10),
+    title: it.title,
+    color: SS_WATCH_CONFIG.colors[it.category] ?? "var(--text-faint)",
+    detail: (
+      <>
+        <p className="el-small el-muted">{SS_WATCH_CONFIG.labels[it.category] ?? it.category} · {it.domain} · {it.status === "verified" ? "Verified" : "Unverified"}</p>
+        <a href={it.url} target="_blank" rel="noreferrer noopener">Read the report</a>
+      </>
+    ),
+  }));
+  const today = AS_OF;
+  const start = new Date(Date.parse(`${today}T00:00:00Z`) - 180 * 86_400_000).toISOString().slice(0, 10);
   return (
-    <div className="ss-viol">
-      <h3 className="el-subhead">Reported breaches, latest first</h3>
-      <p className="el-muted el-small">Ceasefire violations and breaches of the agreement, as reported in the feeds in the last 180 days. Each is a report, coded by rules, and stays unverified until an analyst checks it.</p>
+    <div className="ss-breach">
+      <h3 className="el-subhead">Reported breaches, last 180 days</h3>
+      <p className="el-muted el-small">Ceasefire violations and breaches of the agreement, as reported in the feeds. Each is a report coded by rules until an analyst checks it. Select a point to read it.</p>
       {items === null && <p className="el-muted">Loading…</p>}
       {items?.length === 0 && <p className="el-muted">No breach reports in the last 180 days.</p>}
-      <ul className="el-reports">
-        {items?.map((it) => (
-          <li key={it.id}>
-            <span className="el-reports__bar" style={{ background: SS_WATCH_CONFIG.colors[it.category] ?? "var(--text-faint)" }} aria-hidden="true" />
-            <div className="el-reports__body">
-              <p className="el-reports__meta">
-                <span className="el-reports__cat">{SS_WATCH_CONFIG.labels[it.category] ?? it.category}</span>
-                <span>{fmtDate(it.published_at.slice(0, 10), { day: "numeric", month: "short" })}</span>
-                <span className={`el-status el-status--${it.status}`}>{it.status === "verified" ? "Verified" : "Unverified"}</span>
-              </p>
-              <a href={it.url} target="_blank" rel="noreferrer noopener">{it.title}</a>
-              <p>{it.domain}</p>
-            </div>
-          </li>
-        ))}
-      </ul>
+      {items && items.length > 0 && <Timeline label="Reported breaches over time" events={events} start={start} end={today} today={today} picked={picked} onPick={setPicked} />}
     </div>
   );
 }

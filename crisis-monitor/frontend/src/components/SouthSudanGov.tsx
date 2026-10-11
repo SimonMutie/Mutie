@@ -68,9 +68,16 @@ export default function GovernmentChanges({ live }: { live: SsLive }) {
                       key={h.id}
                       className={`ss-gov__bar ss-gov__bar--${h.how}${openStart ? " is-open-start" : ""}${openEnd ? " is-open-end" : ""}`}
                       style={{ left: pct(from), width: `calc(${pct(to)} - ${pct(from)})`, top: 4 + lane * 30 }}
-                      title={`${h.name}: ${HOW[h.how]}${h.from ? `, from ${fmt(h.from)}` : ", start not reported"}${h.to ? `, to ${fmt(h.to)}` : ", end not reported"}${h.note ? `. ${h.note}` : ""}`}
+                      tabIndex={0}
+                      aria-label={`${h.name}: ${HOW[h.how]}${h.from ? `, from ${fmt(h.from)}` : ", start not reported"}${h.to ? `, to ${fmt(h.to)}` : ", end not reported"}${h.note ? `. ${h.note}` : ""}`}
                     >
                       <span>{h.name}</span>
+                      <span className="ss-gov__tip" aria-hidden="true">
+                        <b>{h.name}</b>
+                        <em>{HOW[h.how]}</em>
+                        <span>{h.from ? `From ${fmt(h.from)}` : "Start not reported"} · {h.to ? `to ${fmt(h.to)}` : "end not reported"}</span>
+                        {h.note && <span className="ss-gov__tipnote">{h.note}</span>}
+                      </span>
                     </div>
                   );
                 })}

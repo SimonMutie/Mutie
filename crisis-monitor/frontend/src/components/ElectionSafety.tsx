@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getToken, watchApi, type EwDashboard, type EwItem, type WatchKey } from "../api";
+import { Donut, Spark, StackedColumns } from "./charts";
 import ElectionMap, { type Metric, type MapUnit } from "./ElectionMap";
 import { KE_WATCH_CONFIG, type WatchConfig } from "../data/watchConfig";
 
@@ -24,7 +25,7 @@ const ago = (iso: string | null) => {
 };
 const when = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 
-export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG }: { isAdmin: boolean; watch?: WatchConfig }) {
+export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embedded = false }: { isAdmin: boolean; watch?: WatchConfig; embedded?: boolean }) {
   const w = watchApi(watch.key);
   const L = watch.labels;
   const H = watch.help;
@@ -95,13 +96,18 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG }: { i
   const maxWeek = dash ? Math.max(1, ...dash.weekly.map((w) => CATS.reduce((a, k) => a + Number(w[k] ?? 0), 0))) : 1;
   const weeks = dash?.weekly.slice(-14) ?? [];
 
+  const Wrap = embedded ? "div" : "section";
   return (
-    <section className="el-section" id="el-safety">
-      <p className="el-kicker">{watch.kicker}</p>
-      <h2>{watch.heading}</h2>
-      <div className="el-intro">
-        <p>{watch.intro}</p>
-      </div>
+    <Wrap className={embedded ? "el-safety-embed" : "el-section"} id="el-safety">
+      {!embedded && (
+        <>
+          <p className="el-kicker">{watch.kicker}</p>
+          <h2>{watch.heading}</h2>
+          <div className="el-intro">
+            <p>{watch.intro}</p>
+          </div>
+        </>
+      )}
 
       <div className="el-live">
         <span className="el-live__dot" aria-hidden="true" />
@@ -125,7 +131,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG }: { i
       {error && <p className="el-notice el-notice--error">{error}</p>}
 
       <div className="el-kpis">
-        <div><strong>{dash?.events ?? "–"}</strong><span>events in {days === 365 ? "a year" : `${days} days`}</span><small>{dash?.reports ?? 0} reports behind them</small></div>
+        <div><strong>{dash?.events ?? "–"}</strong><span>events in {days === 365 ? "a year" : `${days} days`}</span><small>{dash?.reports ?? 0} reports behind them</small><Spark values={weeks.map((w) => CATS.reduce((a, k) => a + Number(w[k] ?? 0), 0))} label="Events per week" /></div>
         <div className={trend > 0 ? "is-up" : trend < 0 ? "is-down" : ""}>
           <strong>{dash?.last7 ?? "–"}</strong>
           <span>in the last 7 days</span>
@@ -139,35 +145,35 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG }: { i
       <div className="el-safety__grid">
         <div className="el-card">
           <h3>Events per week</h3>
-          <div className="el-weeks" role="img" aria-label="Stacked weekly bars of events by type">
-            {weeks.length === 0 && <p className="el-muted">Nothing collected yet. The first items appear after the next collection.</p>}
-            {weeks.map((w) => {
-              const total = CATS.reduce((a, k) => a + Number(w[k] ?? 0), 0);
-              return (
-                <div key={String(w.week)} className="el-weeks__col" title={`Week of ${w.week}: ${total} events`}>
-                  <span className="el-weeks__n">{total || ""}</span>
-                  <span className="el-weeks__stack" style={{ height: `${(total / maxWeek) * 100}%` }}>
-                    {CATS.map((k) => (Number(w[k] ?? 0) > 0 ? <i key={k} style={{ flex: Number(w[k]), background: COLORS[k] }} /> : null))}
-                  </span>
-                  <span className="el-weeks__d">{when(String(w.week))}</span>
-                </div>
-              );
-            })}
-          </div>
+          {weeks.length === 0 ? (
+            <p className="el-muted">Nothing collected yet. The first items appear after the next collection.</p>
+          ) : (
+            <StackedColumns
+              label="Weekly events by type"
+              height={190}
+              columns={weeks.map((w) => ({
+                label: when(String(w.week)),
+                segments: CATS.map((k) => ({ key: k, label: L[k], value: Number(w[k] ?? 0), color: COLORS[k] })),
+              }))}
+            />
+          )}
         </div>
         <div className="el-card">
           <h3>By type</h3>
-          <ul className="el-types">
-            {CATS.map((k) => (
-              <li key={k}>
-                <button type="button" aria-pressed={cat === k} onClick={() => setCat(cat === k ? "" : k)}>
-                  <i style={{ background: COLORS[k] }} />
-                  <span><b>{L[k]}</b><small>{H[k]}</small></span>
-                  <strong>{dash?.byCategory[k] ?? 0}</strong>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <Donut
+            label="Events by type"
+            size={170}
+            slices={CATS.filter((k) => k !== "coverage").map((k) => ({ key: k, label: L[k], value: dash?.byCategory[k] ?? 0, color: COLORS[k] }))}
+            selected={cat || null}
+            onPick={(k) => setCat(cat === k ? "" : k)}
+            centre={
+              <>
+                <strong>{dash?.events ?? 0}</strong>
+                <span>events</span>
+              </>
+            }
+          />
+          <p className="el-muted el-small">Click a type to filter the reports below.</p>
         </div>
       </div>
 
@@ -239,7 +245,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG }: { i
       </ul>
       {isAdmin && <AddReport watch={watch} onAdded={load} />}
       <p className="el-muted el-small">Method: {watch.method} The page stores the headline, a short summary and the link, never the content of a hateful message. Rules can misread a headline, which is why items are marked unverified and can be corrected or rejected. Violence figures come from media reports and undercount events in remote areas and in counties with fewer outlets.</p>
-    </section>
+    </Wrap>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ELECTION_DAY } from "../data/southSudanElection";
+import { Donut, HBars, LineArea, StackedColumns, Timeline, VBars, type TimelineEvent } from "./charts";
 import {
   BEFORE_AFTER,
   CHAIN_CDF,
@@ -36,6 +37,7 @@ const SCRUB_START = Date.UTC(2026, 8, 1); // 1 Sep 2026
 const SCRUB_DAYS = 31; // to 2 Oct 2026
 const isoAt = (i: number) => new Date(SCRUB_START + i * DAY).toISOString().slice(0, 10);
 const ORDER = "2026-09-22";
+const TAG_COLORS = ["var(--info)", "var(--signal)", "var(--text-faint)", "var(--elevated)", "var(--critical)", "#7c3aed", "#0891b2", "#be185d", "#64748b"];
 const HEALTH_SWAP = "2026-09-28";
 
 export default function SouthSudanLedger() {
@@ -44,7 +46,6 @@ export default function SouthSudanLedger() {
   const [tag, setTag] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("all");
   const [q, setQ] = useState("");
-  const [churn, setChurn] = useState<string | null>(null);
   const [day, setDay] = useState(SCRUB_DAYS);
 
   const h = LEDGER.headline;
@@ -98,47 +99,46 @@ export default function SouthSudanLedger() {
       {year !== null && <FilterBar label={`Showing ${year}`} onClear={() => setYear(null)} />}
 
       <h3 className="el-subhead">The pace of change</h3>
-      <p className="el-muted el-small">Office-change rows per year. Click a year to filter the figures above and the coded seats below. 2026 is split at the 22 September order.</p>
-      <div className="ssl-bars">
-        {ROWS_BY_YEAR.map((r) => (
-          <button
-            key={r.year}
-            type="button"
-            className={`ssl-row ssl-row--btn ${year === r.year ? "is-on" : year !== null ? "is-dim" : ""}`}
-            aria-pressed={year === r.year}
-            onClick={() => setYear((cur) => (cur === r.year ? null : r.year))}
-          >
-            <span className="ssl-row__label">{r.year}</span>
-            <span className="ssl-track">
-              {r.before !== undefined ? (
-                <>
-                  <span className="ssl-fill" style={{ width: pct(r.before, maxYear) }} />
-                  <span className="ssl-fill ssl-fill--alt" style={{ width: pct(r.after!, maxYear) }} />
-                </>
-              ) : (
-                <span className="ssl-fill" style={{ width: pct(r.total, maxYear) }} />
-              )}
-            </span>
-            <span className="ssl-row__value">{r.total}{r.before !== undefined && <small> ({r.before} before, {r.after} after 22 Sep)</small>}</span>
-          </button>
-        ))}
-      </div>
+      <p className="el-muted el-small">Office-change rows per year. Click a year to filter the figures above and the coded seats below. Hover a bar for its value. 2026 is split at the 22 September order.</p>
+      <VBars
+        label="Office-change rows per year"
+        height={200}
+        valueAlways
+        selected={year === null ? null : String(year)}
+        onPick={(k) => setYear((cur) => (cur === Number(k) ? null : Number(k)))}
+        data={ROWS_BY_YEAR.map((r) => ({ key: String(r.year), label: String(r.year), value: r.total, sub: r.before !== undefined ? `${r.before} before 22 Sep, ${r.after} after` : undefined }))}
+      />
 
       <h3 className="el-subhead">The bargain: violations and contested seats</h3>
       <p className="el-muted el-small">The two codes are kept apart on purpose. A violation is a seat taken or altered against its allocation. A contested seat keeps the letter of the allocation while excluding Machar’s wing.</p>
-      <div className="ssl-bars">
-        {CODED_BY_YEAR.map((r) => (
-          <button key={r.year} type="button" className={`ssl-pair ssl-pair--btn ${year === r.year ? "is-on" : year !== null ? "is-dim" : ""}`} aria-pressed={year === r.year} onClick={() => setYear((cur) => (cur === r.year ? null : r.year))}>
-            <span className="ssl-row__label">{r.year}</span>
-            <span className="ssl-stack">
-              <span className="ssl-row ssl-row--tight"><span className="ssl-tag ssl-tag--v">V</span><span className="ssl-track"><span className="ssl-fill ssl-fill--bad" style={{ width: pct(r.v, maxCoded) }} /></span><span className="ssl-row__value">{r.v}</span></span>
-              <span className="ssl-row ssl-row--tight"><span className="ssl-tag ssl-tag--c">C</span><span className="ssl-track"><span className="ssl-fill ssl-fill--warn" style={{ width: pct(r.c, maxCoded) }} /></span><span className="ssl-row__value">{r.c}</span></span>
-            </span>
-          </button>
-        ))}
-      </div>
+      <StackedColumns
+        label="Violations and contested seats by year"
+        height={190}
+        unit="seats"
+        columns={CODED_BY_YEAR.map((r) => ({
+          label: String(r.year),
+          segments: [
+            { key: "v", label: "Violations", value: r.v, color: "var(--critical)" },
+            { key: "c", label: "Contested", value: r.c, color: "var(--elevated)" },
+          ],
+        }))}
+      />
 
       <h3 className="el-subhead">Coded seats</h3>
+      <p className="el-muted el-small">Every coded seat on a timeline. Select a point to read the change; the table below lists them and filters.</p>
+      <Timeline
+        label="Coded seats on a timeline"
+        start="2023-01-01"
+        end={LEDGER.cutOff}
+        today={LEDGER.cutOff}
+        events={CODED.map((r, i): TimelineEvent => ({
+          id: `coded-${i}`,
+          date: r.date.length === 7 ? `${r.date}-01` : r.date,
+          title: `${r.code}: ${r.post}`,
+          color: r.code === "Violation" ? "var(--critical)" : r.code === "Contested" ? "var(--elevated)" : "var(--text-faint)",
+          detail: <p>{r.change}</p>,
+        }))}
+      />
       <div className="ssl-chips" role="group" aria-label="Filter by code">
         {(["all", "Violation", "Contested", "Mixed"] as Code[]).map((c) => (
           <button key={c} type="button" className="ssl-chip" aria-pressed={code === c} onClick={() => setCode(c)}>
@@ -166,53 +166,54 @@ export default function SouthSudanLedger() {
       <p className="el-muted el-small">The 22 September order is coded C (a neutral electoral transition) under the compilation’s standing ruling, so it is not scored as a violation here.</p>
 
       <h3 className="el-subhead">Who gets the seats</h3>
-      <p className="el-muted el-small">Incoming appointees by party tag, all 236 rows. Click a tag to filter the caretaker roster by it, where the roster has that tag. “IG” is the compilation’s tag for the SPLM under Kiir.</p>
-      <div className="ssl-bars">
-        {PARTY_TAGS.map((p) => {
-          const linked = rosterTags.has(p.note);
-          const on = tag === p.note;
-          return (
-            <button
-              key={p.tag}
-              type="button"
-              className={`ssl-row ssl-row--btn ${on ? "is-on" : ""} ${!linked ? "is-static" : ""}`}
-              aria-pressed={on}
-              disabled={!linked}
-              title={linked ? `Filter the caretaker roster to ${p.note}` : "No caretaker rows carry this tag"}
-              onClick={() => toggleTag(p.note)}
-            >
-              <span className="ssl-row__label ssl-row__label--wide">{p.tag} <small>{p.note}</small></span>
-              <span className="ssl-track"><span className={`ssl-fill ${p.note.startsWith("IO") ? "ssl-fill--io" : ""}`} style={{ width: pct(p.count, maxParty) }} /></span>
-              <span className="ssl-row__value">{p.count}</span>
-            </button>
-          );
-        })}
-      </div>
+      <p className="el-muted el-small">Incoming appointees by party tag, all 236 rows. Six are untagged or compound. “IG” is the compilation’s tag for the SPLM under Kiir. Select a tag to filter the caretaker roster by it, where the roster has that tag.</p>
+      <Donut
+        label="Incoming appointees by party tag"
+        size={190}
+        selected={tag}
+        onPick={(k) => rosterTags.has(k) && toggleTag(k)}
+        slices={PARTY_TAGS.map((p, i) => ({ key: p.note, label: p.tag, value: p.count, color: TAG_COLORS[i % TAG_COLORS.length] }))}
+        centre={
+          <>
+            <strong>236</strong>
+            <span>office changes</span>
+          </>
+        }
+      />
 
       <h3 className="el-subhead">Churn: appointments per post</h3>
-      <p className="el-muted el-small">Click a category to see how its index is worked out. Security and intelligence posts changed hands 3.29 times each on average, against 1.54 for the cabinet. The index covers ordinary reshuffles from January 2023 to September 2026, and excludes the one-day dissolution.</p>
-      <div className="ssl-bars">
-        {CHURN.map((c) => {
-          const on = churn === c.cat;
-          return (
-            <div key={c.cat}>
-              <button type="button" className={`ssl-row ssl-row--btn ${on ? "is-on" : churn && !on ? "is-dim" : ""}`} aria-expanded={on} onClick={() => setChurn(on ? null : c.cat)}>
-                <span className="ssl-row__label ssl-row__label--wide">{c.cat} <small>{c.posts} posts</small></span>
-                <span className="ssl-track"><span className={`ssl-fill ${c.index >= 2.5 ? "ssl-fill--bad" : c.index >= 2 ? "ssl-fill--warn" : ""}`} style={{ width: pct(c.index, 3.5) }} /></span>
-                <span className="ssl-row__value">{c.index.toFixed(2)} <small>{c.level}</small></span>
-              </button>
-              {on && (
-                <p className="ssl-explain">
-                  {c.appts} appointments across {c.posts} posts: {c.appts} ÷ {c.posts} = {c.index.toFixed(2)} per post. {c.level} churn.
-                </p>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <p className="el-muted el-small">Hover a category to see how its index is worked out. Security and intelligence posts changed hands 3.29 times each on average, against 1.54 for the cabinet. The index covers ordinary reshuffles from January 2023 to September 2026, and excludes the one-day dissolution.</p>
+      <HBars
+        label="Churn index by category of power"
+        max={3.5}
+        fmt={(n) => n.toFixed(2)}
+        data={CHURN.map((c) => ({ label: c.cat, sub: `${c.posts} posts · ${c.level}`, value: c.index, color: c.index >= 2.5 ? "var(--critical)" : c.index >= 2 ? "var(--elevated)" : "var(--info)" }))}
+        note={(d) => {
+          const c = CHURN.find((x) => x.cat === d.label)!;
+          return `${c.appts} appointments ÷ ${c.posts} posts`;
+        }}
+      />
 
       <h3 className="el-subhead">The break: 22 September 2026</h3>
       <p className="el-muted el-small">A Republican Order under the National Elections Act 2012, as amended in 2026, dissolved the transitional institutions ahead of the 22 December vote. Reported by allAfrica from the SSBC reading. Drag the slider to see the state of the government on any day from 1 September.</p>
+      <HBars
+        label="Posts before and after the order"
+        max={35}
+        data={BEFORE_AFTER.flatMap((r) => [
+          { label: `${r.label}, before`, value: r.before, color: "var(--info)" },
+          { label: `${r.label}, after`, value: r.after, color: "var(--elevated)" },
+        ])}
+      />
+      <LineArea
+        label="Cabinet ministers by day, 1 September to 2 October"
+        height={170}
+        current={day}
+        points={Array.from({ length: SCRUB_DAYS + 1 }, (_, i) => {
+          const d = isoAt(i);
+          const v = d < ORDER ? BEFORE_AFTER[1].before : d < HEALTH_SWAP ? 13 : BEFORE_AFTER[1].after;
+          return { label: fmt(d, { day: "numeric", month: "short" }), value: v };
+        })}
+      />
       <div className="ssl-scrub">
         <label htmlFor="ssl-day" className="ssl-scrub__date">{fmt(iso, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</label>
         <input
