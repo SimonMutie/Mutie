@@ -2173,10 +2173,25 @@ export interface RptListItem {
   published_at: string | null;
 }
 
+/** A report opened from a share link: the published pages, read-only. */
+export interface SharedReportPayload {
+  country: WatchKey;
+  section_id: string | null;
+  report: RptReport;
+  series: { periods: RptPeriod[] };
+  title: string;
+}
+
+/** Public, no sign-in: the report behind a share link. */
+export const publicReportApi = {
+  get: (token: string) => req<SharedReportPayload>(`/api/public/reports/${token}`),
+};
+
 export const reportApi = (k: WatchKey) => {
   const base = `/api/reports/${k}`;
   const send = (path: string, method: string, body?: unknown) => req<{ ok: boolean; error?: string }>(`${base}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
   return {
+    share: (period: string, sectionId?: string) => req<{ token: string; path: string; section_id: string | null }>(`${base}/${period}/share`, { method: "POST", body: JSON.stringify({ section_id: sectionId ?? null }) }),
     series: () => req<{ updated_at: string; periods: RptPeriod[] }>(`${base}/series`),
     list: () => req<RptListItem[]>(`${base}/`),
     get: (period: string) => req<{ report: RptReport | null; title: string; can_edit?: boolean }>(`${base}/${period}`),

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
+const revealers = new Set<() => void>();
+
 /** True when the reader has asked the system for less motion. Everything animated here then jumps straight to its end state. */
 export const prefersReducedMotion = () => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
@@ -56,6 +58,15 @@ export function useInView<T extends Element>(ref: RefObject<T>, threshold = 0.15
     io.observe(el);
     return () => io.disconnect();
   }, [ref, seen, threshold]);
+  // A capture can ask for everything to be shown, whether or not it is on screen.
+  useEffect(() => {
+    if (seen) return;
+    const show = () => setSeen(true);
+    revealers.add(show);
+    return () => {
+      revealers.delete(show);
+    };
+  }, [seen]);
   return seen;
 }
 
@@ -68,4 +79,25 @@ export function Reveal({ children, delay = 0, className = "" }: { children: Reac
       {children}
     </div>
   );
+}
+
+/* ── capture: show every chart at its end state before a snapshot ── */
+
+/** Marks every chart and reveal on the page as seen, so they draw to their end state. */
+export function revealEverything() {
+  revealers.forEach((f) => f());
+}
+
+/** Shows everything, then waits until the page's transitions have finished (or a limit passes). */
+export async function settleForCapture(el: HTMLElement, limitMs = 2200): Promise<void> {
+  revealEverything();
+  await new Promise((r) => setTimeout(r, 60));
+  const anims = el.getAnimations({ subtree: true }).filter((a) => {
+    const it = a.effect?.getComputedTiming().iterations;
+    return it !== Infinity;
+  });
+  await Promise.race([
+    Promise.all(anims.map((a) => a.finished.catch(() => undefined))),
+    new Promise((r) => setTimeout(r, limitMs)),
+  ]);
 }

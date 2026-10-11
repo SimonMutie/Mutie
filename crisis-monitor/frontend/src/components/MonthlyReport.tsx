@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { reportApi, type RptPeriod, type RptReport, type RptSection, type RptStyle, type RptTheme, type WatchKey } from "../api";
+import { reportApi, type RptPeriod, type RptReport, type RptSection, type RptStyle, type RptTheme, type SharedReportPayload, type WatchKey } from "../api";
 import { WATCH_CONFIG } from "../data/watchConfig";
 import ElectionMap from "./ElectionMap";
 import { Donut, HBars, LineArea } from "./charts";
 import ElectionSafety from "./ElectionSafety";
 import Logo from "./Logo";
-import { Reveal, useCountUp } from "../lib/motion";
+import { Reveal, revealEverything, settleForCapture, useCountUp } from "../lib/motion";
 import { exportAllowed } from "../exportGuard";
 import { captureElementAsGif, type GifCaptureProgress } from "../gifCapture";
 import { logoPng } from "../lib/brandLogo";
@@ -58,7 +58,8 @@ const FORMATS: { fmt: Fmt; label: string; hint: string }[] = [
   { fmt: "gif", label: "Animated GIF (.gif)", hint: "The page animating in" },
 ];
 
-export default function MonthlyReport({ country, isAdmin, liveExtra }: { country: WatchKey; isAdmin: boolean; liveExtra?: ReactNode }) {
+/** A shared report is read-only: it opens on its month, with no live figures and no downloads. */
+export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { country: WatchKey; isAdmin: boolean; liveExtra?: ReactNode; share?: { token: string; data: SharedReportPayload } }) {
   const cfg = WATCH_CONFIG[country];
   const api = useMemo(() => reportApi(country), [country]);
   const [series, setSeries] = useState<RptPeriod[]>([]);
@@ -72,7 +73,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
   const [draftTheme, setDraftTheme] = useState<RptTheme>("lens");
   const [msg, setMsg] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
-  const [mode, setMode] = useState<"live" | "month">("live");
+  const [mode, setMode] = useState<"live" | "month">(share ? "month" : "live");
   const [replay, setReplay] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [localHidden, setLocalHidden] = useState<Set<string>>(() => new Set());
@@ -86,20 +87,33 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
 
   // Load the series and the list of reports once, then open the latest published month.
   useEffect(() => {
+    if (share) {
+      setSeries(share.data.series.periods);
+      setPublished([share.data.report.period]);
+      setPeriod(share.data.report.period);
+      return;
+    }
     api.series().then((r) => setSeries(r.periods)).catch(() => {});
     api.list().then((rows) => {
       const pubs = rows.filter((r) => r.status === "published").map((r) => r.period).sort();
       setPublished(pubs);
       if (!picked.current && pubs.length) setPeriod(pubs[pubs.length - 1]);
     }).catch(() => {});
-  }, [api]);
+  }, [api, share]);
 
-  const loadReport = () =>
-    api.get(period).then((r) => {
+  const loadReport = (): Promise<void> => {
+    if (share) {
+      setReport(share.data.report);
+      setTitle(share.data.report.title);
+      setCanEdit(false);
+      return Promise.resolve();
+    }
+    return api.get(period).then((r) => {
       setReport(r.report);
       setTitle(r.report?.title ?? r.title);
       setCanEdit(Boolean(r.can_edit));
     }).catch(() => setReport(null));
+  };
   useEffect(() => {
     setEditing(false);
     setMsg(null);
@@ -162,6 +176,18 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
   const delta = row.events - prevRow.events;
 
   /* ── editing ─────────────────────────────────────────────── */
+
+  /** Makes a share link for the whole report, or one section, and copies it. */
+  const shareLink = async (sectionId?: string) => {
+    try {
+      const r = await api.share(period, sectionId);
+      const url = `${window.location.origin}${r.path}`;
+      await navigator.clipboard?.writeText(url).catch(() => undefined);
+      flash(`Link copied: ${url}`);
+    } catch {
+      flash("The link could not be made. Publish the report first.");
+    }
+  };
 
   const startEdit = () => {
     if (!report) return;
@@ -289,8 +315,18 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
       const placed = cfg.mapUnits.map((u) => ({ name: u.name, n: row.byPlace[u.code] ?? 0 })).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
       return { ...common, table: { head: [cfg.noun[0].toUpperCase() + cfg.noun.slice(1), "Events"], rows: placed.map((x) => [x.name, x.n]) } };
     }
-    if (kind === "trend") return { ...common, table: { head: ["Month", "Events"], rows: trend.map((t) => [monthLabel(t.p), t.v]) } };
-    if (kind === "categories") return { ...common, table: { head: ["Kind of event", "Events"], rows: catRows.map((c) => [cfg.labels[c.key] ?? c.key, c.n]) } };
+    if (kind === "trend")
+      return {
+        ...common,
+        table: { head: ["Month", "Events"], rows: trend.map((t) => [monthLabel(t.p), t.v]) },
+        charts: [{ title: "Events per month, last twelve months", type: "line", labels: trend.map((t) => monthLabel(t.p)), values: trend.map((t) => t.v) }],
+      };
+    if (kind === "categories")
+      return {
+        ...common,
+        table: { head: ["Kind of event", "Events"], rows: catRows.map((c) => [cfg.labels[c.key] ?? c.key, c.n]) },
+        charts: [{ title: "Events by kind", type: "bar", labels: catRows.map((c) => cfg.labels[c.key] ?? c.key), values: catRows.map((c) => c.n) }],
+      };
     return common;
   };
 
@@ -304,13 +340,16 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
         return;
       }
       label("Preparing…");
+      await settleForCapture(pageEl);
       const logo = await logoPng(theme);
       if (fmt === "pdf") {
         const snap = await snapshot(pageEl, theme);
         save(buildPdf(snap), `${page.fileBase}.pdf`);
       } else {
         // Charts go into Word and slides as pictures; figures are drawn as figures and tables.
-        const chart = bodyEl && ["map", "trend", "categories"].includes(page.kind) ? await snapshot(bodyEl, theme) : undefined;
+        // Word takes the chart as a picture. Slides take trend and category charts as native charts, and only the map as a picture.
+        const pictureOnly = fmt === "docx" ? ["map", "trend", "categories"] : ["map"];
+        const chart = bodyEl && pictureOnly.includes(page.kind) ? await snapshot(bodyEl, theme) : undefined;
         if (fmt === "docx") save(await buildDocx(page, chart, logo), `${page.fileBase}.docx`);
         else save(await buildPptx(page, { snap: chart, logo }), `${page.fileBase}.pptx`);
       }
@@ -331,6 +370,8 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
     const sid = gifJob.sid;
     setGifJob(null);
     if (!el) return;
+    // The page just remounted, so its charts start hidden. Reveal them now so the recording plays the drawing-in.
+    revealEverything();
     const label = (t: string) => setBusy((b) => ({ ...b, [sid]: t }));
     captureElementAsGif(
       el,
@@ -381,7 +422,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
             <p className="rpt-scrub__now" aria-live="polite">{mode === "live" ? "Live" : monthLabel(period)}</p>
           </div>
           <div className="rpt-scrub__btns">
-            <button type="button" className="rpt-btn" aria-pressed={mode === "live"} onClick={() => { setPlaying(false); setMode("live"); }}>Live</button>
+            {!share && <button type="button" className="rpt-btn" aria-pressed={mode === "live"} onClick={() => { setPlaying(false); setMode("live"); }}>Live</button>}
             <button type="button" className="rpt-btn" onClick={() => choose(months[Math.max(0, months.indexOf(period) - 1)])} disabled={months.indexOf(period) <= 0} aria-label="Previous month">◀</button>
             <button type="button" className="rpt-btn rpt-btn--play" onClick={() => setPlaying((p) => !p)} aria-pressed={playing}>{playing ? "Pause" : "Play"}</button>
             <button type="button" className="rpt-btn" onClick={() => choose(months[Math.min(months.length - 1, months.indexOf(period) + 1)])} disabled={months.indexOf(period) >= months.length - 1} aria-label="Next month">▶</button>
@@ -416,6 +457,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
           {!report && <button type="button" className="rpt-btn rpt-btn--primary" onClick={startThis}>Start the {monthLabel(period)} report</button>}
           {report && !editing && !isPub && <button type="button" className="rpt-btn rpt-btn--primary" onClick={startEdit}>Edit report</button>}
           {report && !editing && isPub && <button type="button" className="rpt-btn" onClick={reopen}>Reopen to edit</button>}
+          {report && isPub && <button type="button" className="rpt-btn" onClick={() => shareLink()}>Copy link to this report</button>}
           {report && <button type="button" className="rpt-btn" onClick={startNext}>Start {monthLabel(nextOf(period))}</button>}
           {editing && (
             <>
@@ -487,7 +529,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
           const s = pg.section;
           const sid = pg.id;
           const pageNo = n + 1;
-          const dl = true;
+          const dl = !share;
           const page = buildPage(pg, s) ?? exportPageFor(undefined, "live", "live", `${cfg.heading}, live`, []);
           const replayKey = `${sid}-${replay[sid] ?? 0}`;
           return (
@@ -504,6 +546,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra }: { country
               formats={pg.kind === "live" ? ["pdf", "gif"] : undefined}
               hiddenNote={Boolean(s?.hidden)}
               onDownload={dl ? (fmt) => download(sid, fmt, page) : undefined}
+              onShare={isAdmin && isPub && !share && s ? () => shareLink(s.id) : undefined}
               editor={editing && s && pg.index !== undefined ? (
                 <PageEditor
                   s={s}
@@ -643,6 +686,7 @@ function Page({
   title,
   busy,
   onDownload,
+  onShare,
   formats,
   hiddenNote,
   editor,
@@ -658,6 +702,7 @@ function Page({
   title: string;
   busy?: string;
   onDownload?: (fmt: Fmt) => void;
+  onShare?: () => void;
   formats?: Fmt[];
   hiddenNote?: boolean;
   editor?: ReactNode;
@@ -670,6 +715,7 @@ function Page({
         <span className="rpt-page__mark"><Logo standalone size={28} /></span>
         <span className="rpt-page__brand">Afrilens</span>
         <span className="rpt-page__kicker">{kicker}</span>
+        {onShare && <button type="button" className="rpt-dl__btn rpt-noprint" onClick={onShare}>Copy link</button>}
         {onDownload && <PageDownload busy={busy} onPick={onDownload} formats={formats} />}
       </header>
       {hiddenNote && <p className="rpt-page__hidden rpt-noprint">Hidden from readers. Only analysts can see this page.</p>}

@@ -21,6 +21,7 @@ const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"
 const LiveIntelView = lazy(() => import("./components/LiveIntelView"));
 const RegionalSpotlight = lazy(() => import("./components/RegionalSpotlight"));
 const PublicSpotlightView = lazy(() => import("./components/PublicSpotlightView"));
+const SharedReport = lazy(() => import("./components/SharedReport"));
 
 /** Each view above used to be a plain, eager import — meaning every
  *  page's code (including the mapping page, IncidentsDashboard) shared
@@ -47,6 +48,12 @@ type View = { queryId: string } | "admin" | "sources" | "broadcast" | "settings"
  *  viewing" link has to work for people who aren't logged in at all — so this
  *  one path is checked before anything else, completely bypassing the normal
  *  auth-gated app shell below. */
+/** A monthly report shared by link (/shared-report/<token>). */
+function usePublicReportToken(): string | null {
+  const match = /^\/shared-report\/([A-Za-z0-9_-]+)\/?$/.exec(window.location.pathname);
+  return match ? match[1] : null;
+}
+
 function usePublicShareToken(): string | null {
   const path = window.location.pathname;
   const match = /^\/shared\/([A-Za-z0-9_-]+)\/?$/.exec(path);
@@ -63,8 +70,9 @@ function usePublicSpotlightId(): string | null {
 export default function App() {
   const publicSpotlightId = usePublicSpotlightId();
   const sharedDashboardToken = usePublicShareToken();
+  const sharedReportToken = usePublicReportToken();
   // Either public path skips the whole sign-in flow below.
-  const shareToken = sharedDashboardToken ?? publicSpotlightId;
+  const shareToken = sharedReportToken ?? sharedDashboardToken ?? publicSpotlightId;
   const [bootState, setBootState] = useState<BootState>("checking");
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootTry, setBootTry] = useState(0);
@@ -153,6 +161,14 @@ export default function App() {
     return (
       <Suspense fallback={viewLoadingFallback}>
         <PublicSpotlightView id={publicSpotlightId} />
+      </Suspense>
+    );
+  }
+
+  if (sharedReportToken) {
+    return (
+      <Suspense fallback={viewLoadingFallback}>
+        <SharedReport token={sharedReportToken} />
       </Suspense>
     );
   }

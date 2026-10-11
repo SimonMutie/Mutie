@@ -1,4 +1,4 @@
-import html2canvas from "html2canvas";
+import { captureCanvas } from "../lib/captureCanvas";
 import jsPDF from "jspdf";
 import { Document, ImageRun, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType, Footer, Header, BorderStyle } from "docx";
 import PptxGenJS from "pptxgenjs";
@@ -25,6 +25,8 @@ export interface ExportPage {
   table?: { head: string[]; rows: (string | number)[][] };
   /** Headline numbers, shown as tiles on the slide. */
   kpis?: { label: string; value: string }[];
+  /** Native charts for the slide: editable in PowerPoint, with their own data. */
+  charts?: { title: string; type: "line" | "bar"; labels: string[]; values: number[] }[];
   kicker: string;
   theme: RptTheme;
   style?: { font?: "serif" | "sans" | "mono"; size?: "s" | "m" | "l" | "xl"; align?: "left" | "center" | "right" | "justify" };
@@ -40,7 +42,7 @@ export interface Snapshot {
 /** A PNG of the page as it is on screen, stamped the way every app image is. */
 export async function snapshot(el: HTMLElement, theme: RptTheme): Promise<Snapshot> {
   const ignoreElements = (node: Element) => node.classList.contains("rpt-noprint");
-  const canvas = stampCanvas(await html2canvas(el, { useCORS: true, allowTaint: false, logging: false, scale: 2, backgroundColor: THEMES[theme].paper, ignoreElements }));
+  const canvas = stampCanvas(await captureCanvas(el, { scale: 2, backgroundColor: THEMES[theme].paper, ignoreElements }));
   return { png: canvas.toDataURL("image/png"), width: canvas.width, height: canvas.height };
 }
 
@@ -199,7 +201,8 @@ export async function buildPptx(page: ExportPage, opts: { snap?: Snapshot; logo?
   });
   animated.push({ name: "title", kind: "sp" });
 
-  const hasChart = Boolean(opts.snap);
+  const native = page.charts?.[0];
+  const hasChart = Boolean(opts.snap) || Boolean(native);
   const bodyW = hasChart ? 5.6 : SLIDE_W - 1.2;
   const pAlign = st.align === "justify" ? "left" : st.align;
   if (page.paragraphs.length) {
@@ -221,7 +224,38 @@ export async function buildPptx(page: ExportPage, opts: { snap?: Snapshot; logo?
       animated.push({ name: `kpi-${i}`, kind: "sp" }, { name: `kpi-text-${i}`, kind: "sp" });
     });
   }
-  if (opts.snap) {
+  if (native) {
+    const cx = 6.5;
+    const cy = 2.1;
+    const cw = SLIDE_W - 0.6 - cx;
+    const ch = 4.8;
+    const chartType = native.type === "line" ? pptx.ChartType.line : pptx.ChartType.bar;
+    slide.addText(native.title, { x: cx, y: cy - 0.1, w: cw, h: 0.35, fontFace: font, fontSize: 12, bold: true, color: muted, objectName: "chart-title" });
+    slide.addChart(chartType, [{ name: native.title, labels: native.labels, values: native.values }], {
+      x: cx,
+      y: cy + 0.3,
+      w: cw,
+      h: ch - 0.3,
+      barDir: "bar",
+      chartColors: [accent],
+      showLegend: false,
+      showValue: true,
+      dataLabelColor: ink,
+      dataLabelFontSize: 10,
+      dataLabelFontFace: font,
+      catAxisLabelColor: muted,
+      catAxisLabelFontFace: font,
+      catAxisLabelFontSize: 10,
+      valAxisHidden: true,
+      valGridLine: { style: "none" },
+      catGridLine: { style: "none" },
+      lineSize: 2.5,
+      lineDataSymbol: "circle",
+      lineDataSymbolSize: 7,
+      objectName: "chart",
+    } as never);
+    animated.push({ name: "chart", kind: "graphicFrame" }, { name: "chart-title", kind: "sp" });
+  } else if (opts.snap) {
     const maxW = 6.8;
     const maxH = 4.9;
     const ratio = opts.snap.height / opts.snap.width;

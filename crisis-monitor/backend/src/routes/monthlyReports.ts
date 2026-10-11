@@ -22,7 +22,7 @@ import {
   ALIGNS,
   type ReportSection,
 } from "../lib/monthlyReports";
-import { run, nowIso } from "../db";
+import { all, first, run, nowIso } from "../db";
 import type { Env } from "../bindings";
 
 /**
@@ -148,8 +148,71 @@ export function reportRouter(W: Watch) {
     return c.json({ ok: true });
   });
 
+  addShareRoutes(r, country);
   return r;
 }
+
+/** A share token: 18 random bytes, URL-safe. */
+function newShareToken(): string {
+  const b = crypto.getRandomValues(new Uint8Array(18));
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Share links for a report, added to the country router: admins create, list and revoke them. */
+export function addShareRoutes<T extends Hono<{ Bindings: Env; Variables: AuthedVariables }>>(r: T, country: string) {
+  const admin = (c: { get: (k: "role") => string }) => c.get("role") === "admin";
+  r.post("/:period/share", async (c) => {
+    if (!admin(c)) return c.json({ error: "Admin access required" }, 403);
+    const period = c.req.param("period");
+    if (!PERIOD.test(period)) return c.json({ error: "Period must be YYYY-MM" }, 400);
+    const report = await getReport(c.env, country, period);
+    if (!report || report.status !== "published") return c.json({ error: "Publish the report before sharing it." }, 409);
+    const body = (await c.req.json().catch(() => ({}))) as { section_id?: string };
+    const sectionId = body.section_id ?? null;
+    if (sectionId && !report.sections.some((s) => s.id === sectionId)) return c.json({ error: "No such section in this report." }, 400);
+    const token = newShareToken();
+    await run(
+      c.env.DB,
+      `INSERT INTO report_shares (token, country, period, section_id, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,NULL)`,
+      [token, country, period, sectionId, c.get("userId") ?? null, nowIso()],
+    );
+    return c.json({ token, path: `/shared-report/${token}`, section_id: sectionId });
+  });
+  r.get("/:period/shares", async (c) => {
+    if (!admin(c)) return c.json({ error: "Admin access required" }, 403);
+    const rows = await all<Record<string, unknown>>(c.env.DB, `SELECT token, section_id, created_at FROM report_shares WHERE country = ? AND period = ? AND revoked_at IS NULL ORDER BY created_at DESC`, [country, c.req.param("period")]);
+    return c.json(rows);
+  });
+  r.delete("/:period/shares/:token", async (c) => {
+    if (!admin(c)) return c.json({ error: "Admin access required" }, 403);
+    await run(c.env.DB, `UPDATE report_shares SET revoked_at = ? WHERE token = ? AND country = ? AND period = ?`, [nowIso(), c.req.param("token"), country, c.req.param("period")]);
+    return c.json({ ok: true });
+  });
+}
+
+/** Read-only view of a shared report, for anyone with the link. Published content only; hidden sections stay out. */
+export const publicReportRouter = new Hono<{ Bindings: Env }>();
+publicReportRouter.get("/:token", async (c) => {
+  await ensureReportTables(c.env);
+  const share = await first<{ country: string; period: string; section_id: string | null }>(
+    c.env.DB,
+    `SELECT country, period, section_id FROM report_shares WHERE token = ? AND revoked_at IS NULL`,
+    [c.req.param("token")],
+  );
+  if (!share) return c.json({ error: "This link is not active." }, 404);
+  const W = share.country === "ss" ? SS_WATCH : KE_WATCH;
+  const report = await getReport(c.env, share.country, share.period);
+  if (!report || report.status !== "published") return c.json({ error: "This link is not active." }, 404);
+  let sections = report.sections.filter((s) => !s.hidden);
+  if (share.section_id) sections = sections.filter((s) => s.id === share.section_id);
+  return c.json({
+    country: share.country,
+    section_id: share.section_id,
+    report: { ...report, sections },
+    series: { periods: await seriesFor(c.env, W) },
+    title: monthName(share.period),
+  });
+});
 
 export const keReportRouter = reportRouter(KE_WATCH);
 export const ssReportRouter = reportRouter(SS_WATCH);

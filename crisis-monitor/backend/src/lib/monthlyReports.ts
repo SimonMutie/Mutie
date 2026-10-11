@@ -77,6 +77,13 @@ export function ensureReportTables(env: Env): Promise<void> {
       );
       // Added after the first release: SQLite has no ADD COLUMN IF NOT EXISTS, so a duplicate column error means it is already there.
       await run(env.DB, `ALTER TABLE ${REPORT_TABLE} ADD COLUMN theme TEXT NOT NULL DEFAULT 'lens'`).catch(() => {});
+      // Share links: an unguessable token per link, for a whole published report or one section of it. Revoking sets revoked_at.
+      await run(
+        env.DB,
+        `CREATE TABLE IF NOT EXISTS report_shares (
+          token TEXT PRIMARY KEY, country TEXT NOT NULL, period TEXT NOT NULL, section_id TEXT,
+          created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
+      );
     })().catch((e) => {
       ready = null;
       throw e;
