@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { reportApi, type RptPeriod, type RptReport, type RptSection, type WatchKey } from "../api";
 import { WATCH_CONFIG } from "../data/watchConfig";
 import ElectionMap from "./ElectionMap";
 import { Donut, HBars, LineArea } from "./charts";
+import ElectionSafety from "./ElectionSafety";
 import { Reveal, useCountUp } from "../lib/motion";
 import "./Election.css";
 
@@ -34,7 +35,7 @@ function monthsBetween(from: string, to: string): string[] {
   return out;
 }
 
-export default function MonthlyReport({ country, isAdmin }: { country: WatchKey; isAdmin: boolean }) {
+export default function MonthlyReport({ country, isAdmin, liveExtra }: { country: WatchKey; isAdmin: boolean; liveExtra?: ReactNode }) {
   const cfg = WATCH_CONFIG[country];
   const api = useMemo(() => reportApi(country), [country]);
   const [series, setSeries] = useState<RptPeriod[]>([]);
@@ -47,6 +48,7 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
   const [draft, setDraft] = useState<RptSection[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [mode, setMode] = useState<"live" | "month">("live");
   const picked = useRef(false);
 
   const months = useMemo(() => {
@@ -91,6 +93,7 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
 
   const choose = (p: string) => {
     picked.current = true;
+    setMode("month");
     setPeriod(p);
   };
 
@@ -211,10 +214,11 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
       <div className="rpt-scrub rpt-noprint">
         <div className="rpt-scrub__head">
           <div>
-            <p className="el-kicker">Animate across the months</p>
-            <p className="rpt-scrub__now" aria-live="polite">{monthLabel(period)}</p>
+            <p className="el-kicker">One dashboard: live, or month by month</p>
+            <p className="rpt-scrub__now" aria-live="polite">{mode === "live" ? "Live" : monthLabel(period)}</p>
           </div>
           <div className="rpt-scrub__btns">
+            <button type="button" className="rpt-btn" aria-pressed={mode === "live"} onClick={() => { setPlaying(false); setMode("live"); }}>Live</button>
             <button type="button" className="rpt-btn" onClick={() => choose(months[Math.max(0, months.indexOf(period) - 1)])} disabled={months.indexOf(period) <= 0} aria-label="Previous month">◀</button>
             <button type="button" className="rpt-btn rpt-btn--play" onClick={() => setPlaying((p) => !p)} aria-pressed={playing}>{playing ? "Pause" : "Play"}</button>
             <button type="button" className="rpt-btn" onClick={() => choose(months[Math.min(months.length - 1, months.indexOf(period) + 1)])} disabled={months.indexOf(period) >= months.length - 1} aria-label="Next month">▶</button>
@@ -278,6 +282,13 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
           </div>
         )}
 
+        {mode === "live" ? (
+          <section className="rpt-section">
+            <ElectionSafety isAdmin={isAdmin} watch={cfg} embedded />
+            {liveExtra}
+          </section>
+        ) : (
+          <>
         {/* figures */}
         <section className="rpt-section" aria-labelledby="rpt-figs">
           <h3 id="rpt-figs" className="rpt-h">The month in figures</h3>
@@ -345,6 +356,9 @@ export default function MonthlyReport({ country, isAdmin }: { country: WatchKey;
           </div>
           {catRows.every((c) => c.n === 0) && <p className="rpt-note">No events were placed in this month.</p>}
         </section>
+
+          </>
+        )}
 
         {/* the written report */}
         {report === null && !isAdmin && (

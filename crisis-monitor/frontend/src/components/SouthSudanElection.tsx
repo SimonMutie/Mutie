@@ -4,7 +4,6 @@ import { AS_OF, BENCH_LABEL, ELECTION_DAY, FUNDING_NEED_USD, SCENARIOS, SOURCES,
 import { SsDataCtx, mergeSsLive, type SsLive } from "../data/southSudanLive";
 import { SS_WATCH_CONFIG } from "../data/watchConfig";
 import { StackBar, Timeline, type TimelineEvent } from "./charts";
-import ElectionSafety from "./ElectionSafety";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
 import SouthSudanLedger from "./SouthSudanLedger";
@@ -23,12 +22,11 @@ import "./Election.css";
 
 const SECTIONS: { id: string; label: string; admin?: boolean }[] = [
   { id: "overview", label: "Overview" },
-  { id: "report", label: "Monthly report" },
+  { id: "report", label: "Monitor" },
   { id: "calendar", label: "Calendar" },
   { id: "government", label: "Government" },
   { id: "ledger", label: "Ledger" },
   { id: "agreement", label: "Agreement" },
-  { id: "conflict", label: "Conflict" },
   { id: "candidates", label: "Candidates" },
   { id: "outlook", label: "Outlook" },
   { id: "manage", label: "Manage", admin: true },
@@ -97,8 +95,8 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
         </nav>
 
         <main className="el-wrap">
-          <Section id="report" kicker="Monthly report" title="Animate across the months" intro={<p>The month in one report: scrub or play through the months to watch the figures, map and trend move, then read the written analysis for each month. Figures are counted from the platform’s collected reports and frozen when a month is published.</p>}>
-            <MonthlyReport country="ss" isAdmin={isAdmin} />
+          <Section id="report" kicker="Live monitoring and monthly report" title="Conflict monitor" intro={<p>Live: fighting, attacks on civilians, sexual violence, abductions, displacement, ceasefire and agreement breaches, and political detention, collected from the platform’s feeds every 15 minutes and coded by state. Counts are of events, not articles, and they undercount: they measure what is reported. Month: scrub or play through the months to watch the figures, map and trend move, and read the written analysis for each month. Figures are frozen when a month is published.</p>}>
+            <MonthlyReport country="ss" isAdmin={isAdmin} liveExtra={<BreachTimeline />} />
           </Section>
           <Section id="calendar" kicker="Calendar" title="The road to 22 December 2026" intro={<p>Dates come from NEC, the agreement and UN and RJMEC reporting. Dates that the sources do not give exactly are marked “c.”.</p>}>
             <CalendarVisual />
@@ -121,11 +119,6 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
           <Section id="agreement" kicker="Revitalised Agreement" title="How far the agreement is implemented" intro={<p>Each benchmark shows its latest status, the date of the finding, and the source. Where no source in our material reports on an area, it says so rather than guessing. Statuses are as reported, not Afrilens judgements, except where marked.</p>}>
             <BenchmarkSummary live={live} />
             <BenchmarkGrid live={live} />
-          </Section>
-
-          <Section id="conflict" kicker="Live monitoring" title="Conflict dashboard" intro={<p>Fighting, attacks on civilians, sexual violence, abductions, displacement, ceasefire and agreement breaches, and political detention, collected from the platform’s feeds every 15 minutes and coded by state. Counts are of events, not articles, and they undercount: they measure what is reported.</p>}>
-            <ElectionSafety isAdmin={isAdmin} watch={SS_WATCH_CONFIG} embedded />
-            <BreachTimeline />
           </Section>
 
           <Section id="candidates" kicker="Who is running" title="The field" intro={<p>Candidates appear here once a named, dated source confirms a declaration, nomination, exclusion or withdrawal. Other candidates have not yet been confirmed in the material we hold.</p>}>

@@ -18,7 +18,7 @@ import {
 } from "../data/kenyaElection";
 import { ElectionDataCtx, mergeLive, type Live } from "../data/electionLive";
 import { watchApi } from "../api";
-import ElectionSafety from "./ElectionSafety";
+import { GroupedHBars, HBars, Timeline, type TimelineEvent } from "./charts";
 import ElectionManage from "./ElectionManage";
 import MonthlyReport from "./MonthlyReport";
 import "./Election.css";
@@ -34,13 +34,12 @@ import "./Election.css";
 
 const SECTIONS = [
   { id: "overview", label: "Overview" },
-  { id: "report", label: "Monthly report" },
+  { id: "report", label: "Monitor" },
   { id: "timeline", label: "Timeline" },
   { id: "voters", label: "Voters" },
   { id: "population", label: "Population" },
   { id: "candidates", label: "Candidates" },
   { id: "polls", label: "Polls" },
-  { id: "safety", label: "Violence & rhetoric" },
   { id: "outlook", label: "Outlook" },
   { id: "manage", label: "Manage", admin: true },
   { id: "sources", label: "Sources" },
@@ -112,7 +111,7 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
       </nav>
 
       <main className="el-wrap">
-        <Section id="report" kicker="Monthly report" title="Animate across the months" intro={<p>The month in one report: scrub or play through the months to watch the figures, map and trend move, then read the written analysis for each month. Figures are counted from the platform’s collected reports and frozen when a month is published.</p>}>
+        <Section id="report" kicker="Live monitoring and monthly report" title="Election and violence monitor" intro={<p>Live: violence, rhetoric and incidents as the platform collects them every 15 minutes, coded by county. Month: scrub or play through the months to watch the figures, map and trend move, and read the written analysis for each month. Figures are frozen when a month is published.</p>}>
           <MonthlyReport country="ke" isAdmin={isAdmin} />
         </Section>
         <TimelineSection />
@@ -120,7 +119,6 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
         <PopulationSection />
         <CandidatesSection />
         <PollsSection />
-        <ElectionSafety isAdmin={isAdmin} />
         <OutlookSection />
         {isAdmin && (
           <section className="el-section" id="el-manage">
@@ -225,7 +223,13 @@ function TimelineSection() {
 
   return (
     <Section id="timeline" kicker="Calendar" title="The road to 10 August 2027" intro={<p>Dates set by IEBC’s gazetted election period (Notice 13497, 20 August 2026) and by the Constitution, with the events that shaped the field. Dates that follow from other dates, such as petitions and the run-off, are approximate.</p>}>
-      <TimelineStrip items={items} />
+      <Timeline
+        label="Timeline from October 2026 to polling day, 10 August 2027"
+        start="2026-10-01"
+        end="2027-08-31"
+        today={new Date().toLocaleDateString("en-CA")}
+        events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
+      />
       {past.length > 0 && (
         <button type="button" className="el-link" onClick={() => setShowPast(!showPast)}>
           {showPast ? "Hide" : "Show"} earlier events ({past.length})
@@ -262,59 +266,6 @@ function TimelineSection() {
   );
 }
 
-/** One strip from now to polling day, with the key dates marked and today on it. */
-function TimelineStrip({ items }: { items: Milestone[] }) {
-  const start = at("2026-10-01");
-  const end = at("2027-09-15");
-  const W = 1000;
-  const x = (iso: string) => ((at(iso) - start) / (end - start)) * W;
-  const months: { x: number; label: string }[] = [];
-  for (let d = new Date(2026, 9, 1); d.getTime() <= end; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
-    months.push({ x: ((d.getTime() - start) / (end - start)) * W, label: d.toLocaleDateString("en-GB", { month: "short" }) });
-  }
-  const keys = items.filter((m) => m.key && at(m.date) >= start);
-  const today = Math.min(W, Math.max(0, ((Date.now() - start) / (end - start)) * W));
-  const phases: { from: string; to: string; label: string; tone: string }[] = [
-    { from: "2026-10-01", to: "2027-03-16", label: "Parties prepare", tone: "a" },
-    { from: "2027-03-16", to: "2027-05-09", label: "Primaries", tone: "b" },
-    { from: "2027-05-09", to: "2027-06-12", label: "Nominations", tone: "c" },
-    { from: "2027-06-12", to: "2027-08-10", label: "Campaign", tone: "d" },
-    { from: "2027-08-10", to: "2027-09-09", label: "After the vote", tone: "e" },
-  ];
-  return (
-    <figure className="el-strip">
-      <svg viewBox={`0 0 ${W} 150`} role="img" aria-label="Timeline from October 2026 to September 2027 with key dates">
-        {phases.map((p) => (
-          <g key={p.label}>
-            <rect x={x(p.from)} y={64} width={Math.max(2, x(p.to) - x(p.from) - 2)} height={26} rx={4} className={`el-phase el-phase--${p.tone}`} />
-            <text x={x(p.from) + 8} y={81} className="el-strip__phase">{p.label}</text>
-          </g>
-        ))}
-        {months.map((m) => (
-          <g key={m.label + m.x}>
-            <line x1={m.x} x2={m.x} y1={96} y2={104} stroke="var(--border)" />
-            <text x={m.x + 3} y={118} className="el-strip__month">{m.label}</text>
-          </g>
-        ))}
-        {keys.map((m, i) => (
-          <g key={m.title}>
-            <line x1={x(m.date)} x2={x(m.date)} y1={i % 2 ? 44 : 30} y2={64} stroke="var(--text-faint)" />
-            <circle cx={x(m.date)} cy={64} r={4} fill="var(--text-primary)" />
-            <text x={Math.min(W - 4, Math.max(4, x(m.date)))} y={i % 2 ? 38 : 24} textAnchor={x(m.date) > W - 150 ? "end" : x(m.date) < 90 ? "start" : "middle"} className="el-strip__key">
-              {fmtDate(m.date, { day: "numeric", month: "short" })} · {m.short ?? m.title}
-            </text>
-          </g>
-        ))}
-        <g>
-          <line x1={today} x2={today} y1={92} y2={132} stroke="var(--critical)" strokeWidth={2} />
-          <circle cx={today} cy={92} r={4} fill="var(--critical)" />
-          <text x={today + 5} y={142} className="el-strip__today">Today</text>
-        </g>
-      </svg>
-    </figure>
-  );
-}
-
 /* ── voters and population ───────────────────────────────── */
 
 const regions: Region[] = ["Rift Valley", "Eastern", "Nyanza", "Central", "Nairobi", "Western", "Coast", "North Eastern"];
@@ -326,20 +277,20 @@ function RegionBars() {
       return { r, reg: cs.reduce((a, c) => a + c.reg2022, 0), pop: cs.reduce((a, c) => a + c.pop2019, 0), n: cs.length };
     })
     .sort((a, b) => b.reg - a.reg);
-  const max = Math.max(...rows.map((r) => r.reg));
+  const byName = new Map<string, (typeof rows)[number]>(rows.map((x) => [x.r as string, x]));
   return (
     <div className="el-regions">
       <h3>The register by region</h3>
       <p className="el-muted">Former provinces, which is how Kenyan politics still counts the vote. Share of the 2022 register against share of the 2019 population.</p>
-      <ul>
-        {rows.map((x) => (
-          <li key={x.r}>
-            <span className="el-regions__name">{x.r} <em>{x.n} {x.n === 1 ? "county" : "counties"}</em></span>
-            <span className="el-regions__track"><i style={{ width: `${(x.reg / max) * 100}%` }} /></span>
-            <span className="el-regions__val">{mil(x.reg)} · {pct((x.reg / TOTAL_REG_2022) * 100, 0)} of voters <small>({pct((x.pop / TOTAL_POP_2019) * 100, 0)} of people)</small></span>
-          </li>
-        ))}
-      </ul>
+      <HBars
+        label="Registered voters by former province"
+        fmt={(n) => mil(n)}
+        data={rows.map((x) => ({ key: x.r, label: `${x.r} (${x.n} ${x.n === 1 ? "county" : "counties"})`, value: x.reg }))}
+        note={(d) => {
+          const x = byName.get(d.key ?? "")!;
+          return `${pct((x.reg / TOTAL_REG_2022) * 100, 0)} of voters · ${pct((x.pop / TOTAL_POP_2019) * 100, 0)} of people`;
+        }}
+      />
     </div>
   );
 }
@@ -385,6 +336,11 @@ function PopulationSection() {
         <div><strong>{pct(nairobiShare, 1)}</strong><span>of Kenyans live in Nairobi, 4.4 million people, the largest single block of votes.</span></div>
         <div><strong>{pct((northReg / TOTAL_REG_2022) * 100, 1)} vs {pct((northPop / TOTAL_POP_2019) * 100, 1)}</strong><span>share of voters against share of people in seven northern counties (Turkana, Marsabit, Wajir, Mandera, Garissa, Isiolo, Samburu). Registration lags population there.</span></div>
       </div>
+      <HBars
+        label="Ten largest counties by population, 2019"
+        fmt={(n) => n0(n)}
+        data={[...COUNTIES].sort((a, b) => b.pop2019 - a.pop2019).slice(0, 10).map((c) => ({ key: c.code, label: c.name, value: c.pop2019 }))}
+      />
       <ElectionMap metrics={POP_METRICS} caption="Source: KNBS 2019 census; IEBC 2022 register. The third map is centred on zero, so a pale shade means close to par." />
     </Section>
   );
@@ -451,6 +407,14 @@ function CandidatesSection() {
           <button key={s} type="button" aria-pressed={filter === s} onClick={() => setFilter(s)}>{s}</button>
         ))}
       </div>
+      <HBars
+        label="Latest poll share by candidate"
+        fmt={(n) => `${n}%`}
+        data={CANDIDATES.map((c) => ({ c, l: latestShare(c, POLLS) }))
+          .filter((x): x is { c: Candidate; l: { v: number; poll: string } } => x.l !== null)
+          .sort((a, b) => b.l.v - a.l.v)
+          .map(({ c, l }) => ({ key: c.id, label: c.name, value: l.v, sub: l.poll }))}
+      />
       <ul className="el-cands">
         {list.map((c) => {
           const l = latestShare(c, POLLS);
@@ -563,24 +527,17 @@ function PollsSection() {
         <button type="button" aria-pressed={decidedOnly} onClick={() => setDecidedOnly(true)}>Among decided voters only</button>
       </div>
       <div className="el-pollchart">
-        <ul>
-          {names.map((c) => (
-            <li key={c.id}>
-              <span className="el-pollchart__name">{c.name}</span>
-              <span className="el-pollchart__bars">
-                {polls.map((p, i) => {
-                  const v = val(p, c.id);
-                  return (
-                    <span key={p.id} className="el-pollchart__row" title={`${p.pollster}: ${v === undefined ? "not asked" : pct(v)}`}>
-                      <i style={{ width: v === undefined ? 0 : `${(v / max) * 100}%`, background: tones[i % tones.length] }} />
-                      <b>{v === undefined ? "–" : pct(v, decidedOnly ? 0 : 1).replace(".0%", "%")}</b>
-                    </span>
-                  );
-                })}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <GroupedHBars
+          label="Poll shares by candidate and pollster"
+          fmt={(n) => (decidedOnly ? pct(n, 0) : pct(n, 1).replace(".0%", "%"))}
+          groups={names.map((c) => ({
+            label: c.name,
+            bars: polls.map((p, i) => {
+              const v = val(p, c.id);
+              return { key: `${c.id}-${p.id}`, label: `${p.pollster.split(" ")[0]} (${fmtDate(p.published, { month: "short", year: "numeric" })})`, value: v ?? 0, color: tones[i % tones.length], missing: v === undefined };
+            }),
+          }))}
+        />
         <div className="el-pollchart__key">
           {polls.map((p, i) => (
             <span key={p.id}><i style={{ background: tones[i % tones.length] }} /> {p.pollster.split(" ")[0]} ({fmtDate(p.published, { month: "short", year: "numeric" })})</span>
@@ -695,6 +652,17 @@ function OutlookSection() {
 
   return (
     <Section id="outlook" kicker="Afrilens assessment" title="How the election could go" intro={<p>This is analytical judgement drawn from the polls, the 2022 result and the structure of the vote, not a statistical forecast. It will change as the opposition decides on a candidate and as the dates above are met.</p>}>
+      <HBars
+        label="Votes at this turnout"
+        fmt={(n) => n0(n)}
+        max={register}
+        data={[
+          { key: "reg", label: "Register, a ceiling", value: register },
+          { key: "cast", label: `Votes cast at ${turnout}% turnout`, value: cast },
+          { key: "need", label: "Needed to win in round one", value: need },
+          { key: "ruto", label: "Ruto’s 2022 vote", value: ruto2022 },
+        ]}
+      />
       <div className="el-rule">
         <div>
           <h3>The rule that shapes everything</h3>

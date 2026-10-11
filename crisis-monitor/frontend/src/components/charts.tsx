@@ -368,3 +368,50 @@ export function Spark({ values, label, color = "var(--info)", fmt = fmtDefault }
     </div>
   );
 }
+
+/* ── grouped horizontal bars: several series per group ────── */
+
+export interface BarGroup {
+  label: string;
+  bars: { key: string; label: string; value: number; color: string; missing?: boolean }[];
+}
+
+export function GroupedHBars({ groups, label, fmt = (n: number) => `${n.toFixed(1)}%`, max }: { groups: BarGroup[]; label: string; fmt?: (n: number) => string; max?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const seen = useInView(ref, 0.15);
+  const [hi, setHi] = useState<{ g: number; b: number } | null>(null);
+  const maxV = max ?? Math.max(1, ...groups.flatMap((g) => g.bars.map((b) => (b.missing ? 0 : b.value))));
+  return (
+    <div ref={ref} className="vz-ghbars" role="group" aria-label={label}>
+      {groups.map((g, gi) => (
+        <div key={g.label} className="vz-ghbars__group">
+          <span className="vz-ghbars__name">{g.label}</span>
+          <div className="vz-ghbars__rows">
+            {g.bars.map((b, bi) => {
+              const on = hi !== null && hi.g === gi && hi.b === bi;
+              const dim = hi !== null && !on;
+              return (
+                <div
+                  key={b.key}
+                  className={`vz-ghbar ${on ? "is-hi" : dim ? "is-dim" : ""}`}
+                  tabIndex={0}
+                  onMouseEnter={() => setHi({ g: gi, b: bi })}
+                  onMouseLeave={() => setHi(null)}
+                  onFocus={() => setHi({ g: gi, b: bi })}
+                  onBlur={() => setHi(null)}
+                  aria-label={`${g.label}, ${b.label}: ${b.missing ? "not asked" : fmt(b.value)}`}
+                >
+                  <span className="vz-ghbar__src"><i style={{ background: b.color }} />{b.label}</span>
+                  <span className="vz-ghbar__track">
+                    <span className="vz-ghbar__fill" style={{ width: seen && !b.missing ? pct(b.value, maxV) : "0%", background: b.color, transitionDelay: `${(gi * 3 + bi) * 35}ms` }} />
+                  </span>
+                  <span className="vz-ghbar__val">{b.missing ? "–" : fmt(b.value)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

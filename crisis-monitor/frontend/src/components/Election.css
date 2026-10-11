@@ -734,3 +734,25 @@
 .ss-gov__bar:hover .ss-gov__tip, .ss-gov__bar:focus-visible .ss-gov__tip { display: flex; }
 .ss-gov__bar { overflow: visible; }
 .ss-gov__bar > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* grouped bars */
+.vz-ghbars { display: flex; flex-direction: column; gap: 14px; }
+.vz-ghbars__group { display: grid; grid-template-columns: minmax(110px, 170px) 1fr; gap: 12px; align-items: start; }
+.vz-ghbars__name { font-size: 13.5px; font-weight: 700; padding-top: 4px; }
+.vz-ghbars__rows { display: flex; flex-direction: column; gap: 5px; }
+.vz-ghbar { display: grid; grid-template-columns: 110px 1fr 48px; gap: 10px; align-items: center; padding: 3px 6px; margin: 0 -6px; border-radius: 8px; outline: none; transition: opacity 0.25s ease, background 0.2s ease; }
+.vz-ghbar__src { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.vz-ghbar__src i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; flex: none; }
+.vz-ghbar__track { height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--border) 50%, transparent); overflow: hidden; display: block; }
+.vz-ghbar__fill { display: block; height: 100%; border-radius: 6px; transition: width 0.9s cubic-bezier(.2,.7,.2,1), filter 0.2s ease, transform 0.2s ease; transform-origin: left; }
+.vz-ghbar__val { font-size: 12.5px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; transition: transform 0.2s ease; }
+.vz-ghbar.is-hi { background: color-mix(in srgb, var(--info) 8%, transparent); }
+.vz-ghbar.is-hi .vz-ghbar__fill { filter: brightness(1.12) saturate(1.1); transform: scaleY(1.5); }
+.vz-ghbar.is-hi .vz-ghbar__val { transform: scale(1.12); }
+.vz-ghbar.is-dim { opacity: 0.45; }
+.vz-ghbar:focus-visible { outline: 2px solid var(--info); }
+@media (max-width: 560px) { .vz-ghbars__group { grid-template-columns: 1fr; } .vz-ghbar { grid-template-columns: 96px 1fr 44px; } }
+
+/* county shapes: hover lifts and brightens, values glide between months */
+.el-map__stage path { transition: fill 0.6s ease, filter 0.2s ease, stroke-width 0.2s ease; cursor: pointer; }
+.el-map__stage path:hover { filter: brightness(1.12) drop-shadow(0 2px 4px rgba(0,0,0,.25)); stroke: var(--text-primary); stroke-width: 1.4; }
