@@ -8,6 +8,7 @@ import PushPrompt from "./components/PushPrompt";
 import { enableMonitorLayer } from "./monitorLayers";
 import type { SpotlightScope } from "./spotlightRegions";
 import { speakWelcomeIfPending } from "./intro";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
@@ -243,6 +244,24 @@ export default function App() {
       <AlertPopups liveMessage={liveMessage} onOpenQuery={(queryId) => setView({ queryId })} onShowOnMap={() => { setOpenMonitorTool(false); setView("live-osint"); }} />
 
       <div className="lens-view-shell">
+      {/* One view failing shows its own message here, with a way back, instead of taking the whole app down.
+          Keyed by view, so moving to another view starts fresh. */}
+      <ErrorBoundary
+        key={typeof view === "string" ? view : JSON.stringify(view)}
+        fallback={(error, retry) => (
+          <div style={{ padding: 24, maxWidth: 640 }}>
+            <div className="panel" style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--critical)" }}>This view couldn't load</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>Nothing you did is lost. Go back to Live OSINT, or try this view again.</div>
+              <pre style={{ fontSize: 11, color: "var(--text-faint)", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{error.message}</pre>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button type="button" onClick={() => { retry(); setView("live-osint"); }} style={{ padding: "6px 14px", cursor: "pointer", border: "1px solid var(--border)", borderRadius: 6, background: "transparent", color: "var(--text-primary)", fontSize: 13 }}>Back to Live OSINT</button>
+                <button type="button" onClick={retry} style={{ padding: "6px 14px", cursor: "pointer", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel-raised)", color: "var(--text-primary)", fontSize: 13 }}>Try again</button>
+              </div>
+            </div>
+          </div>
+        )}
+      >
       <Suspense fallback={viewLoadingFallback}>
         {view === "admin" && <AdminPanel user={user} onBack={() => setView("live-osint")} />}
 
@@ -302,6 +321,7 @@ export default function App() {
             <div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>
           ))}
       </Suspense>
+      </ErrorBoundary>
       </div>
     </div>
   );
