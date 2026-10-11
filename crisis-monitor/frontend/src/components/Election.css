@@ -451,3 +451,38 @@
   .ssl-row { grid-template-columns: 96px 1fr 44px; gap: 8px; }
   .ssl-row__label--wide { font-size: 12.5px; }
 }
+
+/* ── ledger: interactive controls ─────────────────────────── */
+.ssl-row--btn, .ssl-pair--btn {
+  width: 100%; margin: 0; padding: 6px 8px; border: 1px solid transparent; border-radius: 10px;
+  background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.2s;
+}
+.ssl-row--btn:hover, .ssl-pair--btn:hover { background: color-mix(in srgb, var(--panel) 70%, var(--border)); }
+.ssl-row--btn:focus-visible, .ssl-pair--btn:focus-visible, .ssl-chip:focus-visible, .ssl-filterbar button:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.ssl-row--btn.is-on, .ssl-pair--btn.is-on { border-color: var(--info); background: color-mix(in srgb, var(--info) 8%, var(--panel)); }
+.ssl-row--btn.is-dim, .ssl-pair--btn.is-dim { opacity: 0.45; }
+.ssl-row--btn.is-static, .ssl-row--btn:disabled { cursor: default; }
+.ssl-row--btn:disabled:hover { background: none; }
+.ssl-pair--btn { grid-template-columns: 52px 1fr; align-items: start; }
+.ssl-track { transition: none; }
+.ssl-fill { transition: width 0.45s ease; }
+.ssl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.ssl-chip { border: 1px solid var(--border); background: var(--panel); color: var(--text-muted); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.ssl-chip[aria-pressed="true"] { background: var(--info); border-color: var(--info); color: #fff; }
+.ssl-count { font-size: 12.5px; color: var(--text-muted); margin: 6px 0; }
+.ssl-explain { margin: 2px 0 8px 8px; padding: 8px 12px; font-size: 13px; border-left: 3px solid var(--info); background: var(--panel); border-radius: 0 8px 8px 0; color: var(--text-muted); }
+.ssl-filterbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 0 4px; padding: 8px 12px; background: color-mix(in srgb, var(--info) 10%, var(--panel)); border-radius: 10px; font-size: 13px; font-weight: 600; }
+.ssl-filterbar button { border: none; background: none; color: var(--info); font: inherit; font-weight: 700; cursor: pointer; text-decoration: underline; }
+.ssl-roster-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 12px 0 0; }
+.ssl-search { flex: 1 1 220px; min-width: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: inherit; font: inherit; font-size: 13.5px; }
+.ssl-search:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+.ssl-scrub { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; margin: 12px 0; }
+.ssl-scrub__date { display: block; font-family: var(--font-display); font-size: 22px; font-weight: 700; margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+.ssl-scrub input[type="range"] { width: 100%; accent-color: var(--info); cursor: pointer; }
+.ssl-scrub__marks { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-faint); margin-top: 2px; }
+.ssl-scrub .ssl-kpis { margin-top: 12px; }
+.ssl-scrub .ssl-seq { margin-top: 10px; max-height: 260px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .ssl-fill, .ssl-row--btn, .ssl-pair--btn { transition: none; }
+}

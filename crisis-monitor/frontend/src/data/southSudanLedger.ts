@@ -91,12 +91,12 @@ export const BEFORE_AFTER = [
 ];
 
 /** The sequence of the dissolution, as the compilation dates it. */
-export const SEQUENCE: { date: string; text: string; note?: string }[] = [
-  { date: "9 Sep", text: "Maj. Gen. Atem Salva Kiir, the president’s son, replaces Deng Madhang Kuach as Tiger Division commander.", note: "Last row before the dissolution" },
-  { date: "21 Sep", text: "Kiir signs amendments to the National Elections Act. They remove the legal tie of elections to a permanent constitution and to a census.", note: "allAfrica, 23 Sep" },
-  { date: "22 Sep", text: "Republican Order removes the vice-presidents, ministers and local administrators, dissolves the national and state legislatures and the transitional government. Kiir stays president until a successor is sworn in. 13 caretaker ministers named the same day.", note: "allAfrica, 23 Sep" },
-  { date: "28 Sep", text: "Four more ministers: Humanitarian, Health, General Education, Wildlife. Caretaker governors may name state ministers and commissioners.", note: "Radio Tamazuj dates it 28 Sep; Eye Radio 29 Sep" },
-  { date: "1 Oct", text: "Health minister John Gai Yoh sacked after about three days; Dak Duop Bichiok appointed. The shortest caretaker tenure in the record." },
+export const SEQUENCE: { date: string; iso: string; text: string; note?: string }[] = [
+  { date: "9 Sep", iso: "2026-09-09", text: "Maj. Gen. Atem Salva Kiir, the president’s son, replaces Deng Madhang Kuach as Tiger Division commander.", note: "Last row before the dissolution" },
+  { date: "21 Sep", iso: "2026-09-21", text: "Kiir signs amendments to the National Elections Act. They remove the legal tie of elections to a permanent constitution and to a census.", note: "allAfrica, 23 Sep" },
+  { date: "22 Sep", iso: "2026-09-22", text: "Republican Order removes the vice-presidents, ministers and local administrators, dissolves the national and state legislatures and the transitional government. Kiir stays president until a successor is sworn in. 13 caretaker ministers named the same day.", note: "allAfrica, 23 Sep" },
+  { date: "28 Sep", iso: "2026-09-28", text: "Four more ministers: Humanitarian, Health, General Education, Wildlife. Caretaker governors may name state ministers and commissioners.", note: "Radio Tamazuj dates it 28 Sep; Eye Radio 29 Sep" },
+  { date: "1 Oct", iso: "2026-10-01", text: "Health minister John Gai Yoh sacked after about three days; Dak Duop Bichiok appointed. The shortest caretaker tenure in the record." },
 ];
 
 /** The caretaker roster: [post, holder, party tag, date, status]. Status is the compilation's own tag. */
