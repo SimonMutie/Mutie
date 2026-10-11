@@ -48,6 +48,8 @@ export interface CandidateSeed {
   id: string;
   name: string;
   short: string;
+  /** False for someone who is only a possible running mate: not polled, cannot head a ticket or run alone. */
+  presidential?: boolean;
   mobilisation: number; // 0 to 1
   backyard: string[]; // IEBC county codes
   strongholds: Partial<Record<string, number>>; // region -> 0, 1 or 2
@@ -66,6 +68,15 @@ export const CANDIDATE_SEEDS: CandidateSeed[] = [
   { id: "omtatah", name: "Okiya Omtatah", short: "Omtatah", mobilisation: 0.35, backyard: ["040"], strongholds: { Western: 1, Nairobi: 1 } },
   { id: "mwangi", name: "Boniface Mwangi", short: "Mwangi", mobilisation: 0.4, backyard: ["047"], strongholds: { Nairobi: 2 } },
   { id: "wajackoyah", name: "George Wajackoyah", short: "Wajackoyah", mobilisation: 0.3, backyard: [], strongholds: {} },
+  // Possible running mates for Ruto. Not polled and not presidential candidates: they add their home region's
+  // strength and backyard counties to a ticket they join, and carry no separate vote share. All values are judgements.
+  { id: "kindiki", name: "Kithure Kindiki", short: "Kindiki", presidential: false, mobilisation: 0.6, backyard: ["013", "012"], strongholds: { Eastern: 2, Central: 1 } },
+  { id: "mudavadi", name: "Musalia Mudavadi", short: "Mudavadi", presidential: false, mobilisation: 0.5, backyard: ["037", "038"], strongholds: { Western: 2 } },
+  { id: "wetangula", name: "Moses Wetang’ula", short: "Wetang’ula", presidential: false, mobilisation: 0.5, backyard: ["039"], strongholds: { Western: 2 } },
+  { id: "waiguru", name: "Anne Waiguru", short: "Waiguru", presidential: false, mobilisation: 0.5, backyard: ["020"], strongholds: { Central: 2, Eastern: 1 } },
+  { id: "wanga", name: "Gladys Wanga", short: "Wanga", presidential: false, mobilisation: 0.5, backyard: ["043"], strongholds: { Nyanza: 2 } },
+  { id: "oparanya", name: "Wycliffe Oparanya", short: "Oparanya", presidential: false, mobilisation: 0.4, backyard: ["037"], strongholds: { Western: 2 } },
+  { id: "joho", name: "Hassan Joho", short: "Joho", presidential: false, mobilisation: 0.5, backyard: ["001"], strongholds: { Coast: 2 } },
 ];
 
 /* ── poll average ─────────────────────────────────────────────── */
@@ -124,6 +135,8 @@ export interface SimCandidate {
   id: string;
   name: string;
   short: string;
+  /** Can head a ticket and run alone. Running mates have false and carry no vote share. */
+  presidential: boolean;
   /** National share of decided voters, from the polls. */
   share: number;
   mobilisation: number;
@@ -156,6 +169,11 @@ export interface Ticket {
   strongholds: Record<string, number>;
 }
 
+/** The region where a candidate's base is strongest: their first region at level 2, if any. */
+export function homeRegionOf(c: { strongholds: Record<string, number> }): string | null {
+  return Object.entries(c.strongholds).find(([, v]) => v === 2)?.[0] ?? null;
+}
+
 /** Each ticket's vote: the presidential candidate in full, and the running mate and backers at the transfer rate. Votes that do not move return to every ticket in proportion. */
 export function buildTickets(cands: SimCandidate[], arrangement: Arrangement, transfer: number): Ticket[] {
   const byId = new Map(cands.map((c) => [c.id, c]));
@@ -165,7 +183,7 @@ export function buildTickets(cands: SimCandidate[], arrangement: Arrangement, tr
 
   arrangement.forEach((spec, i) => {
     const head = byId.get(spec.head);
-    if (!head || used.has(head.id)) return;
+    if (!head || !head.presidential || used.has(head.id)) return;
     used.add(head.id);
     const deputy = spec.deputy && spec.deputy !== head.id && byId.has(spec.deputy) && !used.has(spec.deputy) ? spec.deputy : null;
     if (deputy) used.add(deputy);
@@ -177,8 +195,17 @@ export function buildTickets(cands: SimCandidate[], arrangement: Arrangement, tr
     const carried = head.share + partners.reduce((sum, m) => sum + m.share * transfer, 0);
     const total = members.reduce((sum, m) => sum + m.share, 0);
     const mob = total > 0 ? members.reduce((sum, m) => sum + m.share * m.mobilisation, 0) / total : head.mobilisation;
+    // A running mate brings their home region as a lean, and nowhere else. A base would multiply
+    // the ticket's share there about fivefold, and a lean elsewhere would only draw votes from
+    // the home region. Both are judgements; see homeRegionOf.
+    const deputyHome = deputy ? homeRegionOf(byId.get(deputy)!) : null;
     const strong: Record<string, number> = {};
-    for (const r of REGIONS) strong[r] = Math.max(...members.map((m) => m.strongholds[r] ?? 0));
+    for (const r of REGIONS) {
+      const headLevel = head.strongholds[r] ?? 0;
+      const backerLevels = backers.map((id) => byId.get(id)!.strongholds[r] ?? 0);
+      const deputyLevel = r === deputyHome ? 1 : 0;
+      strong[r] = Math.max(headLevel, deputyLevel, ...backerLevels);
+    }
     const label = deputy ? `${head.short} & ${byId.get(deputy)!.short}` : head.name;
     tickets.push({
       key: `ticket-${i}`,
@@ -195,7 +222,7 @@ export function buildTickets(cands: SimCandidate[], arrangement: Arrangement, tr
   });
 
   for (const c of cands) {
-    if (used.has(c.id)) continue;
+    if (used.has(c.id) || !c.presidential) continue;
     tickets.push({
       key: c.id,
       label: c.name,
@@ -402,11 +429,13 @@ export interface Realignment {
 
 /** Simulator candidates from the seeds, with each national share taken from the polls. */
 export function candidatesFrom(seeds: CandidateSeed[], polls: Poll[], asOf: string): SimCandidate[] {
-  const avg = pollAverage(polls, seeds.map((s) => s.id), asOf);
+  const presidential = seeds.filter((s) => s.presidential !== false);
+  const avg = pollAverage(polls, presidential.map((s) => s.id), asOf);
   return seeds.map((s) => ({
     id: s.id,
     name: s.name,
     short: s.short,
+    presidential: s.presidential !== false,
     share: avg[s.id] ?? 0,
     mobilisation: s.mobilisation,
     backyard: s.backyard,
@@ -435,10 +464,10 @@ export const SCENARIOS: Scenario[] = [
     arrangement: [],
   },
   {
-    id: "ruto-wamalwa",
-    name: "Ruto with Wamalwa",
-    blurb: "Ruto runs with Eugene Wamalwa as running mate. No one else backs the ticket.",
-    arrangement: [{ head: "ruto", deputy: "wamalwa", backers: [] }],
+    id: "ruto-kindiki",
+    name: "Ruto with Kindiki",
+    blurb: "Ruto runs with Kithure Kindiki, the incumbent Deputy President, as running mate. No one else backs the ticket.",
+    arrangement: [{ head: "ruto", deputy: "kindiki", backers: [] }],
   },
   {
     id: "kalonzo-gachagua",
@@ -452,6 +481,17 @@ export const SCENARIOS: Scenario[] = [
     blurb: "Edwin Sifuna runs for president with Rigathi Gachagua as running mate. Every other opposition candidate backs the ticket.",
     arrangement: [{ head: "sifuna", deputy: "gachagua", backers: backersExcept("sifuna", "gachagua") }],
   },
+];
+
+/** The running mates Afrilens tests for Ruto. Each is a judgement of home-region and backyard strength, not a poll. */
+export const RUTO_RUNNING_MATES: { id: string; note: string }[] = [
+  { id: "kindiki", note: "Incumbent Deputy President" },
+  { id: "mudavadi", note: "Western Kenya; senior government figure" },
+  { id: "wetangula", note: "Western Kenya" },
+  { id: "waiguru", note: "Mt Kenya (Kirinyaga)" },
+  { id: "wanga", note: "Lake Victoria (Homa Bay)" },
+  { id: "oparanya", note: "Western Kenya (Kakamega)" },
+  { id: "joho", note: "Coast (Mombasa)" },
 ];
 
 /** The arrangement on the record: the latest change per candidate, dated on or before the as-of day. */

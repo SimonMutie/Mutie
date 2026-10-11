@@ -5,8 +5,10 @@ import {
   arrangementFromRealignments,
   buildTickets,
   candidatesFrom,
+  homeRegionOf,
   MAX_TICKETS,
   REGIONS,
+  RUTO_RUNNING_MATES,
   SCENARIOS,
   simulate,
   TRANSFER_DEFAULT,
@@ -37,6 +39,7 @@ const DRAWS = 500;
 const TRANSFER_STEPS = [0.5, 0.7, 0.85, 1];
 
 type Draft = { head: string | null; deputy: string | null; backers: string[] };
+interface MateRow { id: string | null; label: string; note: string; home: string | null; rutoHome: number | null; delta: number; rutoNational: number; counties: number }
 const EMPTY: Draft = { head: null, deputy: null, backers: [] };
 
 export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: Live; isAdmin: boolean; onChanged: () => void }) {
@@ -66,7 +69,12 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
 
   const name = (id: string | null) => (id ? byId.get(id)?.name ?? id : "");
   const short = (id: string | null) => (id ? byId.get(id)?.short ?? id : "");
-  const aloneIds = cands.map((c) => c.id).filter((id) => !arrangement.some((t) => t.head === id || t.deputy === id || t.backers.includes(id)));
+  const presidents = cands.filter((c) => c.presidential);
+  const homeRegion = (id: string): string | null => {
+    const c = byId.get(id);
+    return c ? homeRegionOf(c) : null;
+  };
+  const aloneIds = presidents.map((c) => c.id).filter((id) => !arrangement.some((t) => t.head === id || t.deputy === id || t.backers.includes(id)));
 
   /* ── building ─────────────────────────────────────────── */
 
@@ -90,18 +98,84 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
     setNotice(null);
   };
 
-  const setHead = (id: string) => setDraft((d) => ({ ...d, head: id, deputy: d.deputy === id ? null : d.deputy, backers: d.backers.filter((b) => b !== id) }));
-  const setDeputy = (id: string | null) => setDraft((d) => ({ ...d, deputy: id, backers: id ? d.backers.filter((b) => b !== id) : d.backers }));
-  const toggleBacker = (id: string) =>
+  const loadMate = (id: string | null) => {
+    setCustom([{ head: "ruto", deputy: id, backers: [] }]);
+    setPresetId(null);
+    setMode("custom");
+    setDraft(EMPTY);
+    setEditing(null);
+    setNotice(null);
+  };
+
+  const [mates, setMates] = useState<MateRow[] | null>(null);
+  const [comparing, setComparing] = useState(false);
+  const compareMates = () => {
+    setComparing(true);
+    // Let the button state paint before the runs start.
+    window.setTimeout(() => {
+      const runFor = (deputy: string | null) => {
+        const r = simulate(cands, { arrangement: [{ head: "ruto", deputy, backers: [] }], transfer: dTransfer, turnout: dTurnout, draws: DRAWS });
+        const idx = r.tickets.findIndex((x) => x.head === "ruto");
+        const regionShare = (region: string) => r.regions.find((x) => x.region === region)?.shares[idx] ?? 0;
+        return { r, idx, regionShare, t: r.tickets[idx] };
+      };
+      const alone = runFor(null);
+      const rows: MateRow[] = RUTO_RUNNING_MATES.map((m) => {
+        const home = homeRegion(m.id);
+        const run = runFor(m.id);
+        const inHome = home ? run.regionShare(home) : 0;
+        const aloneInHome = home ? alone.regionShare(home) : 0;
+        return {
+          id: m.id,
+          label: name(m.id),
+          note: m.note,
+          home,
+          rutoHome: inHome,
+          delta: home ? inHome - aloneInHome : 0,
+          rutoNational: run.t?.central ?? 0,
+          counties: run.t?.countiesAtFloor ?? 0,
+        };
+      }).sort((x, y) => y.delta - x.delta);
+      setMates([
+        { id: null, label: "Ruto alone", note: "No running mate", home: null, rutoHome: null, delta: 0, rutoNational: alone.t?.central ?? 0, counties: alone.t?.countiesAtFloor ?? 0 },
+        ...rows,
+      ]);
+      setComparing(false);
+    }, 30);
+  };
+
+  /** The ballot the reader is changing. On the live record, a first change starts their own copy of it. */
+  const startOwn = () => {
+    if (mode === "live") {
+      setCustom(liveArrangement.map((t) => ({ ...t, backers: [...t.backers] })));
+      setMode("custom");
+      setPresetId(null);
+    }
+  };
+  const setHead = (id: string) => {
+    startOwn();
+    setDraft((d) => ({ ...d, head: id, deputy: d.deputy === id ? null : d.deputy, backers: d.backers.filter((b) => b !== id) }));
+  };
+  const setDeputy = (id: string | null) => {
+    startOwn();
+    setDraft((d) => ({ ...d, deputy: id, backers: id ? d.backers.filter((b) => b !== id) : d.backers }));
+  };
+  const toggleBacker = (id: string) => {
+    startOwn();
     setDraft((d) => ({ ...d, backers: d.backers.includes(id) ? d.backers.filter((b) => b !== id) : [...d.backers, id] }));
-  const backAll = () => setDraft((d) => ({ ...d, backers: cands.map((c) => c.id).filter((id) => id !== d.head && id !== d.deputy) }));
+  };
+  const backAll = () => {
+    startOwn();
+    setDraft((d) => ({ ...d, backers: presidents.map((c) => c.id).filter((id) => id !== d.head && id !== d.deputy) }));
+  };
 
   const saveTicket = () => {
     if (!draft.head) return;
     const spec: TicketSpec = { head: draft.head, deputy: draft.deputy, backers: draft.backers.filter((b) => b !== draft.head && b !== draft.deputy) };
     const claimed = new Set([spec.head, spec.deputy, ...spec.backers].filter((x): x is string => !!x));
     // Anyone placed in this ticket leaves whatever ticket they were in before.
-    const others = custom
+    const shown = mode === "live" ? liveArrangement : custom;
+    const others = shown
       .filter((_, i) => i !== editing)
       .filter((t) => !claimed.has(t.head))
       .map((t) => ({ head: t.head, deputy: t.deputy && !claimed.has(t.deputy) ? t.deputy : null, backers: t.backers.filter((b) => !claimed.has(b)) }));
@@ -119,15 +193,16 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
   };
 
   const editTicket = (i: number) => {
-    const t = custom[i];
+    const t = (mode === "live" ? liveArrangement : custom)[i];
     if (!t) return;
+    startOwn();
     setDraft({ head: t.head, deputy: t.deputy, backers: [...t.backers] });
     setEditing(i);
     setNotice(null);
   };
 
   const removeTicket = (i: number) => {
-    setCustom(custom.filter((_, j) => j !== i));
+    setCustom((mode === "live" ? liveArrangement : custom).filter((_, j) => j !== i));
     setMode("custom");
     setPresetId(null);
     if (editing === i) {
@@ -221,14 +296,14 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
             <h3>{editing !== null ? "Change this ticket" : "Build a ticket"}</h3>
             <p className="sim-muted">Choose the presidential candidate, the running mate, and the backers. Anyone you place in a ticket leaves their previous ticket.</p>
           </div>
-          {mode === "live" && <span className="sim-tag sim-tag--live">Read only. Edit the tickets to build your own.</span>}
+          {mode === "live" && <span className="sim-tag sim-tag--live">Showing the live record. Your first change starts your own ballot.</span>}
         </div>
 
-        <div className={`sim-steps${mode === "live" ? " is-locked" : ""}`}>
-          <fieldset className="sim-step" disabled={mode === "live"}>
+        <div className="sim-steps">
+          <fieldset className="sim-step">
             <legend><span>1</span> President</legend>
             <div className="sim-pick">
-              {cands.map((c) => (
+              {presidents.map((c) => (
                 <button key={c.id} type="button" className={`sim-pick__item${draft.head === c.id ? " is-on" : ""}`} aria-pressed={draft.head === c.id} onClick={() => setHead(c.id)}>
                   <span>{c.short}</span>
                   <small>{pct(c.share, 1)}</small>
@@ -237,7 +312,7 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
             </div>
           </fieldset>
 
-          <fieldset className="sim-step" disabled={mode === "live" || !draft.head}>
+          <fieldset className="sim-step" disabled={!draft.head}>
             <legend><span>2</span> Running mate</legend>
             <div className="sim-pick">
               <button type="button" className={`sim-pick__item${draft.deputy === null ? " is-on" : ""}`} aria-pressed={draft.deputy === null} onClick={() => setDeputy(null)}>
@@ -247,20 +322,20 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
               {cands.filter((c) => c.id !== draft.head).map((c) => (
                 <button key={c.id} type="button" className={`sim-pick__item${draft.deputy === c.id ? " is-on" : ""}`} aria-pressed={draft.deputy === c.id} onClick={() => setDeputy(c.id)}>
                   <span>{c.short}</span>
-                  <small>{pct(c.share, 1)}</small>
+                  <small>{c.presidential ? pct(c.share, 1) : "Running mate only"}</small>
                 </button>
               ))}
             </div>
           </fieldset>
 
-          <fieldset className="sim-step" disabled={mode === "live" || !draft.head}>
+          <fieldset className="sim-step" disabled={!draft.head}>
             <legend><span>3</span> Backed by</legend>
             <div className="sim-step__tools">
               <button type="button" className="sim-link" onClick={backAll}>Every other candidate</button>
               <button type="button" className="sim-link" onClick={() => setDraft((d) => ({ ...d, backers: [] }))}>None</button>
             </div>
             <div className="sim-pick">
-              {cands.filter((c) => c.id !== draft.head && c.id !== draft.deputy).map((c) => {
+              {presidents.filter((c) => c.id !== draft.head && c.id !== draft.deputy).map((c) => {
                 const on = draft.backers.includes(c.id);
                 return (
                   <button key={c.id} type="button" className={`sim-pick__item sim-pick__item--check${on ? " is-on" : ""}`} aria-pressed={on} onClick={() => toggleBacker(c.id)}>
@@ -287,7 +362,7 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
             {editing !== null && (
               <button type="button" className="sim-reset" onClick={() => { setDraft(EMPTY); setEditing(null); setNotice(null); }}>Cancel</button>
             )}
-            <button type="button" className="sim-save" disabled={!draft.head || mode === "live"} onClick={saveTicket}>
+            <button type="button" className="sim-save" disabled={!draft.head} onClick={saveTicket}>
               {editing !== null ? "Save changes" : "Add ticket to the ballot"}
             </button>
           </div>
@@ -315,7 +390,7 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
                     <div><dt>Running mate</dt><dd>{t.deputy ? name(t.deputy) : "None"}</dd></div>
                     <div><dt>Backed by</dt><dd>{t.backers.length ? t.backers.map((b) => short(b)).join(", ") : "No one"}</dd></div>
                   </dl>
-                  {mode === "custom" && (
+                  {(
                     <div className="sim-ticket__actions">
                       <button type="button" className="sim-link" onClick={() => editTicket(i)}>Change</button>
                       <button type="button" className="sim-link sim-link--danger" onClick={() => removeTicket(i)}>Remove</button>
@@ -328,6 +403,38 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
         )}
         {aloneIds.length > 0 && arrangement.length > 0 && (
           <p className="sim-muted sim-alone"><strong>Running alone:</strong> {aloneIds.map((id) => short(id)).join(", ")}</p>
+        )}
+      </div>
+
+      <div className="sim-card sim-card--wide">
+        <h3>Which running mate helps Ruto most?</h3>
+        <p className="sim-muted">Each name is tested with Ruto at the head of the ticket, on the same polls and settings as this page. Running mates are not polled, so the model gives them their home region’s strength and backyard counties and nothing more.</p>
+        <p className="sim-muted sim-compare__note">National totals come from the polls, so a running mate changes <em>where</em> Ruto’s votes come from, not how many he has. Round-one and run-off odds therefore stay the same across these tickets.</p>
+        <div className="sim-compare__bar">
+          <button type="button" className="sim-save" onClick={compareMates} disabled={comparing}>
+            {comparing ? "Running the seven tickets…" : mates ? "Run again" : "Compare the running mates"}
+          </button>
+        </div>
+        {mates && (
+          <div className="sim-table-wrap">
+            <table className="sim-table sim-mates">
+              <thead>
+                <tr><th>Running mate</th><th>Home base</th><th>Ruto in home region</th><th>Change vs Ruto alone</th><th>Ruto nationwide</th><th /></tr>
+              </thead>
+              <tbody>
+                {mates.map((m) => (
+                  <tr key={m.id ?? "alone"} className={m.id === null ? "is-base" : ""}>
+                    <td><strong>{m.label}</strong></td>
+                    <td className="sim-muted">{m.home ? `${m.note} · ${m.home}` : m.note}</td>
+                    <td>{m.rutoHome === null ? "—" : pct(m.rutoHome, 1)}</td>
+                    <td className={m.id === null ? "" : m.delta >= 0 ? "sim-up" : "sim-down"}>{m.id === null ? "—" : `${m.delta >= 0 ? "+" : ""}${(m.delta * 100).toFixed(1)} pts`}</td>
+                    <td>{pct(m.rutoNational, 1)}</td>
+                    <td>{m.id !== null && <button type="button" className="sim-link" onClick={() => loadMate(m.id)}>Load ticket</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -423,8 +530,8 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
               <tbody>
                 {cands.map((c) => (
                   <tr key={c.id}>
-                    <td>{c.name}</td>
-                    <td>{pct(c.share, 1)}</td>
+                    <td>{c.name}{!c.presidential && <span className="sim-muted"> · running mate only</span>}</td>
+                    <td>{c.presidential ? pct(c.share, 1) : "—"}</td>
                     <td>{Math.round(c.mobilisation * 100)}</td>
                     <td>{c.backyard.length ? c.backyard.map((code) => COUNTIES.find((x) => x.code === code)?.name ?? code).join(", ") : "—"}</td>
                     <td className="sim-strong">

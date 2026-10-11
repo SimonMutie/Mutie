@@ -1143,7 +1143,6 @@
 .sim-builder__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .sim-tag--live { align-self: center; background: var(--panel-raised); border-color: var(--border); font-size: 12px; padding: 5px 12px; }
 .sim-steps { display: grid; gap: 16px; margin-top: 8px; }
-.sim-steps.is-locked { opacity: 0.6; }
 .sim-step { border: 0; margin: 0; padding: 0; min-width: 0; }
 .sim-step:disabled { opacity: 0.45; }
 .sim-step legend { font-family: var(--font-display); font-size: 15px; font-weight: 600; padding: 0; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
@@ -1196,3 +1195,10 @@
   .sim-ballot { grid-template-columns: 1fr; }
   .sim-sens__row { grid-template-columns: 90px 1fr 48px; }
 }
+
+.sim-compare__bar { margin: 4px 0 12px; }
+.sim-mates tr.is-base td { background: var(--panel-raised); }
+.sim-up { color: var(--positive); font-weight: 600; }
+.sim-down { color: var(--critical); font-weight: 600; }
+.sim-compare__note { margin-top: -4px; }
+.sim-mates td { vertical-align: middle; }
