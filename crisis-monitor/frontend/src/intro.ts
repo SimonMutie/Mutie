@@ -18,10 +18,11 @@
  */
 
 export const WELCOME_HEADING = "Welcome to The Lens";
-// The welcome is one passage, shown and spoken as written — never split into a heading and a line.
-export const WELCOME_MESSAGE = "Welcome to the Lens, your number one platform for crisis monitoring and risk anticipation. The Lens, helping investors derisk opportunities across frontier markets.";
-// Read aloud by the browser only if the recording cannot be played; "de-risk" is hyphenated so it is pronounced correctly.
-const WELCOME_SPOKEN = WELCOME_MESSAGE.replace("derisk", "de-risk");
+// On screen: the short tagline under the heading.
+export const WELCOME_LINE = "We help you turn signals into insights and foresight, for risk anticipation and strategic decision-making.";
+// Spoken: the full introduction (the recording says exactly this). The browser reads it aloud only if the
+// recording cannot be played; "de-risk" is hyphenated so it is pronounced correctly.
+const WELCOME_SPOKEN = "Welcome to the Lens, your number one platform for crisis monitoring and risk anticipation. The Lens, helping investors de-risk opportunities across frontier markets.";
 
 const SOUND_KEY = "lens.intro.sound";
 const VOICE_KEY = "lens.intro.voice";
