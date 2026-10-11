@@ -442,7 +442,7 @@ export const KE_WATCH: Watch = {
   code: codeReport,
   leadKind,
   leadKinds: ["poll", "declaration", "iebc", "court"],
-  contentKinds: ["poll", "candidate", "milestone"],
+  contentKinds: ["poll", "candidate", "milestone", "candidate-input", "stronghold", "realignment"],
   deathCategories: ["political_violence", "protest_policing", "abduction", "election_admin"],
   places: new Map(COUNTY_LIST),
 };

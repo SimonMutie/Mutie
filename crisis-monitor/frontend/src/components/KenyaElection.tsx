@@ -20,6 +20,7 @@ import { ElectionDataCtx, mergeLive, type Live } from "../data/electionLive";
 import { watchApi } from "../api";
 import { GroupedHBars, HBars, Timeline, type TimelineEvent } from "./charts";
 import ElectionManage from "./ElectionManage";
+import ElectionSimulator from "./ElectionSimulator";
 import MonthlyReport from "./MonthlyReport";
 import { SectionFrame } from "./SectionToggle";
 import "./Election.css";
@@ -41,6 +42,7 @@ const SECTIONS = [
   { id: "population", label: "Population" },
   { id: "candidates", label: "Candidates" },
   { id: "polls", label: "Polls" },
+  { id: "simulator", label: "Simulator" },
   { id: "outlook", label: "Outlook" },
   { id: "manage", label: "Manage", admin: true },
   { id: "sources", label: "Sources" },
@@ -120,6 +122,9 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
         <PopulationSection />
         <CandidatesSection />
         <PollsSection />
+        <Section id="simulator" kicker="2027 simulator" title="Coalition scenarios and the 2027 outcome" intro={<p>Put candidates into tickets and see how the 2027 presidential race could finish. Each run combines the polls, each candidate’s strongholds, backyard and mobilisation, the transfer of votes to a ticket and the constitutional rule for winning in the first round. The numbers update as polls, realignments and inputs change.</p>}>
+          <ElectionSimulator live={live} isAdmin={isAdmin} onChanged={loadContent} />
+        </Section>
         <OutlookSection />
         {isAdmin && (
           <section className="el-section" id="el-manage">
