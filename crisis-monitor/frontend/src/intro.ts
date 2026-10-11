@@ -18,8 +18,9 @@
  */
 
 export const WELCOME_HEADING = "Welcome to The Lens";
-export const WELCOME_LINE = "We help you turn signals into insights and foresight, for risk anticipation and strategic decision-making.";
-const WELCOME_SPOKEN = "Welcome to The Lens, your number one platform for crisis monitoring and risk anticipation. We help you turn signals into insights and foresight, for strategic decision-making.";
+export const WELCOME_LINE = "Your number one platform for crisis monitoring and risk anticipation. The Lens, helping investors derisk opportunities across frontier markets.";
+// Read aloud by the browser only if the recording cannot be played; "de-risk" is hyphenated so it is pronounced correctly.
+const WELCOME_SPOKEN = "Welcome to The Lens, your number one platform for crisis monitoring and risk anticipation. The Lens, helping investors de-risk opportunities across frontier markets.";
 
 const SOUND_KEY = "lens.intro.sound";
 const VOICE_KEY = "lens.intro.voice";

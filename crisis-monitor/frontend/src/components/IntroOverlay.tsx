@@ -16,7 +16,7 @@ import "./IntroOverlay.css";
 
 type Phase = "playing" | "leaving" | "skipped" | "gone";
 
-// The welcome is 22 words and is fully on screen about 1.7 s in. The zoom
+// The welcome is 24 words and is fully on screen about 1.7 s in. The zoom
 // waits long enough after that for it to be read at an unhurried pace
 // (roughly five seconds); anyone who has seen it can click to skip.
 const HOLD_MS = 6500;
