@@ -142,7 +142,7 @@ const widgetSchema = z.object({
         text: z.string(),
         color: z.string().optional(),
         type: z
-          .enum(["checkpoint", "chokepoint", "port", "airport", "military", "school", "health", "government", "town", "dam", "investment", "border_point", "threat_risk", "other"])
+          .enum(["checkpoint", "chokepoint", "port", "airport", "military", "school", "health", "government", "town", "dam", "investment", "border_point", "threat_risk", "aid_response", "water_point", "other"])
           .optional(),
       })
     )

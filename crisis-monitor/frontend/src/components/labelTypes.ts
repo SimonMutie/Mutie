@@ -35,6 +35,8 @@ export type LabelType =
   | "investment"
   | "border_point"
   | "threat_risk"
+  | "aid_response"
+  | "water_point"
   | "other";
 
 interface LabelTypeMeta {
@@ -115,6 +117,16 @@ export const LABEL_TYPE_META: Record<LabelType, LabelTypeMeta> = {
     name: "Threat / Risk",
     iconInner:
       '<polygon points="12,2 22,20 2,20" fill="none" stroke="white" stroke-width="2" /><line x1="12" y1="9" x2="12" y2="14" stroke="white" stroke-width="2" /><circle cx="12" cy="17" r="1.2" fill="white" />',
+  },
+  aid_response: {
+    color: "#db2777",
+    name: "Humanitarian response",
+    iconInner: '<circle cx="12" cy="12" r="6.5" fill="none" stroke="white" stroke-width="2" /><line x1="12" y1="7" x2="12" y2="17" stroke="white" stroke-width="2" /><line x1="7" y1="12" x2="17" y2="12" stroke="white" stroke-width="2" />',
+  },
+  water_point: {
+    color: "#65a30d",
+    name: "Water point",
+    iconInner: '<path d="M12,3 C12,3 6,10 6,14 A6,6 0 0,0 18,14 C18,10 12,3 12,3 Z" fill="white" />',
   },
   other: {
     color: "#6b7280",
