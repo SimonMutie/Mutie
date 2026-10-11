@@ -7,6 +7,7 @@
   inset: 0;
   z-index: 10000;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
   background: #050a12;
@@ -20,7 +21,10 @@
   flex-direction: column;
   align-items: center;
   gap: clamp(22px, 4vh, 40px);
-  padding: 24px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  padding: 24px 16px;
   text-align: center;
 }
 
@@ -94,7 +98,7 @@
 }
 .intro__words p {
   margin: 14px auto 0;
-  max-width: 34em;
+  max-width: min(34em, 100%);
   font-size: clamp(15px, 2.1vmin, 19px);
   line-height: 1.55;
   color: #a9b8ca;
