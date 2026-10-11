@@ -3,11 +3,13 @@ import { watchApi, type EwItem } from "../api";
 import { AS_OF, BENCH_LABEL, ELECTION_DAY, FUNDING_NEED_USD, SCENARIOS, SOURCES, type BenchStatus, type Benchmark, type Milestone } from "../data/southSudanElection";
 import { SsDataCtx, mergeSsLive, type SsLive } from "../data/southSudanLive";
 import { SS_WATCH_CONFIG } from "../data/watchConfig";
-import { StackBar, StackedColumns, Timeline, type TimelineEvent } from "./charts";
+import { StackBar, Timeline, type TimelineEvent } from "./charts";
+import { LaneTimeline } from "./LaneTimeline";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
 import SouthSudanLedger from "./SouthSudanLedger";
 import MonthlyReport from "./MonthlyReport";
+import { SectionFrame } from "./SectionToggle";
 import { Portrait } from "./Portrait";
 import { PEOPLE } from "../data/southSudanPeople";
 import "./Election.css";
@@ -169,12 +171,9 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
 
 function Section({ id, kicker, title, intro, children }: { id: string; kicker: string; title: string; intro?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="el-section" id={`ss-${id}`}>
-      <p className="el-kicker">{kicker}</p>
-      <h2>{title}</h2>
-      {intro && <div className="el-intro">{intro}</div>}
+    <SectionFrame id={id} prefix="ss" kicker={kicker} title={title} intro={intro}>
       {children}
-    </section>
+    </SectionFrame>
   );
 }
 
@@ -372,32 +371,37 @@ function CalendarVisual() {
 function BreachTimeline() {
   const [items, setItems] = useState<EwItem[] | null>(null);
   const [all, setAll] = useState(false);
+  const [picked, setPicked] = useState<string | null>(null);
   useEffect(() => {
     const ss = watchApi("ss");
     Promise.all([ss.items({ category: "agreement_breach", days: 180, limit: 300 }), ss.items({ category: "ceasefire_violation", days: 180, limit: 300 })])
       .then(([a, b]) => setItems([...a, ...b].sort((x, y) => y.published_at.localeCompare(x.published_at))))
       .catch(() => setItems([]));
   }, []);
-  const kinds = [
-    { key: "ceasefire_violation", label: SS_WATCH_CONFIG.labels.ceasefire_violation ?? "Ceasefire violations", color: SS_WATCH_CONFIG.colors.ceasefire_violation },
-    { key: "agreement_breach", label: SS_WATCH_CONFIG.labels.agreement_breach ?? "Agreement breaches", color: SS_WATCH_CONFIG.colors.agreement_breach },
-  ];
-  // Weeks run back from the as-of date, 26 of them, so the 180 days fill the chart.
-  const weeks = useMemo(() => {
-    const end = Date.parse(`${AS_OF}T00:00:00Z`);
-    const start = end - 26 * 7 * DAY + DAY;
-    const out = Array.from({ length: 26 }, (_, i) => {
-      const from = new Date(start + i * 7 * DAY);
-      return { label: from.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }), counts: Object.fromEntries(kinds.map((k) => [k.key, 0])) as Record<string, number> };
-    });
-    for (const it of items ?? []) {
-      const t = Date.parse(it.published_at);
-      const i = Math.floor((t - start) / (7 * DAY));
-      if (i >= 0 && i < out.length && out[i].counts[it.category] !== undefined) out[i].counts[it.category]++;
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items]);
+  const kinds = ["ceasefire_violation", "agreement_breach"] as const;
+  const lanes = kinds.map((k) => ({ key: k, label: SS_WATCH_CONFIG.labels[k] ?? k, color: SS_WATCH_CONFIG.colors[k] ?? "var(--info)" }));
+  const range = useMemo(() => {
+    const end = AS_OF;
+    const start = new Date(Date.parse(`${AS_OF}T00:00:00Z`) - 180 * DAY).toISOString().slice(0, 10);
+    return { start, end };
+  }, []);
+  const events = useMemo(
+    () =>
+      (items ?? []).map((it) => ({
+        id: it.id,
+        lane: it.category,
+        date: it.published_at.slice(0, 10),
+        title: it.title,
+        detail: (
+          <p>
+            {[it.county, it.status === "verified" ? "Verified by an analyst" : "Unverified, coded by rules"].filter(Boolean).join(" · ")}
+            {" · "}
+            <a href={it.url} target="_blank" rel="noreferrer noopener">Read the report</a>
+          </p>
+        ),
+      })),
+    [items],
+  );
   const shown = all ? items ?? [] : (items ?? []).slice(0, 12);
   const byKind = (k: string) => (items ?? []).filter((x) => x.category === k).length;
   return (
@@ -410,16 +414,21 @@ function BreachTimeline() {
         <>
           <div className="ss-breach__totals">
             <div><strong>{items.length}</strong><span>reports</span></div>
-            {kinds.map((k) => (
-              <div key={k.key}><strong style={{ color: k.color }}>{byKind(k.key)}</strong><span>{k.label.toLowerCase()}</span></div>
+            {kinds.map((k, i) => (
+              <div key={k}><strong style={{ color: lanes[i].color }}>{byKind(k)}</strong><span>{lanes[i].label.toLowerCase()}</span></div>
             ))}
             <div><strong>{items.filter((x) => x.status === "verified").length}</strong><span>verified by an analyst</span></div>
           </div>
-          <StackedColumns
-            label="Breach reports per week"
-            height={200}
-            unit="reports"
-            columns={weeks.map((w) => ({ label: w.label, segments: kinds.map((k) => ({ key: k.key, label: k.label, value: w.counts[k.key], color: k.color })) }))}
+          <LaneTimeline
+            label="Reported breaches on a timeline, last 180 days"
+            lanes={lanes}
+            events={events}
+            start={range.start}
+            end={range.end}
+            today={AS_OF}
+            marks={[{ date: "2026-09-22", label: "22 Sep order" }]}
+            picked={picked}
+            onPick={(id) => setPicked((cur) => (cur === id ? null : id))}
           />
           <ol className="ss-breach__list">
             {shown.map((it, i) => (

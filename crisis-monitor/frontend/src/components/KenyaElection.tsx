@@ -21,6 +21,7 @@ import { watchApi } from "../api";
 import { GroupedHBars, HBars, Timeline, type TimelineEvent } from "./charts";
 import ElectionManage from "./ElectionManage";
 import MonthlyReport from "./MonthlyReport";
+import { SectionFrame } from "./SectionToggle";
 import "./Election.css";
 
 /**
@@ -134,12 +135,9 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
 
 function Section({ id, kicker, title, intro, children }: { id: string; kicker: string; title: string; intro?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section className="el-section" id={`el-${id}`}>
-      <p className="el-kicker">{kicker}</p>
-      <h2>{title}</h2>
-      {intro && <div className="el-intro">{intro}</div>}
+    <SectionFrame id={id} prefix="el" kicker={kicker} title={title} intro={intro}>
       {children}
-    </section>
+    </SectionFrame>
   );
 }
 

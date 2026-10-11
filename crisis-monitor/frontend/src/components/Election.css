@@ -930,3 +930,58 @@
     radial-gradient(60% 80% at 100% 100%, color-mix(in srgb, var(--rp-accent) 18%, transparent), transparent 70%),
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='900' height='400' viewBox='0 0 900 400'><g fill='none' stroke='%237d8a9c' stroke-opacity='.28' stroke-width='1.3'><path d='M-20 120C120 60 200 180 340 120S560 40 700 120S860 200 920 150'/><path d='M-20 170C120 110 200 230 340 170S560 90 700 170S860 250 920 200'/><path d='M-20 220C120 160 200 280 340 220S560 140 700 220S860 300 920 250'/><path d='M-20 270C120 210 200 330 340 270S560 190 700 270S860 350 920 300'/></g></svg>") left bottom / 900px auto no-repeat;
 }
+
+/* ── lane timeline: one row per category, markers placed by date ── */
+.ltl { position: relative; margin: 6px 0 4px; }
+.ltl__empty { color: var(--text-muted); font-size: 13.5px; margin: 0 0 10px; }
+.ltl__scroll { overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 4px; }
+.ltl__inner { min-width: 680px; position: relative; }
+.ltl__head { position: relative; height: 22px; }
+.ltl__mark-label { position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; opacity: 0; transition: opacity 0.6s ease 0.4s; }
+.ltl.is-in .ltl__mark-label { opacity: 1; }
+.ltl__mark-label.is-end { transform: translateX(-100%); }
+.ltl__body { position: relative; }
+.ltl__lanes { border-top: 1px solid var(--border-soft); }
+.ltl__lane { display: flex; align-items: stretch; border-bottom: 1px solid var(--border-soft); }
+.ltl__name { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 4px; font-size: 13px; font-weight: 600; color: var(--text-primary); flex-shrink: 0; }
+.ltl__name i { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ltl__name span { line-height: 1.2; }
+.ltl__name small { margin-left: auto; font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.ltl__track { flex: 1; }
+.ltl__plot { position: absolute; top: 0; right: 0; pointer-events: none; }
+.ltl__mark { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed color-mix(in srgb, var(--text-muted) 55%, transparent); opacity: 0; transition: opacity 0.6s ease; }
+.ltl.is-in .ltl__mark { opacity: 1; }
+.ltl__today { position: absolute; top: -6px; bottom: -6px; width: 2px; background: var(--critical); border-radius: 2px; opacity: 0; transition: opacity 0.5s ease 0.6s; }
+.ltl.is-in .ltl__today { opacity: 1; }
+.ltl__dot { position: absolute; width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; padding: 0; border: 2px solid var(--panel); border-radius: 50%; cursor: pointer; pointer-events: auto; transform: scale(0); transition: transform 0.45s cubic-bezier(.2,.9,.3,1.3), box-shadow 0.2s ease; box-shadow: 0 0 0 0 transparent; }
+.ltl.is-in .ltl__dot { transform: scale(1); }
+.ltl__dot:hover, .ltl__dot:focus-visible, .ltl__dot.is-on { transform: scale(1.35); box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent); outline: none; }
+.ltl__axis { position: relative; height: 26px; margin-top: 6px; }
+.ltl__tick { position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+.ltl__tick.is-year { color: var(--text-primary); font-weight: 700; }
+.ltl__tick.is-start { transform: none; }
+.ltl__tick.is-end { transform: translateX(-100%); }
+.ltl__detail { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 0 10px 10px 0; background: var(--panel); min-height: 84px; }
+.ltl__detail h4 { margin: 2px 0 6px; font-family: var(--font-display); font-size: 15.5px; line-height: 1.3; letter-spacing: -0.005em; }
+.ltl__when { margin: 0; font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+.ltl__body-text { font-size: 13.5px; line-height: 1.5; color: var(--text-muted); }
+.ltl__body-text p { margin: 0; }
+.ltl__hint { margin: 0; font-size: 13px; color: var(--text-faint); }
+@media (prefers-reduced-motion: reduce) {
+  .ltl__dot, .ltl__mark, .ltl__mark-label, .ltl__today { transition: none !important; }
+  .ltl__dot, .ltl.is-in .ltl__dot { transform: none; }
+  .ltl__mark, .ltl__mark-label, .ltl__today { opacity: 1; }
+}
+
+/* ── breach list and totals, South Sudan ── */
+.ltl__breach-note { margin: 4px 0 12px; }
+
+/* ── collapsible sections: every section can be hidden by its reader ── */
+.el-sec-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 5px 11px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-muted); background: transparent; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.el-sec-toggle:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.el-sec-toggle:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.el-sec-toggle__chev { display: inline-block; transition: transform 0.25s ease; }
+.el-sec-toggle[aria-expanded="false"] .el-sec-toggle__chev { transform: rotate(-90deg); }
+.el-sec-body[hidden] { display: none; }
+.el-section.is-collapsed { padding-bottom: 0; }
+.el-section.is-collapsed h2 { opacity: 0.85; }

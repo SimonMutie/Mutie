@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ELECTION_DAY } from "../data/southSudanElection";
-import { Donut, HBars, LineArea, StackedColumns, Timeline, VBars, type TimelineEvent } from "./charts";
+import { Donut, HBars, LineArea, StackedColumns, VBars } from "./charts";
+import { LaneTimeline, type LaneEvent } from "./LaneTimeline";
 import {
   BEFORE_AFTER,
   CHAIN_CDF,
@@ -47,6 +48,7 @@ export default function SouthSudanLedger() {
   const [status, setStatus] = useState<Status>("all");
   const [q, setQ] = useState("");
   const [day, setDay] = useState(SCRUB_DAYS);
+  const [pickedCoded, setPickedCoded] = useState<string | null>(null);
 
   const h = LEDGER.headline;
   const maxYear = Math.max(...ROWS_BY_YEAR.map((r) => r.total));
@@ -126,18 +128,27 @@ export default function SouthSudanLedger() {
 
       <h3 className="el-subhead">Coded seats</h3>
       <p className="el-muted el-small">Every coded seat on a timeline. Select a point to read the change; the table below lists them and filters.</p>
-      <Timeline
+      <LaneTimeline
         label="Coded seats on a timeline"
+        lanes={[
+          { key: "Violation", label: "Violations", color: "var(--critical)" },
+          { key: "Contested", label: "Contested seats", color: "var(--elevated)" },
+          { key: "Mixed", label: "Mixed", color: "var(--text-faint)" },
+        ]}
+        events={coded.map((r): LaneEvent => ({
+          id: `coded-${CODED.indexOf(r)}`,
+          lane: r.code,
+          date: r.date.length === 7 ? `${r.date}-01` : r.date,
+          title: r.post,
+          detail: <p>{r.change}</p>,
+        }))}
         start="2023-01-01"
         end={LEDGER.cutOff}
         today={LEDGER.cutOff}
-        events={CODED.map((r, i): TimelineEvent => ({
-          id: `coded-${i}`,
-          date: r.date.length === 7 ? `${r.date}-01` : r.date,
-          title: `${r.code}: ${r.post}`,
-          color: r.code === "Violation" ? "var(--critical)" : r.code === "Contested" ? "var(--elevated)" : "var(--text-faint)",
-          detail: <p>{r.change}</p>,
-        }))}
+        marks={[{ date: ORDER, label: "22 Sep order" }]}
+        picked={pickedCoded}
+        onPick={(id) => setPickedCoded((cur) => (cur === id ? null : id))}
+        empty="No coded seats match this filter."
       />
       <div className="ssl-chips" role="group" aria-label="Filter by code">
         {(["all", "Violation", "Contested", "Mixed"] as Code[]).map((c) => (
