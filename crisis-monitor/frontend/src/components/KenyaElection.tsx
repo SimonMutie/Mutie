@@ -58,11 +58,25 @@ const pct = (n: number, d = 1) => `${n.toFixed(d)}%`;
 
 export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () => void; isAdmin?: boolean }) {
   const [live, setLive] = useState<Live>(() => mergeLive(null));
-  const loadContent = () => watchApi("ke").content().then((c) => setLive(mergeLive(c))).catch(() => {});
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+  const loadContent = () =>
+    watchApi("ke")
+      .content()
+      .then((c) => {
+        setLive(mergeLive(c));
+        setRefreshedAt(new Date());
+      })
+      .catch(() => {});
   useEffect(() => {
     loadContent();
-    const t = setInterval(loadContent, 5 * 60_000);
-    return () => clearInterval(t);
+    // Re-read the record every minute, and whenever the reader comes back to the tab, so the figures follow new polls and changes.
+    const t = setInterval(loadContent, 60_000);
+    const onVisible = () => document.visibilityState === "visible" && loadContent();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
   const sections = SECTIONS.filter((s) => !s.admin || isAdmin);
   const [active, setActive] = useState<string>("overview");
@@ -123,7 +137,7 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
         <CandidatesSection />
         <PollsSection />
         <Section id="simulator" kicker="2027 simulator" title="Coalition scenarios and the 2027 outcome" intro={<p>Put candidates into tickets and see how the 2027 presidential race could finish. Each run combines the polls, each candidate’s strongholds, backyard and mobilisation, the transfer of votes to a ticket and the constitutional rule for winning in the first round. The numbers update as polls, realignments and inputs change.</p>}>
-          <ElectionSimulator live={live} isAdmin={isAdmin} onChanged={loadContent} />
+          <ElectionSimulator live={live} isAdmin={isAdmin} onChanged={loadContent} refreshedAt={refreshedAt} />
         </Section>
         <OutlookSection />
         {isAdmin && (

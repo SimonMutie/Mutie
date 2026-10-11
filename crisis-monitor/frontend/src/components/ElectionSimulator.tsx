@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { slug, type Live } from "../data/electionLive";
 import { COUNTIES } from "../data/kenyaElection";
 import {
@@ -42,7 +42,7 @@ type Draft = { head: string | null; deputy: string | null; backers: string[] };
 interface MateRow { id: string | null; label: string; note: string; home: string | null; rutoHome: number | null; delta: number; rutoNational: number; counties: number }
 const EMPTY: Draft = { head: null, deputy: null, backers: [] };
 
-export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: Live; isAdmin: boolean; onChanged: () => void }) {
+export default function ElectionSimulator({ live, isAdmin, onChanged, refreshedAt }: { live: Live; isAdmin: boolean; onChanged: () => void; refreshedAt: Date | null }) {
   const asOf = todayIso();
   const cands = useMemo(() => candidatesFrom(live.sim.seeds, live.polls, asOf), [live.sim.seeds, live.polls, asOf]);
   const byId = useMemo(() => new Map(cands.map((c) => [c.id, c])), [cands]);
@@ -240,6 +240,14 @@ export default function ElectionSimulator({ live, isAdmin, onChanged }: { live: 
       <div className="sim-caveat" role="note">
         <strong>Inputs are judgements, outcomes are simulated.</strong> Poll shares and realignments come from the live record. Strongholds, backyards and mobilisation scores are Afrilens estimates from each candidate’s base, not 2022 county results, and should be checked against IEBC’s county figures once they are loaded. The simulation runs {DRAWS.toLocaleString("en-GB")} elections with poll, regional and mobilisation error. It shows a range of plausible outcomes, not a forecast.
       </div>
+
+      <p className="sim-live" role="status">
+        <span className="sim-live-dot" aria-hidden="true" />
+        <span>
+          Live. {refreshedAt ? `Checked the record at ${refreshedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Loading the record"}, and again every minute or when you return to this page.
+          New polls, realignments and input changes apply on the next check, and every number here recalculates.
+        </span>
+      </p>
 
       <div className="sim-howto">
         <p className="sim-howto__title">How a ticket works</p>
@@ -654,6 +662,29 @@ function SimEditor({ live, onChanged, asOf, cands }: { live: Live; onChanged: ()
   const [err, setErr] = useState<string | null>(null);
   const seed = live.sim.seeds.find((s) => s.id === who);
   const [rz, setRz] = useState({ date: asOf, candidate: "", ticket: "A", role: "head" as TicketRole, note: "", source: "" });
+  const [queue, setQueue] = useState<{ id: string; kind: string; title: string; url: string; domain: string | null; published_at: string }[]>([]);
+  const loadQueue = () =>
+    watchApi("ke")
+      .leads()
+      .then((rows) => setQueue(rows.filter((r) => r.kind === "declaration" || r.kind === "poll")))
+      .catch(() => setQueue([]));
+  useEffect(() => {
+    if (open) loadQueue();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  /** The candidate a headline names, matched on surname, ignoring apostrophes and case. */
+  const matchCandidate = (title: string) => {
+    const t = title.replace(/[’']/g, "").toLowerCase();
+    return cands.find((c) => {
+      const surname = c.name.split(" ").pop() ?? c.name;
+      return t.includes(surname.replace(/[’']/g, "").toLowerCase());
+    });
+  };
+  const useLead = (l: { title: string; url: string; published_at: string }) => {
+    const hit = matchCandidate(l.title);
+    setRz({ date: l.published_at.slice(0, 10), candidate: hit?.id ?? "", ticket: "A", role: "head", note: l.title, source: l.url });
+  };
 
   const save = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -701,6 +732,35 @@ function SimEditor({ live, onChanged, asOf, cands }: { live: Live; onChanged: ()
                 })
               }
             />
+          )}
+
+          <h4 className="sim-editor__h">Review queue from public sources</h4>
+          <p className="sim-muted">The collector files declarations and poll reports it finds in news. Nothing reaches the simulator until someone checks it. Use one to fill in a change below, then choose its ticket and role.</p>
+          {queue.length === 0 ? (
+            <p className="sim-empty">Nothing waiting for review.</p>
+          ) : (
+            <ul className="sim-queue">
+              {queue.map((l) => {
+                const hit = matchCandidate(l.title);
+                return (
+                  <li key={l.id}>
+                    <div>
+                      <span className="sim-queue__kind">{l.kind === "poll" ? "Poll" : "Declaration"}</span>
+                      <p>{l.title}</p>
+                      <small className="sim-muted">{l.domain ?? "news"} · {l.published_at.slice(0, 10)}{hit ? ` · names ${hit.short}` : ""}</small>
+                    </div>
+                    <div className="sim-queue__actions">
+                      {l.kind === "poll" ? (
+                        <small className="sim-muted">Enter the figures under Polls in Manage.</small>
+                      ) : (
+                        <button type="button" className="sim-reset" disabled={busy} onClick={() => useLead(l)}>Use for a change</button>
+                      )}
+                      <button type="button" className="sim-link" disabled={busy} onClick={() => save(() => watchApi("ke").setLead(l.id, "dismissed")).then(loadQueue)}>Dismiss</button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           )}
 
           <h4 className="sim-editor__h">Record a change on the ballot</h4>
