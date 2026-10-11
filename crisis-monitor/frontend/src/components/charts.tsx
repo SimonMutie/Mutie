@@ -416,7 +416,22 @@ export interface TimelineEvent {
   key?: boolean;
 }
 
-export function Timeline({ events, start, end, label, today, onPick, picked }: { events: TimelineEvent[]; start: string; end: string; label: string; today?: string; onPick?: (id: string) => void; picked?: string | null }) {
+export interface TimelinePhase {
+  from: string;
+  to: string;
+  label: string;
+  tone?: string;
+}
+
+/**
+ * A dated timeline. Phases draw as bands under the axis, key events as cards
+ * on two sides with leader stems (placed in levels so labels do not collide),
+ * every event as a dot, and today as a pulsing marker. Hovering or focusing an
+ * event reads its detail below. Everything animates in once on screen.
+ */
+const TL = { axis: 190, card: 44, gap: 52, band: 14, stage: 408, cardW: 164, minGap: 21 };
+
+export function Timeline({ events, start, end, label, today, onPick, picked, phases = [] }: { events: TimelineEvent[]; start: string; end: string; label: string; today?: string; onPick?: (id: string) => void; picked?: string | null; phases?: TimelinePhase[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const seen = useInView(ref, 0.15);
   const [hi, setHi] = useState<string | null>(null);
@@ -424,39 +439,119 @@ export function Timeline({ events, start, end, label, today, onPick, picked }: {
   const t1 = Date.parse(`${end}T00:00:00Z`);
   const at = (iso: string) => ((Date.parse(`${iso}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
   const ticks = useMemo(() => {
-    const out: { p: number; label: string }[] = [];
+    const out: { p: number; label: string; year: boolean }[] = [];
     const d = new Date(t0);
     d.setUTCDate(1);
     d.setUTCMonth(d.getUTCMonth() + 1);
     while (d.getTime() <= t1) {
-      out.push({ p: ((d.getTime() - t0) / (t1 - t0)) * 100, label: d.toLocaleDateString("en-GB", { month: "short", year: "2-digit", timeZone: "UTC" }) });
+      const m = d.getUTCMonth();
+      out.push({ p: ((d.getTime() - t0) / (t1 - t0)) * 100, label: d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" }), year: m === 0 });
       d.setUTCMonth(d.getUTCMonth() + 1);
     }
     return out;
   }, [t0, t1]);
+  // Key events take turns above and below the axis; a label that would collide moves to the next level.
+  const slots = useMemo(() => {
+    const keys = events.filter((e) => e.key).sort((a, b) => a.date.localeCompare(b.date));
+    const used: number[][] = [
+      [-Infinity, -Infinity, -Infinity],
+      [-Infinity, -Infinity, -Infinity],
+    ];
+    const out = new Map<string, { side: 0 | 1; level: number }>();
+    keys.forEach((e, i) => {
+      const x = ((Date.parse(`${e.date}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
+      const pref = (i % 2) as 0 | 1;
+      let placed = false;
+      for (const side of [pref, (1 - pref) as 0 | 1]) {
+        for (let L = 0; L < 3 && !placed; L++) {
+          if (x - used[side][L] >= TL.minGap) {
+            used[side][L] = x;
+            out.set(e.id, { side, level: L });
+            placed = true;
+          }
+        }
+        if (placed) break;
+      }
+      if (!placed) out.set(e.id, { side: pref, level: 2 });
+    });
+    return out;
+  }, [events, t0, t1]);
   const active = events.find((e) => e.id === (hi ?? picked)) ?? null;
+  const cardTop = (side: 0 | 1, L: number) => (side === 0 ? TL.axis - TL.band - L * TL.gap - TL.card : TL.axis + 70 + L * TL.gap);
   return (
-    <div ref={ref} className="vz-tl" role="group" aria-label={label}>
-      <div className="vz-tl__axis">
-        <span className="vz-tl__line" style={{ transform: `scaleX(${seen ? 1 : 0})` }} />
-        {today && <span className="vz-tl__today" style={{ left: `${at(today)}%` }}><span>today</span></span>}
-        {ticks.map((t) => (
-          <span key={t.label + t.p} className="vz-tl__tick" style={{ left: `${t.p}%` }}><span>{t.label}</span></span>
-        ))}
-        {events.map((e, i) => (
-          <button
-            key={e.id}
-            type="button"
-            className={`vz-tl__dot ${e.key ? "is-key" : ""} ${(hi ?? picked) === e.id ? "is-on" : ""} ${seen ? "is-in" : ""}`}
-            style={{ left: `${at(e.date)}%`, background: e.color ?? "var(--info)", transitionDelay: `${300 + i * 60}ms` }}
-            onMouseEnter={() => setHi(e.id)}
-            onMouseLeave={() => setHi(null)}
-            onFocus={() => setHi(e.id)}
-            onBlur={() => setHi(null)}
-            onClick={() => onPick?.(e.id)}
-            aria-label={`${e.date}: ${e.title}`}
-          />
-        ))}
+    <div ref={ref} className={`vzt ${seen ? "is-in" : ""}`} role="group" aria-label={label}>
+      <div className="vzt__scroll">
+        <div className="vzt__stage" style={{ height: TL.stage }}>
+          {today && (
+            <div className="vzt__today" style={{ left: `${at(today)}%` }}>
+              <span>Today</span>
+            </div>
+          )}
+          <div className="vzt__axis" style={{ top: TL.axis }} />
+          {phases.map((p, i) => (
+            <div
+              key={p.label}
+              className="vzt__phase"
+              style={{ top: TL.axis + TL.band, left: `${at(p.from)}%`, width: `${at(p.to) - at(p.from)}%`, background: p.tone ?? "var(--info)", transitionDelay: `${250 + i * 140}ms` }}
+            >
+              <span>{p.label}</span>
+            </div>
+          ))}
+          {ticks.map((t) => (
+            <span key={t.label + t.p} className={`vzt__tick ${t.year ? "is-year" : ""}`} style={{ left: `${t.p}%`, top: TL.axis + TL.band + 30 }}>
+              {t.label}
+            </span>
+          ))}
+          {events.map((e, i) => {
+            const x = at(e.date);
+            const slot = slots.get(e.id);
+            const on = (hi ?? picked) === e.id;
+            const color = e.color ?? "var(--info)";
+            const delay = `${300 + i * 45}ms`;
+            return (
+              <Fragment key={e.id}>
+                {slot && (
+                  <>
+                    <span
+                      className={`vzt__stem ${slot.side === 0 ? "is-up" : "is-down"}`}
+                      style={{
+                        left: `${x}%`,
+                        top: slot.side === 0 ? cardTop(0, slot.level) + TL.card : TL.axis,
+                        height: slot.side === 0 ? TL.axis - (cardTop(0, slot.level) + TL.card) : cardTop(1, slot.level) - TL.axis,
+                        background: color,
+                        transitionDelay: delay,
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className={`vzt__card ${x < 12 ? "is-left" : x > 88 ? "is-right" : ""} ${on ? "is-on" : ""}`}
+                      style={{ left: `${x}%`, top: cardTop(slot.side, slot.level), borderColor: color, transitionDelay: delay }}
+                      onMouseEnter={() => setHi(e.id)}
+                      onMouseLeave={() => setHi(null)}
+                      onFocus={() => setHi(e.id)}
+                      onBlur={() => setHi(null)}
+                      onClick={() => onPick?.(e.id)}
+                    >
+                      <small style={{ color }}>{new Date(`${e.date}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}</small>
+                      <b>{e.title}</b>
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className={`vzt__dot ${e.key ? "is-key" : ""} ${on ? "is-on" : ""}`}
+                  style={{ left: `${x}%`, top: TL.axis, background: color, transitionDelay: delay }}
+                  onMouseEnter={() => setHi(e.id)}
+                  onMouseLeave={() => setHi(null)}
+                  onFocus={() => setHi(e.id)}
+                  onBlur={() => setHi(null)}
+                  onClick={() => onPick?.(e.id)}
+                  aria-label={`${e.date}: ${e.title}`}
+                />
+              </Fragment>
+            );
+          })}
+        </div>
       </div>
       <div className="vz-tl__detail" aria-live="polite">
         {active ? (
@@ -466,7 +561,7 @@ export function Timeline({ events, start, end, label, today, onPick, picked }: {
             {active.detail && <div className="vz-tl__body">{active.detail}</div>}
           </>
         ) : (
-          <p className="vz-muted">Hover or select a point on the line to read it.</p>
+          <p className="vz-muted">Hover or select an event to read it.</p>
         )}
       </div>
     </div>

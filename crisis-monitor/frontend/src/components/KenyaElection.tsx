@@ -226,8 +226,15 @@ function TimelineSection() {
       <Timeline
         label="Timeline from October 2026 to polling day, 10 August 2027"
         start="2026-10-01"
-        end="2027-08-31"
+        end="2027-09-15"
         today={new Date().toLocaleDateString("en-CA")}
+        phases={[
+          { from: "2026-10-01", to: "2027-03-16", label: "Parties prepare", tone: "#2f66f0" },
+          { from: "2027-03-16", to: "2027-05-09", label: "Primaries", tone: "#8a3ffc" },
+          { from: "2027-05-09", to: "2027-06-12", label: "Nominations", tone: "#b3690b" },
+          { from: "2027-06-12", to: "2027-08-10", label: "Campaign", tone: "#d1352b" },
+          { from: "2027-08-10", to: "2027-09-09", label: "After the vote", tone: "#0d9488" },
+        ]}
         events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
       />
       {past.length > 0 && (
