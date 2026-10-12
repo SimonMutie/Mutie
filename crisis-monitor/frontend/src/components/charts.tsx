@@ -453,9 +453,9 @@ export interface TimelinePhase {
  * every event as a dot, and today as a pulsing marker. Hovering or focusing an
  * event reads its detail below. Everything animates in once on screen.
  */
-const TL = { axis: 190, card: 44, gap: 52, band: 14, lead: 40, stage: 408, cardW: 132, minGap: 21 };
+const TL = { axis: 190, card: 44, gap: 52, band: 14, lead: 40, stage: 408, cardW: 132, minGap: 21, rise: 56 };
 
-export function Timeline({ events, start, end, label, today, onPick, picked, phases = [] }: { events: TimelineEvent[]; start: string; end: string; label: string; today?: string; onPick?: (id: string) => void; picked?: string | null; phases?: TimelinePhase[] }) {
+export function Timeline({ events, start, end, label, today, countdown, onPick, picked, phases = [] }: { events: TimelineEvent[]; start: string; end: string; label: string; today?: string; countdown?: { to: string; label: string }; onPick?: (id: string) => void; picked?: string | null; phases?: TimelinePhase[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const seen = useInView(ref, 0.15);
   const [hi, setHi] = useState<string | null>(null);
@@ -596,8 +596,15 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
       <div className="vzt__scroll">
         <div className="vzt__stage" style={{ height: stageH }}>
           {today && (
-            <div className={`vzt__today ${at(today) > 84 ? "is-end" : ""}`} style={{ left: `${at(today)}%`, top: axisY - TL.lead + 6 }}>
-              <span>Today</span>
+            <div className="vzt__today" style={{ left: `${at(today)}%`, top: axisY - TL.rise }}>
+              {countdown && (
+                <span className="vzt__days">
+                  {Math.max(0, Math.round((Date.parse(`${countdown.to}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000))} days
+                  <br />
+                  until {countdown.label}
+                </span>
+              )}
+              <span className="vzt__now">Today</span>
             </div>
           )}
           <div className="vzt__axis" style={{ top: axisY }} />

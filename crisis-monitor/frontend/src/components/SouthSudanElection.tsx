@@ -362,6 +362,7 @@ function CalendarVisual() {
       start="2024-10-01"
       end="2026-12-31"
       today={AS_OF}
+      countdown={{ to: ELECTION_DAY, label: "polling day" }}
       picked={picked}
       onPick={setPicked}
     />
