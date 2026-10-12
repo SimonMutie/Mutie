@@ -10,20 +10,16 @@ import "./Spotlight.css";
 const KenyaElection = lazy(() => import("./KenyaElection"));
 const SouthSudanElection = lazy(() => import("./SouthSudanElection"));
 
-/** A published report, shown inside the platform. */
-function ReportFrame({ title, src, label, onBack }: { title: string; src: string; label: string; onBack: () => void }) {
+/** Yemen and the Red Sea: the published report, shown inside the platform. */
+function YemenReport({ onBack }: { onBack: () => void }) {
   return (
     <div className="spotlight-page">
       <div className="spotlight-wrap">
-        <button type="button" className="spotlight-back" onClick={onBack}>← {label}</button>
+        <button type="button" className="spotlight-back" onClick={onBack}>← Yemen</button>
       </div>
-      <iframe src={src} title={title} style={{ display: "block", width: "100%", height: "82vh", border: 0 }} />
+      <iframe src="/reports/yemen-red-sea.html" title="Yemen and the Red Sea" style={{ display: "block", width: "100%", height: "82vh", border: 0 }} />
     </div>
   );
-}
-
-function YemenReport({ onBack }: { onBack: () => void }) {
-  return <ReportFrame title="Yemen and the Red Sea" src="/reports/yemen-red-sea.html" label="Yemen" onBack={onBack} />;
 }
 
 /**
@@ -46,7 +42,7 @@ interface Props {
   onScopeChange: (scope: SpotlightScope) => void;
 }
 
-type Screen = { kind: "index" } | { kind: "read"; id: string } | { kind: "edit"; id: string | null } | { kind: "country"; iso2: string } | { kind: "election"; iso2: string; product?: string };
+type Screen = { kind: "index" } | { kind: "read"; id: string } | { kind: "edit"; id: string | null } | { kind: "country"; iso2: string } | { kind: "election"; iso2: string };
 type Notice = { text: string; error?: boolean } | null;
 
 const errorText = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback);
@@ -138,8 +134,6 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
       <Suspense fallback={<div className="spotlight-page"><div className="spotlight-wrap"><div className="spotlight-empty">Loading…</div></div></div>}>
         {screen.iso2 === "YE" ? (
           <YemenReport onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
-        ) : screen.product === "Political networks" ? (
-          <ReportFrame title="Political networks" src="/reports/south-sudan-networks.html" label="South Sudan" onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
         ) : screen.iso2 === "SS" ? (
           <SouthSudanElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
         ) : (
@@ -157,7 +151,7 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
         isAdmin={isAdmin}
         onBack={() => setScreen({ kind: "index" })}
         onOpenEntry={(id) => setScreen({ kind: "read", id })}
-        onOpenProduct={(title) => setScreen({ kind: "election", iso2: screen.iso2, product: title })}
+        onOpenProduct={() => setScreen({ kind: "election", iso2: screen.iso2 })}
         regionName={scope === "all" ? "Africa" : spotlightRegionName(scope)}
       />
     );
