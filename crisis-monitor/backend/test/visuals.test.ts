@@ -22,35 +22,35 @@ beforeAll(async () => {
 });
 
 describe("published visuals", () => {
-  const png = "data:image/png;base64," + "QUJD".repeat(60_000); // larger than one stored row
+  const image = "data:image/gif;base64," + "QUJD".repeat(60_000); // larger than one stored row
 
   it("refuses non-admins", async () => {
-    const res = await call("/", "POST", viewer, { title: "T", kicker: "K", png });
+    const res = await call("/", "POST", viewer, { title: "T", kicker: "K", image });
     expect([401, 403]).toContain(res.status);
     expect(res.status).not.toBe(200);
   });
 
   it("publishes a visual that reads back exactly through its public link", async () => {
-    const res = await call("/", "POST", admin, { title: "Road to the vote", kicker: "Calendar", png });
+    const res = await call("/", "POST", admin, { title: "Road to the vote", kicker: "Calendar", image });
     expect(res.status).toBe(200);
     const { token, path } = (await res.json()) as { token: string; path: string };
     expect(path).toBe(`/visual/${token}`);
     const got = await publicGet(token);
     expect(got.status).toBe(200);
-    const body = (await got.json()) as { title: string; kicker: string; png: string };
+    const body = (await got.json()) as { title: string; kicker: string; image: string };
     expect(body.title).toBe("Road to the vote");
     expect(body.kicker).toBe("Calendar");
-    expect(body.png).toBe(png);
+    expect(body.image).toBe(image);
   });
 
   it("stops working once revoked", async () => {
-    const { token } = (await (await call("/", "POST", admin, { title: "Gone", kicker: "", png: "data:image/png;base64,QUJD" })).json()) as { token: string };
+    const { token } = (await (await call("/", "POST", admin, { title: "Gone", kicker: "", image: "data:image/gif;base64,QUJD" })).json()) as { token: string };
     expect((await call(`/${token}`, "DELETE", admin)).status).toBe(200);
     expect((await publicGet(token)).status).toBe(404);
   });
 
-  it("rejects something that is not a PNG", async () => {
-    const res = await call("/", "POST", admin, { title: "x", kicker: "", png: "data:text/plain;base64,QUJD" });
+  it("rejects something that is not a GIF", async () => {
+    const res = await call("/", "POST", admin, { title: "x", kicker: "", image: "data:image/png;base64,QUJD" });
     expect(res.status).toBe(400);
   });
 });

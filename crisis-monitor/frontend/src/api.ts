@@ -2268,10 +2268,10 @@ export function connectLiveFeed(onMessage: (type: string, payload: unknown) => v
 
 /** Published visuals: one picture (a timeline, chart or widget) with its own link. */
 export const visualsApi = {
-  publish: (body: { title: string; kicker: string; png: string }) =>
+  publish: (body: { title: string; kicker: string; image: string }) =>
     req<{ token: string; path: string }>("/api/visuals", { method: "POST", body: JSON.stringify(body) }),
   list: () => req<{ visuals: { token: string; title: string; kicker: string; created_at: string; path: string }[] }>("/api/visuals"),
   revoke: (token: string) => req<{ ok: boolean }>(`/api/visuals/${token}`, { method: "DELETE" }),
-  /** Public: the picture behind a visual link. */
-  get: (token: string) => req<{ title: string; kicker: string; created_at: string; png: string }>(`/api/public/visuals/${token}`),
+  /** Public: the animation behind a visual link. */
+  get: (token: string) => req<{ title: string; kicker: string; created_at: string; image: string }>(`/api/public/visuals/${token}`),
 };
