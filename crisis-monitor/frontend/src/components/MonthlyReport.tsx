@@ -589,6 +589,16 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
           <button type="button" className="rpt-btn" onClick={downloadWhole} disabled={wholeBusy !== null}>{wholeBusy ?? "Download PDF"}</button>
           <button type="button" className="rpt-btn" onClick={() => shareLink()} disabled={!isPub} title={isPub ? "Copy a live link to the whole report" : "Publish the report to get a link"}>Copy link</button>
           <button type="button" className="rpt-btn" onClick={() => setWholeHidden(!allHidden)}>{allHidden ? "Show whole report to readers" : "Hide whole report from readers"}</button>
+          {report.sections.some((x) => x.hidden) && (
+            <div className="rpt-whole__hidden">
+              <span className="rpt-whole__label">Hidden from readers</span>
+              {report.sections.filter((x) => x.hidden).map((x) => (
+                <button key={x.id} type="button" className="rpt-whole__show" onClick={() => toggleHidden(x.id)} title={`Show ${x.title} to readers`}>
+                  {x.title} · Show
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <article className="rpt-doc" data-country={country} aria-label={`Monthly report, ${monthLabel(period)}`}>
@@ -797,7 +807,12 @@ function Page({
         )}
         {onDownload && <PageDownload busy={busy} onPick={onDownload} formats={formats} />}
       </header>
-      {hiddenNote && <p className="rpt-page__hidden rpt-noprint">Hidden from readers. Only analysts can see this page.</p>}
+      {hiddenNote && (
+        <p className="rpt-page__hidden rpt-noprint">
+          Hidden from readers. Only analysts can see this page.
+          {onToggleHidden && <button type="button" className="rpt-whole__show" onClick={onToggleHidden}>Show to readers</button>}
+        </p>
+      )}
       {editor}
       <div className="rpt-page__body">
         {!isCover && title && <h3 className="rpt-h rpt-page__title">{title}</h3>}

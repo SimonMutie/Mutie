@@ -1240,6 +1240,9 @@
 /* Whole-report controls: one bar above the report for the admin */
 .rpt-whole { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
 .rpt-whole__label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-right: 4px; }
+.rpt-whole__hidden { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex-basis: 100%; padding-top: 8px; border-top: 1px dashed var(--border); }
+.rpt-whole__show { font: inherit; font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--critical); background: color-mix(in srgb, var(--critical) 10%, transparent); color: var(--critical); cursor: pointer; margin-left: 4px; }
+.rpt-whole__show:hover { background: color-mix(in srgb, var(--critical) 20%, transparent); }
 .rpt-dl__btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Hide a live block (admins), and the row that brings hidden blocks back */
