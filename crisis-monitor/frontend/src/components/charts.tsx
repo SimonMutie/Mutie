@@ -430,6 +430,8 @@ export function StackBar({ segments, label, fmt = fmtDefault }: { segments: Datu
 export interface TimelineEvent {
   id: string;
   date: string;
+  /** If the event runs over a period, its last day: the axis shows the span. */
+  until?: string;
   title: string;
   color?: string;
   detail?: ReactNode;
@@ -471,6 +473,19 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
     return out;
   }, [t0, t1]);
   // Key events take turns above and below the axis; a label that would collide moves to the next level.
+  // A period's card hangs from the middle of its span; a single date from the date.
+  const centre = (e: TimelineEvent) => {
+    const a = ((Date.parse(`${e.date}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
+    if (!e.until) return a;
+    const b = ((Date.parse(`${e.until}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
+    return (a + b) / 2;
+  };
+  // Card height grows with its text, so no words are cut off.
+  const cardH = (e: TimelineEvent) => {
+    const perLine = Math.max(10, TL.cardW - 26);
+    const lines = Math.max(1, Math.ceil((e.title.length * 6.9) / perLine));
+    return 34 + lines * 17;
+  };
   const slots = useMemo(() => {
     const keys = events.filter((e) => e.key).sort((a, b) => a.date.localeCompare(b.date));
     const used: number[][] = [
@@ -479,7 +494,7 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
     ];
     const out = new Map<string, { side: 0 | 1; level: number }>();
     keys.forEach((e, i) => {
-      const x = ((Date.parse(`${e.date}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
+      const x = centre(e);
       const pref = (i % 2) as 0 | 1;
       let placed = false;
       for (const side of [pref, (1 - pref) as 0 | 1]) {
@@ -502,7 +517,26 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
   const axisY = compact ? 62 : TL.axis;
   const stageH = compact ? axisY + 84 : TL.stage;
   // Cards never sit on the axis: each one hangs off a visible leader line.
-  const cardTop = (side: 0 | 1, L: number) => (side === 0 ? axisY - TL.lead - L * TL.gap - TL.card : axisY + 70 + L * TL.gap);
+  // Each level is as tall as its tallest card, so taller cards push the next level out.
+  const offsets = useMemo(() => {
+    const maxH: number[][] = [[0, 0, 0], [0, 0, 0]];
+    events.forEach((e) => {
+      const sl = slots.get(e.id);
+      if (sl) maxH[sl.side][sl.level] = Math.max(maxH[sl.side][sl.level], cardH(e));
+    });
+    const off: number[][] = [[0, 0, 0], [0, 0, 0]];
+    for (const side of [0, 1] as const) {
+      let acc = 0;
+      for (let L = 0; L < 3; L++) {
+        off[side][L] = acc;
+        acc += maxH[side][L] + 10;
+      }
+    }
+    return off;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, slots]);
+  // The line a level's cards hang from: the bottom edge of an upper card, the top edge of a lower card.
+  const levelBase = (side: 0 | 1, L: number) => (side === 0 ? axisY - TL.lead - offsets[0][L] : axisY + 70 + offsets[1][L]);
   return (
     <div ref={ref} className={`vzt ${seen ? "is-in" : ""}`} role="group" aria-label={label}>
       <div className="vzt__scroll">
@@ -540,17 +574,22 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
                     <span
                       className={`vzt__stem ${slot.side === 0 ? "is-up" : "is-down"}`}
                       style={{
-                        left: `${x}%`,
-                        top: slot.side === 0 ? cardTop(0, slot.level) + TL.card : axisY,
-                        height: slot.side === 0 ? axisY - (cardTop(0, slot.level) + TL.card) : cardTop(1, slot.level) - axisY,
+                        left: `${centre(e)}%`,
+                        top: slot.side === 0 ? levelBase(0, slot.level) : axisY,
+                        height: slot.side === 0 ? axisY - levelBase(0, slot.level) : levelBase(1, slot.level) - axisY,
                         background: color,
                         transitionDelay: delay,
                       }}
                     />
                     <button
                       type="button"
-                      className={`vzt__card ${x < 12 ? "is-left" : x > 88 ? "is-right" : ""} ${on ? "is-on" : ""}`}
-                      style={{ left: `${x}%`, top: cardTop(slot.side, slot.level), borderColor: color, transitionDelay: delay }}
+                      className={`vzt__card ${centre(e) < 12 ? "is-left" : centre(e) > 88 ? "is-right" : ""} ${on ? "is-on" : ""}`}
+                      style={{
+                        left: `${centre(e)}%`,
+                        top: slot.side === 0 ? levelBase(0, slot.level) - cardH(e) : levelBase(1, slot.level),
+                        borderColor: color,
+                        transitionDelay: delay,
+                      }}
                       onMouseEnter={() => setHi(e.id)}
                       onMouseLeave={() => setHi(null)}
                       onFocus={() => setHi(e.id)}
@@ -561,6 +600,9 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
                       <b>{e.title}</b>
                     </button>
                   </>
+                )}
+                {e.until && (
+                  <span className="vzt__range" style={{ left: `${x}%`, width: `${at(e.until) - x}%`, top: axisY - 3, background: color, transitionDelay: delay }} aria-hidden="true" />
                 )}
                 <button
                   type="button"

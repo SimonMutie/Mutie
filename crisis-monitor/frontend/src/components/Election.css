@@ -806,9 +806,11 @@
 .vzt.is-in .vzt__card.is-left { transform: none; }
 .vzt.is-in .vzt__card.is-right { transform: translateX(-100%); }
 .vzt__card small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .02em; }
-.vzt__card b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; font-weight: 600; line-height: 1.3; margin-top: 2px; }
+.vzt__card b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.3; margin-top: 2px; }
 .vzt__card:hover, .vzt__card.is-on, .vzt__card:focus-visible { box-shadow: 0 6px 18px rgba(0,0,0,.14); z-index: 3; outline: none; }
 .vzt__card.is-on { background: color-mix(in srgb, var(--info) 6%, var(--panel)); }
+.vzt__range { position: absolute; height: 6px; border-radius: 3px; opacity: .85; transform: scaleX(0); transform-origin: left; transition: transform .6s cubic-bezier(.3,.6,.2,1); }
+.vzt.is-in .vzt__range { transform: scaleX(1); }
 .vzt__dot { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; border: 2px solid var(--panel); padding: 0; cursor: pointer; transform: scale(0); transition: transform .5s cubic-bezier(.3,.6,.2,1) .2s, box-shadow .2s ease; z-index: 1; }
 .vzt__dot.is-key { width: 14px; height: 14px; margin: -7px 0 0 -7px; }
 .vzt.is-in .vzt__dot { transform: scale(1); }

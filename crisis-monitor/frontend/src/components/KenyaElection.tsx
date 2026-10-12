@@ -252,7 +252,7 @@ function TimelineSection() {
           { from: "2027-06-11", to: "2027-08-10", label: "Campaign", tone: "#d1352b" },
           { from: "2027-08-10", to: "2027-09-09", label: "After the vote", tone: "#0d9488" },
         ]}
-        events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
+        events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, until: m.until, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
       />
       {past.length > 0 && (
         <button type="button" className="el-link" onClick={() => setShowPast(!showPast)}>
