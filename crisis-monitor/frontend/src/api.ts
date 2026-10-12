@@ -2217,6 +2217,8 @@ export const reportApi = (k: WatchKey) => {
   const base = `/api/reports/${k}`;
   const send = (path: string, method: string, body?: unknown) => req<{ ok: boolean; error?: string }>(`${base}${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) });
   return {
+    /** Shows or hides sections from readers. Works on published reports too; text and figures are not changed. */
+    visibility: (period: string, hidden: Record<string, boolean>) => req<{ ok: boolean }>(`${base}/${period}/visibility`, { method: "PUT", body: JSON.stringify({ hidden }) }),
     share: (period: string, sectionId?: string) => req<{ token: string; path: string; section_id: string | null }>(`${base}/${period}/share`, { method: "POST", body: JSON.stringify({ section_id: sectionId ?? null }) }),
     series: () => req<{ updated_at: string; periods: RptPeriod[] }>(`${base}/series`),
     list: () => req<RptListItem[]>(`${base}/`),

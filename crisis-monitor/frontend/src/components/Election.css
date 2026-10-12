@@ -1229,3 +1229,8 @@
 .el-block__handle { cursor: move; user-select: none; font-size: 12px; color: var(--text-muted); background: var(--panel-raised); border: 1px dashed var(--info); border-radius: 10px; padding: 6px 10px; margin-bottom: 8px; flex: 0 0 auto; }
 .el-grid.is-arranging .react-grid-item { outline: 1px dashed var(--border); border-radius: 12px; }
 .el-grid .react-resizable-handle { z-index: 2; }
+
+/* Whole-report controls: one bar above the report for the admin */
+.rpt-whole { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+.rpt-whole__label { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin-right: 4px; }
+.rpt-dl__btn:disabled { opacity: 0.5; cursor: not-allowed; }

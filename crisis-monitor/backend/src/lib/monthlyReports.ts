@@ -198,6 +198,11 @@ export async function saveReport(env: Env, country: string, period: string, data
   );
 }
 
+/** Changes only which sections readers see. Text and figures are untouched, so a published report stays published. */
+export async function setReportVisibility(env: Env, country: string, period: string, sections: ReportSection[], by: string | null) {
+  await run(env.DB, `UPDATE ${REPORT_TABLE} SET sections = ?, updated_at = ?, updated_by = ? WHERE country = ? AND period = ?`, [JSON.stringify(sections), nowIso(), by, country, period]);
+}
+
 export async function insertReport(env: Env, r: { country: string; period: string; title: string; sections: ReportSection[]; by: string | null }) {
   const now = nowIso();
   await run(

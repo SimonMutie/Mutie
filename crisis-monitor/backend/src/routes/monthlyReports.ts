@@ -21,6 +21,7 @@ import {
   SIZES,
   ALIGNS,
   type ReportSection,
+  setReportVisibility,
 } from "../lib/monthlyReports";
 import { all, first, run, nowIso } from "../db";
 import type { Env } from "../bindings";
@@ -106,6 +107,20 @@ export function reportRouter(W: Watch) {
     }
     await insertReport(c.env, { country, period, title: `${monthName(period)} · ${W.key === "ke" ? "Kenya" : "South Sudan"} election and conflict watch`, sections, by: c.get("userId") ?? null });
     return c.json({ ok: true, period, next: nextPeriod(period) });
+  });
+
+  const VisibilityBody = z.object({ hidden: z.record(z.string().min(1).max(60), z.boolean()) });
+  r.put("/:period/visibility", async (c) => {
+    if (!isAdmin(c.get("role"))) return c.json({ error: "Admin access required" }, 403);
+    const period = c.req.param("period");
+    if (!PERIOD.test(period)) return c.json({ error: "Period must be YYYY-MM" }, 400);
+    const parsed = VisibilityBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "Invalid request" }, 400);
+    const existing = await getReport(c.env, country, period);
+    if (!existing) return c.json({ error: "No report for this month yet" }, 404);
+    const sections = existing.sections.map((sec) => (sec.id in parsed.data.hidden ? { ...sec, hidden: parsed.data.hidden[sec.id] } : sec));
+    await setReportVisibility(c.env, country, period, sections, c.get("userId") ?? null);
+    return c.json({ ok: true });
   });
 
   r.put("/:period", async (c) => {

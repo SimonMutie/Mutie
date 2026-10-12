@@ -10,7 +10,7 @@ import { exportAllowed } from "../exportGuard";
 import { captureElementAsGif, type GifCaptureProgress } from "../gifCapture";
 import { logoPng } from "../lib/brandLogo";
 import { FONT_CSS, SIZE_SCALE, THEMES, THEME_ORDER, resolveStyle, themeVars } from "../lib/reportTheme";
-import { buildDocx, buildPdf, buildPptx, save, snapshot, type ExportPage, type Snapshot } from "../report/monthlyExport";
+import { buildDocx, buildPdf, buildPdfPages, buildPptx, save, snapshot, type ExportPage, type Snapshot } from "../report/monthlyExport";
 import "./Election.css";
 
 /**
@@ -86,6 +86,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
   const [busy, setBusy] = useState<Record<string, string>>({});
   const [localHidden, setLocalHidden] = useState<Set<string>>(() => new Set());
   const [gifJob, setGifJob] = useState<{ sid: string; key: number } | null>(null);
+  const [wholeBusy, setWholeBusy] = useState<string | null>(null);
   const picked = useRef(false);
 
   const months = useMemo(() => {
@@ -194,6 +195,55 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
       flash(`Link copied: ${url}`);
     } catch {
       flash("The link could not be made. Publish the report first.");
+    }
+  };
+
+  /** Shows or hides sections from readers, straight away (no editor needed). */
+  const setHidden = async (hidden: Record<string, boolean>, note: string) => {
+    if (!report) return;
+    const r = await api.visibility(period, hidden);
+    if (r.ok) {
+      flash(note);
+      await loadReport();
+    } else flash("Could not change what readers see.");
+  };
+  const toggleHidden = (sid: string) => {
+    const cur = report?.sections.find((x) => x.id === sid);
+    const next = !cur?.hidden;
+    void setHidden({ [sid]: next }, next ? "Hidden from readers." : "Shown to readers.");
+  };
+  const allHidden = Boolean(report && report.sections.length && report.sections.every((x) => x.hidden));
+  const setWholeHidden = (hidden: boolean) => {
+    if (!report) return;
+    const map: Record<string, boolean> = {};
+    for (const x of report.sections) map[x.id] = hidden;
+    void setHidden(map, hidden ? "The whole report is hidden from readers." : "The whole report is shown to readers.");
+  };
+
+  /** One PDF of every page readers see (hidden pages and the live monitor are left out). */
+  const downloadWhole = async () => {
+    if (!exportAllowed()) return;
+    setWholeBusy("Preparing…");
+    try {
+      const snaps: Snapshot[] = [];
+      for (const pg of pages) {
+        if (pg.kind === "live" || pg.section?.hidden) continue;
+        const el = document.querySelector<HTMLElement>(`.rpt-page[data-sid="${pg.id}"]`);
+        if (!el) continue;
+        setWholeBusy(`Page ${snaps.length + 1}…`);
+        await settleForCapture(el);
+        snaps.push(await snapshot(el, themeShown));
+      }
+      if (!snaps.length) {
+        flash("Nothing to download: every page is hidden, or the report has no pages yet.");
+        return;
+      }
+      save(buildPdfPages(snaps), `${country}-${period}-report.pdf`);
+    } catch (err) {
+      console.error("[report download] whole report", err);
+      flash(`The whole report did not download (${err instanceof Error ? err.message.slice(0, 160) : "unknown error"}). Try again.`);
+    } finally {
+      setWholeBusy(null);
     }
   };
 
@@ -533,6 +583,14 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
       )}
 
       {/* ── the pages ─────────────────────────────────────── */}
+      {isAdmin && !share && report && !editing && (
+        <div className="rpt-whole rpt-noprint" role="group" aria-label="Whole report">
+          <span className="rpt-whole__label">Whole report</span>
+          <button type="button" className="rpt-btn" onClick={downloadWhole} disabled={wholeBusy !== null}>{wholeBusy ?? "Download PDF"}</button>
+          <button type="button" className="rpt-btn" onClick={() => shareLink()} disabled={!isPub} title={isPub ? "Copy a live link to the whole report" : "Publish the report to get a link"}>Copy link</button>
+          <button type="button" className="rpt-btn" onClick={() => setWholeHidden(!allHidden)}>{allHidden ? "Show whole report to readers" : "Hide whole report from readers"}</button>
+        </div>
+      )}
       <article className="rpt-doc" data-country={country} aria-label={`Monthly report, ${monthLabel(period)}`}>
         {pages.map((pg, n) => {
           const s = pg.section;
@@ -555,7 +613,9 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
               formats={pg.kind === "live" ? ["pdf", "gif"] : undefined}
               hiddenNote={Boolean(s?.hidden)}
               onDownload={dl ? (fmt) => download(sid, fmt, page) : undefined}
-              onShare={isAdmin && isPub && !share && s ? () => shareLink(s.id) : undefined}
+              onShare={isAdmin && !share && s ? () => shareLink(s.id) : undefined}
+              shareDisabled={!isPub}
+              onToggleHidden={isAdmin && !share && !editing && s && report ? () => toggleHidden(s.id) : undefined}
               editor={editing && s && pg.index !== undefined ? (
                 <PageEditor
                   s={s}
@@ -702,6 +762,8 @@ function Page({
   editor,
   isCover,
   children,
+  onToggleHidden,
+  shareDisabled,
 }: {
   id: string;
   pageNo: number;
@@ -715,6 +777,8 @@ function Page({
   onShare?: () => void;
   formats?: Fmt[];
   hiddenNote?: boolean;
+  onToggleHidden?: () => void;
+  shareDisabled?: boolean;
   editor?: ReactNode;
   isCover: boolean;
   children: ReactNode;
@@ -725,7 +789,12 @@ function Page({
         <span className="rpt-page__mark"><Logo standalone size={28} /></span>
         <span className="rpt-page__brand">Afrilens</span>
         <span className="rpt-page__kicker">{kicker}</span>
-        {onShare && <button type="button" className="rpt-dl__btn rpt-noprint" onClick={onShare}>Copy link</button>}
+        {onToggleHidden && (
+          <button type="button" className="rpt-dl__btn rpt-noprint" onClick={onToggleHidden}>{hiddenNote ? "Show to readers" : "Hide from readers"}</button>
+        )}
+        {onShare && (
+          <button type="button" className="rpt-dl__btn rpt-noprint" onClick={onShare} disabled={shareDisabled} title={shareDisabled ? "Publish the report to get a link" : "Copy a live link to this section"}>Copy link</button>
+        )}
         {onDownload && <PageDownload busy={busy} onPick={onDownload} formats={formats} />}
       </header>
       {hiddenNote && <p className="rpt-page__hidden rpt-noprint">Hidden from readers. Only analysts can see this page.</p>}

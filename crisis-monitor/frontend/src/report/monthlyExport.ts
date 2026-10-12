@@ -52,17 +52,26 @@ const alignDocx = (a: string) => (a === "center" ? AlignmentType.CENTER : a === 
 /* ── PDF: the page as it looks, one or more A4 sheets ───────── */
 
 export function buildPdf(snap: Snapshot): Blob {
+  return buildPdfPages([snap]);
+}
+
+/** Several pages in one PDF: each page starts on a new sheet. */
+export function buildPdfPages(snaps: Snapshot[]): Blob {
   const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
   const pageW = pdf.internal.pageSize.getWidth();
   const pageH = pdf.internal.pageSize.getHeight();
   const margin = 10;
   const w = pageW - margin * 2;
-  const h = (snap.height / snap.width) * w;
   const printable = pageH - margin * 2;
-  // A long page runs across several sheets; each sheet shows the next slice.
-  for (let y = 0; y < h; y += printable) {
-    if (y > 0) pdf.addPage();
-    pdf.addImage(snap.png, "PNG", margin, margin - y, w, h, undefined, "FAST");
+  let first = true;
+  for (const snap of snaps) {
+    const h = (snap.height / snap.width) * w;
+    // A long page runs across several sheets; each sheet shows the next slice.
+    for (let y = 0; y < h; y += printable) {
+      if (!first) pdf.addPage();
+      first = false;
+      pdf.addImage(snap.png, "PNG", margin, margin - y, w, h, undefined, "FAST");
+    }
   }
   return pdf.output("blob");
 }
