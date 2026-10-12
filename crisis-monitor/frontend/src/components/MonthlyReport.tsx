@@ -645,6 +645,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
                 </>
               )}
               {pg.kind === "narrative" && s && <Narrative s={s} />}
+              {pg.kind !== "narrative" && pg.kind !== "cover" && pg.kind !== "live" && s && (s.body ?? "").trim() && <Narrative s={s} />}
             </Page>
           );
         })}
@@ -669,7 +670,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
         "Counts are of collected reports, coded by written rules and verified where marked. They measure what is reported and undercount.",
       ]);
     if (pg.kind === "narrative" && s) return exportPageFor(s, s.id, "narrative", s.title, (s.body ?? "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean));
-    if (s) return exportPageFor(s, s.id, s.kind, s.title, []);
+    if (s) return exportPageFor(s, s.id, s.kind, s.title, (s.body ?? "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean));
     return null;
   }
 }
@@ -843,7 +844,16 @@ function PageEditor({
           />
         </>
       ) : (
-        <p className="rpt-note">This page draws from the month’s data. Its title and style can be changed; the figures cannot.</p>
+        <>
+          <p className="rpt-note">The figures on this page come from the month’s data and cannot be changed. The title, style, note and position can.</p>
+          <textarea
+            rows={Math.min(10, Math.max(3, (s.body ?? "").split("\n").length + 1))}
+            value={s.body ?? ""}
+            onChange={(e) => onPatch({ body: e.target.value })}
+            placeholder="Optional note shown under the figures. Separate paragraphs with a blank line."
+            aria-label="Page note"
+          />
+        </>
       )}
     </div>
   );
