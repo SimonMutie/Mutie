@@ -27,7 +27,7 @@ import { broadcastsRouter } from "./routes/broadcasts";
 import { contactsRouter } from "./routes/contacts";
 import { electionWatchRouter, southSudanWatchRouter } from "./routes/electionWatch";
 import { keReportRouter, publicReportRouter, ssReportRouter } from "./routes/monthlyReports";
-import { backfillElectionIfNeeded, collectElectionItems, KE_WATCH } from "./lib/electionWatch";
+import { archiveJob, backfillElectionIfNeeded, collectElectionItems, KE_WATCH, runArchiveJob } from "./lib/electionWatch";
 import { proposeFromLeads } from "./lib/electionProposals";
 import { SS_WATCH } from "./lib/southSudanWatch";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
@@ -252,6 +252,9 @@ export default {
             // Once per watch: the archive back to GDELT's reach, so the dashboards have history (see backfillElectionIfNeeded).
             .then(() => backfillElectionIfNeeded(env, W))
             .then((b) => b && console.log(`[election-watch:${W.key}] archive backfill ${b.status}: ${b.inserted} new items from ${b.scanned} stories (${b.timespan ?? "no span"})`))
+            // A period read that was rate-limited or is still going moves forward a little each tick, without a click.
+            .then(() => archiveJob(env, W).then((j) => (j && j.status !== "done" ? runArchiveJob(env, W, { maxSlices: 2 }) : null)))
+            .then((j) => j && console.log(`[election-watch:${W.key}] archive read ${j.slicesDone}/${j.slicesTotal} slices (${j.status})`))
             .catch((err) => console.error(`[election-watch:${W.key}] collection failed`, err))
         );
       }

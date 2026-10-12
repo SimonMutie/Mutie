@@ -2138,9 +2138,12 @@ export const watchApi = (k: WatchKey) => {
     patchItem: (id: string, data: { status?: "auto" | "verified" | "rejected"; category?: EwCategory; county_code?: string | null; fatalities?: number | null }) => req<{ ok: boolean }>(`${base}/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     addItem: (data: { title: string; url: string; category: EwCategory; county_code?: string | null; published_at: string; fatalities?: number | null }) => req<{ id: string }>(`${base}/items`, { method: "POST", body: JSON.stringify(data) }),
     collect: (hours?: number) => req<{ scanned: number; inserted: number; leads: number }>(`${base}/collect`, { method: "POST", body: JSON.stringify({ hours }) }),
-    /** Reads GDELT's news archive for the watch: the whole reach, or the last `months` months in two-week slices. */
+    /** Reads GDELT's news archive for the watch, for the last `months` months, in two-week slices. Resumes where it stopped. */
     backfill: (months?: number) =>
-      req<{ status: "done" | "rate_limited" | "failed"; searches: number; capped: number; scanned: number; inserted: number; leads: number }>(`${base}/backfill`, { method: "POST", body: JSON.stringify({ months }) }),
+      req<{ status: "running" | "rate_limited" | "done"; slicesDone: number; slicesTotal: number; scanned: number; inserted: number; capped: number; from: number; cursor: number; months: number }>(
+        `${base}/backfill`,
+        { method: "POST", body: JSON.stringify({ months }) }
+      ),
     csvUrl: (days: number) => `${API_URL}${base}/items.csv?days=${days}`,
   };
 };

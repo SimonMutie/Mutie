@@ -360,7 +360,7 @@ export async function collectElectionItems(env: Env, maxAgeHours = 30, W: Watch 
 export interface BackfillResult {
   status: "done" | "rate_limited" | "failed";
   timespan: string | null;
-  /** Archive searches made (one per query, per two-week slice when a period is asked for). */
+  /** Archive searches made. */
   searches: number;
   /** Searches that GDELT answered as full: it returns at most 250 stories each, so more may exist. */
   capped: number;
@@ -372,50 +372,40 @@ export interface BackfillResult {
 /** How far back the archive search reaches. GDELT documents three months; its newer notes say a full search reaches
  *  back to January 2017, so "full" is tried first and "3months" used if GDELT refuses it. */
 const BACKFILL_SPANS = ["full", "3months"] as const;
-/** A period is read in slices this long, so each one fits in GDELT's 250-story answer. */
-const SLICE_DAYS = 14;
+
+/** Stores what the archive returned for one search. */
+async function storeArchive(env: Env, articles: Awaited<ReturnType<typeof fetchGdeltArticles>>, W: Watch) {
+  const hits: ElectionHit[] = articles.map((a) => ({
+    title: a.title,
+    link: a.url,
+    domain: a.domain,
+    published: parseGdeltDate(a.seendate).toISOString(),
+    text: "",
+  }));
+  return { scanned: hits.length, ...(await storeElectionHits(env, hits, W)) };
+}
 
 /**
- * Reads GDELT's news archive for this watch's query and stores what the watch codes.
- * With no period it reads as far back as GDELT allows in one search per query. With `months`, it works back
- * through that many months in two-week slices. The platform's feeds only keep recent days, so this is what gives
- * the dashboards a history. Repeat runs skip stories already stored.
+ * Reads GDELT's news archive for this watch's query, as far back as GDELT allows, in one search per query.
+ * Repeat runs skip stories already stored.
  */
-export async function backfillElectionFromGdelt(env: Env, W: Watch = KE_WATCH, opts: { months?: number } = {}): Promise<BackfillResult> {
+export async function backfillElectionFromGdelt(env: Env, W: Watch = KE_WATCH): Promise<BackfillResult> {
   await ensureElectionWatchTables(env, W);
   const queries = toGdeltQueries(buildSearchPlan(parseBooleanQuery(W.query).ast));
   const result: BackfillResult = { status: "done", timespan: null, searches: 0, capped: 0, scanned: 0, inserted: 0, leads: 0 };
-
-  // Each request to read: an exact slice of the period, or the whole archive reach.
-  type Request = { query: string; window?: { start: Date; end: Date }; span?: (typeof BACKFILL_SPANS)[number] };
-  const requests: Request[] = [];
-  if (opts.months && opts.months > 0) {
-    const now = Date.now();
-    const sliceMs = SLICE_DAYS * 86_400_000;
-    const from = now - opts.months * 30 * 86_400_000;
-    for (let end = now; end > from; end -= sliceMs) {
-      const start = Math.max(from, end - sliceMs);
-      for (const q of queries) requests.push({ query: q, window: { start: new Date(start), end: new Date(end) } });
-    }
-  } else {
-    for (const q of queries) requests.push({ query: q });
-  }
-
-  for (const req of requests) {
+  for (const q of queries) {
     let articles: Awaited<ReturnType<typeof fetchGdeltArticles>> | null = null;
-    const spans = req.window ? [null] : BACKFILL_SPANS;
-    for (const span of spans) {
+    for (const span of BACKFILL_SPANS) {
       try {
-        articles = await fetchGdeltArticles(req.query, 250, span ?? "full", req.window);
-        if (span) result.timespan = span;
+        articles = await fetchGdeltArticles(q, 250, span);
+        result.timespan = span;
         break;
       } catch (err) {
         if (err instanceof GdeltRateLimitError) {
-          // Stop here; what was stored stays, and a repeat run carries on.
           result.status = "rate_limited";
           return result;
         }
-        console.error(`[election-backfill:${W.key}] archive search failed`, err);
+        console.error(`[election-backfill:${W.key}] archive search over "${span}" failed`, err);
       }
     }
     if (!articles) {
@@ -424,23 +414,113 @@ export async function backfillElectionFromGdelt(env: Env, W: Watch = KE_WATCH, o
     }
     result.searches++;
     if (articles.length >= 250) result.capped++;
-    const hits: ElectionHit[] = articles.map((a) => ({
-      title: a.title,
-      link: a.url,
-      domain: a.domain,
-      published: parseGdeltDate(a.seendate).toISOString(),
-      text: "",
-    }));
-    result.scanned += hits.length;
-    const stored = await storeElectionHits(env, hits, W);
+    const stored = await storeArchive(env, articles, W);
+    result.scanned += stored.scanned;
     result.inserted += stored.inserted;
     result.leads += stored.leads;
   }
-  // Only a whole-archive run counts as done; a period run is a manual collection and can be repeated.
-  if (!opts.months && result.status === "done" && result.searches > 0) {
+  if (result.status === "done" && result.searches > 0) {
     await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES ('gdelt_backfill', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [`${nowIso()} ${result.timespan}`]);
   }
   return result;
+}
+
+/* ── a period read in slices, resumable ───────────────────── */
+
+/** A period is read in slices this long, so each one fits in GDELT's 250-story answer. */
+const SLICE_MS = 14 * 86_400_000;
+/** Pause between GDELT searches: GDELT refuses a quick burst of requests from one source. */
+const PACE_MS = 1500;
+
+export interface ArchiveJob {
+  months: number;
+  /** Reading goes back from here; a slice ends at `cursor`. Epoch milliseconds. */
+  cursor: number;
+  /** The earliest moment the period reaches. Epoch milliseconds. */
+  from: number;
+  status: "running" | "rate_limited" | "done";
+  slicesDone: number;
+  slicesTotal: number;
+  scanned: number;
+  inserted: number;
+  capped: number;
+  updatedAt: string;
+}
+
+const JOB_KEY = "archive_job";
+
+export async function archiveJob(env: Env, W: Watch = KE_WATCH): Promise<ArchiveJob | null> {
+  await ensureElectionWatchTables(env, W);
+  const row = await first<{ value: string }>(env.DB, `SELECT value FROM ${W.t.state} WHERE key = ?`, [JOB_KEY]);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value) as ArchiveJob;
+  } catch {
+    return null;
+  }
+}
+
+async function saveJob(env: Env, W: Watch, job: ArchiveJob) {
+  job.updatedAt = nowIso();
+  await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [JOB_KEY, JSON.stringify(job)]);
+}
+
+/**
+ * Starts a read of `months` months back (or continues the one running), working through it in two-week slices.
+ * Each slice is saved as it finishes, so a rate-limited run resumes where it stopped. Call it again to carry on.
+ * `maxSlices` bounds one call; the scheduled collection carries a running read forward between calls.
+ */
+export async function runArchiveJob(env: Env, W: Watch = KE_WATCH, opts: { months?: number; maxSlices?: number; paceMs?: number } = {}): Promise<ArchiveJob | null> {
+  await ensureElectionWatchTables(env, W);
+  const current = await archiveJob(env, W);
+  let job: ArchiveJob | null = current;
+  if (opts.months && (!current || current.months !== opts.months || current.status === "done")) {
+    const now = Date.now();
+    const from = now - opts.months * 30 * 86_400_000;
+    job = { months: opts.months, cursor: now, from, status: "running", slicesDone: 0, slicesTotal: Math.ceil((now - from) / SLICE_MS), scanned: 0, inserted: 0, capped: 0, updatedAt: nowIso() };
+    await saveJob(env, W, job);
+  }
+  if (!job || job.status === "done") return job;
+
+  const queries = toGdeltQueries(buildSearchPlan(parseBooleanQuery(W.query).ast));
+  const maxSlices = opts.maxSlices ?? 2;
+  const pace = opts.paceMs ?? PACE_MS;
+  let ran = 0;
+  while (job.cursor > job.from && ran < maxSlices) {
+    const end = job.cursor;
+    const start = Math.max(job.from, end - SLICE_MS);
+    let rateLimited = false;
+    for (const q of queries) {
+      if (pace > 0) await new Promise((r) => setTimeout(r, pace));
+      try {
+        const articles = await fetchGdeltArticles(q, 250, "full", { start: new Date(start), end: new Date(end) });
+        if (articles.length >= 250) job.capped++;
+        const stored = await storeArchive(env, articles, W);
+        job.scanned += stored.scanned;
+        job.inserted += stored.inserted;
+      } catch (err) {
+        if (err instanceof GdeltRateLimitError) {
+          rateLimited = true;
+          break;
+        }
+        console.error(`[election-archive:${W.key}] slice search failed`, err);
+      }
+    }
+    if (rateLimited) {
+      // Keep this slice for the next call, and stop now.
+      job.status = "rate_limited";
+      await saveJob(env, W, job);
+      return job;
+    }
+    job.cursor = start;
+    job.slicesDone++;
+    ran++;
+    job.status = job.cursor > job.from ? "running" : "done";
+    await saveJob(env, W, job);
+  }
+  if (job.cursor <= job.from) job.status = "done";
+  await saveJob(env, W, job);
+  return job;
 }
 
 /** Runs the archive backfill once per watch, until it has completed. */

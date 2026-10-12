@@ -80,9 +80,15 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
       await w.collect(72);
       const r = await w.backfill(months);
       const when = days === 365 ? "the last year" : `the last ${days} days`;
-      const stop = r.status === "rate_limited" ? " The news archive is limiting requests; press Collect now again in a few minutes to continue." : r.status === "failed" ? " The news archive could not be reached just now." : "";
-      const capped = r.capped ? ` ${r.capped} search${r.capped === 1 ? "" : "es"} returned the maximum, so some stories may be missing.` : "";
-      setNotice(`Collected ${when}: ${r.scanned} stories read from the archive, ${r.inserted} new items coded.${capped}${stop}`);
+      const progress = `${r.slicesDone} of ${r.slicesTotal} two-week slices read, ${r.scanned} stories read, ${r.inserted} new items coded`;
+      const capped = r.capped ? ` Some slices reached GDELT's limit of 250 stories, so a few may be missing.` : "";
+      const text =
+        r.status === "done"
+          ? `Collected ${when}: ${progress}.${capped}`
+          : r.status === "rate_limited"
+            ? `Collecting ${when}: ${progress}. GDELT is limiting requests, so the read has paused. It carries on automatically over the next hours, or press Collect now again to continue.${capped}`
+            : `Collecting ${when}: ${progress}. Press Collect now to continue.${capped}`;
+      setNotice(text);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Collection did not finish.");

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { backfillElectionFromGdelt, backfillElectionIfNeeded, ensureElectionWatchTables, KE_WATCH, resetElectionWatchCheck } from "../src/lib/electionWatch";
+import { backfillElectionFromGdelt, backfillElectionIfNeeded, ensureElectionWatchTables, KE_WATCH, resetElectionWatchCheck, runArchiveJob } from "../src/lib/electionWatch";
 import type { Env } from "../src/bindings";
 import { fakeD1 } from "./fakeD1";
 
@@ -77,20 +77,39 @@ describe("GDELT archive backfill for the election watch", () => {
     const urls: URL[] = [];
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       urls.push(new URL(String(input)));
-      // Every slice answers with the full 250, so the cap is reported.
       const many = Array.from({ length: 250 }, (_, i) => article(1000 + urls.length * 300 + i, `Kenya election rally ${i} in Nairobi IEBC`));
       return jsonResponse({ articles: many });
     }) as unknown as typeof fetch;
 
-    const result = await backfillElectionFromGdelt(env, KE_WATCH, { months: 1 });
+    const job = await runArchiveJob(env, KE_WATCH, { months: 1, maxSlices: 100, paceMs: 0 });
+    expect(job?.status).toBe("done");
     expect(urls.length).toBeGreaterThanOrEqual(2);
     for (const u of urls) {
       expect(u.searchParams.get("startdatetime")).toMatch(/^\d{14}$/);
       expect(u.searchParams.get("enddatetime")).toMatch(/^\d{14}$/);
       expect(u.searchParams.has("timespan")).toBe(false);
     }
-    expect(result.capped).toBe(urls.length);
-    // A period run is not marked as the one-time archive backfill.
-    expect(await backfillElectionIfNeeded(env, KE_WATCH)).not.toBeNull();
+    expect(job?.capped).toBe(urls.length);
+  });
+
+  it("stops at a rate limit, keeps its place, and carries on from the same slice", async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls++;
+      // The third search is refused; after that GDELT answers again.
+      if (calls === 3) return new Response("slow down", { status: 429, headers: { "retry-after": "30" } });
+      return jsonResponse({ articles: [article(2000 + calls, `Kenya IEBC rally number ${calls} in Nairobi`)] });
+    }) as unknown as typeof fetch;
+
+    const first = await runArchiveJob(env, KE_WATCH, { months: 3, maxSlices: 100, paceMs: 0 });
+    expect(first?.status).toBe("rate_limited");
+    const cursorAtStop = first!.cursor;
+    const slicesAtStop = first!.slicesDone;
+
+    globalThis.fetch = vi.fn(async () => jsonResponse({ articles: [article(3000, "Ruto addresses Kenyans in Nakuru on IEBC reforms")] })) as unknown as typeof fetch;
+    const resumed = await runArchiveJob(env, KE_WATCH, { maxSlices: 100, paceMs: 0 });
+    expect(resumed?.cursor).toBeLessThan(cursorAtStop);
+    expect(resumed?.slicesDone).toBeGreaterThan(slicesAtStop);
+    expect(resumed?.status).toBe("done");
   });
 });

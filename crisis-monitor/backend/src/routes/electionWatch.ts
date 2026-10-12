@@ -5,7 +5,7 @@ import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { canViewSpotlight } from "./spotlight";
 import { audit, clientIp } from "../lib/audit";
-import { backfillElectionFromGdelt, buildDashboard, clusterFor, collectElectionItems, ensureElectionWatchTables, KE_WATCH, type ItemRow, type Watch } from "../lib/electionWatch";
+import { archiveJob, backfillElectionFromGdelt, buildDashboard, clusterFor, collectElectionItems, ensureElectionWatchTables, KE_WATCH, runArchiveJob, type ItemRow, type Watch } from "../lib/electionWatch";
 import { SS_WATCH } from "../lib/southSudanWatch";
 import { approveProposal, pendingProposals, rejectProposal } from "../lib/electionProposals";
 import type { Env } from "../bindings";
@@ -279,12 +279,21 @@ export function watchRouter(W: Watch) {
     return c.json({ checked: rows.length, changed });
   });
 
-  /** Admin: reads GDELT's news archive for this watch, as far back as it reaches or for the given number of months. Safe to repeat; known links are skipped. */
+  /** Admin: reads GDELT's news archive for this watch. With `months`, starts or continues that period in two-week
+   *  slices (a rate-limited read resumes where it stopped); without, reads the archive's whole reach once. */
   r.post("/backfill", async (c) => {
     const denied = adminOnly(c);
     if (denied) return denied;
     const months = Math.min(12, Math.max(1, Math.round(Number((await c.req.json().catch(() => ({}))).months) || 0)));
-    return c.json(await backfillElectionFromGdelt(c.env, W, months ? { months } : {}));
+    if (!months) return c.json(await backfillElectionFromGdelt(c.env, W));
+    return c.json(await runArchiveJob(c.env, W, { months, maxSlices: 4 }));
+  });
+
+  /** Where the period read has got to. */
+  r.get("/backfill", async (c) => {
+    const denied = adminOnly(c);
+    if (denied) return denied;
+    return c.json(await archiveJob(c.env, W));
   });
 
   r.post("/collect", async (c) => {
