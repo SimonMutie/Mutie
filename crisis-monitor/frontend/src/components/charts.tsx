@@ -432,6 +432,8 @@ export interface TimelineEvent {
   date: string;
   /** If the event runs over a period, its last day: the axis shows the span. */
   until?: string;
+  /** "start": a period's card and leader sit on its first day rather than its middle. */
+  anchor?: "start";
   title: string;
   color?: string;
   detail?: ReactNode;
@@ -476,7 +478,7 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
   // A period's card hangs from the middle of its span; a single date from the date.
   const centre = (e: TimelineEvent) => {
     const a = ((Date.parse(`${e.date}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
-    if (!e.until) return a;
+    if (!e.until || e.anchor === "start") return a;
     const b = ((Date.parse(`${e.until}T00:00:00Z`) - t0) / Math.max(1, t1 - t0)) * 100;
     return (a + b) / 2;
   };
@@ -496,31 +498,61 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
     }
     return 38 + lines * 17;
   };
+  // Each card is W wide (in % of the stage, about 8.6px a %) and hangs from its stem: centred on it,
+  // or starting or ending at it when the stem is near an edge.
+  const W = 15.5;
+  const M = 1.5;
+  const spanOf = (x: number, anchor: "center" | "left" | "right") =>
+    anchor === "left" ? { lo: x, hi: x + W } : anchor === "right" ? { lo: x - W, hi: x } : { lo: x - W / 2, hi: x + W / 2 };
   const slots = useMemo(() => {
+    type Slot = { side: 0 | 1; level: number; x: number; lo: number; hi: number; anchor: "center" | "left" | "right" };
     const keys = events.filter((e) => e.key).sort((a, b) => a.date.localeCompare(b.date));
-    const placed: { side: 0 | 1; level: number; x: number }[] = [];
-    const out = new Map<string, { side: 0 | 1; level: number }>();
-    // A card's leader line runs through every level nearer the axis, and a card spans about its width.
-    // So cards on one side keep apart horizontally: far apart on the same level, and clear of each
-    // other's leader lines on different levels. Cards near the edge are wider on one side, so need more room.
-    const edge = (x: number) => (x < 12 || x > 88 ? 16 : 9);
-    const fits = (side: 0 | 1, L: number, x: number) =>
-      placed.every(
-        (p) =>
-          p.side !== side ||
-          (p.level === L ? Math.abs(x - p.x) >= TL.minGap : Math.abs(x - p.x) >= Math.max(edge(x), edge(p.x))),
-      );
-    keys.forEach((e, i) => {
+    // Two cards clash on one side if they share a level and their spans overlap, or if the leader line
+    // of the card further from the axis would run through the nearer card.
+    const clash = (a: Slot, b: Slot) => {
+      if (a.side !== b.side) return false;
+      if (a.level === b.level) return a.lo - M < b.hi && b.lo - M < a.hi;
+      const [near, far] = a.level < b.level ? [a, b] : [b, a];
+      return far.x >= near.lo - M && far.x <= near.hi + M;
+    };
+    // Every way a card can sit, in order of preference: its own side, centred, then nearer the axis.
+    const options = keys.map((e, i) => {
       const x = centre(e);
       const pref = (i % 2) as 0 | 1;
-      let slot: { side: 0 | 1; level: number } | null = null;
-      for (const side of [pref, (1 - pref) as 0 | 1]) {
-        for (let L = 0; L < 3 && !slot; L++) if (fits(side, L, x)) slot = { side, level: L };
-        if (slot) break;
+      const anchors: ("center" | "left" | "right")[] = [];
+      if (x - W / 2 >= 0 && x + W / 2 <= 100) anchors.push("center");
+      if (x + W <= 100) anchors.push("left");
+      if (x - W >= 0) anchors.push("right");
+      const out: Slot[] = [];
+      for (const side of [pref, (1 - pref) as 0 | 1])
+        for (let level = 0; level < 3; level++)
+          for (const anchor of anchors) out.push({ side, level, x, anchor, ...spanOf(x, anchor) });
+      return out;
+    });
+    // Backtracking search for a placement with no clashes; a fixed budget keeps it quick.
+    const chosen: Slot[] = [];
+    let budget = 50000;
+    const place = (i: number): boolean => {
+      if (i === keys.length) return true;
+      for (const c of options[i]) {
+        if (--budget < 0) return false;
+        if (chosen.some((p) => clash(p, c))) continue;
+        chosen.push(c);
+        if (place(i + 1)) return true;
+        chosen.pop();
       }
-      if (!slot) slot = { side: pref, level: 2 };
-      placed.push({ ...slot, x });
-      out.set(e.id, slot);
+      return false;
+    };
+    const found = place(0);
+    const out = new Map<string, Slot>();
+    keys.forEach((e, i) => {
+      if (found) out.set(e.id, chosen[i]);
+      else {
+        // No clash-free placement exists: fall back to the outermost level so the card is still shown.
+        const x = centre(e);
+        const anchor = x < 50 ? "left" : "right";
+        out.set(e.id, { side: (i % 2) as 0 | 1, level: 2, x, anchor, ...spanOf(x, anchor) });
+      }
     });
     return out;
   }, [events, t0, t1]);
@@ -605,7 +637,7 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
                     />
                     <button
                       type="button"
-                      className={`vzt__card ${centre(e) < 12 ? "is-left" : centre(e) > 88 ? "is-right" : ""} ${on ? "is-on" : ""}`}
+                      className={`vzt__card ${slot.anchor === "left" ? "is-left" : slot.anchor === "right" ? "is-right" : ""} ${on ? "is-on" : ""}`}
                       style={{
                         left: `${centre(e)}%`,
                         top: slot.side === 0 ? levelBase(0, slot.level) - cardH(e) : levelBase(1, slot.level),

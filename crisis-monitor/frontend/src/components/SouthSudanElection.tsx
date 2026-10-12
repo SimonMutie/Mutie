@@ -338,6 +338,7 @@ function CalendarVisual() {
     id: m.id,
     date: m.date,
     until: m.until,
+    anchor: m.until ? "start" : undefined,
     title: m.title,
     color: m.key ? "var(--critical)" : "var(--info)",
     key: m.key,
