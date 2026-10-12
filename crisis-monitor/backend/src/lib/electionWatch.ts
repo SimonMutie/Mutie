@@ -3,6 +3,8 @@ import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
 import { parseBooleanQuery } from "../booleanQuery";
 import { searchFeeds } from "./feedSearch";
+import { fetchGdeltArticles, GdeltRateLimitError, parseGdeltDate } from "../connectors/gdelt";
+import { buildSearchPlan, toGdeltQueries } from "./querySearchPlan";
 
 /**
  * Kenya Election Watch: the live half.
@@ -304,11 +306,17 @@ export interface CollectResult {
   leads: number;
 }
 
-/** Reads the feeds once and stores what this country's watch codes. Idempotent: an article is stored once. */
-export async function collectElectionItems(env: Env, maxAgeHours = 30, W: Watch = KE_WATCH): Promise<CollectResult> {
-  await ensureElectionWatchTables(env, W);
-  const parsed = parseBooleanQuery(W.query);
-  const hits = (await searchFeeds(env, [{ id: "ew", text: W.query, parsed }], maxAgeHours, 700)).get("ew") ?? [];
+/** A story as the collectors hand it over: the feeds, or GDELT's archive. */
+export interface ElectionHit {
+  title?: string | null;
+  link?: string | null;
+  domain: string | null;
+  published: string;
+  text?: string | null;
+}
+
+/** Codes each story by its headline and summary and stores what this country's watch keeps. Idempotent: a link is stored once. */
+async function storeElectionHits(env: Env, hits: ElectionHit[], W: Watch): Promise<{ inserted: number; leads: number }> {
   let inserted = 0;
   let leads = 0;
   const now = nowIso();
@@ -316,7 +324,7 @@ export async function collectElectionItems(env: Env, maxAgeHours = 30, W: Watch 
     const title = (h.title ?? "").replace(/\s+/g, " ").trim();
     if (!title || !h.link) continue;
     const summary = (h.text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 420);
-    const code = W.code(title, summary, h.domain);
+    const code = W.code(title, summary, h.domain ?? "");
     if (!code) continue;
     const existing = await first<{ id: string }>(env.DB, `SELECT id FROM ${W.t.items} WHERE url = ?`, [h.link]);
     if (existing) continue;
@@ -334,9 +342,87 @@ export async function collectElectionItems(env: Env, maxAgeHours = 30, W: Watch 
       }
     }
   }
+  return { inserted, leads };
+}
+
+/** Reads the platform's own feeds once and stores what this country's watch codes. Idempotent: an article is stored once. */
+export async function collectElectionItems(env: Env, maxAgeHours = 30, W: Watch = KE_WATCH): Promise<CollectResult> {
+  await ensureElectionWatchTables(env, W);
+  const parsed = parseBooleanQuery(W.query);
+  const hits = (await searchFeeds(env, [{ id: "ew", text: W.query, parsed }], maxAgeHours, 700)).get("ew") ?? [];
+  const { inserted, leads } = await storeElectionHits(env, hits, W);
+  const now = nowIso();
   await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES ('last_collect', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [now]);
   await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES ('last_scanned', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(hits.length)]);
   return { scanned: hits.length, inserted, leads };
+}
+
+export interface BackfillResult {
+  status: "done" | "rate_limited" | "failed";
+  timespan: string | null;
+  searches: number;
+  scanned: number;
+  inserted: number;
+  leads: number;
+}
+
+/** How far back the archive search reaches. GDELT documents three months; its newer notes say a full search reaches
+ *  back to January 2017, so "full" is tried first and "3months" used if GDELT refuses it. */
+const BACKFILL_SPANS = ["full", "3months"] as const;
+
+/**
+ * Reads GDELT's news archive for this watch's query, as far back as GDELT allows, and stores what the watch codes.
+ * The platform's feeds only keep recent days, so this is what gives the dashboards a history.
+ * Each search returns at most 250 stories; a later run cannot reach further back than the first.
+ */
+export async function backfillElectionFromGdelt(env: Env, W: Watch = KE_WATCH): Promise<BackfillResult> {
+  await ensureElectionWatchTables(env, W);
+  const queries = toGdeltQueries(buildSearchPlan(parseBooleanQuery(W.query).ast));
+  const result: BackfillResult = { status: "done", timespan: null, searches: 0, scanned: 0, inserted: 0, leads: 0 };
+  for (const q of queries) {
+    let articles: Awaited<ReturnType<typeof fetchGdeltArticles>> | null = null;
+    for (const span of BACKFILL_SPANS) {
+      try {
+        articles = await fetchGdeltArticles(q, 250, span);
+        result.timespan = span;
+        break;
+      } catch (err) {
+        if (err instanceof GdeltRateLimitError) {
+          result.status = "rate_limited";
+          return result;
+        }
+        console.error(`[election-backfill:${W.key}] archive search over "${span}" failed`, err);
+      }
+    }
+    if (!articles) {
+      result.status = "failed";
+      continue;
+    }
+    result.searches++;
+    const hits: ElectionHit[] = articles.map((a) => ({
+      title: a.title,
+      link: a.url,
+      domain: a.domain,
+      published: parseGdeltDate(a.seendate).toISOString(),
+      text: "",
+    }));
+    result.scanned += hits.length;
+    const stored = await storeElectionHits(env, hits, W);
+    result.inserted += stored.inserted;
+    result.leads += stored.leads;
+  }
+  if (result.status === "done" && result.searches > 0) {
+    await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES ('gdelt_backfill', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [`${nowIso()} ${result.timespan}`]);
+  }
+  return result;
+}
+
+/** Runs the archive backfill once per watch, until it has completed. */
+export async function backfillElectionIfNeeded(env: Env, W: Watch = KE_WATCH): Promise<BackfillResult | null> {
+  await ensureElectionWatchTables(env, W);
+  const done = await first<{ value: string }>(env.DB, `SELECT value FROM ${W.t.state} WHERE key = 'gdelt_backfill'`);
+  if (done) return null;
+  return backfillElectionFromGdelt(env, W);
 }
 
 /* ── dashboard ────────────────────────────────────────────── */

@@ -378,7 +378,7 @@ export async function primeQuery(env: Env, queryId: string, booleanQuery: string
     console.error(`[query-prime] feed search failed for query ${queryId}:`, err);
   }
   try {
-    const r = await fetchNewsForQuery(env, query, { timespan: "3d", maxRecords: 250, fulltextBudget: 25, maxSearches: 3 });
+    const r = await fetchNewsForQuery(env, query, { timespan: "3months", maxRecords: 250, fulltextBudget: 25, maxSearches: 3 });
     console.log(`[query-prime] ${queryId}: searched ${JSON.stringify(r.searches)} -> ${r.inserted} new articles, ${r.matched} matches${r.rateLimited ? " (rate limited)" : ""}`);
   } catch (err) {
     console.error(`[query-prime] news search failed for query ${queryId}:`, err);

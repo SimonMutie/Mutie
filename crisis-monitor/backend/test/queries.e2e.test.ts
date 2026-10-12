@@ -198,7 +198,7 @@ describe("a new query fetches its own results", () => {
     expect(res.status).toBe(201);
     queryId = ((await res.json()) as { id: string }).id;
     await Promise.all(pending);
-    expect(gdeltCalls).toEqual([{ query: 'ethiopia tigray (conflict OR attack OR fighting OR "drone strike")', timespan: "3d" }]);
+    expect(gdeltCalls).toEqual([{ query: 'ethiopia tigray (conflict OR attack OR fighting OR "drone strike")', timespan: "3months" }]);
   }, 30_000);
 
   it("matches the right articles and none of the noise", () => {

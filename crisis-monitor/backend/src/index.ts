@@ -27,7 +27,7 @@ import { broadcastsRouter } from "./routes/broadcasts";
 import { contactsRouter } from "./routes/contacts";
 import { electionWatchRouter, southSudanWatchRouter } from "./routes/electionWatch";
 import { keReportRouter, publicReportRouter, ssReportRouter } from "./routes/monthlyReports";
-import { collectElectionItems, KE_WATCH } from "./lib/electionWatch";
+import { backfillElectionIfNeeded, collectElectionItems, KE_WATCH } from "./lib/electionWatch";
 import { proposeFromLeads } from "./lib/electionProposals";
 import { SS_WATCH } from "./lib/southSudanWatch";
 import { dueDiligenceRouter } from "./routes/dueDiligence";
@@ -249,6 +249,9 @@ export default {
             // New declarations become proposals for an approver. Nothing is published from here.
             .then(() => (W === KE_WATCH ? proposeFromLeads(env, W) : null))
             .then((p) => p && p.filed > 0 && console.log(`[election-watch:${W.key}] ${p.filed} new proposals for review`))
+            // Once per watch: the archive back to GDELT's reach, so the dashboards have history (see backfillElectionIfNeeded).
+            .then(() => backfillElectionIfNeeded(env, W))
+            .then((b) => b && console.log(`[election-watch:${W.key}] archive backfill ${b.status}: ${b.inserted} new items from ${b.scanned} stories (${b.timespan ?? "no span"})`))
             .catch((err) => console.error(`[election-watch:${W.key}] collection failed`, err))
         );
       }

@@ -5,7 +5,7 @@ import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { canViewSpotlight } from "./spotlight";
 import { audit, clientIp } from "../lib/audit";
-import { buildDashboard, clusterFor, collectElectionItems, ensureElectionWatchTables, KE_WATCH, type ItemRow, type Watch } from "../lib/electionWatch";
+import { backfillElectionFromGdelt, buildDashboard, clusterFor, collectElectionItems, ensureElectionWatchTables, KE_WATCH, type ItemRow, type Watch } from "../lib/electionWatch";
 import { SS_WATCH } from "../lib/southSudanWatch";
 import { approveProposal, pendingProposals, rejectProposal } from "../lib/electionProposals";
 import type { Env } from "../bindings";
@@ -277,6 +277,13 @@ export function watchRouter(W: Watch) {
       changed++;
     }
     return c.json({ checked: rows.length, changed });
+  });
+
+  /** Admin: reads GDELT's news archive for this watch as far back as it reaches. Safe to repeat; known links are skipped. */
+  r.post("/backfill", async (c) => {
+    const denied = adminOnly(c);
+    if (denied) return denied;
+    return c.json(await backfillElectionFromGdelt(c.env, W));
   });
 
   r.post("/collect", async (c) => {
