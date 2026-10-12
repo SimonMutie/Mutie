@@ -675,14 +675,14 @@
 .vz-donut__legend li.is-sel { font-weight: 700; box-shadow: inset 3px 0 0 var(--info); }
 .vz-donut__legend i { width: 12px; height: 12px; border-radius: 3px; display: block; }
 .vz-donut__legend strong { font-variant-numeric: tabular-nums; }
-/* The ring stays on the left and shrinks to fit a narrow card; the legend runs down beside it, the full height of the card. */
-.vz-donut { align-items: start; }
-.vz-donut__legend { align-self: stretch; min-width: 0; min-height: 0; max-height: 100%; overflow: auto; }
-@container (max-width: 420px) {
-  .vz-donut { grid-template-columns: minmax(0, 42%) minmax(0, 1fr); gap: 12px; }
-  .vz-donut__ring { width: 100% !important; height: auto !important; aspect-ratio: 1; }
-  .vz-donut__ring .vz-donut__svg { width: 100%; height: 100%; }
-}
+/* Sunburst: the ring with the first groups beside it, the rest flowing across the card below in columns */
+.vz-donut.vz-sun { display: block; }
+.vz-sun__top { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.vz-sun__top > .vz-donut__ring { flex: 0 0 auto; }
+.vz-sun__head { grid-column: auto; grid-row: auto; flex: 1 1 0; min-width: 150px; overflow: visible; max-height: none; align-self: stretch; }
+.vz-sun__tail { grid-column: auto; grid-row: auto; display: block; column-width: 190px; column-gap: 18px; margin-top: 14px; overflow: visible; max-height: none; }
+.vz-sun__tail > li { break-inside: avoid; }
+.vz-sun__tail .vz-sun__group { margin-top: 6px; }
 
 .vz-line { position: relative; }
 .vz-line__svg { width: 100%; height: auto; overflow: visible; cursor: crosshair; }

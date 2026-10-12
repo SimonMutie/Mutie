@@ -235,8 +235,43 @@ export function Sunburst({ groups, label, centre, size = 210, fmt = fmtDefault, 
     const on = hi.g === gi && (hi.c === null || hi.c === ci);
     return on ? "is-hi" : "is-dim";
   };
+  const renderArc = (a: (typeof arcs)[number]) => (
+        <Fragment key={a.g.label}>
+          <li className={`vz-sun__group ${hi !== null && hi.g === a.gi && hi.c === null ? "is-hi" : hi !== null && hi.g !== a.gi ? "is-dim" : ""}`} onMouseEnter={() => setHi({ g: a.gi, c: null })} onMouseLeave={() => setHi(null)}>
+            <i style={{ background: a.g.color }} />
+            <span>{a.g.label}</span>
+            <strong>{fmt(a.gv)}</strong>
+          </li>
+          {a.kids.map((k) => (
+            <li
+              key={k.c.key ?? k.c.label}
+              className={`vz-sun__kid ${dimmedOuter(a.gi, k.ci) === "is-hi" ? "is-hi" : dimmedOuter(a.gi, k.ci) === "is-dim" ? "is-dim" : ""} ${selected && selected === (k.c.key ?? k.c.label) ? "is-sel" : ""} ${onPick ? "is-click" : ""}`}
+              onMouseEnter={() => setHi({ g: a.gi, c: k.ci })}
+              onMouseLeave={() => setHi(null)}
+              onClick={() => onPick?.(k.c.key ?? k.c.label)}
+            >
+              <i style={{ background: k.c.color ?? "var(--info)" }} />
+              <span>{k.c.label}</span>
+              <strong>{fmt(k.c.value)}</strong>
+            </li>
+          ))}
+        </Fragment>
+  );
+  // The first groups sit beside the ring, filling about its height; the rest flow across the card below it.
+  const rowBudget = Math.max(6, Math.floor(size / 21));
+  let used = 0;
+  let split = 0;
+  for (; split < arcs.length; split++) {
+    const rows = 1 + arcs[split].kids.length;
+    if (split > 0 && used + rows > rowBudget) break;
+    used += rows;
+  }
+  const headArcs = arcs.slice(0, split);
+  const tailArcs = arcs.slice(split);
+
   return (
     <div ref={ref} className="vz-donut vz-sun" role="group" aria-label={label}>
+      <div className="vz-sun__top">
       <div className="vz-donut__ring" style={{ width: size, height: size }}>
         <svg viewBox={`0 0 ${VB} ${VB}`} width={size} height={size} className="vz-donut__svg">
           <circle cx={VB / 2} cy={VB / 2} r={RI} className="vz-sun__track" strokeWidth={W} />
@@ -297,30 +332,15 @@ export function Sunburst({ groups, label, centre, size = 210, fmt = fmtDefault, 
           )}
         </div>
       </div>
-      <ul className="vz-donut__legend vz-sun__legend">
-        {arcs.map((a) => (
-          <Fragment key={a.g.label}>
-            <li className={`vz-sun__group ${hi !== null && hi.g === a.gi && hi.c === null ? "is-hi" : hi !== null && hi.g !== a.gi ? "is-dim" : ""}`} onMouseEnter={() => setHi({ g: a.gi, c: null })} onMouseLeave={() => setHi(null)}>
-              <i style={{ background: a.g.color }} />
-              <span>{a.g.label}</span>
-              <strong>{fmt(a.gv)}</strong>
-            </li>
-            {a.kids.map((k) => (
-              <li
-                key={k.c.key ?? k.c.label}
-                className={`vz-sun__kid ${dimmedOuter(a.gi, k.ci) === "is-hi" ? "is-hi" : dimmedOuter(a.gi, k.ci) === "is-dim" ? "is-dim" : ""} ${selected && selected === (k.c.key ?? k.c.label) ? "is-sel" : ""} ${onPick ? "is-click" : ""}`}
-                onMouseEnter={() => setHi({ g: a.gi, c: k.ci })}
-                onMouseLeave={() => setHi(null)}
-                onClick={() => onPick?.(k.c.key ?? k.c.label)}
-              >
-                <i style={{ background: k.c.color ?? "var(--info)" }} />
-                <span>{k.c.label}</span>
-                <strong>{fmt(k.c.value)}</strong>
-              </li>
-            ))}
-          </Fragment>
-        ))}
+      <ul className="vz-donut__legend vz-sun__legend vz-sun__head">
+        {headArcs.map(renderArc)}
       </ul>
+      </div>
+      {tailArcs.length > 0 && (
+        <ul className="vz-donut__legend vz-sun__legend vz-sun__tail">
+          {tailArcs.map(renderArc)}
+        </ul>
+      )}
     </div>
   );
 }

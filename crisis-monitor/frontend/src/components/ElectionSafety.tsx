@@ -301,7 +301,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           {ring === "sun" ? (
             <Sunburst
               label="Events by type, grouped into families"
-              size={210}
+              size={180}
               groups={watch.groups
                 .map((g) => ({
                   label: g.label,
