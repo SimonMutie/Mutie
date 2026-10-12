@@ -449,7 +449,7 @@ export interface TimelinePhase {
  * every event as a dot, and today as a pulsing marker. Hovering or focusing an
  * event reads its detail below. Everything animates in once on screen.
  */
-const TL = { axis: 190, card: 44, gap: 52, band: 14, stage: 408, cardW: 164, minGap: 21 };
+const TL = { axis: 190, card: 44, gap: 52, band: 14, lead: 40, stage: 408, cardW: 164, minGap: 21 };
 
 export function Timeline({ events, start, end, label, today, onPick, picked, phases = [] }: { events: TimelineEvent[]; start: string; end: string; label: string; today?: string; onPick?: (id: string) => void; picked?: string | null; phases?: TimelinePhase[] }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -501,7 +501,8 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
   const compact = slots.size === 0;
   const axisY = compact ? 62 : TL.axis;
   const stageH = compact ? axisY + 84 : TL.stage;
-  const cardTop = (side: 0 | 1, L: number) => (side === 0 ? axisY - TL.band - L * TL.gap - TL.card : axisY + 70 + L * TL.gap);
+  // Cards never sit on the axis: each one hangs off a visible leader line.
+  const cardTop = (side: 0 | 1, L: number) => (side === 0 ? axisY - TL.lead - L * TL.gap - TL.card : axisY + 70 + L * TL.gap);
   return (
     <div ref={ref} className={`vzt ${seen ? "is-in" : ""}`} role="group" aria-label={label}>
       <div className="vzt__scroll">
