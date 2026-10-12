@@ -1260,9 +1260,3 @@
 .pv-link { flex-basis: 100%; display: flex; }
 .pv-link input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
 
-.el-terms { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 16px 0; }
-.el-terms > div { border: 1px solid currentColor; border-radius: 6px; padding: 12px 14px; opacity: .95; }
-.el-terms b { display: block; margin-bottom: 4px; }
-.el-terms p { margin: 0; line-height: 1.5; }
-.el-terms__plain { grid-column: 1 / -1; margin: 0; line-height: 1.5; }
-@media (min-width: 720px) { .el-terms { grid-template-columns: 1fr 1fr; } }

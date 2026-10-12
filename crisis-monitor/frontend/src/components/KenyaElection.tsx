@@ -254,17 +254,6 @@ function TimelineSection() {
         ]}
         events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
       />
-      <div className="el-terms" aria-label="Primaries and nominations, explained">
-        <div>
-          <b>Primaries</b>
-          <p>Each party picks its own candidate, through internal votes or delegates. This is the party's decision, not the electoral commission's. Deadline: 9 May 2027.</p>
-        </div>
-        <div>
-          <b>Nominations</b>
-          <p>The official filing with the electoral commission (IEBC). The candidate and running mate are lodged with their papers, and only names on that filed list can appear on the ballot. Window: 29 May to 11 June 2027.</p>
-        </div>
-        <p className="el-terms__plain">In plain terms: primaries decide who a party wants. Nominations decide who is officially entered on the ballot. A party that has picked a candidate still has to file that candidate within the nominations window. The gap between 9 and 29 May is the time for the party to prepare its filing.</p>
-      </div>
       {past.length > 0 && (
         <button type="button" className="el-link" onClick={() => setShowPast(!showPast)}>
           {showPast ? "Hide" : "Show"} earlier events ({past.length})
@@ -681,8 +670,8 @@ function OutlookSection() {
     { when: "15 Oct 2026", what: "Parties name authorised persons: who has a registered vehicle, and who does not." },
     { when: "30 Oct to 6 Nov 2026", what: "Nomination rules certified and lodged: which coalition partners sign up to a common primary." },
     { when: "9 Feb 2027", what: "Public officers resign: which Cabinet Secretaries and officials leave to contest." },
-    { when: "9 May 2027", what: "Primaries end: the opposition’s single candidate, or the lack of one, becomes visible." },
-    { when: "29 May to 11 June 2027", what: "Nominated candidates are filed with IEBC." },
+    { when: "9 May 2027", what: "Party primaries end." },
+    { when: "29 May to 11 June 2027", what: "Names of nominated candidates are filed with IEBC." },
   ];
 
   return (
