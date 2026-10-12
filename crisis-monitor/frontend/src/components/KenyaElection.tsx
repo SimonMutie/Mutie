@@ -248,8 +248,8 @@ function TimelineSection() {
         phases={[
           { from: "2026-10-01", to: "2027-03-16", label: "Parties prepare", tone: "#2f66f0" },
           { from: "2027-03-16", to: "2027-05-09", label: "Primaries", tone: "#8a3ffc" },
-          { from: "2027-05-29", to: "2027-06-12", label: "Nominations", tone: "#b3690b" },
-          { from: "2027-06-12", to: "2027-08-10", label: "Campaign", tone: "#d1352b" },
+          { from: "2027-05-09", to: "2027-06-11", label: "Nominations", tone: "#b3690b" },
+          { from: "2027-06-11", to: "2027-08-10", label: "Campaign", tone: "#d1352b" },
           { from: "2027-08-10", to: "2027-09-09", label: "After the vote", tone: "#0d9488" },
         ]}
         events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
