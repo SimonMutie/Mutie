@@ -63,18 +63,48 @@ export function toPlainColours(value: string): string {
   return out + value.slice(i);
 }
 
+const MODERN_TEST = /\b(oklab|oklch|lab|lch|hwb|color-mix|color)\(/;
+
+/** Colour rules for one element in the snapshot's copy of the page. They are
+ *  !important, so they also beat CSS animations (a pulsing dot or a glow),
+ *  which would otherwise bring the modern colour back. */
+function colourRule(id: string, selector: string, cs: CSSStyleDeclaration): string {
+  const decls: string[] = [];
+  for (let k = 0; k < cs.length; k++) {
+    const prop = cs[k];
+    const v = toRgba(cs.getPropertyValue(prop));
+    if (MODERN_TEST.test(v)) decls.push(`${prop}: ${toPlainColours(v)} !important`);
+    else if (v !== cs.getPropertyValue(prop)) decls.push(`${prop}: ${v} !important`);
+  }
+  return decls.length ? `[data-pvx="${id}"]${selector} { ${decls.join("; ")} }\n` : "";
+}
+
 export function resolveColours(cloneDoc: Document) {
   const win = cloneDoc.defaultView;
   if (!win) return;
+  let rules = "";
+  let n = 0;
   cloneDoc.querySelectorAll<HTMLElement>("*").forEach((el) => {
-    const cs = win.getComputedStyle(el);
-    for (let k = 0; k < cs.length; k++) {
-      const prop = cs[k];
-      const v = toRgba(cs.getPropertyValue(prop));
-      if (/\b(oklab|oklch|lab|lch|hwb|color-mix|color)\(/.test(v)) el.style.setProperty(prop, toPlainColours(v));
-      else if (v !== cs.getPropertyValue(prop)) el.style.setProperty(prop, v);
+    // One id per element covers the element and its ::before and ::after.
+    const id = `pvx${n++}`;
+    let found = "";
+    found += colourRule(id, "", win.getComputedStyle(el));
+    for (const ps of ["::before", "::after"] as const) {
+      const cs = win.getComputedStyle(el, ps);
+      const content = cs.getPropertyValue("content");
+      if (!content || content === "none" || content === "normal") continue;
+      found += colourRule(id, ps, cs);
+    }
+    if (found) {
+      el.setAttribute("data-pvx", id);
+      rules += found;
     }
   });
+  if (rules) {
+    const style = cloneDoc.createElement("style");
+    style.textContent = rules;
+    cloneDoc.head.appendChild(style);
+  }
 }
 
 type Options = NonNullable<Parameters<typeof html2canvas>[1]>;
