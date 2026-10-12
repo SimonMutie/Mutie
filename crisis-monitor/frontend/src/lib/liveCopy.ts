@@ -98,6 +98,12 @@ export function buildLiveCopy(el: HTMLElement, paper: string): LiveCopy {
     const decls = diffDecls(getComputedStyle(orig), base);
     const own = copy.getAttribute("style") ?? "";
     copy.setAttribute("style", [own, ...decls].filter(Boolean).join(";"));
+    // A reveal ("is-in") is set after the page loads. The copy starts before it,
+    // and a short script adds it, so the entrance plays in the viewer's browser.
+    if (copy.classList.contains("is-in")) {
+      copy.classList.remove("is-in");
+      copy.setAttribute("data-was-in", "");
+    }
     const id = `lv${i}`;
     for (const ps of ["::before", "::after"] as const) {
       const cs = getComputedStyle(orig, ps);
@@ -122,7 +128,12 @@ html,body{margin:0;background:${paper};}
 ${keyframesCss()}
 ${pseudo}
 </style></head>
-<body><div style="width:${Math.round(rect.width)}px">${clone.outerHTML}</div></body></html>`;
+<body><div style="width:${Math.round(rect.width)}px">${clone.outerHTML}</div>
+<script>
+requestAnimationFrame(function () { requestAnimationFrame(function () {
+  document.querySelectorAll("[data-was-in]").forEach(function (e) { e.classList.add("is-in"); });
+}); });
+</script></body></html>`;
 
   return { html, width: Math.round(rect.width), height: Math.round(rect.height) };
 }

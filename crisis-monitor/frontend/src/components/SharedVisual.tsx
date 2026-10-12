@@ -30,12 +30,12 @@ export default function SharedVisual({ token }: { token: string }) {
             {data.kind === "gif" ? (
               <img src={data.content} alt={data.title} style={{ display: "block", width: "100%", height: "auto", background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0" }} />
             ) : (
-              // Scripts are blocked (sandbox with no permissions), so only the visual's own motion runs.
+              // The frame can run only the visual's own small reveal script; it cannot reach the rest of the app.
               <div style={{ overflowX: "auto", background: "#fff", borderRadius: 8, border: "1px solid #e2e8f0" }}>
                 <iframe
                   title={data.title}
                   srcDoc={data.content}
-                  sandbox=""
+                  sandbox="allow-scripts"
                   style={{ display: "block", border: 0, width: data.width, maxWidth: "none", height: Math.max(300, data.height) }}
                 />
               </div>
