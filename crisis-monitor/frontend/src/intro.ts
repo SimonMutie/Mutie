@@ -1,12 +1,12 @@
 /**
  * The opening sequence's sound: a spoken welcome and a soft tone.
  *
- * The welcome is a recording — a female British English voice, generated
- * once with the open-source Kokoro speech model (voice "bf_emma") and shipped
- * with the site (public/audio/welcome-female.mp3). Because it is a file, it
- * sounds the same on every device and uses no service at run time. If the
- * file cannot be played, the visitor's browser reads the line aloud itself,
- * with the nearest British female voice the device has.
+ * The welcome is Simon Mutie's own voice — his recording, cleaned of
+ * background noise, levelled, and with the hesitations between words closed
+ * up so it runs as one smooth line — shipped with the site
+ * (public/audio/welcome.mp3). Because it is a file, it sounds the same on
+ * every device and uses no service at run time. If the file cannot be
+ * played, the visitor's browser reads the line aloud itself.
  *
  * The tone is made on the spot by the browser's audio engine.
  *
@@ -84,7 +84,7 @@ export function introAppliesHere(): boolean {
 
 /* ── voice ─────────────────────────────────────────────────────────── */
 
-const WELCOME_AUDIO_URL = "/audio/welcome-female.mp3";
+const WELCOME_AUDIO_URL = "/audio/welcome.mp3";
 
 let welcomePending = false;
 let welcomeSpoken = false;
