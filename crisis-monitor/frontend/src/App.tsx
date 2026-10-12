@@ -8,7 +8,7 @@ import PushPrompt from "./components/PushPrompt";
 import { enableMonitorLayer } from "./monitorLayers";
 import type { SpotlightScope } from "./spotlightRegions";
 import { speakWelcomeIfPending } from "./intro";
-import ErrorBoundary from "./components/ErrorBoundary";
+import ErrorBoundary, { isStaleBuildError } from "./components/ErrorBoundary";
 
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
@@ -257,7 +257,7 @@ export default function App() {
               <pre style={{ fontSize: 11, color: "var(--text-faint)", whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0 }}>{error.message}</pre>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button type="button" onClick={() => { retry(); setView("live-osint"); }} style={{ padding: "6px 14px", cursor: "pointer", border: "1px solid var(--border)", borderRadius: 6, background: "transparent", color: "var(--text-primary)", fontSize: 13 }}>Back to Live OSINT</button>
-                <button type="button" onClick={retry} style={{ padding: "6px 14px", cursor: "pointer", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel-raised)", color: "var(--text-primary)", fontSize: 13 }}>Try again</button>
+                <button type="button" onClick={() => (isStaleBuildError(error) ? window.location.reload() : retry())} title={isStaleBuildError(error) ? "Reloads The Lens to get the latest version" : undefined} style={{ padding: "6px 14px", cursor: "pointer", border: "1px solid var(--border)", borderRadius: 6, background: "var(--panel-raised)", color: "var(--text-primary)", fontSize: 13 }}>Try again</button>
               </div>
             </div>
           </div>

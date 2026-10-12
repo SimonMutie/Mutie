@@ -11,7 +11,7 @@ interface State {
 
 const RELOAD_KEY = "lens.staleBuildReloadedAt";
 const RELOAD_GAP_MS = 2 * 60 * 1000;
-const isStaleBuildError = (error: Error) => /dynamically imported module|Importing a module script failed|Loading chunk [\w-]+ failed/i.test(error?.message ?? "");
+export const isStaleBuildError = (error: Error) => /dynamically imported module|Importing a module script failed|Loading chunk [\w-]+ failed/i.test(error?.message ?? "");
 
 export default class ErrorBoundary extends React.Component<Props, State> {
   state: State = { error: null };
