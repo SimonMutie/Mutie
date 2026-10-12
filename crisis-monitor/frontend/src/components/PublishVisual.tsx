@@ -46,7 +46,7 @@ export default function PublishVisualButton({
       await settleForCapture(el);
       let body: { kind: "html" | "gif"; content: string; width: number; height: number };
       if (kind === "live") {
-        const copy = buildLiveCopy(el, "#ffffff");
+        const copy = await buildLiveCopy(el, "#ffffff");
         body = { kind: "html", content: copy.html, width: copy.width, height: copy.height };
       } else {
         const rect = el.getBoundingClientRect();

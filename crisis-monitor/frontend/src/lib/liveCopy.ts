@@ -70,7 +70,26 @@ export interface LiveCopy {
   height: number;
 }
 
-export function buildLiveCopy(el: HTMLElement, paper: string): LiveCopy {
+/** Each timeline event's panel text, read by hovering its dot on the live page. */
+async function eventDetails(el: HTMLElement): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const panel = el.querySelector<HTMLElement>(".vz-tl__detail");
+  if (!panel) return out;
+  for (const dot of Array.from(el.querySelectorAll<HTMLElement>(".vzt__dot"))) {
+    const key = dot.getAttribute("aria-label") ?? "";
+    if (!key) continue;
+    dot.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 30));
+    out[key] = panel.innerHTML;
+    dot.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+  }
+  await new Promise((r) => setTimeout(r, 30));
+  return out;
+}
+
+export async function buildLiveCopy(el: HTMLElement, paper: string): Promise<LiveCopy> {
+  const details = await eventDetails(el);
+  const dotKeys = Object.keys(details);
   const rect = el.getBoundingClientRect();
   const origs: HTMLElement[] = [el, ...Array.from(el.querySelectorAll<HTMLElement>("*"))];
   const clone = el.cloneNode(true) as HTMLElement;
@@ -100,6 +119,14 @@ export function buildLiveCopy(el: HTMLElement, paper: string): LiveCopy {
     copy.setAttribute("style", [own, ...decls].filter(Boolean).join(";"));
     // A reveal ("is-in") is set after the page loads. The copy starts before it,
     // and a short script adds it, so the entrance plays in the viewer's browser.
+    // Each dot and card names its event, so the copy's script can show its text.
+    if (orig.classList.contains("vzt__dot")) {
+      copy.setAttribute("data-ev", orig.getAttribute("aria-label") ?? "");
+    } else if (orig.classList.contains("vzt__card")) {
+      const title = orig.querySelector("b")?.textContent ?? "";
+      const key = dotKeys.find((k) => k.endsWith(`: ${title}`));
+      if (key) copy.setAttribute("data-ev", key);
+    }
     if (copy.classList.contains("is-in")) {
       copy.classList.remove("is-in");
       copy.setAttribute("data-was-in", "");
@@ -130,9 +157,26 @@ ${pseudo}
 </style></head>
 <body><div style="width:${Math.round(rect.width)}px">${clone.outerHTML}</div>
 <script>
-requestAnimationFrame(function () { requestAnimationFrame(function () {
-  document.querySelectorAll("[data-was-in]").forEach(function (e) { e.classList.add("is-in"); });
-}); });
+(function () {
+  var details = ${JSON.stringify(details).replace(/</g, "\\u003c")};
+  requestAnimationFrame(function () { requestAnimationFrame(function () {
+    document.querySelectorAll("[data-was-in]").forEach(function (e) { e.classList.add("is-in"); });
+  }); });
+  var panel = document.querySelector(".vz-tl__detail");
+  function show(key) {
+    if (!panel || !(key in details)) return;
+    panel.innerHTML = details[key];
+    document.querySelectorAll("[data-ev]").forEach(function (e) {
+      e.classList.toggle("is-on", e.getAttribute("data-ev") === key);
+    });
+  }
+  document.querySelectorAll("[data-ev]").forEach(function (e) {
+    var key = e.getAttribute("data-ev");
+    e.addEventListener("mouseenter", function () { show(key); });
+    e.addEventListener("focus", function () { show(key); });
+    e.addEventListener("click", function () { show(key); });
+  });
+})();
 </script></body></html>`;
 
   return { html, width: Math.round(rect.width), height: Math.round(rect.height) };
