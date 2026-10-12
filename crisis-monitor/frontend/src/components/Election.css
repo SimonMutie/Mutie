@@ -1249,3 +1249,13 @@
 .el-block__hide { position: absolute; top: 8px; right: 8px; z-index: 3; font-size: 11px; line-height: 1; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel-raised); color: var(--text-muted); cursor: pointer; }
 .el-block__hide:hover { color: var(--text-primary); }
 .el-hidden-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+.el-export__note { font-size: 12px; color: var(--text-muted); margin-top: 10px; max-width: 60ch; }
+
+/* ── publish a visual as its own link ─────────────────────── */
+.pv-wrap { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pv-btn { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
+.pv-btn:hover:not(:disabled) { border-color: var(--signal); color: var(--signal); }
+.pv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.pv-note { font-size: 12px; font-weight: 700; color: var(--text-muted); }
+.pv-link { flex-basis: 100%; display: flex; }
+.pv-link input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }

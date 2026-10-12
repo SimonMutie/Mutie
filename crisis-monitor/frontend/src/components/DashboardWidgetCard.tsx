@@ -51,6 +51,7 @@ import { api } from "../api";
 import { GEO_REGISTRY, findGeoHierarchy, getGeoLevel } from "../registry";
 import html2canvas from "html2canvas";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
+import PublishVisualButton from "./PublishVisual";
 import { exportElement } from "../report/elementExport";
 import type { CrosstabRow, Dataset, DatasetColumn, DatasetSummary, DashboardWidget, NormalizedDashboardStats, PivotableField, WidgetDataField, WidgetType } from "../api";
 import { detectColumnType } from "./DatasetsPanel";
@@ -742,13 +743,16 @@ export default function DashboardWidgetCard({
     if (!cardRef.current) return;
     setDownloadingImage(true);
     try {
-      await exportElement(cardRef.current, fmt, {
+      const note = await exportElement(cardRef.current, fmt, {
         fileBase: `${widget.title.replace(/[^a-z0-9]+/gi, "_").toLowerCase() || "widget"}_${new Date().toISOString().slice(0, 10)}`,
         title: widget.title || "Widget",
         kicker: "Dashboard widget",
       });
-    } catch {
-      setGifError("That download did not work. Try again.");
+      if (note) setGifError(note);
+    } catch (err) {
+      const why = err instanceof Error ? err.message.slice(0, 160) : "unknown error";
+      console.error(`[widget download] ${fmt} failed:`, err);
+      setGifError(`That download did not work (${fmt.toUpperCase()}: ${why}). Try again.`);
     } finally {
       setDownloadingImage(false);
     }
@@ -856,6 +860,7 @@ export default function DashboardWidgetCard({
                 gifProgress={gifProgress}
                 gifError={gifError}
               />
+              <PublishVisualButton target={() => cardRef.current} title={widget.title || "Widget"} kicker="Dashboard widget" />
               {showFullControls && onRemove && (
                 <button onClick={onRemove} title="Remove widget" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
                   ×
@@ -877,6 +882,7 @@ export default function DashboardWidgetCard({
                 gifProgress={gifProgress}
                 gifError={gifError}
               />
+              <PublishVisualButton target={() => cardRef.current} title={widget.title || "Widget"} kicker="Dashboard widget" />
             </div>
           )}
         </div>

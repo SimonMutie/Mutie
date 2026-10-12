@@ -2,7 +2,7 @@ import { exportAllowed } from "../exportGuard";
 import { logoPng } from "../lib/brandLogo";
 import { revealEverything, settleForCapture } from "../lib/motion";
 import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../gifCapture";
-import { buildDocx, buildPdf, buildPptx, save, snapshot, type ExportPage } from "./monthlyExport";
+import { buildDocx, buildPdf, buildPptx, buildTextPdf, save, snapshot, type ExportPage, type Snapshot } from "./monthlyExport";
 import type { RptTheme } from "../api";
 
 /**
@@ -64,21 +64,34 @@ function pageFor(el: HTMLElement, meta: ElementMeta): ExportPage {
   };
 }
 
-/** Downloads the element as a PDF, Word document or animated PowerPoint. */
-export async function exportElement(el: HTMLElement, fmt: ElementFormat, meta: ElementMeta): Promise<void> {
-  if (!exportAllowed()) return;
+/**
+ * Downloads the element as a PDF, Word document or animated PowerPoint.
+ * If the picture of the element cannot be made, the file is still written from
+ * its text and table, and the returned note says the picture was left out.
+ */
+export async function exportElement(el: HTMLElement, fmt: ElementFormat, meta: ElementMeta): Promise<string | null> {
+  if (!exportAllowed()) return null;
   const theme = meta.theme ?? "lens";
   revealEverything();
   await settleForCapture(el);
   const page = pageFor(el, meta);
-  const snap = await snapshot(el, theme);
-  if (fmt === "pdf") {
-    save(buildPdf(snap), `${meta.fileBase}.pdf`);
-    return;
+  let snap: Snapshot | undefined;
+  let note: string | null = null;
+  try {
+    snap = await snapshot(el, theme);
+  } catch (err) {
+    const why = err instanceof Error ? err.message.slice(0, 160) : "unknown error";
+    console.error(`[element download] picture failed for ${meta.fileBase}:`, err);
+    note = `The picture could not be made (${why}), so this file has the text and table only.`;
   }
-  const logo = await logoPng(theme);
+  if (fmt === "pdf") {
+    save(snap ? buildPdf(snap) : buildTextPdf(page), `${meta.fileBase}.pdf`);
+    return note;
+  }
+  const logo = await logoPng(theme).catch(() => undefined);
   if (fmt === "docx") save(await buildDocx(page, snap, logo), `${meta.fileBase}.docx`);
   else save(await buildPptx(page, { snap, logo }), `${meta.fileBase}.pptx`);
+  return note;
 }
 
 /** Records the element as an animated GIF, playing its motion from the start. */

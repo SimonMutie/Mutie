@@ -340,3 +340,32 @@ export function save(blob: Blob, name: string) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/** A text-only PDF of a section, used when its picture cannot be made. */
+export function buildTextPdf(page: ExportPage): Blob {
+  const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+  const pageH = pdf.internal.pageSize.getHeight();
+  const width = pdf.internal.pageSize.getWidth() - 20;
+  let y = 20;
+  const write = (text: string, size: number, bold = false, gap = 2) => {
+    pdf.setFont("helvetica", bold ? "bold" : "normal");
+    pdf.setFontSize(size);
+    for (const line of pdf.splitTextToSize(text, width) as string[]) {
+      if (y > pageH - 15) {
+        pdf.addPage();
+        y = 20;
+      }
+      pdf.text(line, 10, y);
+      y += size * 0.45;
+    }
+    y += gap;
+  };
+  if (page.kicker) write(page.kicker.toUpperCase(), 9, true);
+  write(page.title, 18, true, 4);
+  for (const p of page.paragraphs) write(p, 10, false, 3);
+  if (page.table) {
+    write(page.table.head.join("   |   "), 10, true, 1);
+    for (const row of page.table.rows) write(row.join("   |   "), 9, false, 1);
+  }
+  return pdf.output("blob");
+}

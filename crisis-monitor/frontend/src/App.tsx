@@ -11,6 +11,7 @@ import { speakWelcomeIfPending } from "./intro";
 import ErrorBoundary, { isStaleBuildError } from "./components/ErrorBoundary";
 
 const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
+const SharedVisual = lazy(() => import("./components/SharedVisual"));
 const QueryEditor = lazy(() => import("./components/QueryEditor"));
 const AdminPanel = lazy(() => import("./components/AdminPanel"));
 const BroadcastAlerts = lazy(() => import("./components/BroadcastAlerts"));
@@ -55,6 +56,12 @@ function usePublicReportToken(): string | null {
   return match ? match[1] : null;
 }
 
+/** One published visual, opened by its link (/visual/<token>). */
+function usePublicVisualToken(): string | null {
+  const match = /^\/visual\/([A-Za-z0-9_-]+)\/?$/.exec(window.location.pathname);
+  return match ? match[1] : null;
+}
+
 function usePublicShareToken(): string | null {
   const path = window.location.pathname;
   const match = /^\/shared\/([A-Za-z0-9_-]+)\/?$/.exec(path);
@@ -72,8 +79,9 @@ export default function App() {
   const publicSpotlightId = usePublicSpotlightId();
   const sharedDashboardToken = usePublicShareToken();
   const sharedReportToken = usePublicReportToken();
+  const sharedVisualToken = usePublicVisualToken();
   // Either public path skips the whole sign-in flow below.
-  const shareToken = sharedReportToken ?? sharedDashboardToken ?? publicSpotlightId;
+  const shareToken = sharedReportToken ?? sharedVisualToken ?? sharedDashboardToken ?? publicSpotlightId;
   const [bootState, setBootState] = useState<BootState>("checking");
   const [bootError, setBootError] = useState<string | null>(null);
   const [bootTry, setBootTry] = useState(0);
@@ -163,6 +171,14 @@ export default function App() {
     return (
       <Suspense fallback={viewLoadingFallback}>
         <PublicSpotlightView id={publicSpotlightId} />
+      </Suspense>
+    );
+  }
+
+  if (sharedVisualToken) {
+    return (
+      <Suspense fallback={viewLoadingFallback}>
+        <SharedVisual token={sharedVisualToken} />
       </Suspense>
     );
   }
