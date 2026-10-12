@@ -133,10 +133,14 @@ export class GdeltRateLimitError extends Error {
   }
 }
 
+/** GDELT's date format for startdatetime / enddatetime (UTC, no separators). */
+const gdeltDateTime = (d: Date) => d.toISOString().slice(0, 19).replace(/[-:T]/g, "");
+
 export async function fetchGdeltArticles(
   searchTerms: string,
   maxRecords = 250, // GDELT's documented max per request — was 75, starving niche/narrow topics of candidates
-  timespan = "6h" // was 1h — too narrow a window for low-volume topics to have any hits at all
+  timespan = "6h", // was 1h — too narrow a window for low-volume topics to have any hits at all
+  window?: { start: Date; end: Date } // an exact date range instead of a timespan, for reading back through the archive
 ): Promise<GdeltArticle[]> {
   const params = new URLSearchParams({
     query: searchTerms,
@@ -144,8 +148,13 @@ export async function fetchGdeltArticles(
     maxrecords: String(maxRecords),
     format: "json",
     sort: "datedesc",
-    timespan,
   });
+  if (window) {
+    params.set("startdatetime", gdeltDateTime(window.start));
+    params.set("enddatetime", gdeltDateTime(window.end));
+  } else {
+    params.set("timespan", timespan);
+  }
 
   const res = await fetch(`${GDELT_ENDPOINT}?${params.toString()}`, {
     headers: { "User-Agent": "TheLensCrisisMonitor/1.0 (+https://github.com/SimonMutie/Mutie)" },

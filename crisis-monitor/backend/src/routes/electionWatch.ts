@@ -279,11 +279,12 @@ export function watchRouter(W: Watch) {
     return c.json({ checked: rows.length, changed });
   });
 
-  /** Admin: reads GDELT's news archive for this watch as far back as it reaches. Safe to repeat; known links are skipped. */
+  /** Admin: reads GDELT's news archive for this watch, as far back as it reaches or for the given number of months. Safe to repeat; known links are skipped. */
   r.post("/backfill", async (c) => {
     const denied = adminOnly(c);
     if (denied) return denied;
-    return c.json(await backfillElectionFromGdelt(c.env, W));
+    const months = Math.min(12, Math.max(1, Math.round(Number((await c.req.json().catch(() => ({}))).months) || 0)));
+    return c.json(await backfillElectionFromGdelt(c.env, W, months ? { months } : {}));
   });
 
   r.post("/collect", async (c) => {

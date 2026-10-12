@@ -40,6 +40,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
   const [onlyVerified, setOnlyVerified] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -65,6 +66,26 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "That did not save.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Collects the feeds, then reads the news archive for the period on screen. Says what it found. */
+  async function collectNow() {
+    setNotice(null);
+    const months = days === 365 ? 12 : Math.max(1, Math.round(days / 30));
+    setBusy("collect");
+    try {
+      await w.collect(72);
+      const r = await w.backfill(months);
+      const when = days === 365 ? "the last year" : `the last ${days} days`;
+      const stop = r.status === "rate_limited" ? " The news archive is limiting requests; press Collect now again in a few minutes to continue." : r.status === "failed" ? " The news archive could not be reached just now." : "";
+      const capped = r.capped ? ` ${r.capped} search${r.capped === 1 ? "" : "es"} returned the maximum, so some stories may be missing.` : "";
+      setNotice(`Collected ${when}: ${r.scanned} stories read from the archive, ${r.inserted} new items coded.${capped}${stop}`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Collection did not finish.");
     } finally {
       setBusy(null);
     }
@@ -124,12 +145,13 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         </div>
         <button type="button" className="el-btn" onClick={download}>Download CSV</button>
         {isAdmin && (
-          <button type="button" className="el-btn" disabled={busy === "collect"} onClick={() => act("collect", () => w.collect(72))}>
+          <button type="button" className="el-btn" disabled={busy === "collect"} onClick={() => collectNow()}>
             {busy === "collect" ? "Collecting…" : "Collect now"}
           </button>
         )}
       </div>
       {error && <p className="el-notice el-notice--error">{error}</p>}
+      {notice && !error && <p className="el-notice">{notice}</p>}
 
       <div className="el-kpis">
         <div><strong>{dash?.events ?? "–"}</strong><span>events in {days === 365 ? "a year" : `${days} days`}</span><small>{dash?.reports ?? 0} reports behind them</small><Spark values={weeks.map((w) => CATS.reduce((a, k) => a + Number(w[k] ?? 0), 0))} label="Events per week" /></div>

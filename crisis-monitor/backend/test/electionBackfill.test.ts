@@ -72,4 +72,25 @@ describe("GDELT archive backfill for the election watch", () => {
     expect(retry?.status).toBe("done");
     expect(await backfillElectionIfNeeded(env, KE_WATCH)).toBeNull();
   });
+
+  it("reads a period in two-week date slices, and reports searches that hit GDELT's cap", async () => {
+    const urls: URL[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(new URL(String(input)));
+      // Every slice answers with the full 250, so the cap is reported.
+      const many = Array.from({ length: 250 }, (_, i) => article(1000 + urls.length * 300 + i, `Kenya election rally ${i} in Nairobi IEBC`));
+      return jsonResponse({ articles: many });
+    }) as unknown as typeof fetch;
+
+    const result = await backfillElectionFromGdelt(env, KE_WATCH, { months: 1 });
+    expect(urls.length).toBeGreaterThanOrEqual(2);
+    for (const u of urls) {
+      expect(u.searchParams.get("startdatetime")).toMatch(/^\d{14}$/);
+      expect(u.searchParams.get("enddatetime")).toMatch(/^\d{14}$/);
+      expect(u.searchParams.has("timespan")).toBe(false);
+    }
+    expect(result.capped).toBe(urls.length);
+    // A period run is not marked as the one-time archive backfill.
+    expect(await backfillElectionIfNeeded(env, KE_WATCH)).not.toBeNull();
+  });
 });
