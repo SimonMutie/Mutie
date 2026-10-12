@@ -6,7 +6,7 @@ import { captureElementAsGif, downloadBlob, type GifCaptureProgress } from "../g
 import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { api, ApiError, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type VictimGroupRow, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
+import { api, ApiError, type DashboardVersion, type CrosstabRow, type Dataset, type DatasetSummary, type DashboardWidget, type IncidentFilters, type IncidentItem, type IncidentStats, type NormalizedDashboardStats, type VictimGroupRow, type PivotableField, type WidgetDataField, type WidgetType } from "../api";
 import DashboardWidgetCard, { type MapIncidentRow, breakdownKeyFor, crosstabKeyFor, valueMapKeyFor, dailyKeyFor, DATA_FIELD_TO_COLUMN, fieldLabel, PRESET_THEMES, COLOR_SWATCHES, FIELDS_FOR_TYPE, WIDGET_TYPES, PIVOTABLE_FIELD_OPTIONS, PIVOT_FIELD_LABELS } from "./DashboardWidgetCard";
 import ErrorBoundary from "./ErrorBoundary";
 import { VizProvider, useViz } from "./viz/context";
@@ -581,7 +581,38 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   );
 
   function removeWidget(id: string) {
+    const gone = widgets.find((x) => x.id === id);
+    if (!window.confirm(`Remove “${gone?.title || "this chart"}” from the dashboard?\n\nIts layout is kept in History, so it can be brought back.`)) return;
     setWidgets((w) => w.filter((x) => x.id !== id));
+  }
+
+  // History: the dashboard as it stood before each removal, kept on the server.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState<DashboardVersion[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  async function openHistory() {
+    if (!backendId) return;
+    setHistoryOpen(true);
+    setHistoryError(null);
+    setVersions(null);
+    try {
+      setVersions(await api.listDashboardVersions(backendId));
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "The history could not be loaded.");
+      setVersions([]);
+    }
+  }
+  async function restoreVersion(v: DashboardVersion) {
+    if (!backendId) return;
+    const when = new Date(v.saved_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    if (!window.confirm(`Put the dashboard back to how it was on ${when}?\n\nWhat it looks like now is kept in History too.`)) return;
+    try {
+      const restored = await api.restoreDashboardVersion(backendId, v.id);
+      setWidgets(restored.widgets);
+      setHistoryOpen(false);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "The dashboard could not be restored.");
+    }
   }
   function renameWidget(id: string, title: string) {
     setWidgets((w) => w.map((x) => (x.id === id ? { ...x, title } : x)));
@@ -945,6 +976,36 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
           <button onClick={save} disabled={saveStatus === "saving"} style={primaryBtnStyle}>
             Save
           </button>
+        )}
+        {backendId && (
+          <button onClick={openHistory} title="See earlier versions, including charts that were removed" style={secondaryBtnStyle}>
+            History
+          </button>
+        )}
+        {historyOpen && (
+          <div role="presentation" onClick={() => setHistoryOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div role="dialog" aria-label="Dashboard history" onClick={(e) => e.stopPropagation()} style={{ background: "var(--panel, #fff)", color: "var(--text-primary, #111)", borderRadius: 10, padding: 18, width: "min(520px, 100%)", maxHeight: "80vh", overflow: "auto", boxShadow: "0 12px 40px rgba(0,0,0,.25)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <strong style={{ fontSize: 16 }}>History</strong>
+                <button onClick={() => setHistoryOpen(false)} style={secondaryBtnStyle}>Close</button>
+              </div>
+              <p style={{ margin: "0 0 12px", fontSize: 13, color: "var(--text-muted, #666)" }}>
+                Each time a chart is removed, the dashboard as it was before is kept here. Restoring puts that version back, and keeps what is there now in History too.
+              </p>
+              {historyError && <p role="alert" style={{ color: "var(--critical, #b91c1c)", fontSize: 13 }}>{historyError}</p>}
+              {versions === null && <p style={{ fontSize: 13 }}>Loading…</p>}
+              {versions && versions.length === 0 && !historyError && <p style={{ fontSize: 13 }}>No earlier versions yet. Versions are kept from the next time a chart is removed.</p>}
+              {versions?.map((v) => (
+                <div key={v.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, borderTop: "1px solid var(--border, #e5e5e5)", padding: "10px 0" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{new Date(v.saved_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted, #666)", overflowWrap: "anywhere" }}>{v.reason ?? "Saved"} · {v.widget_count} charts</div>
+                  </div>
+                  <button onClick={() => restoreVersion(v)} disabled={locked} title={locked ? "Unlock the dashboard to restore" : undefined} style={secondaryBtnStyle}>Restore</button>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
         <button onClick={toggleLock} title={locked ? "Unlock to edit again" : "Lock once you're done editing, to prevent accidental changes"} style={locked ? liveBtnStyle : secondaryBtnStyle}>
           {locked ? "🔒 Locked — click to unlock" : "🔓 Lock dashboard"}

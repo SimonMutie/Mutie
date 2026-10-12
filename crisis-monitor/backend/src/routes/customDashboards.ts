@@ -282,6 +282,46 @@ customDashboardsRouter.get("/:id", async (c) => {
   return c.json(rowToDashboard(row));
 });
 
+// ── history: every removal of a widget keeps the dashboard as it was before ──
+// A removed widget is not gone: its dashboard's widgets, as they stood before
+// the removal, are kept in custom_dashboard_versions (the last 30 per
+// dashboard) and can be put back from the dashboard's History panel.
+const HISTORY_KEEP = 30;
+let historyReady: Promise<void> | null = null;
+function ensureHistory(db: D1Database): Promise<void> {
+  if (!historyReady) {
+    historyReady = (async () => {
+      await db.prepare(
+        `CREATE TABLE IF NOT EXISTS custom_dashboard_versions (
+          id TEXT PRIMARY KEY, dashboard_id TEXT NOT NULL, name TEXT, widgets TEXT NOT NULL,
+          saved_at TEXT NOT NULL, saved_by TEXT, reason TEXT)`
+      ).run();
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_dashboard_versions ON custom_dashboard_versions (dashboard_id, saved_at)`).run();
+    })().catch((e) => {
+      historyReady = null;
+      throw e;
+    });
+  }
+  return historyReady;
+}
+
+async function snapshotDashboard(db: D1Database, dashboardId: string, by: string, reason: string): Promise<void> {
+  await ensureHistory(db);
+  const row = await first<{ name: string; widgets: string }>(db, `SELECT name, widgets FROM custom_dashboards WHERE id = ?`, [dashboardId]);
+  if (!row) return;
+  await db
+    .prepare(`INSERT INTO custom_dashboard_versions (id, dashboard_id, name, widgets, saved_at, saved_by, reason) VALUES (?,?,?,?,?,?,?)`)
+    .bind(newId(), dashboardId, row.name, row.widgets ?? "[]", nowIso(), by, reason)
+    .run();
+  await db
+    .prepare(
+      `DELETE FROM custom_dashboard_versions WHERE dashboard_id = ? AND id NOT IN (
+         SELECT id FROM custom_dashboard_versions WHERE dashboard_id = ? ORDER BY saved_at DESC LIMIT ?)`
+    )
+    .bind(dashboardId, dashboardId, HISTORY_KEEP)
+    .run();
+}
+
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
   widgets: z.array(widgetSchema).optional(),
@@ -321,6 +361,14 @@ customDashboardsRouter.patch("/:id", async (c) => {
     params.push(parsed.data.name);
   }
   if (parsed.data.widgets !== undefined) {
+    const before = await first<{ widgets: string }>(c.env.DB, `SELECT widgets FROM custom_dashboards WHERE id = ?`, [id]);
+    const oldWidgets = JSON.parse(String(before?.widgets ?? "[]")) as { id?: string; title?: string }[];
+    const keptIds = new Set(parsed.data.widgets.map((w) => w.id));
+    const removed = oldWidgets.filter((w) => w.id && !keptIds.has(w.id));
+    if (removed.length) {
+      const titles = removed.map((w) => w.title || "Untitled").join(", ").slice(0, 300);
+      await snapshotDashboard(c.env.DB, id, ownerId, `Removed: ${titles}`);
+    }
     updates.push("widgets = ?");
     params.push(JSON.stringify(parsed.data.widgets));
   }
@@ -373,6 +421,44 @@ customDashboardsRouter.patch("/:id", async (c) => {
   if (parsed.data.is_public !== undefined) {
     await audit(c.env, { userId: ownerId, action: parsed.data.is_public ? "share.on" : "share.off", detail: id, ip: clientIp(c.req) });
   }
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [id]);
+  return c.json(rowToDashboard(row!));
+});
+
+/** The dashboard's saved history, newest first: when, by whom, and what was removed. */
+customDashboardsRouter.get("/:id/versions", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const id = c.req.param("id");
+  const existing = await first<{ owner_id: string | null }>(c.env.DB, `SELECT owner_id FROM custom_dashboards WHERE id = ?`, [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && existing.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  await ensureHistory(c.env.DB);
+  const rows = await all<{ id: string; saved_at: string; saved_by: string | null; reason: string | null; widgets: string }>(
+    c.env.DB,
+    `SELECT id, saved_at, saved_by, reason, widgets FROM custom_dashboard_versions WHERE dashboard_id = ? ORDER BY saved_at DESC LIMIT ?`,
+    [id, HISTORY_KEEP]
+  );
+  return c.json(
+    rows.map((r) => ({ id: r.id, saved_at: r.saved_at, saved_by: r.saved_by, reason: r.reason, widget_count: (JSON.parse(r.widgets) as unknown[]).length }))
+  );
+});
+
+/** Put a saved version back. The current state is kept as a version too, so a restore can itself be undone. */
+customDashboardsRouter.post("/:id/versions/:versionId/restore", async (c) => {
+  const isAdmin = c.get("role") === "admin";
+  const ownerId = c.get("userId");
+  const id = c.req.param("id");
+  const existing = await first<{ owner_id: string | null; locked: number }>(c.env.DB, `SELECT owner_id, locked FROM custom_dashboards WHERE id = ?`, [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  if (!isAdmin && existing.owner_id !== ownerId) return c.json({ error: "Not found" }, 404);
+  if (existing.locked) return c.json({ error: "This dashboard is locked. Unlock it to restore an earlier version." }, 423);
+  await ensureHistory(c.env.DB);
+  const version = await first<{ widgets: string }>(c.env.DB, `SELECT widgets FROM custom_dashboard_versions WHERE id = ? AND dashboard_id = ?`, [c.req.param("versionId"), id]);
+  if (!version) return c.json({ error: "Not found" }, 404);
+  await snapshotDashboard(c.env.DB, id, ownerId, "Before restore");
+  await c.env.DB.prepare(`UPDATE custom_dashboards SET widgets = ?, updated_at = ? WHERE id = ?`).bind(version.widgets, nowIso(), id).run();
+  await audit(c.env, { userId: ownerId, action: "dashboard.restore", detail: id, ip: clientIp(c.req) });
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM custom_dashboards WHERE id = ?`, [id]);
   return c.json(rowToDashboard(row!));
 });

@@ -1982,6 +1982,10 @@ export const api = {
   runPublicViz: (token: string, widgetId: string, filters?: import("./components/viz/types").VizFilter[]) =>
     req<import("./components/viz/types").VizResult>(`/api/public/dashboards-viz/${encodeURIComponent(token)}`, { method: "POST", body: JSON.stringify({ widgetId, filters }) }),
   deleteCustomDashboard: (id: string) => req<void>(`/api/custom-dashboards/${id}`, { method: "DELETE" }),
+  /** A dashboard's saved history: the widgets as they were before each removal, newest first. */
+  listDashboardVersions: (id: string) => req<DashboardVersion[]>(`/api/custom-dashboards/${id}/versions`),
+  restoreDashboardVersion: (id: string, versionId: string) =>
+    req<CustomDashboard>(`/api/custom-dashboards/${id}/versions/${encodeURIComponent(versionId)}/restore`, { method: "POST" }),
   // Public — no auth token needed, works for anyone with the share link.
   getVictimGroups: (filters: { from?: string; to?: string; [field: string]: string | undefined } = {}) =>
     req<VictimGroupRow[]>(`/api/incidents/victim-groups?${new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) as Record<string, string>)}`),
@@ -2276,3 +2280,11 @@ export const visualsApi = {
   get: (token: string) =>
     req<{ title: string; kicker: string; kind: "html" | "gif"; width: number; height: number; created_at: string; content: string }>(`/api/public/visuals/${token}`),
 };
+
+export interface DashboardVersion {
+  id: string;
+  saved_at: string;
+  saved_by: string | null;
+  reason: string | null;
+  widget_count: number;
+}
