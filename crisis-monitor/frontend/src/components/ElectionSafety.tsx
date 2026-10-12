@@ -27,6 +27,13 @@ const DEFAULT_LAYOUT: Layout[] = [
   { i: "reports", x: 0, y: 32, w: 12, h: 20 },
 ];
 const KNOWN = new Set(DEFAULT_LAYOUT.map((l) => l.i));
+const BLOCK_LABEL: Record<string, string> = {
+  kpis: "Headline figures",
+  weekly: "Events per week",
+  bytype: "By type",
+  map: "Where it is happening",
+  reports: "Latest reports",
+};
 
 /** A saved arrangement, completed with the defaults for any block it leaves out. */
 function withDefaults(stored: Layout[] | null): Layout[] {
@@ -80,6 +87,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
   const [layout, setLayout] = useState<Layout[]>(DEFAULT_LAYOUT);
   const [savedLayout, setSavedLayout] = useState<Layout[]>(DEFAULT_LAYOUT);
   const [arranging, setArranging] = useState(false);
+  const [hiddenBlocks, setHiddenBlocks] = useState<string[]>([]);
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 899px)").matches);
 
   useEffect(() => {
@@ -95,10 +103,28 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         const l = withDefaults(r.layout);
         setLayout(l);
         setSavedLayout(l);
+        setHiddenBlocks(r.hidden ?? []);
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watch.key]);
+
+  /** Hides or shows blocks for everyone who can see this watch. Admins only; the change is saved at once. */
+  async function saveHiddenBlocks(next: string[]) {
+    const before = hiddenBlocks;
+    setHiddenBlocks(next);
+    try {
+      const r = await w.saveHidden(next);
+      setHiddenBlocks(r.hidden);
+    } catch (e) {
+      setHiddenBlocks(before);
+      setError(e instanceof Error ? e.message : "That did not save.");
+    }
+  }
+  const hideBlock = (id: string) => saveHiddenBlocks([...hiddenBlocks.filter((x) => x !== id), id]);
+  const showBlock = (id: string) => saveHiddenBlocks(hiddenBlocks.filter((x) => x !== id));
+  const isHidden = (id: string) => hiddenBlocks.includes(id);
+  const shownLayout = layout.filter((l) => !hiddenBlocks.includes(l.i));
 
   async function saveArrangement() {
     try {
@@ -244,9 +270,19 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           )}
         </div>
       )}
+      {isAdmin && hiddenBlocks.length > 0 && (
+        <div className="el-hidden-row">
+          <span>Hidden from the live view:</span>
+          {hiddenBlocks.map((id) => (
+            <button key={id} type="button" className="el-btn el-btn--small" onClick={() => showBlock(id)}>
+              {BLOCK_LABEL[id] ?? id} · Show
+            </button>
+          ))}
+        </div>
+      )}
       <Grid
         className={`el-grid${arranging ? " is-arranging" : ""}`}
-        layout={narrow ? stackedOf(layout) : layout}
+        layout={narrow ? stackedOf(shownLayout) : shownLayout}
         cols={12}
         rowHeight={ROW_H}
         margin={[14, 14]}
@@ -258,7 +294,11 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           if (arranging && !narrow) setLayout(l);
         }}
       >
+        {!isHidden("kpis") && (
         <div key="kpis" className="el-block">
+          {isAdmin && !narrow && !arranging && (
+            <button type="button" className="el-block__hide" onClick={() => hideBlock("kpis")}>Hide</button>
+          )}
           {arranging && <div className="el-block__handle">Kpis · drag here</div>}
       <div className="el-kpis">
         <div><strong>{dash?.events ?? "–"}</strong><span>events in {days === 365 ? "a year" : `${days} days`}</span><small>{dash?.reports ?? 0} reports behind them</small><Spark values={weeks.map((w) => CATS.reduce((a, k) => a + Number(w[k] ?? 0), 0))} label="Events per week" /></div>
@@ -272,7 +312,12 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         <div><strong>{dash && dash.events ? Math.round((dash.verified / dash.events) * 100) : 0}%</strong><span>verified by analysts</span><small>{dash?.verified ?? 0} of {dash?.events ?? 0} events</small></div>
       </div>
         </div>
+        )}
+        {!isHidden("weekly") && (
         <div key="weekly" className="el-block">
+          {isAdmin && !narrow && !arranging && (
+            <button type="button" className="el-block__hide" onClick={() => hideBlock("weekly")}>Hide</button>
+          )}
           {arranging && <div className="el-block__handle">Events per week · drag here</div>}
         <div className="el-card">
           <h3>Events per week</h3>
@@ -290,7 +335,12 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           )}
         </div>
         </div>
+        )}
+        {!isHidden("bytype") && (
         <div key="bytype" className="el-block">
+          {isAdmin && !narrow && !arranging && (
+            <button type="button" className="el-block__hide" onClick={() => hideBlock("bytype")}>Hide</button>
+          )}
           {arranging && <div className="el-block__handle">By type · drag here</div>}
         <div className="el-card">
           <h3>By type</h3>
@@ -336,7 +386,12 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           <p className="el-muted el-small">Click a type to filter the reports below.</p>
         </div>
         </div>
+        )}
+        {!isHidden("map") && (
         <div key="map" className="el-block el-block--scroll">
+          {isAdmin && !narrow && !arranging && (
+            <button type="button" className="el-block__hide" onClick={() => hideBlock("map")}>Hide</button>
+          )}
           {arranging && <div className="el-block__handle">Where it is happening · drag here</div>}
       <h3 className="el-subhead">Where it is happening</h3>
       <ElectionMap
@@ -355,7 +410,12 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         ]}
       />
         </div>
+        )}
+        {!isHidden("reports") && (
         <div key="reports" className="el-block el-block--scroll">
+          {isAdmin && !narrow && !arranging && (
+            <button type="button" className="el-block__hide" onClick={() => hideBlock("reports")}>Hide</button>
+          )}
           {arranging && <div className="el-block__handle">Latest reports · drag here</div>}
       <h3 className="el-subhead">Latest reports</h3>
       <div className="el-filters">
@@ -407,6 +467,7 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         ))}
       </ul>
         </div>
+        )}
       </Grid>
       {isAdmin && <AddReport watch={watch} onAdded={load} />}
       <p className="el-muted el-small">Method: {watch.method} The page stores the headline, a short summary and the link, never the content of a hateful message. Rules can misread a headline, which is why items are marked unverified and can be corrected or rejected. Violence figures come from media reports and undercount events in remote areas and in counties with fewer outlets.</p>

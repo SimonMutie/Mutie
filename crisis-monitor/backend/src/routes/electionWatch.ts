@@ -37,14 +37,38 @@ export function watchRouter(W: Watch) {
   const layoutItem = z.object({ i: z.string().min(1).max(40), x: z.number().int().min(0).max(24), y: z.number().int().min(0).max(500), w: z.number().int().min(1).max(24), h: z.number().int().min(1).max(60) });
   const layoutSchema = z.object({ items: z.array(layoutItem).max(30) });
 
+  /** Sections an admin has hidden from the live view, shared by everyone who can see this watch. */
+  const hiddenSchema = z.object({ hidden: z.array(z.string().min(1).max(40)).max(12) });
+
   r.get("/layout", async (c) => {
     const row = await first<{ value: string }>(c.env.DB, `SELECT value FROM ${T.state} WHERE key = 'widget_layout'`);
-    if (!row) return c.json({ layout: null });
-    try {
-      return c.json({ layout: JSON.parse(row.value) });
-    } catch {
-      return c.json({ layout: null });
+    let layout: unknown = null;
+    if (row) {
+      try {
+        layout = JSON.parse(row.value);
+      } catch {
+        layout = null;
+      }
     }
+    const hidden = await first<{ value: string }>(c.env.DB, `SELECT value FROM ${T.state} WHERE key = 'widget_hidden'`);
+    let hiddenList: string[] = [];
+    try {
+      hiddenList = hidden ? (JSON.parse(hidden.value) as string[]) : [];
+    } catch {
+      hiddenList = [];
+    }
+    return c.json({ layout, hidden: hiddenList });
+  });
+
+  r.put("/hidden", async (c) => {
+    const denied = adminOnly(c);
+    if (denied) return denied;
+    const parsed = hiddenSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+    const value = JSON.stringify([...new Set(parsed.data.hidden)]);
+    await run(c.env.DB, `INSERT INTO ${T.state} (key, value) VALUES ('widget_hidden', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [value]);
+    await audit(c.env, { userId: c.get("userId"), action: `${W.key}_watch.sections_hidden`, detail: value.slice(0, 200), ip: clientIp(c.req) });
+    return c.json({ hidden: JSON.parse(value) });
   });
 
   r.put("/layout", async (c) => {

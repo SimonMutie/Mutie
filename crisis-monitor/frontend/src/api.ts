@@ -2138,7 +2138,9 @@ export const watchApi = (k: WatchKey) => {
     patchItem: (id: string, data: { status?: "auto" | "verified" | "rejected"; category?: EwCategory; county_code?: string | null; fatalities?: number | null }) => req<{ ok: boolean }>(`${base}/items/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
     addItem: (data: { title: string; url: string; category: EwCategory; county_code?: string | null; published_at: string; fatalities?: number | null }) => req<{ id: string }>(`${base}/items`, { method: "POST", body: JSON.stringify(data) }),
     /** The shared arrangement of the live widgets, or null until an admin arranges them. */
-    layout: () => req<{ layout: { i: string; x: number; y: number; w: number; h: number }[] | null }>(`${base}/layout`),
+    layout: () => req<{ layout: { i: string; x: number; y: number; w: number; h: number }[] | null; hidden: string[] }>(`${base}/layout`),
+    /** Sections hidden from the live view for everyone who can see this watch. */
+    saveHidden: (hidden: string[]) => req<{ hidden: string[] }>(`${base}/hidden`, { method: "PUT", body: JSON.stringify({ hidden }) }),
     saveLayout: (items: { i: string; x: number; y: number; w: number; h: number }[]) => req<{ layout: unknown }>(`${base}/layout`, { method: "PUT", body: JSON.stringify({ items }) }),
     collect: (hours?: number) => req<{ scanned: number; inserted: number; leads: number }>(`${base}/collect`, { method: "POST", body: JSON.stringify({ hours }) }),
     /** Reads GDELT's news archive for the watch, for the last `months` months, in two-week slices. Resumes where it stopped. */
