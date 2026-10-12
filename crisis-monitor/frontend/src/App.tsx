@@ -1,7 +1,7 @@
 import { setSessionUser } from "./session";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import AlertPopups from "./components/AlertPopups";
-import { api, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
+import { api, ApiError, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
 import TopBar from "./components/TopBar";
 import AuthScreen from "./components/AuthScreen";
 import PushPrompt from "./components/PushPrompt";
@@ -107,8 +107,9 @@ export default function App() {
           setUser(me);
           setBootState("authed");
           return;
-        } catch {
-          setToken(null); // stale/expired token
+        } catch (e) {
+          // Only a refusal ends the session. A dropped connection (or a page left mid-request) keeps the token for the next load.
+          if (e instanceof ApiError && (e.status === 401 || e.status === 403)) setToken(null);
         }
       }
       try {
