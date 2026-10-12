@@ -86,7 +86,9 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         r.status === "done"
           ? `Collected ${when}: ${progress}.${capped}`
           : r.status === "rate_limited"
-            ? `Collecting ${when}: ${progress}. GDELT is limiting requests, so the read has paused. It carries on automatically over the next hours, or press Collect now again to continue.${capped}`
+            ? `Collecting ${when}: ${progress}. GDELT is limiting requests, so the read has paused${
+                r.retryAt ? ` until ${new Date(r.retryAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : ""
+              }. It carries on automatically after that; pressing Collect now before then will not speed it up.${capped}`
             : `Collecting ${when}: ${progress}. Press Collect now to continue.${capped}`;
       setNotice(text);
       await load();

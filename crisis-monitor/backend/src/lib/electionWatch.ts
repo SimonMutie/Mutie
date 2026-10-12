@@ -445,9 +445,29 @@ export interface ArchiveJob {
   inserted: number;
   capped: number;
   updatedAt: string;
+  /** Set when GDELT refused a search: no further searches until this moment (epoch milliseconds). */
+  retryAt?: number;
 }
 
 const JOB_KEY = "archive_job";
+/** Where GDELT's "try again" moment is kept. It belongs to the source, not to one period, so every read respects it. */
+const RETRY_KEY = "archive_retry_at";
+/** Even when GDELT asks for less, wait at least this long after a refusal: a quick retry only extends the refusal. */
+const MIN_COOLDOWN_MS = 5 * 60_000;
+
+async function retryAt(env: Env, W: Watch): Promise<number | null> {
+  const row = await first<{ value: string }>(env.DB, `SELECT value FROM ${W.t.state} WHERE key = ?`, [RETRY_KEY]);
+  const at = row ? Number(row.value) : NaN;
+  return Number.isFinite(at) ? at : null;
+}
+
+async function setRetryAt(env: Env, W: Watch, at: number | null) {
+  if (at === null) {
+    await run(env.DB, `DELETE FROM ${W.t.state} WHERE key = ?`, [RETRY_KEY]);
+    return;
+  }
+  await run(env.DB, `INSERT INTO ${W.t.state} (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [RETRY_KEY, String(at)]);
+}
 
 export async function archiveJob(env: Env, W: Watch = KE_WATCH): Promise<ArchiveJob | null> {
   await ensureElectionWatchTables(env, W);
@@ -482,6 +502,16 @@ export async function runArchiveJob(env: Env, W: Watch = KE_WATCH, opts: { month
   }
   if (!job || job.status === "done") return job;
 
+  // GDELT refused us recently: wait for its moment instead of asking again on every tick and click.
+  const wait = await retryAt(env, W);
+  if (wait && Date.now() < wait) {
+    job.status = "rate_limited";
+    job.retryAt = wait;
+    await saveJob(env, W, job);
+    return job;
+  }
+  job.retryAt = undefined;
+
   const queries = toGdeltQueries(buildSearchPlan(parseBooleanQuery(W.query).ast));
   const maxSlices = opts.maxSlices ?? 2;
   const pace = opts.paceMs ?? PACE_MS;
@@ -501,6 +531,9 @@ export async function runArchiveJob(env: Env, W: Watch = KE_WATCH, opts: { month
       } catch (err) {
         if (err instanceof GdeltRateLimitError) {
           rateLimited = true;
+          const at = Date.now() + Math.max(err.retryAfterMs, MIN_COOLDOWN_MS);
+          await setRetryAt(env, W, at);
+          job.retryAt = at;
           break;
         }
         console.error(`[election-archive:${W.key}] slice search failed`, err);
@@ -514,6 +547,8 @@ export async function runArchiveJob(env: Env, W: Watch = KE_WATCH, opts: { month
     }
     job.cursor = start;
     job.slicesDone++;
+    job.retryAt = undefined;
+    await setRetryAt(env, W, null);
     ran++;
     job.status = job.cursor > job.from ? "running" : "done";
     await saveJob(env, W, job);

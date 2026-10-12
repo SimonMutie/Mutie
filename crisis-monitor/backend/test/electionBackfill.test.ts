@@ -107,9 +107,32 @@ describe("GDELT archive backfill for the election watch", () => {
     const slicesAtStop = first!.slicesDone;
 
     globalThis.fetch = vi.fn(async () => jsonResponse({ articles: [article(3000, "Ruto addresses Kenyans in Nakuru on IEBC reforms")] })) as unknown as typeof fetch;
+    // Wait out GDELT's cooldown, as a later tick would.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 10 * 60_000);
     const resumed = await runArchiveJob(env, KE_WATCH, { maxSlices: 100, paceMs: 0 });
+    vi.useRealTimers();
     expect(resumed?.cursor).toBeLessThan(cursorAtStop);
     expect(resumed?.slicesDone).toBeGreaterThan(slicesAtStop);
     expect(resumed?.status).toBe("done");
+  });
+  it("waits out GDELT's retry-after before asking again, across periods and ticks", async () => {
+    let calls = 0;
+    globalThis.fetch = vi.fn(async () => {
+      calls++;
+      return new Response("slow down", { status: 429, headers: { "retry-after": "30" } });
+    }) as unknown as typeof fetch;
+
+    const refused = await runArchiveJob(env, KE_WATCH, { months: 1, maxSlices: 5, paceMs: 0 });
+    expect(refused?.status).toBe("rate_limited");
+    expect(refused?.retryAt).toBeGreaterThan(Date.now() + 4 * 60_000); // at least five minutes, whatever GDELT asked
+    const callsAtRefusal = calls;
+
+    // A scheduled tick, and a button press for a different period, both wait.
+    await runArchiveJob(env, KE_WATCH, { maxSlices: 5, paceMs: 0 });
+    const otherPeriod = await runArchiveJob(env, KE_WATCH, { months: 3, maxSlices: 5, paceMs: 0 });
+    expect(calls).toBe(callsAtRefusal);
+    expect(otherPeriod?.status).toBe("rate_limited");
+    expect(otherPeriod?.slicesDone).toBe(0);
   });
 });

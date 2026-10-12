@@ -2140,7 +2140,7 @@ export const watchApi = (k: WatchKey) => {
     collect: (hours?: number) => req<{ scanned: number; inserted: number; leads: number }>(`${base}/collect`, { method: "POST", body: JSON.stringify({ hours }) }),
     /** Reads GDELT's news archive for the watch, for the last `months` months, in two-week slices. Resumes where it stopped. */
     backfill: (months?: number) =>
-      req<{ status: "running" | "rate_limited" | "done"; slicesDone: number; slicesTotal: number; scanned: number; inserted: number; capped: number; from: number; cursor: number; months: number }>(
+      req<{ status: "running" | "rate_limited" | "done"; slicesDone: number; slicesTotal: number; scanned: number; inserted: number; capped: number; from: number; cursor: number; months: number; retryAt?: number }>(
         `${base}/backfill`,
         { method: "POST", body: JSON.stringify({ months }) }
       ),
