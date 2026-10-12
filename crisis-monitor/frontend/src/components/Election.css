@@ -675,7 +675,8 @@
 .vz-donut__legend li.is-sel { font-weight: 700; box-shadow: inset 3px 0 0 var(--info); }
 .vz-donut__legend i { width: 12px; height: 12px; border-radius: 3px; display: block; }
 .vz-donut__legend strong { font-variant-numeric: tabular-nums; }
-@media (max-width: 560px) { .vz-donut { grid-template-columns: 1fr; justify-items: center; } .vz-donut__legend { grid-column: 1; grid-row: 2; width: 100%; } }
+@container (max-width: 420px) { .vz-donut { grid-template-columns: minmax(0, 1fr); justify-items: center; } .vz-donut__legend { grid-column: 1; grid-row: 2; width: 100%; } }
+.vz-donut__legend { min-width: 0; }
 
 .vz-line { position: relative; }
 .vz-line__svg { width: 100%; height: auto; overflow: visible; cursor: crosshair; }
@@ -834,8 +835,8 @@
 .rpt-page .rpt-two { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 26px; align-items: start; }
 /* On a report page the donut stacks over its legend, so the legend never runs into the bars beside it. */
 .rpt-page .rpt-two > * { min-width: 0; }
-.rpt-page .vz-donut { grid-template-columns: minmax(0, 1fr); justify-items: center; }
-.rpt-page .vz-donut__legend { grid-column: 1; grid-row: 2; width: 100%; }
+/* Charts with a legend: the legend sits beside the ring, and drops below it only when the card is narrow. */
+.el-card, .rpt-page__body { container-type: inline-size; }
 @media (max-width: 680px) { .rpt-page .rpt-two { grid-template-columns: 1fr; } }
 
 /* download menu on each page */
