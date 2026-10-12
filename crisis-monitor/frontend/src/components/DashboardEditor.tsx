@@ -162,6 +162,12 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     },
     [categoryFilters, hoverCrossFilter, dashCountry]
   );
+  // What the widgets' data is fetched by: only the pinned filters. Hovering a bar previews the filter on the
+  // widgets' highlights but no longer re-fetches every widget, which made hovering slow and crashy.
+  const dataFilters = useMemo(
+    () => (dashCountry ? { ...categoryFilters, country: dashCountry } : categoryFilters),
+    [categoryFilters, dashCountry]
+  );
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [stats, setStats] = useState<NormalizedDashboardStats | null>(null);
@@ -249,9 +255,9 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   }, []);
 
   useEffect(() => {
-    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((s) => setStats(normalizeStats(s)));
+    api.getIncidentStats({ from: dateRangeFrom, to: dateRangeTo, ...dataFilters }).then((s) => setStats(normalizeStats(s)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   // The incidents behind a map widget, read a page at a time in the compact form (no bulky original upload), so a map
   // can show tens of thousands of dots and the first ones appear while the rest are still arriving.
@@ -260,7 +266,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     if (!hasMap) { setIncidents([]); return; }
     let live = true;
     const all: IncidentItem[] = [];
-    const filt = { from: dateRangeFrom, to: dateRangeTo, located: "1", ...effectiveFilters } as Record<string, string | undefined>;
+    const filt = { from: dateRangeFrom, to: dateRangeTo, located: "1", ...dataFilters } as Record<string, string | undefined>;
     (async () => {
       let after = 0;
       let shownAt = 0;
@@ -281,27 +287,27 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     })().catch(() => {});
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasMap, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [hasMap, dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   const hasVictims = widgets.some((w) => w.type === "victims");
   useEffect(() => {
     if (!hasVictims) return;
     let live = true;
     setVictimGroups(undefined);
-    api.getVictimGroups({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters } as Record<string, string | undefined>).then((r) => live && setVictimGroups(r)).catch(() => live && setVictimGroups([]));
+    api.getVictimGroups({ from: dateRangeFrom, to: dateRangeTo, ...dataFilters } as Record<string, string | undefined>).then((r) => live && setVictimGroups(r)).catch(() => live && setVictimGroups([]));
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasVictims, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [hasVictims, dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   const hasGroupCalendar = widgets.some((w) => w.type === "calendar" && !w.datasetId);
   useEffect(() => {
     if (!hasGroupCalendar) return;
     let live = true;
     setDailyGroups(undefined);
-    api.getMonthlyGroups({ from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters } as Record<string, string | undefined>).then((r) => live && setDailyGroups(r)).catch(() => live && setDailyGroups([]));
+    api.getMonthlyGroups({ from: dateRangeFrom, to: dateRangeTo, ...dataFilters } as Record<string, string | undefined>).then((r) => live && setDailyGroups(r)).catch(() => live && setDailyGroups([]));
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasGroupCalendar, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [hasGroupCalendar, dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   // A changed date range or category filter invalidates every previously-
   // fetched breakdown and crosstab (they were computed under the old
@@ -313,7 +319,7 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
     setCrosstabs({});
     setDailyBreakdowns({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   // Fetches only the specific (primary, secondary) cross-tabs the current set
   // of widgets actually need, and only the ones not already fetched — adding
@@ -344,12 +350,12 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
         return;
       }
       const [primary, secondary] = key.split("|") as [PivotableField, PivotableField];
-      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((rows) => {
+      api.getCrosstab(primary, secondary, { from: dateRangeFrom, to: dateRangeTo, ...dataFilters }).then((rows) => {
         setCrosstabs((prev) => ({ ...prev, [key]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   // A choropleth/globe widget's "existing value per location" mode
   // (population, GDP, etc. — see valueMapKeyFor) is always dataset-sourced,
@@ -403,12 +409,12 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
         });
         return;
       }
-      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo, ...effectiveFilters }).then((rows) => {
+      api.getBreakdown(field as PivotableField, { from: dateRangeFrom, to: dateRangeTo, ...dataFilters }).then((rows) => {
         setBreakdowns((prev) => ({ ...prev, [field]: rows }));
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(effectiveFilters)]);
+  }, [widgets, dateRangeFrom, dateRangeTo, JSON.stringify(dataFilters)]);
 
   // Stat cards sourced from a dataset need that dataset's row count / column
   // sums — fetched once per dataset actually in use, not once per widget.
@@ -568,10 +574,10 @@ export default function DashboardEditor({ mode, extraTools, onBack, onSavedNew }
   // The dashboard's own category filters, in the form the visuals' queries take.
   const vizExternalFilters: VizFilter[] = useMemo(
     () =>
-      Object.entries(effectiveFilters)
+      Object.entries(dataFilters)
         .filter(([, v]) => !!v)
         .map(([field, v]) => ({ field, op: "in" as const, values: [v as string] })),
-    [effectiveFilters]
+    [dataFilters]
   );
 
   function removeWidget(id: string) {
