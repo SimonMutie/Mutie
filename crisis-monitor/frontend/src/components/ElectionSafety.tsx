@@ -13,6 +13,42 @@ import { KE_WATCH_CONFIG, type WatchConfig } from "../data/watchConfig";
  * reject items, and the page says how many are verified.
  */
 
+import GridLayout, { WidthProvider, type Layout } from "react-grid-layout";
+import "react-grid-layout/css/styles.css";
+
+const Grid = WidthProvider(GridLayout);
+const ROW_H = 30;
+/** The default arrangement of the live widgets: the grid's own units, twelve columns wide. */
+const DEFAULT_LAYOUT: Layout[] = [
+  { i: "kpis", x: 0, y: 0, w: 12, h: 5 },
+  { i: "weekly", x: 0, y: 5, w: 7, h: 10 },
+  { i: "bytype", x: 7, y: 5, w: 5, h: 10 },
+  { i: "map", x: 0, y: 15, w: 12, h: 17 },
+  { i: "reports", x: 0, y: 32, w: 12, h: 20 },
+];
+const KNOWN = new Set(DEFAULT_LAYOUT.map((l) => l.i));
+
+/** A saved arrangement, completed with the defaults for any block it leaves out. */
+function withDefaults(stored: Layout[] | null): Layout[] {
+  const saved = new Map((stored ?? []).filter((l) => KNOWN.has(l.i)).map((l) => [l.i, l]));
+  return DEFAULT_LAYOUT.map((d) => {
+    const s = saved.get(d.i);
+    return s ? { ...d, x: s.x, y: s.y, w: s.w, h: s.h } : d;
+  });
+}
+
+/** On a narrow screen the blocks stack, full width, in the order they sit. */
+function stackedOf(l: Layout[]): Layout[] {
+  let y = 0;
+  return [...l]
+    .sort((a, b) => a.y - b.y || a.x - b.x)
+    .map((it) => {
+      const out = { ...it, x: 0, w: 12, y, static: true };
+      y += it.h;
+      return out;
+    });
+}
+
 export const EW_LABEL = KE_WATCH_CONFIG.labels;
 
 const ago = (iso: string | null) => {
@@ -41,6 +77,39 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [layout, setLayout] = useState<Layout[]>(DEFAULT_LAYOUT);
+  const [savedLayout, setSavedLayout] = useState<Layout[]>(DEFAULT_LAYOUT);
+  const [arranging, setArranging] = useState(false);
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 899px)").matches);
+
+  useEffect(() => {
+    const m = window.matchMedia("(max-width: 899px)");
+    const f = () => setNarrow(m.matches);
+    m.addEventListener("change", f);
+    return () => m.removeEventListener("change", f);
+  }, []);
+
+  useEffect(() => {
+    w.layout()
+      .then((r) => {
+        const l = withDefaults(r.layout);
+        setLayout(l);
+        setSavedLayout(l);
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watch.key]);
+
+  async function saveArrangement() {
+    try {
+      await w.saveLayout(layout.map(({ i, x, y, w: ww, h }) => ({ i, x, y, w: ww, h })));
+      setSavedLayout(layout);
+      setArranging(false);
+      setNotice("Arrangement saved. Everyone who can see this watch sees it now.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "The arrangement did not save.");
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -161,6 +230,36 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
       {error && <p className="el-notice el-notice--error">{error}</p>}
       {notice && !error && <p className="el-notice">{notice}</p>}
 
+      {isAdmin && !narrow && (
+        <div className="el-arrange">
+          {!arranging ? (
+            <button type="button" className="el-btn" onClick={() => setArranging(true)}>Arrange widgets</button>
+          ) : (
+            <>
+              <span className="el-muted el-small">Drag a block by its bar. Resize from its bottom-right corner. Everyone who can see this watch sees the saved arrangement.</span>
+              <button type="button" className="el-btn el-btn--primary" onClick={saveArrangement}>Save arrangement</button>
+              <button type="button" className="el-btn" onClick={() => setLayout(DEFAULT_LAYOUT)}>Reset to default</button>
+              <button type="button" className="el-btn" onClick={() => { setLayout(savedLayout); setArranging(false); }}>Cancel</button>
+            </>
+          )}
+        </div>
+      )}
+      <Grid
+        className={`el-grid${arranging ? " is-arranging" : ""}`}
+        layout={narrow ? stackedOf(layout) : layout}
+        cols={12}
+        rowHeight={ROW_H}
+        margin={[14, 14]}
+        isDraggable={arranging && !narrow}
+        isResizable={arranging && !narrow}
+        draggableHandle=".el-block__handle"
+        resizeHandles={["se"]}
+        onLayoutChange={(l: Layout[]) => {
+          if (arranging && !narrow) setLayout(l);
+        }}
+      >
+        <div key="kpis" className="el-block">
+          {arranging && <div className="el-block__handle">Kpis · drag here</div>}
       <div className="el-kpis">
         <div><strong>{dash?.events ?? "–"}</strong><span>events in {days === 365 ? "a year" : `${days} days`}</span><small>{dash?.reports ?? 0} reports behind them</small><Spark values={weeks.map((w) => CATS.reduce((a, k) => a + Number(w[k] ?? 0), 0))} label="Events per week" /></div>
         <div className={trend > 0 ? "is-up" : trend < 0 ? "is-down" : ""}>
@@ -172,8 +271,9 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
         <div><strong>{hate}</strong><span>hate-speech cases</span><small>incitement and NCIC action reported</small></div>
         <div><strong>{dash && dash.events ? Math.round((dash.verified / dash.events) * 100) : 0}%</strong><span>verified by analysts</span><small>{dash?.verified ?? 0} of {dash?.events ?? 0} events</small></div>
       </div>
-
-      <div className="el-safety__grid">
+        </div>
+        <div key="weekly" className="el-block">
+          {arranging && <div className="el-block__handle">Events per week · drag here</div>}
         <div className="el-card">
           <h3>Events per week</h3>
           {weeks.length === 0 ? (
@@ -189,6 +289,9 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
             />
           )}
         </div>
+        </div>
+        <div key="bytype" className="el-block">
+          {arranging && <div className="el-block__handle">By type · drag here</div>}
         <div className="el-card">
           <h3>By type</h3>
           <div className="el-toggle el-toggle--tight" role="group" aria-label="Chart style">
@@ -232,8 +335,9 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           )}
           <p className="el-muted el-small">Click a type to filter the reports below.</p>
         </div>
-      </div>
-
+        </div>
+        <div key="map" className="el-block el-block--scroll">
+          {arranging && <div className="el-block__handle">Where it is happening · drag here</div>}
       <h3 className="el-subhead">Where it is happening</h3>
       <ElectionMap
         metrics={metrics}
@@ -250,7 +354,9 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           ...(watch.key === "ke" && "reg2022" in c ? [["Registered voters, 2022", (c as unknown as { reg2022: number }).reg2022.toLocaleString()] as [string, string]] : []),
         ]}
       />
-
+        </div>
+        <div key="reports" className="el-block el-block--scroll">
+          {arranging && <div className="el-block__handle">Latest reports · drag here</div>}
       <h3 className="el-subhead">Latest reports</h3>
       <div className="el-filters">
         <select value={cat} onChange={(e) => setCat(e.target.value as string | "")} aria-label="Type">
@@ -300,6 +406,8 @@ export default function ElectionSafety({ isAdmin, watch = KE_WATCH_CONFIG, embed
           </li>
         ))}
       </ul>
+        </div>
+      </Grid>
       {isAdmin && <AddReport watch={watch} onAdded={load} />}
       <p className="el-muted el-small">Method: {watch.method} The page stores the headline, a short summary and the link, never the content of a hateful message. Rules can misread a headline, which is why items are marked unverified and can be corrected or rejected. Violence figures come from media reports and undercount events in remote areas and in counties with fewer outlets.</p>
     </Wrap>

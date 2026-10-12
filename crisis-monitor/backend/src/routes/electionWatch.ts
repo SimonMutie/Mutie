@@ -33,6 +33,31 @@ export function watchRouter(W: Watch) {
     return c.json(await buildDashboard(c.env, days, W));
   });
 
+  /** The arrangement of the live widgets, shared by everyone who can see this watch. Null until an admin arranges them. */
+  const layoutItem = z.object({ i: z.string().min(1).max(40), x: z.number().int().min(0).max(24), y: z.number().int().min(0).max(500), w: z.number().int().min(1).max(24), h: z.number().int().min(1).max(60) });
+  const layoutSchema = z.object({ items: z.array(layoutItem).max(30) });
+
+  r.get("/layout", async (c) => {
+    const row = await first<{ value: string }>(c.env.DB, `SELECT value FROM ${T.state} WHERE key = 'widget_layout'`);
+    if (!row) return c.json({ layout: null });
+    try {
+      return c.json({ layout: JSON.parse(row.value) });
+    } catch {
+      return c.json({ layout: null });
+    }
+  });
+
+  r.put("/layout", async (c) => {
+    const denied = adminOnly(c);
+    if (denied) return denied;
+    const parsed = layoutSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+    const value = JSON.stringify(parsed.data.items);
+    await run(c.env.DB, `INSERT INTO ${T.state} (key, value) VALUES ('widget_layout', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [value]);
+    await audit(c.env, { userId: c.get("userId"), action: `${W.key}_watch.layout_saved`, detail: `${parsed.data.items.length} widgets`, ip: clientIp(c.req) });
+    return c.json({ layout: parsed.data.items });
+  });
+
   interface ItemOut extends Omit<ItemRow, "cluster_id"> {
     county: string | null;
     reports: number;
