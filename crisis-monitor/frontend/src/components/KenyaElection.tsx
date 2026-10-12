@@ -248,12 +248,23 @@ function TimelineSection() {
         phases={[
           { from: "2026-10-01", to: "2027-03-16", label: "Parties prepare", tone: "#2f66f0" },
           { from: "2027-03-16", to: "2027-05-09", label: "Primaries", tone: "#8a3ffc" },
-          { from: "2027-05-09", to: "2027-06-12", label: "Nominations", tone: "#b3690b" },
+          { from: "2027-05-29", to: "2027-06-12", label: "Nominations", tone: "#b3690b" },
           { from: "2027-06-12", to: "2027-08-10", label: "Campaign", tone: "#d1352b" },
           { from: "2027-08-10", to: "2027-09-09", label: "After the vote", tone: "#0d9488" },
         ]}
         events={items.map((m): TimelineEvent => ({ id: m.date + m.title, date: m.date, title: m.short ?? m.title, detail: m.detail, key: m.key }))}
       />
+      <div className="el-terms" aria-label="Primaries and nominations, explained">
+        <div>
+          <b>Primaries</b>
+          <p>Each party picks its own candidate, through internal votes or delegates. This is the party's decision, not the electoral commission's. Deadline: 9 May 2027.</p>
+        </div>
+        <div>
+          <b>Nominations</b>
+          <p>The official filing with the electoral commission (IEBC). The candidate and running mate are lodged with their papers, and only names on that filed list can appear on the ballot. Window: 29 May to 11 June 2027.</p>
+        </div>
+        <p className="el-terms__plain">In plain terms: primaries decide who a party wants. Nominations decide who is officially entered on the ballot. A party that has picked a candidate still has to file that candidate within the nominations window. The gap between 9 and 29 May is the time for the party to prepare its filing.</p>
+      </div>
       {past.length > 0 && (
         <button type="button" className="el-link" onClick={() => setShowPast(!showPast)}>
           {showPast ? "Hide" : "Show"} earlier events ({past.length})
