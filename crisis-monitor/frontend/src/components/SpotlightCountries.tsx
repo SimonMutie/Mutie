@@ -28,7 +28,7 @@ export const MIDDLE_EAST_GROUPS: { name: string; codes: string[] }[] = [{ name: 
 export const COUNTRY_PRODUCTS: Record<string, { title: string; blurb: string; tag: string }[]> = {
   KE: [{ title: "Election Watch 2027", blurb: "Timeline to 10 August 2027, registered voters and population by county, declared candidates with profiles, the latest polls with credibility grades, and an assessment of how the vote could go.", tag: "Election" }],
   YE: [{ title: "Yemen and the Red Sea", blurb: "Live report on the Houthi escalation, Bab el-Mandeb and Gulf of Aden shipping, humanitarian access, displacement, Horn interactions, realignments and foreign military presence on the Red Sea and Aden coasts.", tag: "Special Report" }],
-  SS: [{ title: "Transition and Conflict Watch", blurb: "The 22 December 2026 election, government changes since 2025 shown as a timeline of posts, the Revitalised Agreement’s benchmarks and reported breaches, and a live conflict dashboard by state.", tag: "Transition" }],
+  SS: [{ title: "Political networks", blurb: "Who is tied to whom in South Sudan's power structure: command lines, alliances, kinship, enmity and defections between the main figures and institutions, grouped by camp.", tag: "Networks" }, { title: "Transition and Conflict Watch", blurb: "The 22 December 2026 election, government changes since 2025 shown as a timeline of posts, the Revitalised Agreement’s benchmarks and reported breaches, and a live conflict dashboard by state.", tag: "Transition" }],
 };
 
 export const flag = (iso2: string) => (iso2.length === 2 ? String.fromCodePoint(...[...iso2.toUpperCase()].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "");

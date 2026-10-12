@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>South Sudan Political Networks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f2f0ea; --panel:#fbfaf6; --fg:#15212b; --muted:#5a6670; --rule:#d5d0c3; --node:#ffffff; --nodeRing:#9aa5ad;
+  --cmd:#6b7178; --all:#7b4fb0; --kin:#5f9b5a; --ene:#c0392b; --def:#2b6cb0; --opp:#222;
+  --serif:"Source Serif 4",Georgia,serif; --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e1820; --panel:#15232d; --fg:#e8edf0; --muted:#98a6b0; --rule:#2a3c48; --node:#1b2e39; --nodeRing:#5d7280;
+  --cmd:#9aa3ab; --all:#b99be0; --kin:#93d18f; --ene:#ef7a6a; --def:#79b4e8; --opp:#cfd6db; color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0e1820; --panel:#15232d; --fg:#e8edf0; --muted:#98a6b0; --rule:#2a3c48; --node:#1b2e39; --nodeRing:#5d7280;
+  --cmd:#9aa3ab; --all:#b99be0; --kin:#93d18f; --ene:#ef7a6a; --def:#79b4e8; --opp:#cfd6db; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans)}
+.wrap{max-width:1240px;margin:0 auto;padding-block:28px 48px;padding-inline:16px}
+.kicker{font:500 12px/1.2 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font:700 clamp(28px,4.4vw,42px)/1.1 var(--serif);margin:10px 0 8px}
+.dek{color:var(--muted);max-width:70ch;margin:0}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:20px 0 10px}
+.toolbar input[type=search]{flex:1 1 220px;min-width:0;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--panel);color:var(--fg);font:inherit}
+.chip{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--rule);background:var(--panel);color:var(--fg);border-radius:999px;padding:5px 11px;font:500 13px var(--sans);cursor:pointer}
+.chip[aria-pressed="false"]{opacity:.45}
+.chip i{width:18px;height:0;border-top:3px solid var(--c);display:inline-block}
+.chip.dash i{border-top-style:dashed}
+.chip.dot i{border-top-style:dotted}
+.layout{display:grid;grid-template-columns:1fr;gap:14px}
+@media (min-width:980px){.layout{grid-template-columns:minmax(0,1fr) 300px}}
+.stage{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:8px;overflow:hidden}
+.stage svg{display:block;width:100%;height:auto}
+.grp rect{fill:none;stroke-width:2;rx:10}
+.grp text{font:600 14px var(--sans)}
+.edge{fill:none;stroke-width:1.9;opacity:.8;transition:opacity .2s}
+.edge.cmd{stroke:var(--cmd)} .edge.all{stroke:var(--all);stroke-dasharray:none} .edge.kin{stroke:var(--kin);stroke-width:2.6;opacity:.7}
+.edge.ene{stroke:var(--ene)} .edge.def{stroke:var(--def);stroke-dasharray:2 4;stroke-width:2.4} .edge.opp{stroke:var(--opp);stroke-dasharray:2 4}
+.edge.dim{opacity:.07} .edge.hot{opacity:1;stroke-width:3.2}
+.node circle{fill:var(--node);stroke:var(--nodeRing);stroke-width:2;cursor:pointer;transition:opacity .2s}
+.node.inst circle{fill:var(--panel);stroke-dasharray:4 3}
+.node text{font:500 11.5px var(--sans);fill:var(--fg);text-anchor:middle;pointer-events:none}
+.node.dim circle,.node.dim text{opacity:.18}
+.node.sel circle{stroke:var(--fg);stroke-width:3.2}
+.node.hit circle{stroke:var(--fg);stroke-width:2.6}
+.panel{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;align-self:start;position:sticky;top:12px}
+.panel h2{font:700 19px/1.2 var(--serif);margin:0 0 4px}
+.panel .meta{font:500 12px var(--mono);color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin-bottom:10px}
+.panel ul{list-style:none;margin:0;padding:0}
+.panel li{padding:7px 0;border-top:1px solid var(--rule);font-size:14px}
+.panel li b{font-weight:600}
+.panel .hint{color:var(--muted);font-size:14px}
+.legend{display:grid;gap:6px;margin:0 0 6px;font-size:13px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:8px}
+.legend i{width:26px;border-top:3px solid var(--c);display:inline-block}
+.legend i.dash{border-top-style:dashed} .legend i.dot{border-top-style:dotted}
+.note{margin-top:18px;color:var(--muted);font-size:13px;max-width:90ch}
+.sources{font-size:13px;color:var(--muted);margin-top:8px}
+a{color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kicker">South Sudan · political networks</div>
+  <h1>Who is tied to whom in South Sudan's power structure</h1>
+  <p class="dek">Command lines, alliances, kinship, enmity and defections between the main figures and institutions, grouped by the camps they sit in. Click a name to see its links.</p>
+
+  <div class="toolbar" role="toolbar" aria-label="Filter links">
+    <input type="search" id="q" placeholder="Find a name…" aria-label="Find a name">
+    <button class="chip" data-t="cmd" aria-pressed="true" style="--c:var(--cmd)"><i></i>Command</button>
+    <button class="chip" data-t="all" aria-pressed="true" style="--c:var(--all)"><i></i>Alliance</button>
+    <button class="chip" data-t="kin" aria-pressed="true" style="--c:var(--kin)"><i></i>Kinship</button>
+    <button class="chip" data-t="ene" aria-pressed="true" style="--c:var(--ene)"><i></i>Enmity</button>
+    <button class="chip dot" data-t="def" aria-pressed="true" style="--c:var(--def)"><i></i>Defection</button>
+  </div>
+
+  <div class="layout">
+    <div class="stage">
+      <svg id="net" viewBox="0 0 1300 980" role="img" aria-labelledby="nt nd">
+        <title id="nt">South Sudan political network</title>
+        <desc id="nd">Groups of figures and institutions, linked by command, alliance, kinship, enmity and defection lines. Each line is listed when a name is selected.</desc>
+        <g id="groups"></g>
+        <g id="edges"></g>
+        <g id="nodes"></g>
+      </svg>
+    </div>
+    <aside class="panel" id="panel" aria-live="polite">
+      <div class="meta">Select a name</div>
+      <h2>South Sudan network</h2>
+      <p class="hint">Click any name on the map to see its links. Use the filters above to show one type of link at a time.</p>
+      <div class="legend" style="margin-top:12px">
+        <span style="--c:var(--cmd)"><i></i>Command or chain of command</span>
+        <span style="--c:var(--all)"><i></i>Alliance</span>
+        <span style="--c:var(--kin)"><i></i>Kinship</span>
+        <span style="--c:var(--ene)"><i></i>Enmity</span>
+        <span style="--c:var(--def)"><i class="dot"></i>Defection</span>
+      </div>
+    </aside>
+  </div>
+
+  <p class="note">Source: the links and grouping are taken from a political mapping exercise by Joshua Craze, which this page reads and redraws. Names are placed in the camp the source puts them in. The set of links is selected, not exhaustive, and the relationships are the source's reading rather than verified fact. Treat each line as a claim to check before relying on it.</p>
+  <p class="sources">Relationships reflect the source as of its publication; they are not a current assessment.</p>
+</div>
+
+<script>
+(function () {
+  var NS = "http://www.w3.org/2000/svg";
+  var TYPE_LABEL = { cmd: "Command", all: "Alliance", kin: "Kinship", ene: "Enmity", def: "Defection" };
+
+  // Groups: a box on the map, and the nodes it holds.
+  var GROUPS = [
+    { id: "royal", name: "Royal family", x: 30, y: 30, w: 270, h: 330, color: "#2f66f0" },
+    { id: "potemkin", name: "Potemkin opposition", x: 320, y: 30, w: 300, h: 330, color: "#222" },
+    { id: "unboxed", name: "Individuals", x: 640, y: 30, w: 240, h: 330, color: "#8a8f96", dashed: true },
+    { id: "others", name: "Other figures and SPLA-IO", x: 1000, y: 380, w: 270, h: 580, color: "#8a8f96", dashed: true },
+    { id: "nonsig", name: "Non-signatory opposition", x: 900, y: 30, w: 370, h: 330, color: "#0ea5c6" },
+    { id: "organized", name: "Organized forces", x: 30, y: 380, w: 330, h: 560, color: "#7b3f99" },
+    { id: "splm", name: "SPLM old guard", x: 380, y: 380, w: 300, h: 320, color: "#d1352b" },
+    { id: "demoted", name: "Recently demoted", x: 700, y: 380, w: 280, h: 320, color: "#a0732a" },
+    { id: "equatorian", name: "Equatorian block", x: 380, y: 720, w: 300, h: 240, color: "#5f9b3a" },
+    { id: "defected", name: "Defected IO", x: 700, y: 720, w: 280, h: 240, color: "#d946b8" }
+  ];
+
+  // People and institutions. "inst" marks an institution rather than a person.
+  var NODES = [
+    { id: "salva", name: "Salva Kiir Mayardit", g: "royal" },
+    { id: "adut", name: "Adut Kiir", g: "royal" },
+    { id: "benjamin", name: "Benjamin Bol Mel", g: "royal" },
+    { id: "ayuel", name: "Ayuel Ngor Kacgor", g: "royal" },
+    { id: "simonakuei", name: "Simon Akuei Deng", g: "royal" },
+
+    { id: "josephine", name: "Josephine Lagu", g: "potemkin" },
+    { id: "rebecca", name: "Rebecca Garang", g: "potemkin" },
+    { id: "lam", name: "Lam Akol", g: "potemkin" },
+    { id: "hussein", name: "Hussein Abdel-Bagy Ayii", g: "potemkin" },
+    { id: "dehay", name: "Dehay Chagor", g: "potemkin" },
+
+    { id: "riek", name: "Riek Machar", g: "unboxed" },
+    { id: "angelina", name: "Angelina Teny", g: "unboxed" },
+    { id: "taban", name: "Taban Deng Gai", g: "unboxed" },
+    { id: "ezekiel", name: "Ezekiel Lol", g: "unboxed" },
+    { id: "thoi", name: "Thoi Chany Raet", g: "others" },
+    { id: "martin", name: "Martin Elia Lumuro", g: "others" },
+    { id: "splaio", name: "SPLA-IO", g: "others", inst: true },
+
+    { id: "pagan", name: "Pagan Amum", g: "nonsig", sub: "Tumaini" },
+    { id: "malong", name: "Paul Malong Awan", g: "nonsig", sub: "Tumaini" },
+    { id: "buay", name: "Stephen Buay", g: "nonsig", sub: "Tumaini" },
+    { id: "gatwich", name: "Simon Gatwich Dual", g: "nonsig" },
+    { id: "cirillo", name: "Thomas Cirillo", g: "nonsig" },
+
+    { id: "ssdf", name: "SSPDF", g: "organized", inst: true },
+    { id: "police", name: "Police", g: "organized", inst: true },
+    { id: "natsec", name: "National Security", g: "organized", inst: true },
+    { id: "tiger", name: "Tiger Division", g: "organized", inst: true },
+    { id: "mi", name: "Military Intelligence", g: "organized", inst: true },
+    { id: "agwalek", name: "Agwalek militia", g: "organized", inst: true },
+    { id: "paulnang", name: "Paul Nang Majok", g: "organized" },
+    { id: "mayuat", name: "Abraham Mayuat", g: "organized" },
+    { id: "mayor", name: "Charles Mayor", g: "organized" },
+    { id: "lualmalok", name: "Lual Lual Malok", g: "organized" },
+    { id: "babanen", name: "Stephen Marshal Babanen", g: "organized" },
+
+    { id: "kuol", name: "Kuol Manyang Juuk", g: "splm" },
+    { id: "rin", name: "Rin Tueny Mabor", g: "splm" },
+    { id: "peter", name: "Peter Lam Both", g: "splm" },
+    { id: "daniel", name: "Daniel Awet", g: "splm" },
+    { id: "nguen", name: "Nguen Monytuil", g: "splm" },
+    { id: "nhial", name: "Nhial Deng Nhial", g: "splm" },
+
+    { id: "akolkor", name: "Akol Kor Kuc", g: "demoted" },
+    { id: "tutkew", name: "Tut Kew Gatluak", g: "demoted" },
+    { id: "gum", name: "Abraham Gum Makuac", g: "demoted" },
+    { id: "santino", name: "Santino Deng Wol", g: "demoted" },
+    { id: "gordon", name: "Gordon Koang Biel", g: "demoted" },
+    { id: "maroldit", name: "Lual Maroldit", g: "demoted" },
+
+    { id: "jemma", name: "Jemma Nunu Kumbe", g: "equatorian" },
+    { id: "lobong", name: "Louis Lobong", g: "equatorian" },
+    { id: "igga", name: "James Wani Igga", g: "equatorian" },
+
+    { id: "olonyi", name: "Johnson Olonyi", g: "defected" },
+    { id: "koang", name: "James Koang Chuol", g: "defected" },
+    { id: "maguek", name: "Simon Maguek Gai", g: "defected" },
+    { id: "ashab", name: "Ashab Khamis", g: "defected" }
+  ];
+
+  // Links, as read from the source. t: cmd, all (alliance), kin, ene, def.
+  var EDGES = [
+    ["salva", "ssdf", "cmd"], ["salva", "police", "cmd"], ["salva", "natsec", "cmd"], ["salva", "tiger", "cmd"], ["salva", "mi", "cmd"],
+    ["salva", "thoi", "cmd"], ["salva", "martin", "cmd"], ["salva", "riek", "cmd"], ["salva", "taban", "cmd"], ["salva", "josephine", "cmd"],
+    ["salva", "benjamin", "cmd"],
+    ["ssdf", "agwalek", "cmd"], ["ssdf", "paulnang", "cmd"], ["police", "mayuat", "cmd"], ["natsec", "mayor", "cmd"],
+    ["tiger", "lualmalok", "cmd"], ["mi", "babanen", "cmd"], ["riek", "splaio", "cmd"], ["taban", "ezekiel", "cmd"],
+    ["paulnang", "olonyi", "cmd"], ["paulnang", "maguek", "cmd"], ["paulnang", "gatwich", "cmd"],
+
+    ["salva", "adut", "all"], ["adut", "benjamin", "all"], ["josephine", "lam", "all"], ["lam", "hussein", "all"], ["akolkor", "tutkew", "all"],
+
+    ["salva", "adut", "kin"],
+
+    ["salva", "riek", "ene"], ["salva", "rebecca", "ene"], ["salva", "akolkor", "ene"], ["riek", "taban", "ene"],
+    ["riek", "josephine", "ene"], ["salva", "malong", "ene"], ["benjamin", "kuol", "ene"], ["buay", "tutkew", "ene"],
+
+    ["splaio", "olonyi", "def"], ["splaio", "koang", "def"], ["splaio", "maguek", "def"], ["splaio", "ashab", "def"]
+  ];
+
+  var byId = {};
+  NODES.forEach(function (n) { byId[n.id] = n; });
+  var groupById = {};
+  GROUPS.forEach(function (g) { groupById[g.id] = g; });
+
+  // Place nodes in a grid inside their group's box.
+  NODES.forEach(function (n) { n.members = []; });
+  GROUPS.forEach(function (g) {
+    var members = NODES.filter(function (n) { return n.g === g.id; });
+    var top = 56;
+    var inner = { x: g.x + 14, y: g.y + top, w: g.w - 28, h: g.h - top - 18 };
+    var cols = Math.max(1, Math.min(members.length, Math.floor(inner.w / 105)));
+    var rows = Math.ceil(members.length / cols);
+    var cellW = inner.w / cols, cellH = 80;
+    members.forEach(function (n, i) {
+      var c = i % cols, r = Math.floor(i / cols);
+      n.x = inner.x + cellW * (c + 0.5);
+      n.y = inner.y + cellH * (r + 0.5);
+    });
+  });
+
+  var svg = document.getElementById("net");
+  var gGroups = document.getElementById("groups");
+  var gEdges = document.getElementById("edges");
+  var gNodes = document.getElementById("nodes");
+
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  GROUPS.forEach(function (g) {
+    var grp = el("g", { class: "grp" }, gGroups);
+    el("rect", { x: g.x, y: g.y, width: g.w, height: g.h, stroke: g.color, rx: 10, "stroke-dasharray": g.dashed ? "6 5" : null }, grp);
+    var label = el("text", { x: g.x + 12, y: g.y + 24, fill: g.color }, grp);
+    label.textContent = g.name;
+  });
+
+  // Each link is a gentle curve; the bend alternates so parallel links separate.
+  var edgeEls = EDGES.map(function (e, i) {
+    var a = byId[e[0]], b = byId[e[1]];
+    var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var bend = (i % 2 ? 1 : -1) * Math.min(90, len * 0.18);
+    var cx = mx - (dy / len) * bend, cy = my + (dx / len) * bend;
+    var path = el("path", { d: "M" + a.x + "," + a.y + " Q" + cx + "," + cy + " " + b.x + "," + b.y, class: "edge " + e[2] }, gEdges);
+    return { el: path, s: e[0], t: e[1], type: e[2] };
+  });
+
+  var nodeEls = {};
+  NODES.forEach(function (n) {
+    var g = el("g", { class: "node" + (n.inst ? " inst" : ""), tabindex: "0", role: "button", "aria-label": n.name }, gNodes);
+    el("circle", { cx: n.x, cy: n.y, r: n.inst ? 20 : 24 }, g);
+    var t = el("text", { x: n.x, y: n.y + (n.inst ? 38 : 40) }, g);
+    t.textContent = n.name;
+    nodeEls[n.id] = { g: g, n: n };
+    g.addEventListener("click", function () { select(n.id); });
+    g.addEventListener("keydown", function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); select(n.id); } });
+    g.addEventListener("mouseenter", function () { if (!selected) highlight(n.id); });
+    g.addEventListener("mouseleave", function () { if (!selected) clearHighlight(); });
+  });
+
+  var selected = null;
+  var activeTypes = { cmd: true, all: true, kin: true, ene: true, def: true };
+
+  function linksOf(id) {
+    return EDGES.filter(function (e) { return e[0] === id || e[1] === id; }).filter(function (e) { return activeTypes[e[2]]; });
+  }
+
+  function highlight(id) {
+    var keep = {};
+    keep[id] = true;
+    var links = linksOf(id);
+    links.forEach(function (e) { keep[e[0]] = true; keep[e[1]] = true; });
+    edgeEls.forEach(function (x) {
+      var hit = x.s === id || x.t === id;
+      x.el.classList.toggle("dim", !hit);
+      x.el.classList.toggle("hot", hit);
+    });
+    NODES.forEach(function (n) { nodeEls[n.id].g.classList.toggle("dim", !keep[n.id]); });
+  }
+
+  function clearHighlight() {
+    edgeEls.forEach(function (x) { x.el.classList.remove("dim", "hot"); });
+    NODES.forEach(function (n) { nodeEls[n.id].g.classList.remove("dim", "sel", "hit"); });
+  }
+
+  function select(id) {
+    if (selected === id) { selected = null; clearHighlight(); renderPanel(null); return; }
+    selected = id;
+    highlight(id);
+    NODES.forEach(function (n) { nodeEls[n.id].g.classList.toggle("sel", n.id === id); });
+    renderPanel(id);
+  }
+
+  function renderPanel(id) {
+    var panel = document.getElementById("panel");
+    var legend = panel.querySelector(".legend").outerHTML;
+    if (!id) {
+      panel.innerHTML = '<div class="meta">Select a name</div><h2>South Sudan network</h2><p class="hint">Click any name on the map to see its links. Use the filters above to show one type of link at a time.</p>' + legend;
+      return;
+    }
+    var n = byId[id];
+    var g = groupById[n.g];
+    var links = linksOf(id).map(function (e) {
+      var other = e[0] === id ? byId[e[1]] : byId[e[0]];
+      var dir = e[2] === "cmd" && e[0] !== id ? "under" : e[2] === "cmd" ? "commands" : "";
+      var text = dir === "commands" ? "Commands " + other.name : dir === "under" ? "Reports to " + other.name : TYPE_LABEL[e[2]] + " with " + other.name;
+      return "<li><b>" + text + "</b></li>";
+    }).join("");
+    panel.innerHTML = '<div class="meta">' + g.name + (n.sub ? " · " + n.sub : "") + (n.inst ? " · institution" : "") + '</div><h2>' + n.name + "</h2>" +
+      (links ? '<ul>' + links + "</ul>" : '<p class="hint">No links shown for the selected filters.</p>') + legend;
+  }
+
+  document.querySelectorAll(".chip").forEach(function (chip) {
+    chip.addEventListener("click", function () {
+      var t = chip.getAttribute("data-t");
+      activeTypes[t] = !activeTypes[t];
+      chip.setAttribute("aria-pressed", String(activeTypes[t]));
+      edgeEls.forEach(function (x) { x.el.style.display = activeTypes[x.type] ? "" : "none"; });
+      if (selected) { highlight(selected); renderPanel(selected); }
+    });
+  });
+
+  var q = document.getElementById("q");
+  q.addEventListener("input", function () {
+    var v = q.value.trim().toLowerCase();
+    NODES.forEach(function (n) {
+      var hit = v && n.name.toLowerCase().indexOf(v) !== -1;
+      nodeEls[n.id].g.classList.toggle("hit", !!hit);
+    });
+  });
+})();
+</script>
+</body>
+</html>
