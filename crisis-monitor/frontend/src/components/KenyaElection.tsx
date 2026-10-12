@@ -682,7 +682,7 @@ function OutlookSection() {
     { when: "30 Oct to 6 Nov 2026", what: "Nomination rules certified and lodged: which coalition partners sign up to a common primary." },
     { when: "9 Feb 2027", what: "Public officers resign: which Cabinet Secretaries and officials leave to contest." },
     { when: "9 May 2027", what: "Primaries end: the opposition’s single candidate, or the lack of one, becomes visible." },
-    { when: "29 May to 11 Jun 2027", what: "Presidential nominations: the final list of candidates and running mates." },
+    { when: "29 May to 11 June 2027", what: "Nominated candidates are filed with IEBC." },
   ];
 
   return (
