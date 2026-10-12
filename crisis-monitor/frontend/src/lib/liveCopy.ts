@@ -26,11 +26,16 @@ function baselineFor(orig: Element): CSSStyleDeclaration | null {
   }
 }
 
-/** Declarations for every property where `cs` differs from `base`. */
+/** Motion is left to the page's own CSS, so the copy plays it live. Copying
+ *  these values would freeze a card mid-reveal (hidden or scaled to nothing). */
+const MOTION = /^(transition|animation|transform|opacity|visibility|translate|scale|rotate|will-change)/;
+
+/** Declarations for every property where `cs` differs from `base`, without motion. */
 function diffDecls(cs: CSSStyleDeclaration, base: CSSStyleDeclaration | null): string[] {
   const out: string[] = [];
   for (let k = 0; k < cs.length; k++) {
     const prop = cs[k];
+    if (MOTION.test(prop)) continue;
     const v = cs.getPropertyValue(prop);
     if (!base || base.getPropertyValue(prop) !== v) out.push(`${prop}:${v}`);
   }
@@ -88,10 +93,11 @@ export function buildLiveCopy(el: HTMLElement, paper: string): LiveCopy {
       return;
     }
     const base = baselineFor(orig);
+    // The copy keeps its classes and its own inline styles; the linked page
+    // CSS then gives the same state, and the same motion, as on screen.
     const decls = diffDecls(getComputedStyle(orig), base);
-    copy.setAttribute("style", decls.join(";"));
-    copy.removeAttribute("class");
-    copy.removeAttribute("id");
+    const own = copy.getAttribute("style") ?? "";
+    copy.setAttribute("style", [own, ...decls].filter(Boolean).join(";"));
     const id = `lv${i}`;
     for (const ps of ["::before", "::after"] as const) {
       const cs = getComputedStyle(orig, ps);
