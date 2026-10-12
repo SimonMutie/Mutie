@@ -35,7 +35,7 @@ function ensureTables(db: Env["DB"]): Promise<void> {
     ready = (async () => {
       await run(
         db,
-        `CREATE TABLE IF NOT EXISTS published_visuals (
+        `CREATE TABLE IF NOT EXISTS visual_links (
           token TEXT PRIMARY KEY, title TEXT NOT NULL, kicker TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
           width INTEGER NOT NULL, height INTEGER NOT NULL, chunks INTEGER NOT NULL,
           created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
@@ -79,7 +79,7 @@ visualsRouter.post("/", async (c) => {
   const token = newToken();
   await run(
     c.env.DB,
-    `INSERT INTO published_visuals (token, title, kicker, kind, width, height, chunks, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?,?,?,NULL)`,
+    `INSERT INTO visual_links (token, title, kicker, kind, width, height, chunks, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?,?,?,NULL)`,
     [token, title, kicker, kind, width, height, chunks, c.get("userId"), nowIso()],
   );
   for (let i = 0; i < chunks; i++) {
@@ -93,14 +93,14 @@ visualsRouter.get("/", async (c) => {
   await ensureTables(c.env.DB);
   const rows = await all<Record<string, unknown>>(
     c.env.DB,
-    `SELECT token, title, kicker, kind, created_at FROM published_visuals WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 200`,
+    `SELECT token, title, kicker, kind, created_at FROM visual_links WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 200`,
   );
   return c.json({ visuals: rows.map((r) => ({ ...r, path: `/visual/${r.token}` })) });
 });
 
 visualsRouter.delete("/:token", async (c) => {
   await ensureTables(c.env.DB);
-  await run(c.env.DB, `UPDATE published_visuals SET revoked_at = ? WHERE token = ?`, [nowIso(), c.req.param("token")]);
+  await run(c.env.DB, `UPDATE visual_links SET revoked_at = ? WHERE token = ?`, [nowIso(), c.req.param("token")]);
   await audit(c.env, { userId: c.get("userId"), action: "visual.revoke", detail: c.req.param("token"), ip: clientIp(c.req) });
   return c.json({ ok: true });
 });
@@ -113,7 +113,7 @@ publicVisualsRouter.get("/:token", async (c) => {
   const token = c.req.param("token");
   const visual = await first<{ title: string; kicker: string; kind: string; width: number; height: number; created_at: string }>(
     c.env.DB,
-    `SELECT title, kicker, kind, width, height, created_at FROM published_visuals WHERE token = ? AND revoked_at IS NULL`,
+    `SELECT title, kicker, kind, width, height, created_at FROM visual_links WHERE token = ? AND revoked_at IS NULL`,
     [token],
   );
   if (!visual) return c.json({ error: "This link is not active." }, 404);
