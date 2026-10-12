@@ -334,10 +334,12 @@ function BenchmarkSummary({ live }: { live: SsLive }) {
 function CalendarVisual() {
   const { timeline } = useContext(SsDataCtx);
   const [picked, setPicked] = useState<string | null>(null);
+  // The marker and countdown use the live date. Ranges that run to the data date are ongoing, so they run to today.
+  const todayStr = new Date().toLocaleDateString("en-CA");
   const events: TimelineEvent[] = timeline.map((m) => ({
     id: m.id,
     date: m.date,
-    until: m.until,
+    until: m.until === AS_OF ? todayStr : m.until,
     anchor: m.until ? "start" : undefined,
     title: m.title,
     color: m.key ? "var(--critical)" : "var(--info)",
@@ -361,7 +363,7 @@ function CalendarVisual() {
       ]}
       start="2024-10-01"
       end="2026-12-31"
-      today={AS_OF}
+      today={todayStr}
       countdown={{ to: ELECTION_DAY, label: "polling day" }}
       picked={picked}
       onPick={setPicked}
