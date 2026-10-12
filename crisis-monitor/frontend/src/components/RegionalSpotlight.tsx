@@ -2,13 +2,25 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api, type AuthUser, type SpotlightEntry, type SpotlightEntryInput } from "../api";
 import { SPOTLIGHT_PRODUCT_TYPES, SPOTLIGHT_REGIONS, spotlightRegionName, type SpotlightRegionSlug, type SpotlightScope } from "../spotlightRegions";
 import SpotlightArticle from "./SpotlightArticle";
-import { CountryDirectory, CountryPage } from "./SpotlightCountries";
+import { CountryDirectory, CountryPage, MIDDLE_EAST_GROUPS } from "./SpotlightCountries";
 import { RichTextEditor } from "./SpotlightRichText";
 import { uploadImageFile } from "../imageUpload";
 import "./Spotlight.css";
 
 const KenyaElection = lazy(() => import("./KenyaElection"));
 const SouthSudanElection = lazy(() => import("./SouthSudanElection"));
+
+/** Yemen and the Red Sea: the published report, shown inside the platform. */
+function YemenReport({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="spotlight-page">
+      <div className="spotlight-wrap">
+        <button type="button" className="spotlight-back" onClick={onBack}>← Yemen</button>
+      </div>
+      <iframe src="/reports/yemen-red-sea.html" title="Yemen and the Red Sea" style={{ display: "block", width: "100%", height: "82vh", border: 0 }} />
+    </div>
+  );
+}
 
 /**
  * Regional Spotlight: publications filed by region.
@@ -120,7 +132,9 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
   if (screen.kind === "election") {
     return (
       <Suspense fallback={<div className="spotlight-page"><div className="spotlight-wrap"><div className="spotlight-empty">Loading…</div></div></div>}>
-        {screen.iso2 === "SS" ? (
+        {screen.iso2 === "YE" ? (
+          <YemenReport onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
+        ) : screen.iso2 === "SS" ? (
           <SouthSudanElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
         ) : (
           <KenyaElection isAdmin={isAdmin} onBack={() => setScreen({ kind: "country", iso2: screen.iso2 })} />
@@ -138,6 +152,7 @@ export default function RegionalSpotlight({ user, scope, onScopeChange }: Props)
         onBack={() => setScreen({ kind: "index" })}
         onOpenEntry={(id) => setScreen({ kind: "read", id })}
         onOpenProduct={() => setScreen({ kind: "election", iso2: screen.iso2 })}
+        regionName={scope === "all" ? "Africa" : spotlightRegionName(scope)}
       />
     );
   }
@@ -267,6 +282,7 @@ function SpotlightIndex(props: {
         )}
 
         {scope === "africa" && <CountryDirectory entries={entries} onOpen={props.onOpenCountry} />}
+        {scope === "middle-east" && <CountryDirectory entries={entries} onOpen={props.onOpenCountry} groups={MIDDLE_EAST_GROUPS} />}
 
         {entries === null && !props.loadError && <div className="spotlight-empty">Loading…</div>}
 

@@ -18,31 +18,39 @@ const GROUPS: { name: string; codes: string[] }[] = [
   { name: "Southern Africa and the islands", codes: ["ZA", "ZW", "ZM", "MW", "MZ", "BW", "NA", "LS", "SZ", "MG", "MU", "SC", "KM"] },
 ];
 
+/** Countries outside Africa that have a directory entry (Middle East so far). */
+const OTHER_COUNTRIES: Record<string, { label: string; name: string }> = {
+  YE: { label: "Yemen", name: "Yemen" },
+};
+export const MIDDLE_EAST_GROUPS: { name: string; codes: string[] }[] = [{ name: "Arabian Peninsula and the Red Sea", codes: ["YE"] }];
+
 /** Countries that have a product of their own beyond the publications list. */
 export const COUNTRY_PRODUCTS: Record<string, { title: string; blurb: string; tag: string }[]> = {
   KE: [{ title: "Election Watch 2027", blurb: "Timeline to 10 August 2027, registered voters and population by county, declared candidates with profiles, the latest polls with credibility grades, and an assessment of how the vote could go.", tag: "Election" }],
+  YE: [{ title: "Yemen and the Red Sea", blurb: "Live report on the Houthi escalation, Bab el-Mandeb and Gulf of Aden shipping, humanitarian access, displacement, Horn interactions, realignments and foreign military presence on the Red Sea and Aden coasts.", tag: "Special Report" }],
   SS: [{ title: "Transition and Conflict Watch", blurb: "The 22 December 2026 election, government changes since 2025 shown as a timeline of posts, the Revitalised Agreement’s benchmarks and reported breaches, and a live conflict dashboard by state.", tag: "Transition" }],
 };
 
 export const flag = (iso2: string) => (iso2.length === 2 ? String.fromCodePoint(...[...iso2.toUpperCase()].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "");
-const label = (iso2: string) => AFRICA.find((a) => a.iso2 === iso2)?.label ?? iso2;
+const label = (iso2: string) => AFRICA.find((a) => a.iso2 === iso2)?.label ?? OTHER_COUNTRIES[iso2]?.label ?? iso2;
 
 /** The publications that name a country. */
 export function entriesFor(entries: SpotlightEntry[] | null, iso2: string): SpotlightEntry[] {
   const a = AFRICA.find((x) => x.iso2 === iso2);
-  if (!a || !entries) return [];
-  const names = [a.label, a.name, ...(a.also ?? [])].map((n) => n.toLowerCase());
+  const other = OTHER_COUNTRIES[iso2];
+  if ((!a && !other) || !entries) return [];
+  const names = (a ? [a.label, a.name, ...(a.also ?? [])] : [other.label, other.name]).map((n) => n.toLowerCase());
   return entries.filter((e) => {
     const c = (e.countries ?? "").toLowerCase();
     return c && names.some((n) => c.split(/[,;/]|\band\b/).some((part) => part.trim() === n));
   });
 }
 
-export function CountryDirectory({ entries, onOpen }: { entries: SpotlightEntry[] | null; onOpen: (iso2: string) => void }) {
-  const counts = useMemo(() => new Map(AFRICA.map((a) => [a.iso2, entriesFor(entries, a.iso2).length])), [entries]);
+export function CountryDirectory({ entries, onOpen, groups: given }: { entries: SpotlightEntry[] | null; onOpen: (iso2: string) => void; groups?: { name: string; codes: string[] }[] }) {
+  const counts = useMemo(() => new Map([...AFRICA.map((a) => a.iso2), ...Object.keys(OTHER_COUNTRIES)].map((c) => [c, entriesFor(entries, c).length])), [entries]);
   const known = new Set(GROUPS.flatMap((g) => g.codes));
   const other = AFRICA.filter((a) => !known.has(a.iso2)).map((a) => a.iso2);
-  const groups = other.length ? [...GROUPS, { name: "Other", codes: other }] : GROUPS;
+  const groups = given ?? (other.length ? [...GROUPS, { name: "Other", codes: other }] : GROUPS);
   return (
     <section className="spotlight-countries" aria-label="Countries">
       <h2>Countries</h2>
@@ -79,18 +87,20 @@ export function CountryPage(props: {
   onBack: () => void;
   onOpenEntry: (id: string) => void;
   onOpenProduct: (title: string) => void;
+  regionName?: string;
 }) {
   const { iso2, entries } = props;
+  const region = props.regionName ?? "Africa";
   const name = label(iso2);
   const products = COUNTRY_PRODUCTS[iso2] ?? [];
   const list = entriesFor(entries, iso2).filter((e) => props.isAdmin || e.status === "published");
   return (
     <div className="spotlight-page">
       <div className="spotlight-wrap">
-        <button type="button" className="spotlight-back" onClick={props.onBack}>← Africa</button>
+        <button type="button" className="spotlight-back" onClick={props.onBack}>← {region}</button>
         <div className="spotlight-head">
           <div>
-            <p className="spotlight-head__section">Regional Spotlight · Africa</p>
+            <p className="spotlight-head__section">Regional Spotlight · {region}</p>
             <h1><span aria-hidden="true">{flag(iso2)}</span> {name}</h1>
           </div>
         </div>
