@@ -36,6 +36,14 @@ const nextOf = (p: string) => {
 const EMPTY = (period: string): RptPeriod => ({ period, reports: 0, events: 0, verified: 0, fatalities: 0, byCategory: {}, byPlace: {} });
 const n0 = (n: number) => n.toLocaleString("en-GB");
 
+/** A report with no data pages at all (written before they existed) gets the standard ones, after its summary. Removing some of them is respected. */
+function withDataPages(sections: RptSection[]): RptSection[] {
+  if (sections.some((s) => s.kind !== "narrative")) return sections;
+  const at = sections.findIndex((s) => s.id === "summary");
+  const i = at >= 0 ? at + 1 : 0;
+  return [...sections.slice(0, i), ...DATA_SECTIONS, ...sections.slice(i)];
+}
+
 /** The data pages a month has before any written report exists. */
 const DATA_SECTIONS: RptSection[] = [
   { id: "figures", kind: "figures", title: "The month in figures" },
@@ -191,7 +199,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
 
   const startEdit = () => {
     if (!report) return;
-    setDraft(report.sections.map((s) => ({ ...s })));
+    setDraft(withDataPages(report.sections).map((s) => ({ ...s })));
     setDraftTheme(report.theme ?? "lens");
     setTitle(report.title);
     setEditing(true);
@@ -256,7 +264,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
 
   /* ── the pages ───────────────────────────────────────────── */
 
-  const sectionsShown: RptSection[] = editing ? draft : report ? report.sections : DATA_SECTIONS;
+  const sectionsShown: RptSection[] = editing ? draft : report ? withDataPages(report.sections) : DATA_SECTIONS;
   const themeShown: RptTheme = editing ? draftTheme : report?.theme ?? "lens";
   const kicker = `${cfg.kicker} · Monthly report · ${monthLabel(period)}`;
   const footerLeft = `Afrilens Consulting · ${cfg.heading}`;
@@ -271,7 +279,7 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
     if (s.kind === "narrative") {
       if (!editing && !(s.body ?? "").trim()) return;
       pages.push({ id: s.id, kind: "narrative", section: s, index: i });
-    } else if (mode === "month") pages.push({ id: s.id, kind: s.kind, section: s, index: i });
+    } else if (mode === "month" || editing) pages.push({ id: s.id, kind: s.kind, section: s, index: i });
   });
   const total = pages.length;
   const toggleable = sectionsShown.filter((s) => s.kind !== "narrative" || editing || (s.body ?? "").trim());
