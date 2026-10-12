@@ -2266,12 +2266,13 @@ export function connectLiveFeed(onMessage: (type: string, payload: unknown) => v
   };
 }
 
-/** Published visuals: one picture (a timeline, chart or widget) with its own link. */
+/** Published visuals: one visual (a timeline, chart or widget) with its own link. */
 export const visualsApi = {
-  publish: (body: { title: string; kicker: string; image: string }) =>
+  publish: (body: { title: string; kicker: string; kind: "html" | "gif"; content: string; width: number; height: number }) =>
     req<{ token: string; path: string }>("/api/visuals", { method: "POST", body: JSON.stringify(body) }),
-  list: () => req<{ visuals: { token: string; title: string; kicker: string; created_at: string; path: string }[] }>("/api/visuals"),
+  list: () => req<{ visuals: { token: string; title: string; kicker: string; kind: string; created_at: string; path: string }[] }>("/api/visuals"),
   revoke: (token: string) => req<{ ok: boolean }>(`/api/visuals/${token}`, { method: "DELETE" }),
-  /** Public: the animation behind a visual link. */
-  get: (token: string) => req<{ title: string; kicker: string; created_at: string; image: string }>(`/api/public/visuals/${token}`),
+  /** Public: one visual behind its link. `content` is a page (html) or a GIF data URL. */
+  get: (token: string) =>
+    req<{ title: string; kicker: string; kind: "html" | "gif"; width: number; height: number; created_at: string; content: string }>(`/api/public/visuals/${token}`),
 };

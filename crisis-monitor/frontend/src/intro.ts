@@ -74,7 +74,7 @@ export function markIntroShown(): void {
  *  publication or dashboard opened from a shared link, and never to a
  *  dashboard shown inside an article. */
 export function introAppliesHere(): boolean {
-  if (/^\/(shared|spotlight)\//.test(window.location.pathname)) return false;
+  if (/^\/(shared|shared-report|visual|spotlight)\//.test(window.location.pathname)) return false;
   try {
     return window.self === window.top;
   } catch {

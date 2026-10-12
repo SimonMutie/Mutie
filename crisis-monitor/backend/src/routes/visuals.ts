@@ -7,21 +7,26 @@ import type { Env } from "../bindings";
 
 /**
  * Published visuals: one timeline, chart, infographic or dashboard widget,
- * published as its own link. The picture is stored in D1 in chunks, because a
- * single row is capped well below a chart's PNG. The public link shows only
- * this picture, never the rest of the app.
+ * published as its own link. Two kinds:
+ *  - "html": a live copy of the visual. Its CSS motion plays in the viewer's
+ *    browser. Scripts are not included, so maps and globes show as still frames.
+ *  - "gif": a short animated recording of the visual.
+ * The content is stored in D1 in chunks, because one row is capped well below
+ * a visual's size. The public link shows only this visual.
  */
 
 const CHUNK = 80_000; // characters per row
-const MAX_CHUNKS = 60; // about 4.8 MB of picture data
-const MAX_IMAGE = CHUNK * MAX_CHUNKS;
-const IMAGE_PREFIX = /^data:(image\/gif);base64,/;
+const MAX_CHUNKS = 60; // about 4.8 MB per visual
+const MAX_CONTENT = CHUNK * MAX_CHUNKS;
+const GIF_PREFIX = "data:image/gif;base64,";
 
 const publishSchema = z.object({
   title: z.string().trim().min(1).max(160),
   kicker: z.string().trim().max(80).default(""),
-  /** The animation, as a GIF data URL. */
-  image: z.string().max(MAX_IMAGE + 40),
+  kind: z.enum(["html", "gif"]),
+  content: z.string().min(1).max(MAX_CONTENT + GIF_PREFIX.length + 10),
+  width: z.number().int().min(1).max(4000).default(800),
+  height: z.number().int().min(1).max(8000).default(400),
 });
 
 let ready: Promise<void> | null = null;
@@ -31,8 +36,9 @@ function ensureTables(db: Env["DB"]): Promise<void> {
       await run(
         db,
         `CREATE TABLE IF NOT EXISTS published_visuals (
-          token TEXT PRIMARY KEY, title TEXT NOT NULL, kicker TEXT NOT NULL DEFAULT '', chunks INTEGER NOT NULL,
-          mime TEXT NOT NULL DEFAULT 'image/gif', created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
+          token TEXT PRIMARY KEY, title TEXT NOT NULL, kicker TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,
+          width INTEGER NOT NULL, height INTEGER NOT NULL, chunks INTEGER NOT NULL,
+          created_by TEXT, created_at TEXT NOT NULL, revoked_at TEXT)`,
       );
       await run(
         db,
@@ -59,24 +65,27 @@ visualsRouter.use("*", requireAuth, requireAdmin);
 visualsRouter.post("/", async (c) => {
   const parsed = publishSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: "This visual could not be published. Try again." }, 400);
+  const { title, kicker, kind, width, height } = parsed.data;
+  let content = parsed.data.content;
+  if (kind === "gif") {
+    if (!content.startsWith(GIF_PREFIX)) return c.json({ error: "This visual could not be published. Try again." }, 400);
+    content = content.slice(GIF_PREFIX.length);
+  }
+  if (content.length > MAX_CONTENT) {
+    return c.json({ error: "This visual is too large to publish. Make the section shorter and try again." }, 413);
+  }
   await ensureTables(c.env.DB);
-  const { title, kicker, image } = parsed.data;
-  const prefix = IMAGE_PREFIX.exec(image);
-  if (!prefix) return c.json({ error: "This visual could not be published. Try again." }, 400);
-  const mime = prefix[1];
-  const data = image.slice(prefix[0].length);
-  const chunks = Math.max(1, Math.ceil(data.length / CHUNK));
-  if (chunks > MAX_CHUNKS) return c.json({ error: "This visual is too large to publish. Make the section shorter and try again." }, 413);
+  const chunks = Math.max(1, Math.ceil(content.length / CHUNK));
   const token = newToken();
   await run(
     c.env.DB,
-    `INSERT INTO published_visuals (token, title, kicker, chunks, mime, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?,NULL)`,
-    [token, title, kicker, chunks, mime, c.get("userId"), nowIso()],
+    `INSERT INTO published_visuals (token, title, kicker, kind, width, height, chunks, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?,?,?,NULL)`,
+    [token, title, kicker, kind, width, height, chunks, c.get("userId"), nowIso()],
   );
   for (let i = 0; i < chunks; i++) {
-    await run(c.env.DB, `INSERT INTO published_visual_chunks (token, idx, data) VALUES (?,?,?)`, [token, i, data.slice(i * CHUNK, (i + 1) * CHUNK)]);
+    await run(c.env.DB, `INSERT INTO published_visual_chunks (token, idx, data) VALUES (?,?,?)`, [token, i, content.slice(i * CHUNK, (i + 1) * CHUNK)]);
   }
-  await audit(c.env, { userId: c.get("userId"), action: "visual.publish", detail: title, ip: clientIp(c.req) });
+  await audit(c.env, { userId: c.get("userId"), action: "visual.publish", detail: `${kind}: ${title}`, ip: clientIp(c.req) });
   return c.json({ token, path: `/visual/${token}` });
 });
 
@@ -84,7 +93,7 @@ visualsRouter.get("/", async (c) => {
   await ensureTables(c.env.DB);
   const rows = await all<Record<string, unknown>>(
     c.env.DB,
-    `SELECT token, title, kicker, created_at FROM published_visuals WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 200`,
+    `SELECT token, title, kicker, kind, created_at FROM published_visuals WHERE revoked_at IS NULL ORDER BY created_at DESC LIMIT 200`,
   );
   return c.json({ visuals: rows.map((r) => ({ ...r, path: `/visual/${r.token}` })) });
 });
@@ -96,23 +105,27 @@ visualsRouter.delete("/:token", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Public: the picture of one published visual, for anyone with the link. */
+/** Public: one published visual, for anyone with the link. */
 export const publicVisualsRouter = new Hono<{ Bindings: Env }>();
 
 publicVisualsRouter.get("/:token", async (c) => {
   await ensureTables(c.env.DB);
   const token = c.req.param("token");
-  const visual = await first<{ title: string; kicker: string; chunks: number; mime: string; created_at: string }>(
+  const visual = await first<{ title: string; kicker: string; kind: string; width: number; height: number; created_at: string }>(
     c.env.DB,
-    `SELECT title, kicker, chunks, mime, created_at FROM published_visuals WHERE token = ? AND revoked_at IS NULL`,
+    `SELECT title, kicker, kind, width, height, created_at FROM published_visuals WHERE token = ? AND revoked_at IS NULL`,
     [token],
   );
   if (!visual) return c.json({ error: "This link is not active." }, 404);
   const parts = await all<{ data: string }>(c.env.DB, `SELECT data FROM published_visual_chunks WHERE token = ? ORDER BY idx`, [token]);
+  const joined = parts.map((p) => p.data).join("");
   return c.json({
     title: visual.title,
     kicker: visual.kicker,
+    kind: visual.kind,
+    width: visual.width,
+    height: visual.height,
     created_at: visual.created_at,
-    image: `data:${visual.mime};base64,${parts.map((p) => p.data).join("")}`,
+    content: visual.kind === "gif" ? GIF_PREFIX + joined : joined,
   });
 });
