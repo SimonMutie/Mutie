@@ -640,7 +640,8 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
                       className={`vzt__card ${slot.anchor === "left" ? "is-left" : slot.anchor === "right" ? "is-right" : ""} ${on ? "is-on" : ""}`}
                       style={{
                         left: `${centre(e)}%`,
-                        top: slot.side === 0 ? levelBase(0, slot.level) - cardH(e) : levelBase(1, slot.level),
+                        // Cards above the axis hang from their bottom edge, so the leader meets the card whatever its real height.
+                        ...(slot.side === 0 ? { bottom: stageH - levelBase(0, slot.level) } : { top: levelBase(1, slot.level) }),
                         borderColor: color,
                         transitionDelay: delay,
                       }}
