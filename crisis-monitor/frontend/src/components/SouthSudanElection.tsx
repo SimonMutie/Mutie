@@ -337,6 +337,7 @@ function CalendarVisual() {
   const events: TimelineEvent[] = timeline.map((m) => ({
     id: m.id,
     date: m.date,
+    until: m.until,
     title: m.title,
     color: m.key ? "var(--critical)" : "var(--info)",
     key: m.key,
