@@ -361,8 +361,9 @@ export default function MonthlyReport({ country, isAdmin, liveExtra, share }: { 
         if (fmt === "docx") save(await buildDocx(page, chart, logo), `${page.fileBase}.docx`);
         else save(await buildPptx(page, { snap: chart, logo }), `${page.fileBase}.pptx`);
       }
-    } catch {
-      flash("That download did not work. Try again.");
+    } catch (err) {
+      console.error(`[report download] ${fmt} failed for ${sid}`, err);
+      flash(`That download did not work (${fmt.toUpperCase()}: ${err instanceof Error ? err.message.slice(0, 160) : "unknown error"}). Try again.`);
     } finally {
       setBusy((b) => {
         const { [sid]: _gone, ...rest } = b;
