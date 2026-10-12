@@ -782,10 +782,11 @@
 .vzt { position: relative; margin-bottom: 8px; }
 .vzt__scroll { overflow-x: auto; overflow-y: hidden; padding: 4px 2px 6px; -webkit-overflow-scrolling: touch; }
 .vzt__stage { position: relative; min-width: 860px; margin: 0 14px; }
-.vzt__today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--critical); transform: translateX(-1px); z-index: 2; pointer-events: none; }
-.vzt__today.is-end span { left: auto; right: 6px; }
-.vzt__today span { position: absolute; top: -2px; left: 6px; font-size: 11px; font-weight: 700; color: var(--critical); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
-.vzt__today::before { content: ""; position: absolute; top: 16px; left: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--critical); animation: vzt-pulse 2.2s ease-out infinite; }
+/* Today is a short tick across the axis, with its label above it, so no line runs through a card or a phase label. */
+.vzt__today { position: absolute; height: 44px; width: 2px; background: var(--critical); transform: translateX(-1px); z-index: 2; pointer-events: none; }
+.vzt__today.is-end span { left: auto; right: 8px; }
+.vzt__today span { position: absolute; top: -3px; left: 8px; padding: 0 4px; line-height: 14px; border-radius: 3px; background: var(--panel); font-size: 11px; font-weight: 700; color: var(--critical); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.vzt__today::before { content: ""; position: absolute; top: 29px; left: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--critical); animation: vzt-pulse 2.2s ease-out infinite; }
 @keyframes vzt-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--critical) 55%, transparent); } 100% { box-shadow: 0 0 0 12px transparent; } }
 .vzt__axis { position: absolute; left: 0; right: 0; height: 3px; border-radius: 2px; background: color-mix(in srgb, var(--text-faint) 45%, transparent); transform: scaleX(0); transform-origin: left; transition: transform 1.4s cubic-bezier(.3,.6,.2,1); }
 .vzt.is-in .vzt__axis { transform: scaleX(1); }
@@ -799,7 +800,7 @@
 .vzt__stem.is-up { transform-origin: bottom; }
 .vzt__stem.is-down { transform-origin: top; }
 .vzt.is-in .vzt__stem { transform: scaleY(1); }
-.vzt__card { position: absolute; width: 164px; transform: translateX(-50%) translateY(6px); opacity: 0; text-align: left; font: inherit; color: var(--text-primary); background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 6px 9px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: opacity .5s ease, transform .5s cubic-bezier(.3,.6,.2,1), box-shadow .2s ease, border-color .2s ease; }
+.vzt__card { position: absolute; width: 132px; transform: translateX(-50%) translateY(6px); opacity: 0; text-align: left; font: inherit; color: var(--text-primary); background: var(--panel); border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 6px 9px; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: opacity .5s ease, transform .5s cubic-bezier(.3,.6,.2,1), box-shadow .2s ease, border-color .2s ease; }
 .vzt__card.is-left { transform: translateX(0) translateY(6px); }
 .vzt__card.is-right { transform: translateX(-100%) translateY(6px); }
 .vzt.is-in .vzt__card { opacity: 1; transform: translateX(-50%); }

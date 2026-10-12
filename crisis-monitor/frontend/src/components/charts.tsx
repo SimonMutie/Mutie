@@ -451,7 +451,7 @@ export interface TimelinePhase {
  * every event as a dot, and today as a pulsing marker. Hovering or focusing an
  * event reads its detail below. Everything animates in once on screen.
  */
-const TL = { axis: 190, card: 44, gap: 52, band: 14, lead: 40, stage: 408, cardW: 164, minGap: 21 };
+const TL = { axis: 190, card: 44, gap: 52, band: 14, lead: 40, stage: 408, cardW: 132, minGap: 21 };
 
 export function Timeline({ events, start, end, label, today, onPick, picked, phases = [] }: { events: TimelineEvent[]; start: string; end: string; label: string; today?: string; onPick?: (id: string) => void; picked?: string | null; phases?: TimelinePhase[] }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -481,41 +481,52 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
     return (a + b) / 2;
   };
   // Card height grows with its text, so no words are cut off.
+  // Lines of text are wrapped the way the card wraps them, so the card is tall enough for every word.
   const cardH = (e: TimelineEvent) => {
-    const perLine = Math.max(10, TL.cardW - 26);
-    const lines = Math.max(1, Math.ceil((e.title.length * 6.9) / perLine));
-    return 34 + lines * 17;
+    const perLine = Math.floor((TL.cardW - 24) / 7.4);
+    let lines = 1;
+    let cur = 0;
+    for (const w of e.title.split(/\s+/)) {
+      if (cur === 0) cur = w.length;
+      else if (cur + 1 + w.length <= perLine) cur += 1 + w.length;
+      else {
+        lines++;
+        cur = w.length;
+      }
+    }
+    return 38 + lines * 17;
   };
   const slots = useMemo(() => {
     const keys = events.filter((e) => e.key).sort((a, b) => a.date.localeCompare(b.date));
-    const used: number[][] = [
-      [-Infinity, -Infinity, -Infinity],
-      [-Infinity, -Infinity, -Infinity],
-    ];
+    const placed: { side: 0 | 1; level: number; x: number }[] = [];
     const out = new Map<string, { side: 0 | 1; level: number }>();
+    // A card's leader line runs through every level nearer the axis, and a card spans about its width.
+    // So cards on one side keep apart horizontally: far apart on the same level, and clear of each
+    // other's leader lines on different levels. Cards near the edge are wider on one side, so need more room.
+    const edge = (x: number) => (x < 12 || x > 88 ? 16 : 9);
+    const fits = (side: 0 | 1, L: number, x: number) =>
+      placed.every(
+        (p) =>
+          p.side !== side ||
+          (p.level === L ? Math.abs(x - p.x) >= TL.minGap : Math.abs(x - p.x) >= Math.max(edge(x), edge(p.x))),
+      );
     keys.forEach((e, i) => {
       const x = centre(e);
       const pref = (i % 2) as 0 | 1;
-      let placed = false;
+      let slot: { side: 0 | 1; level: number } | null = null;
       for (const side of [pref, (1 - pref) as 0 | 1]) {
-        for (let L = 0; L < 3 && !placed; L++) {
-          if (x - used[side][L] >= TL.minGap) {
-            used[side][L] = x;
-            out.set(e.id, { side, level: L });
-            placed = true;
-          }
-        }
-        if (placed) break;
+        for (let L = 0; L < 3 && !slot; L++) if (fits(side, L, x)) slot = { side, level: L };
+        if (slot) break;
       }
-      if (!placed) out.set(e.id, { side: pref, level: 2 });
+      if (!slot) slot = { side: pref, level: 2 };
+      placed.push({ ...slot, x });
+      out.set(e.id, slot);
     });
     return out;
   }, [events, t0, t1]);
   const active = events.find((e) => e.id === (hi ?? picked)) ?? null;
   // With no key events there are no cards, so the axis sits high and the stage is short.
   const compact = slots.size === 0;
-  const axisY = compact ? 62 : TL.axis;
-  const stageH = compact ? axisY + 84 : TL.stage;
   // Cards never sit on the axis: each one hangs off a visible leader line.
   // Each level is as tall as its tallest card, so taller cards push the next level out.
   const offsets = useMemo(() => {
@@ -536,13 +547,24 @@ export function Timeline({ events, start, end, label, today, onPick, picked, pha
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events, slots]);
   // The line a level's cards hang from: the bottom edge of an upper card, the top edge of a lower card.
+  // The stage grows to fit the tallest stack above and below the axis, so no card is clipped.
+  let up = 0;
+  let down = 0;
+  events.forEach((e) => {
+    const sl = slots.get(e.id);
+    if (!sl) return;
+    if (sl.side === 0) up = Math.max(up, offsets[0][sl.level] + cardH(e));
+    else down = Math.max(down, offsets[1][sl.level] + cardH(e));
+  });
+  const axisY = compact ? 62 : Math.max(TL.axis, TL.lead + up + 24);
+  const stageH = compact ? axisY + 84 : axisY + 70 + down + 24;
   const levelBase = (side: 0 | 1, L: number) => (side === 0 ? axisY - TL.lead - offsets[0][L] : axisY + 70 + offsets[1][L]);
   return (
     <div ref={ref} className={`vzt ${seen ? "is-in" : ""}`} role="group" aria-label={label}>
       <div className="vzt__scroll">
         <div className="vzt__stage" style={{ height: stageH }}>
           {today && (
-            <div className={`vzt__today ${at(today) > 84 ? "is-end" : ""}`} style={{ left: `${at(today)}%` }}>
+            <div className={`vzt__today ${at(today) > 84 ? "is-end" : ""}`} style={{ left: `${at(today)}%`, top: axisY - TL.lead + 6 }}>
               <span>Today</span>
             </div>
           )}
