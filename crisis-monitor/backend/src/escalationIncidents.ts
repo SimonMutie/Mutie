@@ -7,7 +7,7 @@ import { candidatePriority, isCandidateText } from "./lib/escalationKeywords";
 import { normalizeForMatch, readArticle } from "./lib/articleReader";
 import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
-import { countryAt, countryName, distanceKm, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
+import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
@@ -936,8 +936,16 @@ interface IncidentDbRow {
  * incident at its true location — and close any incident left with no
  * reports, resolving its alert. This is how a strike on Riyadh that had been
  * placed at the story's dateline (Dubai) is put back in Riyadh.
+ *
+ * Second version: the first one also moved places the story itself reported
+ * on (an attack on Dammam's airport, in a story whose description named
+ * Riyadh) — those moves are undone, and a report whose description names a
+ * site inside its town (King Fahd International Airport, in Dammam) is placed
+ * at the site.
  */
-const RELOCATION_KEY = "relocated_by_evidence_v1";
+const RELOCATION_KEY = "relocated_by_evidence_v2";
+/** The note the first version left on a report it moved away from a place that was not the dateline. */
+const PASSING_MOVE_RX = /^Located at .+, the place the event's own description names, not (.+)\.$/;
 export async function relocateRecentReports(env: Env): Promise<number> {
   if ((await getState(env, RELOCATION_KEY)) === "1") return 0;
   const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
@@ -945,14 +953,16 @@ export async function relocateRecentReports(env: Env): Promise<number> {
   const budget: GeocodeBudget = { remaining: 4 };
   let moved = 0;
   for (const r of rows) {
-    const fix = placeFromEvidence({
-      countryCode: r.countryCode,
-      place: r.place,
-      admin1: r.admin1,
-      evidence: [r.whatHappened, ...r.indicators.map((i) => i.quote)],
-      filedFrom: datelinePlaces(r.excerpt ?? ""),
-    });
+    // Undo a first-version move away from a town the story itself reported on.
+    const undone = r.notes.map((n) => PASSING_MOVE_RX.exec(n)?.[1]).find(Boolean);
+    const back = undone ? locateText(undone) : null;
+    const start = back && back.precision !== "country" ? { countryCode: back.countryCode, place: back.precision === "place" ? back.label : null, admin1: back.precision === "region" ? back.label : null } : null;
+    const notes = start ? r.notes.filter((n) => !PASSING_MOVE_RX.test(n)) : r.notes;
+    const from = start ?? { countryCode: r.countryCode, place: r.place, admin1: r.admin1 };
+    const refined = placeFromEvidence({ ...from, evidence: [r.whatHappened, ...r.indicators.map((i) => i.quote)], filedFrom: datelinePlaces(r.excerpt ?? "") });
+    const fix = refined ?? (start ? { ...start, note: `Returned to ${start.place ?? start.admin1}, which the story itself reports on.` } : null);
     if (!fix) continue;
+    r.notes = notes;
     const loc = await resolvePlace(env, { countryCode: fix.countryCode, place: fix.place, admin1: fix.admin1, modelLat: null, modelLon: null }, budget);
     await run(
       env.DB,

@@ -324,6 +324,8 @@ interface PlaceIndexEntry {
   kind: "place" | "region";
   rank: number; // curated beats GeoNames; within GeoNames, population
   method: "curated" | "geonames";
+  /** For a site, the town it lies in. */
+  within?: string;
 }
 
 /** country code -> key -> entry. Built once at module load. */
@@ -347,6 +349,7 @@ function addToIndex(index: Map<string, Map<string, PlaceIndexEntry>>, country: s
       kind: p.kind === "region" ? "region" : "place",
       rank: 1e12,
       method: "curated",
+      ...(p.within ? { within: p.within } : {}),
     };
     for (const n of [p.name, ...(p.aliases ?? [])]) {
       addToIndex(EXACT_INDEX, p.country, normalizeName(n), entry);
@@ -391,7 +394,8 @@ export interface PlaceQuery {
 export function resolvePlaceOffline(q: PlaceQuery): ResolvedLocation {
   const known = lookupKnownPlace(q.countryCode, q.place);
   if (known) {
-    return { lat: known.lat, lon: known.lon, precision: known.kind === "region" ? "region" : "place", label: known.name, method: known.method };
+    // A site is labelled with its town: "King Fahd International Airport, Dammam".
+    return { lat: known.lat, lon: known.lon, precision: known.kind === "region" ? "region" : "place", label: known.within ? `${known.name}, ${known.within}` : known.name, method: known.method };
   }
 
   if (q.place && q.modelLat != null && q.modelLon != null && isInOrNearCountry(q.countryCode, q.modelLat, q.modelLon)) {
@@ -473,6 +477,8 @@ export interface TextLocation {
   /** The name as it was found in the text (normalised) — which may be an
    *  alias of `label` ("al fashir" for El Fasher). */
   matchedName: string;
+  /** For a site, the town it lies in (see GazetteerPlace.within). */
+  within?: string;
 }
 
 /** Place names that are also ordinary words, personal names, or places on
@@ -492,6 +498,7 @@ interface MentionEntry {
   lon: number;
   kind: "place" | "region" | "country";
   countryCode: string;
+  within?: string;
 }
 
 /** normalised name -> every place/region/country it could refer to. */
@@ -505,7 +512,7 @@ const MENTION_INDEX: Map<string, MentionEntry[]> = (() => {
     m.set(k, list);
   };
   for (const p of CONFLICT_GAZETTEER as GazetteerPlace[]) {
-    const e: MentionEntry = { label: p.name, lat: p.lat, lon: p.lon, kind: p.kind === "region" ? "region" : "place", countryCode: p.country };
+    const e: MentionEntry = { label: p.name, lat: p.lat, lon: p.lon, kind: p.kind === "region" ? "region" : "place", countryCode: p.country, within: p.within };
     for (const n of [p.name, ...(p.aliases ?? [])]) add(n, e);
   }
   for (const [code, info] of Object.entries(AFRICA_GEO_COUNTRIES)) {
@@ -580,9 +587,11 @@ export function namedLocations(text: string | null | undefined): TextLocation[] 
       }
       if (!pick || rank[e.kind] > rank[pick.kind]) pick = e;
     }
-    if (pick) out.push({ lat: pick.lat, lon: pick.lon, label: pick.label, countryCode: pick.countryCode, precision: pick.kind, matchedName: f.name });
+    if (pick) out.push({ lat: pick.lat, lon: pick.lon, label: pick.label, countryCode: pick.countryCode, precision: pick.kind, matchedName: f.name, ...(pick.within ? { within: pick.within } : {}) });
   }
-  return out;
+  // A town named alongside a site inside it ("Dammam's King Fahd International Airport") gives way to the site.
+  const sites = out.filter((l) => l.within);
+  return sites.length ? out.filter((l) => !sites.some((s) => s.countryCode === l.countryCode && s.within === l.label && !l.within)) : out;
 }
 
 /** The region (state, province) of `countryCode` that a text names, if any
