@@ -82,7 +82,7 @@ const GEOCODER_CALLS_PER_TICK = 6;
 /** Nothing published longer ago than the active window can be about an
  *  event inside it, so older items are not collected, read or coded. */
 const CANDIDATE_MAX_AGE_HOURS = ACTIVE_WINDOW_HOURS;
-const GDELT_CANDIDATE_WINDOW_HOURS = 24;
+const GDELT_CANDIDATE_WINDOW_HOURS = 48;
 const MAX_ATTEMPTS = 3;
 /** The most first-pass (headline) reports stored in one tick. */
 const HEADLINE_REPORTS_PER_TICK = 40;

@@ -84,14 +84,16 @@ describe("helpers", () => {
     expect(isLive({ eventDate: "2026-10-01", publishedAt: null }, now)).toBe(true);
     expect(isLive({ eventDate: "2026-09-30", publishedAt: null }, now)).toBe(false);
   });
-  it("isLive keeps a severe event for four days", () => {
-    // Border gold-mine strikes: Saturday's strike, 200 dead, reported Sunday evening; checked Tuesday morning.
-    const now = new Date("2026-10-13T05:30:00Z");
-    const report = { eventDate: "2026-10-10", publishedAt: "2026-10-11T19:05:39Z" };
-    expect(isLive(report, now)).toBe(false);
-    expect(isLive({ ...report, fatalities: 200 }, now)).toBe(true);
-    expect(isLive({ ...report, fatalities: 3, indicators: [{ id: "mass_atrocity" }] }, now)).toBe(true);
-    expect(isLive({ ...report, fatalities: 200 }, new Date("2026-10-15T20:00:00Z"))).toBe(false);
+  it("isLive keeps every event for 48 hours, severe or not", () => {
+    // Border gold-mine strikes: Saturday's strike, 200 dead, reported Sunday evening.
+    const report = { eventDate: "2026-10-11", publishedAt: "2026-10-11T19:05:39Z" };
+    const within = new Date("2026-10-13T18:00:00Z"); // about 47 hours after publication
+    const after = new Date("2026-10-13T20:00:00Z"); // about 49 hours after publication
+    expect(isLive(report, within)).toBe(true);
+    expect(isLive({ ...report, fatalities: 200 }, within)).toBe(true);
+    expect(isLive({ ...report, fatalities: 3, indicators: [{ id: "mass_atrocity" }] }, within)).toBe(true);
+    expect(isLive(report, after)).toBe(false);
+    expect(isLive({ ...report, fatalities: 200 }, after)).toBe(false);
   });
   it("pickBatch alternates between origins and de-duplicates", () => {
     const c = (id: string, origin: Candidate["origin"]): Candidate => ({ id, url: `https://x/${id}`, domain: "x", origin, title: null, feedText: null, publishedAt: null, priority: 0 });
