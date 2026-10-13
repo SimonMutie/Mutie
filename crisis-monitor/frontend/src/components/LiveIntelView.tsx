@@ -288,8 +288,6 @@ interface GlobePoint {
   /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
    *  Undefined on every other layer. */
   escalationLevel?: "elevated" | "critical";
-  /** Conflict Escalation only — true when the incident has a posture indicator. */
-  posture?: boolean;
   /** Conflict Escalation only — used to fetch the full evidence/source-link
    *  list for this country on click. Undefined on every other layer. */
   countryCode?: string;
@@ -510,7 +508,6 @@ const LAYER_DEFS: LayerDef[] = [
           time: f.properties.time,
           url: f.properties.url,
           escalationLevel: level,
-          posture: (f.properties.incident?.indicators ?? []).some((i) => i.tier === "posture"),
           countryCode: f.properties.countryCode,
           evidenceCount: f.properties.evidenceCount,
           incident: f.properties.incident,

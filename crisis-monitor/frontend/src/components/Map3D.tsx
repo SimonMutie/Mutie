@@ -69,8 +69,6 @@ export interface Map3DPoint {
    *  point instead of just the plain colored dot every other layer gets,
    *  colored by level. Undefined on every other layer. */
   escalationLevel?: "elevated" | "critical";
-  /** Conflict Escalation only — true when the incident has a military-posture indicator; draws a red alert circle. */
-  posture?: boolean;
   /** Conflict Escalation only — fetches the full evidence/source-link list
    *  for this country when its popup opens. Undefined on every other layer. */
   countryCode?: string;
@@ -159,7 +157,6 @@ export type Map3DSelectedFeature =
       lat: number;
       lng: number;
       escalationLevel?: "elevated" | "critical";
-      posture?: boolean;
       countryCode?: string;
       evidenceCount?: number;
       incident?: EscalationIncident;
@@ -187,29 +184,6 @@ const TERRAIN_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrariu
  * it a crisp, identical symbol everywhere, the same way a real pin icon
  * would be shipped as an asset rather than relying on a text character.
  */
-/** Posture alert: a red circle with a white exclamation mark at its centre. */
-function buildPostureIconImageData(): ImageData {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  ctx.beginPath();
-  ctx.arc(size / 2, size / 2, size * 0.44, 0, Math.PI * 2);
-  ctx.fillStyle = "#e02424";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,0.65)";
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  ctx.fillStyle = "#ffffff";
-  const stemWidth = size * 0.1;
-  ctx.fillRect(size / 2 - stemWidth / 2, size * 0.26, stemWidth, size * 0.32);
-  ctx.beginPath();
-  ctx.arc(size / 2, size * 0.7, stemWidth * 0.75, 0, Math.PI * 2);
-  ctx.fill();
-  return ctx.getImageData(0, 0, size, size);
-}
-
 function buildWarningIconImageData(fillColor: string): ImageData {
   const size = 64;
   const canvas = document.createElement("canvas");
@@ -267,7 +241,6 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
         ...(p.actor ? { actor: p.actor } : {}),
         ...(p.details ? { details: p.details } : {}),
         ...(p.escalationLevel ? { escalationLevel: p.escalationLevel } : {}),
-        ...(p.posture ? { posture: true } : {}),
         ...(p.countryCode ? { countryCode: p.countryCode } : {}),
         ...(p.evidenceCount != null ? { evidenceCount: p.evidenceCount } : {}),
       },
@@ -452,7 +425,6 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
 
       map.addImage("warning-icon-critical", buildWarningIconImageData("#ff3d3d"), { pixelRatio: 2 });
       map.addImage("warning-icon-elevated", buildWarningIconImageData("#ff9d4f"), { pixelRatio: 2 });
-      map.addImage("posture-alert-icon", buildPostureIconImageData(), { pixelRatio: 2 });
 
       // The points already in hand, not an empty set: data that arrived
       // before the style finished loading would otherwise stay undrawn
@@ -516,10 +488,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         source: "osiris-points",
         filter: ["has", "escalationLevel"],
         layout: {
-          // Posture incidents get the red alert circle, centred on the point; the rest keep the triangle.
-          "icon-image": ["case", ["==", ["get", "posture"], true], "posture-alert-icon", ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-elevated"]],
-          "icon-size": ["case", ["==", ["get", "posture"], true], 0.5, ["match", ["get", "escalationLevel"], "critical", 0.6, "elevated", 0.48, 0.48]],
-          "icon-anchor": ["case", ["==", ["get", "posture"], true], "center", "bottom"],
+          "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-elevated"],
+          "icon-size": ["match", ["get", "escalationLevel"], "critical", 0.6, "elevated", 0.48, 0.48],
+          "icon-anchor": "bottom",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },
