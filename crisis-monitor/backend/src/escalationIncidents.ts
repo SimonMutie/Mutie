@@ -994,17 +994,18 @@ interface IncidentDbRow {
 const RELOCATION_KEY = "relocated_by_evidence_v2";
 /** The note the first version left on a report it moved away from a place that was not the dateline. */
 const PASSING_MOVE_RX = /^Located at .+, the place the event's own description names, not (.+)\.$/;
-/** Capitals of the countries most often misplaced by the model. */
-const CAPITALS: Record<string, string> = { SD: "khartoum", ET: "addis ababa", EG: "cairo", SS: "juba", SO: "mogadishu", ER: "asmara", LY: "tripoli", SA: "riyadh", CD: "kinshasa", NG: "abuja", KE: "nairobi", UG: "kampala", SN: "dakar", ML: "bamako" };
-const isCapitalOf = (place: string, countryCode: string): boolean => CAPITALS[countryCode] === normalizeName(place);
 
-const COUNTRY_CORRECTION_KEY = "country_correction_v1";
+const COUNTRY_CORRECTION_KEY = "country_correction_v2";
+
+/** Capitals of the countries most often misplaced by the model. */
+const CAPITALS: Record<string, string> = { SD: "khartoum", ET: "addis ababa", EG: "cairo", SS: "juba", SO: "mogadishu", ER: "asmara", LY: "tripoli", SA: "riyadh", CD: "kinshasa", NG: "abuja", KE: "nairobi", UG: "kampala" };
 
 /**
- * One-time correction of stored reports against their own headlines, using
- * the same rules as new coding (verifyCoding): a headline that names a
- * different country wins; a national capital the headline does not name is
- * a guess, so the report falls back to country level.
+ * One-time re-reading of stored articles whose recorded country or place
+ * contradicts their own headline (a story about Ethiopia recorded in Sudan's
+ * capital). Their reports are removed and the articles are made fresh again,
+ * so the AI reads them once more on the normal reading path — the opening
+ * paragraphs for major events — and the corrected rules apply.
  */
 export async function correctStoredCountries(env: Env): Promise<number> {
   if ((await getState(env, COUNTRY_CORRECTION_KEY)) === "1") return 0;
@@ -1014,32 +1015,26 @@ export async function correctStoredCountries(env: Env): Promise<number> {
     `SELECT r.id, r.country_code, r.place, a.title FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id WHERE r.created_at >= ? AND a.title IS NOT NULL`,
     [since]
   );
-  const budget: GeocodeBudget = { remaining: 4 };
-  let fixed = 0;
+  const articles = new Set<string>();
   for (const r of rows) {
     const titleNorm = normalizeName(r.title ?? "");
     const titleCountry = locateText(r.title)?.countryCode ?? null;
     const placeInTitle = !!r.place && titleNorm.includes(normalizeName(r.place));
-    let countryCode = r.country_code;
-    let place = r.place;
-    if (titleCountry && titleCountry !== r.country_code && !placeInTitle) {
-      countryCode = titleCountry;
-      place = null;
-    } else if (place && !placeInTitle && isCapitalOf(place, r.country_code)) {
-      // A capital the headline does not name is a guess, not the place.
-      place = null;
-    }
-    if (countryCode === r.country_code && place === r.place) continue;
-    const loc = await resolvePlace(env, { countryCode, place, admin1: null, modelLat: null, modelLon: null }, budget);
-    await run(
-      env.DB,
-      `UPDATE escalation_reports SET country_code = ?, country_name = ?, place = ?, admin1 = NULL, lat = ?, lon = ?, geo_precision = ?, geo_method = ?, geo_label = ?, incident_id = NULL WHERE id = ?`,
-      [countryCode, countryName(countryCode), place, loc.lat, loc.lon, loc.precision, loc.method, loc.label, r.id]
-    );
+    const wrongCountry = !!titleCountry && titleCountry !== r.country_code && !placeInTitle;
+    const unnamedCapital = !!r.place && !placeInTitle && CAPITALS[r.country_code] === normalizeName(r.place);
+    if (wrongCountry || unnamedCapital) articles.add(r.id);
+  }
+  // Keyed by report id, so resolve each report's article and clear it.
+  let fixed = 0;
+  for (const reportId of articles) {
+    const row = await first<{ article_id: string }>(env.DB, "SELECT article_id FROM escalation_reports WHERE id = ?", [reportId]);
+    if (!row) continue;
+    await run(env.DB, "DELETE FROM escalation_reports WHERE article_id = ?", [row.article_id]);
+    await run(env.DB, "DELETE FROM escalation_articles WHERE id = ?", [row.article_id]);
     fixed++;
   }
   await setState(env, COUNTRY_CORRECTION_KEY, "1");
-  if (fixed > 0) console.log(`[escalation] corrected the country or place of ${fixed} stored report(s) against their headlines`);
+  if (fixed > 0) console.log(`[escalation] queued ${fixed} stored article(s) for a fresh reading: their recorded country or place contradicted the headline`);
   return fixed;
 }
 
