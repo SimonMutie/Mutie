@@ -1,10 +1,8 @@
 /**
  * The opening sequence's sound: a spoken welcome and a soft tone.
  *
- * The welcome is Simon Mutie's own voice — his recording, cleaned of
- * background noise, levelled, and with the hesitations between words closed
- * up so it runs as one smooth line — shipped with the site
- * (public/audio/welcome.mp3). Because it is a file, it sounds the same on
+ * The welcome is a recording supplied by Simon Mutie, used exactly as he
+ * provided it and shipped with the site (public/audio/welcome.mp3). Because it is a file, it sounds the same on
  * every device and uses no service at run time. If the file cannot be
  * played, the visitor's browser reads the line aloud itself.
  *
