@@ -424,16 +424,6 @@ const LAYER_DEFS: LayerDef[] = [
         url: null,
       })),
   },
-  // Whole provinces shaded red where fighting was reported over the last two days (backend lib/conflictZones.ts).
-  // Drawn on the map itself, so the layer has no points of its own.
-  {
-    key: "conflict-zones",
-    label: "Escalation Provinces",
-    group: "Threats & Intel",
-    color: "#e02424",
-    icon: Siren,
-    fetcher: async () => [],
-  },
   {
     key: "global-incidents",
     label: "Global Incidents",
@@ -965,7 +955,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "submarine-cables": false,
     "ais-vessels": false,
     "ucdp-conflict-events": false,
-    "conflict-zones": true,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
   // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
