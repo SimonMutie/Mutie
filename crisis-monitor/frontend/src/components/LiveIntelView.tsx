@@ -1,7 +1,6 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
 import { MarketsPanel } from "./MarketsPanel";
 import { EconomyPanel } from "./EconomyPanel";
-import { STANDING_HOTSPOTS } from "../standingHotspots";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapCompass } from "./LeafletMapControls";
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
@@ -402,28 +401,6 @@ const LAYER_DEFS: LayerDef[] = [
   // GDELT query instead — see the backend's /global-incidents route
   // comment for the exact query — still real, still keyless, no
   // licensing conflict.
-  // Not live data: a curated list of long-running flashpoints (see standingHotspots.ts), so the map shows where to
-  // look on a quiet day. Live, verified escalations are the alert layers; nothing here is an alert.
-  {
-    key: "standing-hotspots",
-    label: "Standing Hotspots",
-    group: "Threats & Intel",
-    color: "#c084fc",
-    icon: Flag,
-    fetcher: async () =>
-      STANDING_HOTSPOTS.map((h) => ({
-        id: `hotspot-${h.id}`,
-        layerKey: "Standing Hotspots",
-        lat: h.lat,
-        lng: h.lon,
-        color: "#c084fc",
-        size: 0.26,
-        title: h.name,
-        subtitle: `Standing hotspot (reference, not a live alert) — ${h.note}`,
-        time: null,
-        url: null,
-      })),
-  },
   // Whole provinces shaded red where fighting was reported over the last two days (backend lib/conflictZones.ts).
   // Drawn on the map itself, so the layer has no points of its own.
   {
@@ -482,49 +459,6 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
-  // Flagged escalation incidents (backend: escalationIncidents.ts) — one
-  // marker per incident, placed where the reporting says the event happened.
-  // Each one is the product of reports coded against the written codebook
-  // — articles read in full, or, until that happens, headlines matched by
-  // fixed rules (the panel then says "preliminary"); it shows the criteria met, the
-  // indicators with their supporting quotes, the sources, and how precisely
-  // the incident is located.
-  {
-    key: "conflict-escalation",
-    label: "Conflict Escalation",
-    group: "Threats & Intel",
-    color: "#ff9d4f",
-    icon: AlertTriangle,
-    // Built directly rather than through fromGateway() — this is the one
-    // layer that needs a per-point field (escalationLevel) fromGateway's
-    // fixed output shape doesn't carry, since it drives the warning-icon
-    // treatment and severity coloring in Map3D.tsx.
-    fetcher: async () => {
-      const collection = await api.getConflictEscalation();
-      return collection.features.map((f) => {
-        const level = f.properties.escalationLevel ?? "elevated";
-        return {
-          id: f.properties.id,
-          layerKey: "Conflict Escalation",
-          lat: f.geometry.coordinates[1],
-          lng: f.geometry.coordinates[0],
-          color: level === "critical" ? "#ff5d5d" : "#ff9d4f",
-          // Bigger and pinned to a fixed size per level (not intensity-
-          // scaled like the point layers) — this is meant to read as a
-          // deliberate warning marker, not just another dot in the swarm.
-          size: level === "critical" ? 0.4 : 0.3,
-          title: f.properties.title,
-          subtitle: f.properties.detail,
-          time: f.properties.time,
-          url: f.properties.url,
-          escalationLevel: level,
-          countryCode: f.properties.countryCode,
-          evidenceCount: f.properties.evidenceCount,
-          incident: f.properties.incident,
-        };
-      });
-    },
-  },
   // Deliberately separate from GDELT Events above — GDELT is a real-time,
   // unverified news-mention feed; this is UCDP's own academically-coded
   // Georeferenced Event Dataset (CC BY 4.0, verified commercial-safe), with
