@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Clapperboard, Radio } from "lucide-react";
 import { visualsApi } from "../api";
 import { useSessionUser } from "../session";
 import { settleForCapture, revealEverything } from "../lib/motion";
@@ -18,6 +19,7 @@ export default function PublishVisualButton({
   title,
   kicker,
   disabled,
+  compact = false,
   reason,
 }: {
   target: () => HTMLElement | null;
@@ -25,6 +27,8 @@ export default function PublishVisualButton({
   kicker: string;
   disabled?: boolean;
   reason?: string;
+  /** Icon-only buttons, for dashboard widget headers. */
+  compact?: boolean;
 }) {
   const user = useSessionUser();
   const [busy, setBusy] = useState<"live" | "gif" | null>(null);
@@ -81,12 +85,25 @@ export default function PublishVisualButton({
 
   return (
     <span className="pv-wrap">
-      <button type="button" className="pv-btn" onClick={() => publish("live")} disabled={off} title={hint ?? "Publish a live copy that plays the visual's motion"}>
-        {busy === "live" ? progress ?? "Publishing…" : "Publish live"}
-      </button>
-      <button type="button" className="pv-btn" onClick={() => publish("gif")} disabled={off} title={hint ?? "Publish an animated GIF of the visual"}>
-        {busy === "gif" ? progress ?? "Publishing…" : "Publish GIF"}
-      </button>
+      {compact ? (
+        <>
+          <button type="button" className="pv-btn pv-btn--icon" onClick={() => publish("live")} disabled={off} aria-label="Publish live" title={busy === "live" ? progress ?? "Publishing…" : hint ?? "Publish live: a copy that plays the visual's motion"}>
+            <Radio size={14} aria-hidden="true" />
+          </button>
+          <button type="button" className="pv-btn pv-btn--icon" onClick={() => publish("gif")} disabled={off} aria-label="Publish GIF" title={busy === "gif" ? progress ?? "Publishing…" : hint ?? "Publish GIF: an animated recording of the visual"}>
+            <Clapperboard size={14} aria-hidden="true" />
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="pv-btn" onClick={() => publish("live")} disabled={off} title={hint ?? "Publish a live copy that plays the visual's motion"}>
+            {busy === "live" ? progress ?? "Publishing…" : "Publish live"}
+          </button>
+          <button type="button" className="pv-btn" onClick={() => publish("gif")} disabled={off} title={hint ?? "Publish an animated GIF of the visual"}>
+            {busy === "gif" ? progress ?? "Publishing…" : "Publish GIF"}
+          </button>
+        </>
+      )}
       {copied && <span className="pv-note" role="status">Link copied</span>}
       {link && (
         <span className="pv-link">

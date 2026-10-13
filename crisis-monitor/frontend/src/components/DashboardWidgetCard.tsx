@@ -860,7 +860,7 @@ export default function DashboardWidgetCard({
                 gifProgress={gifProgress}
                 gifError={gifError}
               />
-              <PublishVisualButton target={() => cardRef.current} title={widget.title || "Widget"} kicker="Dashboard widget" />
+              <PublishVisualButton target={() => cardRef.current} title={widget.title || "Widget"} kicker="Dashboard widget" compact />
               {showFullControls && onRemove && (
                 <button onClick={onRemove} title="Remove widget" style={{ ...miniBtnStyle, color: "var(--critical)" }}>
                   ×
@@ -882,7 +882,7 @@ export default function DashboardWidgetCard({
                 gifProgress={gifProgress}
                 gifError={gifError}
               />
-              <PublishVisualButton target={() => cardRef.current} title={widget.title || "Widget"} kicker="Dashboard widget" />
+              <PublishVisualButton target={() => cardRef.current} title={widget.title || "Widget"} kicker="Dashboard widget" compact />
             </div>
           )}
         </div>

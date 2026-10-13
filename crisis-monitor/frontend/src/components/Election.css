@@ -1260,6 +1260,8 @@
 .pv-btn { font: inherit; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--text); cursor: pointer; }
 .pv-btn:hover:not(:disabled) { border-color: var(--signal); color: var(--signal); }
 .pv-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Icon-only in dashboard widget headers; the name is in the tooltip and for screen readers. */
+.pv-btn--icon { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; }
 .pv-note { font-size: 12px; font-weight: 700; color: var(--text-muted); }
 .pv-link { flex-basis: 100%; display: flex; }
 .pv-link input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
