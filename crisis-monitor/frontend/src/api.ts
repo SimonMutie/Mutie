@@ -1868,6 +1868,10 @@ export const api = {
     req<{ window_end: string; escalation_score: number; volume: number }[]>(`/api/stats/escalation/${queryId}`),
 
   stagingBatches: () => req<StagingBatch[]>("/api/incident-staging/batches"),
+  electionTimeline: (country: "KE" | "SS") => req<{ entries: ElectionEntryView[] }>(`/api/election-timeline/${country}`),
+  electionReviewList: () => req<{ proposals: ElectionProposalRow[] }>(`/api/election-review`),
+  electionReviewDecide: (id: string, body: { status: "approved" | "rejected" | "hidden"; date?: string | null; detail?: string | null }) =>
+    req<{ ok: boolean }>(`/api/election-review/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(body) }),
   stagingList: (date: string) => req<StagedIncident[]>(`/api/incident-staging?date=${encodeURIComponent(date)}`),
   stagingCollect: (hours = 24) => req<{ staged: number; batchDate: string }>("/api/incident-staging/collect", { method: "POST", body: JSON.stringify({ hours }) }),
   stagingPatch: (id: string, patch: { status?: StagingStatus; row?: Partial<IncidentRow> }) =>
@@ -2287,4 +2291,31 @@ export interface DashboardVersion {
   saved_by: string | null;
   reason: string | null;
   widget_count: number;
+}
+
+/** An approved, dated event added to an election timeline by review. */
+export interface ElectionEntryView {
+  id: string;
+  countryCode: string;
+  kind: string;
+  title: string;
+  date: string;
+  detail: string | null;
+  sourceUrl: string;
+  sourceDomain: string | null;
+}
+
+/** A detected headline awaiting review (or already reviewed). */
+export interface ElectionProposalRow {
+  id: string;
+  country_code: string;
+  kind: string;
+  title: string;
+  source_url: string;
+  source_domain: string | null;
+  published_at: string | null;
+  status: "proposed" | "approved" | "rejected" | "hidden";
+  date: string | null;
+  detail: string | null;
+  reviewed_at: string | null;
 }

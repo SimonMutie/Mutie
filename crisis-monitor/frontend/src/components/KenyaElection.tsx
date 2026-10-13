@@ -17,9 +17,10 @@ import {
   type Region,
 } from "../data/kenyaElection";
 import { ElectionDataCtx, mergeLive, type Live } from "../data/electionLive";
-import { watchApi } from "../api";
+import { api, watchApi } from "../api";
 import { GroupedHBars, HBars, Timeline, type TimelineEvent } from "./charts";
 import ElectionManage from "./ElectionManage";
+import ElectionReviewPanel from "./ElectionReviewPanel";
 import ElectionSimulator from "./ElectionSimulator";
 import MonthlyReport from "./MonthlyReport";
 import { SectionFrame } from "./SectionToggle";
@@ -60,10 +61,13 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
   const [live, setLive] = useState<Live>(() => mergeLive(null));
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const loadContent = () =>
-    watchApi("ke")
-      .content()
-      .then((c) => {
-        setLive(mergeLive(c));
+    Promise.all([
+      watchApi("ke").content().catch(() => null),
+      // Approved events from news reports, added by review; a failure just leaves them out.
+      api.electionTimeline("KE").then((r) => r.entries).catch(() => []),
+    ])
+      .then(([c, added]) => {
+        setLive(mergeLive(c, added));
         setRefreshedAt(new Date());
       })
       .catch(() => {});
@@ -143,6 +147,7 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
         {isAdmin && (
           <section className="el-section" id="el-manage">
             <ElectionManage live={live} onChanged={loadContent} />
+            <ElectionReviewPanel country="KE" onChanged={loadContent} />
           </section>
         )}
         <SourcesSection />
@@ -232,8 +237,10 @@ const BASIS: Record<Milestone["basis"], string> = { gazetted: "IEBC gazette", co
 function TimelineSection() {
   const { timeline: TIMELINE } = useContext(ElectionDataCtx);
   const [showPast, setShowPast] = useState(false);
+  const [showAdded, setShowAdded] = useState(true);
   const now = Date.now();
-  const items = [...TIMELINE].sort((a, b) => at(a.date) - at(b.date));
+  const addedCount = TIMELINE.filter((m) => m.added).length;
+  const items = TIMELINE.filter((m) => showAdded || !m.added).sort((a, b) => at(a.date) - at(b.date));
   const past = items.filter((m) => at(m.until ?? m.date) < now - DAY);
   const rest = items.filter((m) => !past.includes(m));
   const nextId = rest[0] ? rest[0].date + rest[0].title : "";
@@ -259,6 +266,11 @@ function TimelineSection() {
           {showPast ? "Hide" : "Show"} earlier events ({past.length})
         </button>
       )}
+      {addedCount > 0 && (
+        <button type="button" className="el-link" aria-pressed={showAdded} onClick={() => setShowAdded(!showAdded)}>
+          {showAdded ? "Hide" : "Show"} events reported in the news ({addedCount})
+        </button>
+      )}
       <ol className="el-timeline">
         {(showPast ? [...past, ...rest] : rest).map((m) => {
           const isPast = past.includes(m);
@@ -275,12 +287,18 @@ function TimelineSection() {
               <div className="el-timeline__body">
                 <p className="el-timeline__meta">
                   <span className={`el-chip el-chip--${m.basis}`}>{BASIS[m.basis]}</span>
+                  {m.added && <span className="el-chip">Reported</span>}
                   <span>{m.phase}</span>
                   {isNext && <span className="el-chip el-chip--next">Next{d > 0 ? ` · ${d} days` : ""}</span>}
                   {!isPast && !isNext && d > 0 && <span className="el-faint">in {d} days</span>}
                 </p>
                 <h3>{m.title}</h3>
                 <p>{m.detail}</p>
+                {m.added && m.sourceUrl && (
+                  <p className="el-small">
+                    Reported by <a href={m.sourceUrl} target="_blank" rel="noreferrer noopener">{m.source ?? "a news source"}</a>. Added after review.
+                  </p>
+                )}
               </div>
             </li>
           );

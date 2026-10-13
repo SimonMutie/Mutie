@@ -60,8 +60,22 @@ export interface Milestone {
   short?: string;
   detail: string;
   basis: "nec" | "agreement" | "court" | "event";
-  source: SourceKey;
+  /** A key into SOURCES. Events added by review carry sourceUrl instead. */
+  source?: SourceKey;
   key?: boolean;
+  /** Added by review from a news source, not part of the calendar as first published. */
+  added?: boolean;
+  sourceUrl?: string;
+  sourceDomain?: string | null;
+}
+
+/** Where a milestone's fact comes from, as a link and a label. */
+export function milestoneSourceLink(m: Milestone): { url: string; text: string } {
+  if (m.source) {
+    const s = SOURCES[m.source];
+    return { url: s.url, text: `${s.publisher}, ${s.date}` };
+  }
+  return { url: m.sourceUrl ?? "", text: m.sourceDomain ?? "Reported" };
 }
 
 export const TIMELINE: Milestone[] = [

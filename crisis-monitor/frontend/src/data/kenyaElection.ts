@@ -99,6 +99,11 @@ export interface Milestone {
   key?: boolean;
   /** Short label for the timeline strip. */
   short?: string;
+  /** Added by review from a news source, not part of the gazette or the Constitution. */
+  added?: boolean;
+  /** Where an added event was reported: the publisher's domain, and the article. */
+  source?: string;
+  sourceUrl?: string;
 }
 
 export const TIMELINE: Milestone[] = [
