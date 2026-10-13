@@ -1,4 +1,5 @@
 import { countryName, locateText, regionNamedIn, type TextLocation } from "./africaGeo";
+import { splitDateline } from "./dateline";
 import { matchNonStateArmedGroups, matchStateMilitaries } from "./escalationKeywords";
 import type { IndicatorId } from "./escalationCodebook";
 import type { RawCodedEvent, RawCoding } from "./escalationCoder";
@@ -429,7 +430,10 @@ export function headlineText(item: HeadlineItem): string {
   const summary = (item.feedText ?? "").replace(/\s+/g, " ").trim();
   const opening = summary.length > SUMMARY_CHARS ? summary.slice(0, summary.lastIndexOf(" ", SUMMARY_CHARS)) : summary;
   // A feed summary very often begins by repeating the headline.
-  const rest = title && opening.toLowerCase().startsWith(title.toLowerCase()) ? opening.slice(title.length).replace(/^[\s.:–—-]+/, "") : opening;
+  const repeated = title && opening.toLowerCase().startsWith(title.toLowerCase()) ? opening.slice(title.length).replace(/^[\s.:–—-]+/, "") : opening;
+  // "DUBAI, Oct 12 (Reuters) - …": where the story was filed from is not where anything happened, and read
+  // as the first place named it would win the location (dateline.ts).
+  const rest = splitDateline(repeated).rest;
   return [title, rest].filter(Boolean).join(". ").replace(/\.\.+/g, ".");
 }
 

@@ -529,10 +529,20 @@ const MENTION_MAX_WORDS = 6;
  *  earliest mention wins. Returns null when the text names nowhere in
  *  Africa — the caller must not substitute a guess. */
 export function locateText(text: string | null | undefined): TextLocation | null {
-  if (!text) return null;
+  const all = namedLocations(text);
+  if (all.length === 0) return null;
+  const rank = { place: 2, region: 1, country: 0 } as const;
+  // A town beats a region beats a country; among equals the earliest mention wins (the list is in text order).
+  return all.reduce((best, l) => (rank[l.precision] > rank[best.precision] ? l : best));
+}
+
+/** Every place, region and country a text names that can be resolved, one per mention, in the order they
+ *  appear — under the same rules as locateText (ambiguous short names need their country named too). */
+export function namedLocations(text: string | null | undefined): TextLocation[] {
+  if (!text) return [];
   // "Ethiopia's" must read as "Ethiopia", not as the unknown word "ethiopias".
   const words = normalizeName(text.replace(/['’‘ʼ]s\b/g, "")).replace(/[()]/g, " ").replace(/\bpapua new guinea\b/g, " ").split(" ").filter(Boolean);
-  if (words.length === 0) return null;
+  if (words.length === 0) return [];
   const used = new Array<boolean>(words.length).fill(false);
   const found: { at: number; entries: MentionEntry[]; name: string }[] = [];
 
@@ -546,7 +556,7 @@ export function locateText(text: string | null | undefined): TextLocation | null
       found.push({ at: i, entries, name });
     }
   }
-  if (found.length === 0) return null;
+  if (found.length === 0) return [];
 
   const isAmbiguous = (name: string) => NEEDS_COUNTRY_MENTION.has(name) || (name.replace(/ /g, "").length <= 4 && !WELL_KNOWN_SHORT.has(name));
   // Countries the text vouches for: named outright, or implied by an
@@ -558,19 +568,21 @@ export function locateText(text: string | null | undefined): TextLocation | null
     if (f.entries.some((e) => e.kind === "country") || (codes.size === 1 && !isAmbiguous(f.name))) for (const c of codes) countries.add(c);
   }
   const rank = { place: 2, region: 1, country: 0 } as const;
-  let best: { at: number; entry: MentionEntry; name: string } | null = null;
-  for (const f of found) {
+  const out: TextLocation[] = [];
+  for (const f of [...found].sort((a, b) => a.at - b.at)) {
     const ambiguousName = isAmbiguous(f.name);
+    // One reading per mention: the most specific that qualifies.
+    let pick: MentionEntry | null = null;
     for (const e of f.entries) {
       if (e.kind !== "country") {
         const otherCountries = f.entries.filter((x) => x.kind !== "country" && x.countryCode !== e.countryCode).length > 0;
         if ((ambiguousName || otherCountries) && !countries.has(e.countryCode)) continue;
       }
-      if (!best || rank[e.kind] > rank[best.entry.kind] || (rank[e.kind] === rank[best.entry.kind] && f.at < best.at)) best = { at: f.at, entry: e, name: f.name };
+      if (!pick || rank[e.kind] > rank[pick.kind]) pick = e;
     }
+    if (pick) out.push({ lat: pick.lat, lon: pick.lon, label: pick.label, countryCode: pick.countryCode, precision: pick.kind, matchedName: f.name });
   }
-  if (!best) return null;
-  return { lat: best.entry.lat, lon: best.entry.lon, label: best.entry.label, countryCode: best.entry.countryCode, precision: best.entry.kind, matchedName: best.name };
+  return out;
 }
 
 /** The region (state, province) of `countryCode` that a text names, if any

@@ -12,6 +12,8 @@ import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, typ
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
 import { codeHeadline, headlineText, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
+import { placeFromEvidence } from "./lib/eventPlace";
+import { datelinePlaces } from "./lib/dateline";
 import type { EscalationCandidate } from "./durableObjects/africaWireActor";
 
 /**
@@ -925,6 +927,45 @@ interface IncidentDbRow {
   alert_id: string | null; first_event_date: string | null; last_event_date: string | null; created_at: string; updated_at: string;
 }
 
+/**
+ * One-off repair for reports coded before the event-description rule
+ * (lib/eventPlace.ts) existed: any report from the last three days whose
+ * place is not named in its own description of the event, where that
+ * description names one other town or region, is moved there and released
+ * from its incident. The next steps of the same tick re-file it — into the
+ * incident at its true location — and close any incident left with no
+ * reports, resolving its alert. This is how a strike on Riyadh that had been
+ * placed at the story's dateline (Dubai) is put back in Riyadh.
+ */
+const RELOCATION_KEY = "relocated_by_evidence_v1";
+export async function relocateRecentReports(env: Env): Promise<number> {
+  if ((await getState(env, RELOCATION_KEY)) === "1") return 0;
+  const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const rows = (await all<ReportDbRow>(env.DB, `${REPORT_SELECT} WHERE r.created_at >= ? AND (r.incident_id IS NULL OR r.incident_id != 'stale')`, [since])).map(toStoredReport);
+  const budget: GeocodeBudget = { remaining: 4 };
+  let moved = 0;
+  for (const r of rows) {
+    const fix = placeFromEvidence({
+      countryCode: r.countryCode,
+      place: r.place,
+      admin1: r.admin1,
+      evidence: [r.whatHappened, ...r.indicators.map((i) => i.quote)],
+      filedFrom: datelinePlaces(r.excerpt ?? ""),
+    });
+    if (!fix) continue;
+    const loc = await resolvePlace(env, { countryCode: fix.countryCode, place: fix.place, admin1: fix.admin1, modelLat: null, modelLon: null }, budget);
+    await run(
+      env.DB,
+      `UPDATE escalation_reports SET country_code = ?, country_name = ?, place = ?, admin1 = ?, lat = ?, lon = ?, geo_precision = ?, geo_method = ?, geo_label = ?, notes = ?, incident_id = NULL WHERE id = ?`,
+      [fix.countryCode, countryName(fix.countryCode), fix.place, fix.admin1, loc.lat, loc.lon, loc.precision, loc.method, loc.label, JSON.stringify([...r.notes, fix.note]), r.id]
+    );
+    moved++;
+  }
+  await setState(env, RELOCATION_KEY, "1");
+  if (moved > 0) console.log(`[escalation] moved ${moved} report(s) to the place their own description names`);
+  return moved;
+}
+
 async function assignNewReports(env: Env): Promise<void> {
   const unassigned = (await all<ReportDbRow>(env.DB, `${REPORT_SELECT} WHERE r.incident_id IS NULL ORDER BY r.created_at`)).map(toStoredReport);
   if (unassigned.length === 0) return;
@@ -1227,6 +1268,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
       }
     }
 
+    await relocateRecentReports(env).catch((err) => console.error("[escalation] relocation failed", err));
     await assignNewReports(env);
     const incidents = await refreshIncidents(env);
     if (new Date().getUTCMinutes() < 5) await pruneOldRows(env);
