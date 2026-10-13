@@ -287,7 +287,7 @@ interface GlobePoint {
   details?: string;
   /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
    *  Undefined on every other layer. */
-  escalationLevel?: "elevated" | "critical";
+  escalationLevel?: "watch" | "elevated" | "critical";
   /** Conflict Escalation only — used to fetch the full evidence/source-link
    *  list for this country on click. Undefined on every other layer. */
   countryCode?: string;
@@ -498,11 +498,11 @@ const LAYER_DEFS: LayerDef[] = [
           layerKey: "Conflict Escalation",
           lat: f.geometry.coordinates[1],
           lng: f.geometry.coordinates[0],
-          color: level === "critical" ? "#ff5d5d" : "#ff9d4f",
+          color: level === "critical" ? "#ff5d5d" : level === "watch" ? "#c9a227" : "#ff9d4f",
           // Bigger and pinned to a fixed size per level (not intensity-
           // scaled like the point layers) — this is meant to read as a
           // deliberate warning marker, not just another dot in the swarm.
-          size: level === "critical" ? 0.4 : 0.3,
+          size: level === "critical" ? 0.4 : level === "watch" ? 0.24 : 0.3,
           title: f.properties.title,
           subtitle: f.properties.detail,
           time: f.properties.time,

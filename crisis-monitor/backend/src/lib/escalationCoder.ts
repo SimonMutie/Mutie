@@ -504,7 +504,7 @@ export interface SynthesisSource {
 export interface IncidentSynthesisInput {
   locationLabel: string;
   countryName: string;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   criteriaMet: string[];
   sources: SynthesisSource[];
 }

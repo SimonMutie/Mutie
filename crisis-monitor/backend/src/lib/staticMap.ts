@@ -9,7 +9,7 @@ import { PROVINCES, provinceAt, type Province } from "./conflictZones";
  * The same scene is written as SVG (shown in the app) and as a PNG (attached to emails, where SVG is not shown).
  * The maps carry no text; the caption goes beside them.
  */
-export type MapLevel = "elevated" | "critical";
+export type MapLevel = "watch" | "elevated" | "critical";
 export type MapPrecision = "place" | "approximate" | "region" | "country";
 
 export const MAP_W = 640;
@@ -35,6 +35,7 @@ const LAND_EDGE = "#3a4560";
 const COLORS: Record<MapLevel, { fill: string; edge: string; pin: string }> = {
   critical: { fill: "rgba(224,36,36,0.62)", edge: "#ff6a6a", pin: "#ff3d3d" },
   elevated: { fill: "rgba(224,110,42,0.58)", edge: "#ffa56a", pin: "#ff9500" },
+  watch: { fill: "rgba(201,162,39,0.45)", edge: "#e6c25a", pin: "#c9a227" },
 };
 
 export function buildMapScene(i: { lat: number; lon: number; level: MapLevel; precision: MapPrecision; countryCode?: string | null }): MapScene {

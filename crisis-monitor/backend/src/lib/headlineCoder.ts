@@ -555,3 +555,24 @@ export function codeHeadline(item: HeadlineItem, now = new Date()): RawCoding {
   };
   return { is_event_report: true, events: [event] };
 }
+
+// ── Major events that name only a country ────────────────────────────────
+
+const MAJOR_TOLL_RX = /\b(\d{1,4})\s+(?:\w+\s+){0,3}?(?:killed|dead|died|deaths?|dies|fatalities|bodies)\b/gi;
+const MAJOR_WORDS_RX = /\b(dozens|tens|scores|hundreds)\s+(?:of\s+)?(?:\w+\s+){0,2}?(?:killed|dead|died|deaths?|people|civilians|soldiers|fighters|militiamen)\b/i;
+const MAJOR_EVENT_RX =
+  /\b(air ?strikes?|drone (?:strikes?|attacks?)|bomb(?:ed|ing|s)?|massacre|coup|mutiny|offensive|captured|seized|overran|interstate|invasion|incursion)\b/i;
+
+/**
+ * A headline about a major event that names a country but no town. The first
+ * pass cannot place it, so it is read in full on a priority lane. Major means
+ * a death toll of ten or more (or "dozens"/"tens"), or a strike, massacre,
+ * coup or capture of ground.
+ */
+export function isMajorUnlocated(item: HeadlineItem, now = new Date()): boolean {
+  if (codeHeadline(item, now).rejection_reason !== "unverified") return false;
+  const text = headlineText(item);
+  const tolls = [...text.matchAll(MAJOR_TOLL_RX)].map((m) => Number(m[1]));
+  const bigWords = /\b(dozens|tens|scores|hundreds)\b/i.test(text) && /\b(kill\w*|dead|died|deaths?|slain|massacre\w*)\b/i.test(text);
+  return tolls.some((n) => n >= 10) || bigWords || MAJOR_WORDS_RX.test(text) || MAJOR_EVENT_RX.test(text);
+}

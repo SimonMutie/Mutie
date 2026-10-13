@@ -14,7 +14,7 @@ import "./EscalationHoverCard.css";
  * address.
  */
 
-const LEVEL: Record<EscalationIncident["level"], string> = { elevated: "ELEVATED", critical: "CRITICAL" };
+const LEVEL: Record<EscalationIncident["level"], string> = { watch: "WATCH", elevated: "ELEVATED", critical: "CRITICAL" };
 const isWebUrl = (url: string | null | undefined): url is string => !!url && /^https?:\/\//i.test(url);
 
 const clamp = (text: string, max: number) => {

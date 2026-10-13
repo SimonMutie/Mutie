@@ -33,7 +33,7 @@ export const PROVINCES: Province[] = (provincesJson as unknown as [string, strin
 export interface EscalationPoint {
   lat: number;
   lon: number;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   /** Where the incident is, as named. */
   label?: string | null;
 }

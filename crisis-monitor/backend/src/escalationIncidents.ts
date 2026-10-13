@@ -11,7 +11,7 @@ import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, loose
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
-import { codeHeadline, headlineText, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
+import { codeHeadline, headlineText, isMajorUnlocated, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
 import { placeFromEvidence } from "./lib/eventPlace";
 import { datelinePlaces } from "./lib/dateline";
 import type { EscalationCandidate } from "./durableObjects/africaWireActor";
@@ -82,7 +82,7 @@ const GEOCODER_CALLS_PER_TICK = 6;
 /** Nothing published longer ago than the active window can be about an
  *  event inside it, so older items are not collected, read or coded. */
 const CANDIDATE_MAX_AGE_HOURS = ACTIVE_WINDOW_HOURS;
-const GDELT_CANDIDATE_WINDOW_HOURS = 48;
+const GDELT_CANDIDATE_WINDOW_HOURS = 24;
 const MAX_ATTEMPTS = 3;
 /** The most first-pass (headline) reports stored in one tick. */
 const HEADLINE_REPORTS_PER_TICK = 40;
@@ -364,6 +364,8 @@ interface ProcessStats {
   reports: number;
   /** Articles for which no model returned a coding this tick. */
   modelFailures: number;
+  /** Major headline-only events queued for an opening-paragraph reading. */
+  priority?: number;
   /** Reports stored this tick by the headline first pass. */
   headlineCoded: number;
 }
@@ -530,7 +532,18 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
   }
 }
 
-async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBudget, stats: ProcessStats): Promise<void> {
+/** The opening paragraph of an article: enough for where and what. Used for
+ *  major events the headline names only by country, so the reading is cheap
+ *  and fast. */
+export function openingParagraph(text: string): string {
+  const paras = text.split(/\n\s*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter((p) => p.length > 0);
+  const first = paras.find((p) => p.length >= 80) ?? paras[0] ?? "";
+  if (first.length <= 1200) return first;
+  const cut = first.slice(0, 1200);
+  return cut.slice(0, Math.max(cut.lastIndexOf(". "), 600) + 1);
+}
+
+async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBudget, stats: ProcessStats, opening = false): Promise<void> {
   const finish = (status: string, fields: { reason?: string | null; note?: string | null; reports?: number; model?: string | null; title?: string | null; textBasis?: string | null; publishedAt?: string | null }) =>
     run(
       env.DB,
@@ -555,7 +568,11 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     const page = await readArticle(c.url);
     let article: ArticleForCoding | null = null;
     if (page) {
-      article = { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
+      // A major event read for location only: the opening paragraph, which is
+      // coded at the reduced confidence of partial text.
+      article = opening
+        ? { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "feed_summary", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain }
+        : { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
     } else if (c.feedText && c.feedText.length >= 200) {
       // The page could not be read; the feed's own summary is long enough to
       // code from, at reduced confidence (see verifyCoding).
@@ -679,14 +696,14 @@ function toStoredReport(r: ReportDbRow): StoredReport {
 const REPORT_SELECT = `SELECT r.*, a.url, a.title, a.domain, a.published_at, a.text_basis FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id`;
 
 /**
- * Is this report's event inside the active window (the last 48 hours)?
+ * Is this report's event inside the active window (the last 24 hours)?
  *
  * Two checks, because an event date is only known to the day:
  *   - the article was published within the window — an article older than
  *     that cannot be reporting something that happened inside it;
  *   - the event's own date (the day the article gives, or the publication
  *     day when it gives none) is today or yesterday.
- * So a marker stands for something reported in the last 48 hours as having
+ * So a marker stands for something reported in the last 24 hours as having
  * happened today or yesterday; older events never count, however recently
  * they were written about.
  */
@@ -1096,6 +1113,25 @@ async function refreshIncidents(env: Env): Promise<{ active: number; elevated: n
       // means the analyst is asked again on the next tick.
     }
 
+    // Watch: a real coded event below the Elevated threshold. It is shown on
+    // the map for monitoring but never alerted, so its text is assembled
+    // directly from the coded reports and no model is called for it.
+    if (c.level === "watch") {
+      const watchLabels = [...new Set(live.flatMap((r) => (r.indicators ?? []).map((i) => i.id)))]
+        .map((id) => INDICATOR_BY_ID[id]?.label.toLowerCase())
+        .filter((s): s is string => !!s);
+      const where = label ? `${label}, ${inc.country_name}` : inc.country_name;
+      synthesis = {
+        headline: `Watch: ${watchLabels.join(", ") || "armed event"} in ${where}`,
+        summary: c.criteriaMet.join(" ") || "A coded armed event below the Elevated threshold, reported by one source.",
+        assessment: "",
+        outlook: "",
+        caveats: "Preliminary. Single or uncorroborated reporting; shown for monitoring only, not an alert.",
+      };
+      synthesisModel = HEADLINE_SYNTHESIS;
+      storedHash = c.contentHash;
+    }
+
     const detail = {
       criteriaMet: c.criteriaMet,
       notes: c.notes,
@@ -1255,7 +1291,13 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
           .filter((c) => awaitingFullReading.has(c.id) && !seenUpgrade.has(c.id) && !!seenUpgrade.add(c.id))
           .sort((a, b) => Number(flagged.has(b.id)) - Number(flagged.has(a.id)) || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
 
-        const lists = [upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
+        // Major events the headlines name only by country go first: their
+        // opening paragraph is read, so they are not left for the budget.
+        const headlineFresh = [...freshOf(africaWire), ...freshOf(wireFeeds)];
+        const priorityOpening = new Set(headlineFresh.filter((c) => c.title && isMajorUnlocated({ title: c.title, feedText: c.feedText, publishedAt: c.publishedAt }, new Date())).map((c) => c.id));
+        const priorityList = headlineFresh.filter((c) => priorityOpening.has(c.id));
+        stats.priority = priorityList.length;
+        const lists = [priorityList, upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
         stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
         const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
@@ -1267,7 +1309,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
           const chunk = batch.slice(i, i + CODING_CONCURRENCY);
           await Promise.all(
             chunk.map(async (c) => {
-              if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats);
+              if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats, priorityOpening.has(c.id));
             })
           );
           // If no model answered for a whole group, the model is down or out of
@@ -1304,7 +1346,7 @@ export interface IncidentView {
   lon: number;
   geoPrecision: GeoPrecision;
   geoMethod: string | null;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   headline: string;
   summary: string;
   assessment: string;
@@ -1350,7 +1392,7 @@ function toIncidentView(r: IncidentDbRow): IncidentView {
     lon: r.lon,
     geoPrecision: r.geo_precision,
     geoMethod: d.geoMethod ?? null,
-    level: r.level as "elevated" | "critical",
+    level: r.level as "watch" | "elevated" | "critical",
     headline: r.headline ?? "",
     summary: r.summary ?? "",
     assessment: r.assessment ?? "",
@@ -1377,7 +1419,18 @@ export async function getFlaggedIncidents(env: Env): Promise<IncidentView[]> {
   const rows = await all<IncidentDbRow>(
     env.DB,
     `SELECT * FROM escalation_incidents WHERE status = 'active' AND level IN ('elevated','critical') AND headline IS NOT NULL
-     ORDER BY CASE level WHEN 'critical' THEN 0 ELSE 1 END, last_event_date DESC, updated_at DESC`
+     ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'elevated' THEN 1 ELSE 2 END, last_event_date DESC, updated_at DESC`
+  );
+  return rows.map(toIncidentView);
+}
+
+/** Everything the map shows: alerted incidents plus Watch (monitoring only, never alerted). */
+export async function getMapIncidents(env: Env): Promise<IncidentView[]> {
+  await ensureTables(env);
+  const rows = await all<IncidentDbRow>(
+    env.DB,
+    `SELECT * FROM escalation_incidents WHERE status = 'active' AND level IN ('watch','elevated','critical') AND headline IS NOT NULL
+     ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'elevated' THEN 1 ELSE 2 END, last_event_date DESC, updated_at DESC`
   );
   return rows.map(toIncidentView);
 }
