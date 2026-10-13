@@ -19,13 +19,38 @@ describe("major events that name only a country", () => {
   });
 });
 
-describe("opening paragraph", () => {
-  it("returns the first substantial paragraph, not the whole article", () => {
-    const text = "Short.\n\nThis is the opening paragraph that names the place and the event in detail, long enough to count as the lead.\n\nThe rest of the article goes on about reactions and background.";
-    expect(openingParagraph(text)).toMatch(/^This is the opening paragraph/);
-    expect(openingParagraph(text)).not.toMatch(/reactions/);
+describe("opening paragraphs", () => {
+  it("returns the first two substantial paragraphs, not the whole article", () => {
+    const text =
+      "Short.\n\nThis is the opening paragraph that names the event and the toll in detail, long enough to count as the lead.\n\n" +
+      "The second paragraph gives the exact place where it happened.\n\nThe rest of the article goes on about reactions and background.";
+    const out = openingParagraph(text);
+    expect(out).toMatch(/^This is the opening paragraph/);
+    expect(out).toMatch(/exact place/);
+    expect(out).not.toMatch(/reactions/);
+  });
+  it("reads the place from paragraph two (Sudan Tribune, border airstrikes)", () => {
+    const text =
+      "PORT SUDAN – Sudan's army chief on Monday ordered a fact-finding committee into airstrikes that killed dozens of gold miners near the Egyptian border.\n\n" +
+      "Warplanes struck gold prospecting sites in the Shamal al-Wadi area of far northern Red Sea State on Saturday, the second such incident in three months.\n\n" +
+      "The strikes drew condemnation from political and armed groups.";
+    const out = openingParagraph(text);
+    expect(out).toMatch(/Shamal al-Wadi/);
+    expect(out).not.toMatch(/condemnation/);
   });
   it("caps very long paragraphs", () => {
     expect(openingParagraph("word. ".repeat(500)).length).toBeLessThanOrEqual(1200);
+    expect(openingParagraph(`${"word. ".repeat(500)}\n\n${"more. ".repeat(500)}`).length).toBeLessThanOrEqual(2400);
+  });
+});
+
+describe("Egypt-border mining strikes are placed at the border, not mid-state", () => {
+  it("knows Shamal al-Wadi in Red Sea State", async () => {
+    const { resolvePlaceOffline, distanceKm } = await import("../src/lib/africaGeo");
+    const loc = resolvePlaceOffline({ countryCode: "SD", place: "Shamal al-Wadi", admin1: "Red Sea State" } as never);
+    expect(loc.label).toMatch(/Shamal al-Wadi/);
+    // Well north of the Red Sea State centroid and Port Sudan, within ~100 km of the 22nd parallel border.
+    expect(loc.lat).toBeGreaterThan(21);
+    expect(distanceKm(loc.lat, loc.lon, 19.6158, 37.2164)).toBeGreaterThan(250);
   });
 });

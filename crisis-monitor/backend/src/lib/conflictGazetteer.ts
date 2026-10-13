@@ -133,6 +133,9 @@ export const CONFLICT_GAZETTEER: GazetteerPlace[] = [
   R("SD", "River Nile", 18.0, 33.8, ["River Nile State", "Nile River State"]),
   R("SD", "Northern State", 19.5, 30.5),
   R("SD", "Red Sea State", 20.3, 36.0),
+  // Gold-mining belt in the far north-west of Red Sea State, below the Egyptian border (Jabal al-Uqaydat
+  // mines); airstrikes Jun and Oct 2026. Rough centre — reported only as "near the Egyptian border".
+  R("SD", "Shamal al-Wadi", 21.5, 35.0, ["Shamal Al Wadi", "Shamal el-Wadi", "Shamal al Wadi area", "Jabal al-Uqaydat", "Al-Uqaydat", "Al-Oqaydat", "Uqaydat"]),
   R("SD", "Khartoum State", 15.6, 32.7, ["Greater Khartoum"]),
   R("SD", "Abyei", 9.6, 28.43, ["Abyei Area"]),
   P("SD", "Khartoum", 15.5007, 32.5599),

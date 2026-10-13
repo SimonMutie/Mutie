@@ -532,15 +532,38 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
   }
 }
 
-/** The opening paragraph of an article: enough for where and what. Used for
- *  major events the headline names only by country, so the reading is cheap
- *  and fast. */
-export function openingParagraph(text: string): string {
+/** The opening of an article — its first two paragraphs: enough for where and
+ *  what. Used for major events the headline names only by country, so the
+ *  reading is cheap and fast. Two, not one, because the lead often gives the
+ *  who and the toll while the exact place comes in the second paragraph
+ *  ("…killed miners near the Egyptian border." / "Warplanes struck sites in the
+ *  Shamal al-Wadi area of far northern Red Sea State…"). */
+export const OPENING_PARAGRAPHS = 2;
+const OPENING_PARA_CHARS = 1200;
+const OPENING_MAX_CHARS = 2400;
+
+function capParagraph(p: string, max: number): string {
+  if (p.length <= max) return p;
+  const cut = p.slice(0, max);
+  return cut.slice(0, Math.max(cut.lastIndexOf(". "), Math.floor(max / 2)) + 1);
+}
+
+export function openingParagraph(text: string, count = OPENING_PARAGRAPHS): string {
   const paras = text.split(/\n\s*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter((p) => p.length > 0);
-  const first = paras.find((p) => p.length >= 80) ?? paras[0] ?? "";
-  if (first.length <= 1200) return first;
-  const cut = first.slice(0, 1200);
-  return cut.slice(0, Math.max(cut.lastIndexOf(". "), 600) + 1);
+  // The lead is the first substantial paragraph (a stray caption or byline before it is skipped);
+  // the paragraphs that follow it are taken as they come, skipping only fragments.
+  const start = Math.max(0, paras.findIndex((p) => p.length >= 80));
+  const picked = [paras[start] ?? "", ...paras.slice(start + 1).filter((p) => p.length >= 40).slice(0, count - 1)].filter(Boolean);
+  const out: string[] = [];
+  let used = 0;
+  for (const p of picked) {
+    const room = Math.min(OPENING_PARA_CHARS, OPENING_MAX_CHARS - used);
+    if (room < 200) break;
+    const capped = capParagraph(p, room);
+    out.push(capped);
+    used += capped.length + 2;
+  }
+  return out.join("\n\n");
 }
 
 async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBudget, stats: ProcessStats, opening = false): Promise<void> {
@@ -568,7 +591,7 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     const page = await readArticle(c.url);
     let article: ArticleForCoding | null = null;
     if (page) {
-      // A major event read for location only: the opening paragraph, which is
+      // A major event read for location only: the opening two paragraphs, which are
       // coded at the reduced confidence of partial text.
       article = opening
         ? { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "feed_summary", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain }
