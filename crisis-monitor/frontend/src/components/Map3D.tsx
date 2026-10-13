@@ -68,7 +68,7 @@ export interface Map3DPoint {
   /** Conflict Escalation only — draws a warning-triangle label above the
    *  point instead of just the plain colored dot every other layer gets,
    *  colored by level. Undefined on every other layer. */
-  escalationLevel?: "elevated" | "critical";
+  escalationLevel?: "watch" | "elevated" | "critical";
   /** Conflict Escalation only — fetches the full evidence/source-link list
    *  for this country when its popup opens. Undefined on every other layer. */
   countryCode?: string;
@@ -156,7 +156,7 @@ export type Map3DSelectedFeature =
       details?: string;
       lat: number;
       lng: number;
-      escalationLevel?: "elevated" | "critical";
+      escalationLevel?: "watch" | "elevated" | "critical";
       countryCode?: string;
       evidenceCount?: number;
       incident?: EscalationIncident;
@@ -425,6 +425,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
 
       map.addImage("warning-icon-critical", buildWarningIconImageData("#ff3d3d"), { pixelRatio: 2 });
       map.addImage("warning-icon-elevated", buildWarningIconImageData("#ff9d4f"), { pixelRatio: 2 });
+      map.addImage("warning-icon-watch", buildWarningIconImageData("#c9a227"), { pixelRatio: 2 });
 
       // The points already in hand, not an empty set: data that arrived
       // before the style finished loading would otherwise stay undrawn
@@ -488,8 +489,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         source: "osiris-points",
         filter: ["has", "escalationLevel"],
         layout: {
-          "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-elevated"],
-          "icon-size": ["match", ["get", "escalationLevel"], "critical", 0.6, "elevated", 0.48, 0.48],
+          "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-watch"],
+          "icon-size": ["match", ["get", "escalationLevel"], "critical", 0.6, "elevated", 0.48, 0.36],
           "icon-anchor": "bottom",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
@@ -698,7 +699,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
             subtitle: string;
             time: string | null;
             url: string | null;
-            escalationLevel: "elevated" | "critical" | null;
+            escalationLevel: "watch" | "elevated" | "critical" | null;
             countryCode?: string;
             evidenceCount?: number;
             actor?: string;
@@ -878,7 +879,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
   );
 }
 
-const LEVEL_LABEL: Record<"elevated" | "critical", string> = { elevated: "ELEVATED", critical: "CRITICAL" };
+const LEVEL_LABEL: Record<"watch" | "elevated" | "critical", string> = { watch: "WATCH", elevated: "ELEVATED", critical: "CRITICAL" };
 
 /**
  * The clicked feature's detail, docked to the left side of the map instead
@@ -1073,7 +1074,7 @@ function CitedText({ text, incident }: { text: string; incident: EscalationIncid
   );
 }
 
-/** "5 Oct, 14:20" — when a source was published, to the minute: only reports from the last 48 hours count. */
+/** "5 Oct, 14:20" — when a source was published, to the minute: only reports from the last 24 hours count. */
 const publishedAt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 const shortDate = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
 
@@ -1104,7 +1105,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
           <div className={`osiris-popup-value osiris-popup-value--${incident.level}`}>{LEVEL_LABEL[incident.level]}</div>
         </div>
         <div>
-          <div className="osiris-popup-label">EVENT DATE · LAST 48 H</div>
+          <div className="osiris-popup-label">EVENT DATE · LAST 24 H</div>
           <div className="osiris-popup-value">{dates}</div>
         </div>
         <div>

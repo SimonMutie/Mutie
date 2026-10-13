@@ -82,7 +82,7 @@ const GEOCODER_CALLS_PER_TICK = 6;
 /** Nothing published longer ago than the active window can be about an
  *  event inside it, so older items are not collected, read or coded. */
 const CANDIDATE_MAX_AGE_HOURS = ACTIVE_WINDOW_HOURS;
-const GDELT_CANDIDATE_WINDOW_HOURS = 48;
+const GDELT_CANDIDATE_WINDOW_HOURS = 24;
 const MAX_ATTEMPTS = 3;
 /** The most first-pass (headline) reports stored in one tick. */
 const HEADLINE_REPORTS_PER_TICK = 40;
@@ -679,14 +679,14 @@ function toStoredReport(r: ReportDbRow): StoredReport {
 const REPORT_SELECT = `SELECT r.*, a.url, a.title, a.domain, a.published_at, a.text_basis FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id`;
 
 /**
- * Is this report's event inside the active window (the last 48 hours)?
+ * Is this report's event inside the active window (the last 24 hours)?
  *
  * Two checks, because an event date is only known to the day:
  *   - the article was published within the window — an article older than
  *     that cannot be reporting something that happened inside it;
  *   - the event's own date (the day the article gives, or the publication
  *     day when it gives none) is today or yesterday.
- * So a marker stands for something reported in the last 48 hours as having
+ * So a marker stands for something reported in the last 24 hours as having
  * happened today or yesterday; older events never count, however recently
  * they were written about.
  */
@@ -1096,6 +1096,25 @@ async function refreshIncidents(env: Env): Promise<{ active: number; elevated: n
       // means the analyst is asked again on the next tick.
     }
 
+    // Watch: a real coded event below the Elevated threshold. It is shown on
+    // the map for monitoring but never alerted, so its text is assembled
+    // directly from the coded reports and no model is called for it.
+    if (c.level === "watch") {
+      const watchLabels = [...new Set(live.flatMap((r) => (r.indicators ?? []).map((i) => i.id)))]
+        .map((id) => INDICATOR_BY_ID[id]?.label.toLowerCase())
+        .filter((s): s is string => !!s);
+      const where = label ? `${label}, ${inc.country_name}` : inc.country_name;
+      synthesis = {
+        headline: `Watch: ${watchLabels.join(", ") || "armed event"} in ${where}`,
+        summary: c.criteriaMet.join(" ") || "A coded armed event below the Elevated threshold, reported by one source.",
+        assessment: "",
+        outlook: "",
+        caveats: "Preliminary. Single or uncorroborated reporting; shown for monitoring only, not an alert.",
+      };
+      synthesisModel = HEADLINE_SYNTHESIS;
+      storedHash = c.contentHash;
+    }
+
     const detail = {
       criteriaMet: c.criteriaMet,
       notes: c.notes,
@@ -1304,7 +1323,7 @@ export interface IncidentView {
   lon: number;
   geoPrecision: GeoPrecision;
   geoMethod: string | null;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   headline: string;
   summary: string;
   assessment: string;
@@ -1350,7 +1369,7 @@ function toIncidentView(r: IncidentDbRow): IncidentView {
     lon: r.lon,
     geoPrecision: r.geo_precision,
     geoMethod: d.geoMethod ?? null,
-    level: r.level as "elevated" | "critical",
+    level: r.level as "watch" | "elevated" | "critical",
     headline: r.headline ?? "",
     summary: r.summary ?? "",
     assessment: r.assessment ?? "",
@@ -1377,7 +1396,18 @@ export async function getFlaggedIncidents(env: Env): Promise<IncidentView[]> {
   const rows = await all<IncidentDbRow>(
     env.DB,
     `SELECT * FROM escalation_incidents WHERE status = 'active' AND level IN ('elevated','critical') AND headline IS NOT NULL
-     ORDER BY CASE level WHEN 'critical' THEN 0 ELSE 1 END, last_event_date DESC, updated_at DESC`
+     ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'elevated' THEN 1 ELSE 2 END, last_event_date DESC, updated_at DESC`
+  );
+  return rows.map(toIncidentView);
+}
+
+/** Everything the map shows: alerted incidents plus Watch (monitoring only, never alerted). */
+export async function getMapIncidents(env: Env): Promise<IncidentView[]> {
+  await ensureTables(env);
+  const rows = await all<IncidentDbRow>(
+    env.DB,
+    `SELECT * FROM escalation_incidents WHERE status = 'active' AND level IN ('watch','elevated','critical') AND headline IS NOT NULL
+     ORDER BY CASE level WHEN 'critical' THEN 0 WHEN 'elevated' THEN 1 ELSE 2 END, last_event_date DESC, updated_at DESC`
   );
   return rows.map(toIncidentView);
 }

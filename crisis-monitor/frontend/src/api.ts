@@ -1011,7 +1011,7 @@ export interface QueryWatchStatus {
 /** A flagged escalation incident that a query's own wording matches. */
 export interface QueryIncident {
   id: string;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   headline: string;
   summary: string;
   place: string;
@@ -1123,7 +1123,7 @@ export interface LiveLayerFeature {
     naturalHazardCategory?: "wildfire" | "severe-weather";
     /** Conflict Escalation only — see the backend's escalationIncidents.ts.
      *  Undefined on every other layer. */
-    escalationLevel?: "elevated" | "critical";
+    escalationLevel?: "watch" | "elevated" | "critical";
     /** Conflict Escalation only — fetches the full evidence/source-link
      *  list via getConflictEscalationEvidence. Undefined elsewhere. */
     countryCode?: string;
@@ -1207,7 +1207,7 @@ export interface EscalationIncident {
    *  position for a named place, a region centroid, or the country centroid. */
   geoPrecision: "place" | "approximate" | "region" | "country";
   geoMethod: string | null;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   headline: string;
   summary: string;
   assessment: string;
@@ -1331,7 +1331,7 @@ export interface ConflictProvince {
   tier: "active";
   /** Flagged escalations inside it, and the highest level among them. */
   incidents: number;
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
   country: string;
   countryName: string;
   name: string;
