@@ -7,7 +7,7 @@ import { candidatePriority, isCandidateText } from "./lib/escalationKeywords";
 import { normalizeForMatch, readArticle } from "./lib/articleReader";
 import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
-import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
+import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, looseKey, mentionsAfrica, normalizeName, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, MASS_CASUALTY_THRESHOLD, SEVERE_WINDOW_HOURS, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
@@ -994,6 +994,55 @@ interface IncidentDbRow {
 const RELOCATION_KEY = "relocated_by_evidence_v2";
 /** The note the first version left on a report it moved away from a place that was not the dateline. */
 const PASSING_MOVE_RX = /^Located at .+, the place the event's own description names, not (.+)\.$/;
+/** Capitals of the countries most often misplaced by the model. */
+const CAPITALS: Record<string, string> = { SD: "khartoum", ET: "addis ababa", EG: "cairo", SS: "juba", SO: "mogadishu", ER: "asmara", LY: "tripoli", SA: "riyadh", CD: "kinshasa", NG: "abuja", KE: "nairobi", UG: "kampala", SN: "dakar", ML: "bamako" };
+const isCapitalOf = (place: string, countryCode: string): boolean => CAPITALS[countryCode] === normalizeName(place);
+
+const COUNTRY_CORRECTION_KEY = "country_correction_v1";
+
+/**
+ * One-time correction of stored reports against their own headlines, using
+ * the same rules as new coding (verifyCoding): a headline that names a
+ * different country wins; a national capital the headline does not name is
+ * a guess, so the report falls back to country level.
+ */
+export async function correctStoredCountries(env: Env): Promise<number> {
+  if ((await getState(env, COUNTRY_CORRECTION_KEY)) === "1") return 0;
+  const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const rows = await all<{ id: string; country_code: string; place: string | null; title: string | null }>(
+    env.DB,
+    `SELECT r.id, r.country_code, r.place, a.title FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id WHERE r.created_at >= ? AND a.title IS NOT NULL`,
+    [since]
+  );
+  const budget: GeocodeBudget = { remaining: 4 };
+  let fixed = 0;
+  for (const r of rows) {
+    const titleNorm = normalizeName(r.title ?? "");
+    const titleCountry = locateText(r.title)?.countryCode ?? null;
+    const placeInTitle = !!r.place && titleNorm.includes(normalizeName(r.place));
+    let countryCode = r.country_code;
+    let place = r.place;
+    if (titleCountry && titleCountry !== r.country_code && !placeInTitle) {
+      countryCode = titleCountry;
+      place = null;
+    } else if (place && !placeInTitle && isCapitalOf(place, r.country_code)) {
+      // A capital the headline does not name is a guess, not the place.
+      place = null;
+    }
+    if (countryCode === r.country_code && place === r.place) continue;
+    const loc = await resolvePlace(env, { countryCode, place, admin1: null, modelLat: null, modelLon: null }, budget);
+    await run(
+      env.DB,
+      `UPDATE escalation_reports SET country_code = ?, country_name = ?, place = ?, admin1 = NULL, lat = ?, lon = ?, geo_precision = ?, geo_method = ?, geo_label = ?, incident_id = NULL WHERE id = ?`,
+      [countryCode, countryName(countryCode), place, loc.lat, loc.lon, loc.precision, loc.method, loc.label, r.id]
+    );
+    fixed++;
+  }
+  await setState(env, COUNTRY_CORRECTION_KEY, "1");
+  if (fixed > 0) console.log(`[escalation] corrected the country or place of ${fixed} stored report(s) against their headlines`);
+  return fixed;
+}
+
 export async function relocateRecentReports(env: Env): Promise<number> {
   if ((await getState(env, RELOCATION_KEY)) === "1") return 0;
   const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
@@ -1369,6 +1418,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     }
 
     await relocateRecentReports(env).catch((err) => console.error("[escalation] relocation failed", err));
+    await correctStoredCountries(env).catch((err) => console.error("[escalation] country correction failed", err));
     await assignNewReports(env);
     const incidents = await refreshIncidents(env);
     if (new Date().getUTCMinutes() < 5) await pruneOldRows(env);
