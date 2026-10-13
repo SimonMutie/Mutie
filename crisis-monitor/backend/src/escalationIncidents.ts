@@ -11,6 +11,7 @@ import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, loose
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, MASS_CASUALTY_THRESHOLD, SEVERE_WINDOW_HOURS, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
+import { proposeElectionEntries } from "./lib/electionTimeline";
 import { codeHeadline, headlineText, isMajorUnlocated, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
 import { placeFromEvidence } from "./lib/eventPlace";
 import { datelinePlaces } from "./lib/dateline";
@@ -1348,6 +1349,9 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
       const onRecord = new Map(
         (await all<ArticleOnRecord>(env.DB, `SELECT id, status, attempts, rejection_reason, model FROM escalation_articles WHERE processed_at >= ?`, [knownSince])).map((r) => [r.id, r])
       );
+
+      // Election and transition headlines for the timelines: proposals only, for review.
+      await proposeElectionEntries(env, [...africaWire, ...wireFeeds].map((c) => ({ url: c.url, domain: c.domain, title: c.title, publishedAt: c.publishedAt }))).catch((err) => console.error("[election] proposals failed", err));
 
       // The headline first pass: every candidate with a headline, at no cost.
       if ((env.ESCALATION_HEADLINE_TIER ?? "true") !== "false") await runHeadlinePass(env, [...africaWire, ...wireFeeds], onRecord, stats);

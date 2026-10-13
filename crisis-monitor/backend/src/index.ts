@@ -42,6 +42,7 @@ import { getTickBudget, recordTickOutcome } from "./lib/gdeltAdaptiveBudget";
 import { runEscalationPipeline } from "./escalationIncidents";
 import { stageDailyIfDue } from "./incidentStaging";
 import { incidentStagingRouter } from "./routes/incidentStaging";
+import { electionTimelineRouter, electionReviewRouter } from "./routes/electionTimeline";
 import { isWatchTick, runQueryWatch } from "./queryWatch";
 
 export { LiveFeedHub } from "./durableObjects/liveFeedHub";
@@ -105,6 +106,8 @@ app.route("/api/query-insights", queryInsightsRouter);
 app.route("/api/analytics", analyticsRouter);
 app.route("/api/public/dashboards-viz", publicAnalyticsRouter);
 app.route("/api/incident-staging", incidentStagingRouter);
+app.route("/api/election-timeline", electionTimelineRouter);
+app.route("/api/election-review", electionReviewRouter);
 app.route("/api/incidents", incidentsRouter);
 app.route("/api/map-routes", mapRoutesRouter);
 app.route("/api/map-shapes", mapShapesRouter);
