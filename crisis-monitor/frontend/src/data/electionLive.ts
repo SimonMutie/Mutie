@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { EwContent } from "../api";
+import type { ElectionEntryView, EwContent } from "../api";
 import { CANDIDATES, POLLS, TIMELINE, type Candidate, type Milestone, type Poll } from "./kenyaElection";
 import { CANDIDATE_SEEDS, type CandidateSeed, type Realignment } from "../lib/kenyaSim";
 
@@ -43,7 +43,7 @@ export function overlay<T extends { id?: string }>(base: T[], idOf: (t: T) => st
   return [...map.values()];
 }
 
-export function mergeLive(content: EwContent | null): Live {
+export function mergeLive(content: EwContent | null, added: ElectionEntryView[] = []): Live {
   const polls = overlay<Poll>(POLLS, (p) => p.id, content?.poll, (d, id, prev) => ({ ...(prev ?? ({} as Poll)), ...(d as unknown as Poll), id })).sort((a, b) => a.published.localeCompare(b.published));
   const candidates = overlay<Candidate>(CANDIDATES, (c) => c.id, content?.candidate, (d, id, prev) => ({
     id,
@@ -62,6 +62,10 @@ export function mergeLive(content: EwContent | null): Live {
   } as Candidate));
   for (const c of candidates) c.polls = Object.fromEntries(polls.filter((p) => p.shares[c.id] !== undefined).map((p) => [p.id, p.shares[c.id]]));
   const timeline = overlay<Milestone & { id?: string }>(TIMELINE.map((m) => ({ ...m, id: milestoneId(m) })), (m) => m.id ?? milestoneId(m), content?.milestone, (d, id, prev) => ({ ...(prev ?? ({} as Milestone)), ...(d as unknown as Milestone), id }));
+  // Events added by review (approved headlines); marked so the timeline can hide them.
+  for (const e of added) {
+    timeline.push({ id: `added-${e.id}`, date: e.date, title: e.title, detail: e.detail ?? "", phase: "Context", basis: "event", added: true, source: e.sourceDomain ?? undefined, sourceUrl: e.sourceUrl });
+  }
   timeline.sort((a, b) => a.date.localeCompare(b.date));
   return { polls, candidates, timeline, sim: mergeSim(content) };
 }

@@ -1,12 +1,13 @@
 import { useContext, useEffect, useMemo, useState } from "react";
-import { watchApi, type EwItem } from "../api";
-import { AS_OF, BENCH_LABEL, ELECTION_DAY, FUNDING_NEED_USD, SCENARIOS, SOURCES, type BenchStatus, type Benchmark, type Milestone } from "../data/southSudanElection";
+import { api, watchApi, type EwItem } from "../api";
+import { AS_OF, BENCH_LABEL, ELECTION_DAY, FUNDING_NEED_USD, SCENARIOS, SOURCES, milestoneSourceLink, type BenchStatus, type Benchmark, type Milestone } from "../data/southSudanElection";
 import { SsDataCtx, mergeSsLive, type SsLive } from "../data/southSudanLive";
 import { SS_WATCH_CONFIG } from "../data/watchConfig";
 import { StackBar, Timeline, type TimelineEvent } from "./charts";
 import { LaneTimeline } from "./LaneTimeline";
 import GovernmentChanges from "./SouthSudanGov";
 import SouthSudanManage from "./SouthSudanManage";
+import ElectionReviewPanel from "./ElectionReviewPanel";
 import SouthSudanLedger from "./SouthSudanLedger";
 import MonthlyReport from "./MonthlyReport";
 import { SectionFrame } from "./SectionToggle";
@@ -42,7 +43,16 @@ const usd = (n: number) => `US$${Math.round(n / 1e6)}m`;
 
 export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack: () => void; isAdmin?: boolean }) {
   const [live, setLive] = useState<SsLive>(() => mergeSsLive(null));
-  const load = () => watchApi("ss").content().then((c) => setLive(mergeSsLive(c))).catch(() => {});
+  const [showAdded, setShowAdded] = useState(true);
+  const addedCount = live.timeline.filter((m) => m.added).length;
+  const load = () =>
+    Promise.all([
+      watchApi("ss").content().catch(() => null),
+      // Approved events from news reports, added by review; a failure just leaves them out.
+      api.electionTimeline("SS").then((r) => r.entries).catch(() => []),
+    ])
+      .then(([c, added]) => setLive(mergeSsLive(c, added)))
+      .catch(() => {});
   useEffect(() => {
     load();
     const t = setInterval(load, 5 * 60_000);
@@ -101,11 +111,16 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
             <MonthlyReport country="ss" isAdmin={isAdmin} liveExtra={<BreachTimeline />} />
           </Section>
           <Section id="calendar" kicker="Calendar" title="The road to 22 December 2026" intro={<p>Dates come from NEC, the agreement and UN and RJMEC reporting. Dates that the sources do not give exactly are marked “c.”.</p>}>
-            <CalendarVisual />
+            <CalendarVisual showAdded={showAdded} />
             <details className="ss-more">
               <summary>Read the calendar as a list</summary>
-              <CalendarList />
+              <CalendarList showAdded={showAdded} />
             </details>
+            {addedCount > 0 && (
+              <button type="button" className="el-link" aria-pressed={showAdded} onClick={() => setShowAdded(!showAdded)}>
+                {showAdded ? "Hide" : "Show"} events reported in the news ({addedCount})
+              </button>
+            )}
           </Section>
 
           <Section id="government" kicker="Musical chairs" title="Who holds which post" intro={<p>Every change in the record since February 2025, on one timeline, up to the 22 September 2026 order that dissolved the transitional government. Decrees are read on state broadcaster SSBC, and the record shows only what the reports say.</p>}>
@@ -147,6 +162,7 @@ export default function SouthSudanElection({ onBack, isAdmin = false }: { onBack
           {isAdmin && (
             <section className="el-section" id="ss-manage">
               <SouthSudanManage live={live} onChanged={load} />
+              <ElectionReviewPanel country="SS" onChanged={load} />
             </section>
           )}
 
@@ -251,11 +267,11 @@ function LatestCoverage() {
 
 /* ── calendar ─────────────────────────────────────────────── */
 
-function CalendarList() {
+function CalendarList({ showAdded }: { showAdded: boolean }) {
   const { timeline } = useContext(SsDataCtx);
   const now = Date.now();
   // Shown in date order whatever order analysts saved them in.
-  const ordered = [...timeline].sort((a, b) => at(a.date) - at(b.date));
+  const ordered = timeline.filter((m) => showAdded || !m.added).sort((a, b) => at(a.date) - at(b.date));
   return (
     <ol className="el-timeline">
       {ordered.map((m) => {
@@ -276,7 +292,7 @@ function CalendarList() {
               </div>
               <h3>{m.title}</h3>
               <p>{m.detail}</p>
-              <p className="el-small"><a href={SOURCES[m.source].url} target="_blank" rel="noreferrer noopener">{SOURCES[m.source].publisher}, {SOURCES[m.source].date}</a></p>
+              <p className="el-small"><a href={milestoneSourceLink(m).url} target="_blank" rel="noreferrer noopener">{milestoneSourceLink(m).text}</a>{m.added ? ". Added after review." : ""}</p>
             </div>
           </li>
         );
@@ -331,12 +347,12 @@ function BenchmarkSummary({ live }: { live: SsLive }) {
   );
 }
 
-function CalendarVisual() {
+function CalendarVisual({ showAdded }: { showAdded: boolean }) {
   const { timeline } = useContext(SsDataCtx);
   const [picked, setPicked] = useState<string | null>(null);
   // The marker and countdown use the live date. Ranges that run to the data date are ongoing, so they run to today.
   const todayStr = new Date().toLocaleDateString("en-CA");
-  const events: TimelineEvent[] = timeline.map((m) => ({
+  const events: TimelineEvent[] = timeline.filter((m) => showAdded || !m.added).map((m) => ({
     id: m.id,
     date: m.date,
     until: m.until === AS_OF ? todayStr : m.until,
@@ -347,7 +363,7 @@ function CalendarVisual() {
     detail: (
       <>
         <p>{m.detail}</p>
-        <p className="el-small"><a href={SOURCES[m.source].url} target="_blank" rel="noreferrer noopener">{SOURCES[m.source].publisher}, {SOURCES[m.source].date}</a></p>
+        <p className="el-small"><a href={milestoneSourceLink(m).url} target="_blank" rel="noreferrer noopener">{milestoneSourceLink(m).text}</a></p>
       </>
     ),
   }));
