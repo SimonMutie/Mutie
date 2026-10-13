@@ -1,7 +1,7 @@
 import type { Env } from "../bindings";
 import { callStructured } from "./llm";
 import { normalizeForMatch, quoteAppearsIn } from "./articleReader";
-import { AFRICA_GEO_COUNTRIES, countryName, lookupKnownPlace, normalizeName, resolveCountryCode } from "./africaGeo";
+import { AFRICA_GEO_COUNTRIES, countryName, locateText, lookupKnownPlace, normalizeName, resolveCountryCode } from "./africaGeo";
 import { datelinePlaces } from "./dateline";
 import { placeFromEvidence } from "./eventPlace";
 import { CONFLICT_GAZETTEER } from "./conflictGazetteer";
@@ -380,6 +380,23 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
         const corrected = [...elsewhere][0];
         notes.push(`Country corrected from ${countryName(countryCode)} to ${countryName(corrected)}: ${place} is in ${countryName(corrected)}.`);
         countryCode = corrected;
+      }
+    }
+
+    // 3b. A headline that names one country is the strongest statement of
+    //     where a story happened. If the model attributes the event to a
+    //     different country, and the event's place is not named in the
+    //     headline, the headline's country wins (the place is then dropped
+    //     rather than kept from the wrong country).
+    const titleCountry = locateText(article.title)?.countryCode ?? null;
+    const titleNorm = normalizeForMatch(article.title ?? "");
+    if (titleCountry && titleCountry !== countryCode && !textNamesCountry(titleNorm, countryCode)) {
+      const placeInTitle = !!place && titleNorm.includes(normalizeForMatch(place));
+      if (!placeInTitle) {
+        notes.push(`Country corrected from ${countryName(countryCode)} to ${countryName(titleCountry)}: the headline names ${countryName(titleCountry)}, not ${countryName(countryCode)}.`);
+        countryCode = titleCountry;
+        place = null;
+        admin1 = null;
       }
     }
 
