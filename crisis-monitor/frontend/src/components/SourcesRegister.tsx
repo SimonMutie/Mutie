@@ -256,6 +256,13 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
             <li>If it does not, verify with three other sources, and then process the incident.</li>
           </ol>
           <p style={p}>Only verified incidents are logged into the spreadsheet.</p>
+          <figure style={{ margin: "12px 0 0" }}>
+            <img
+              src="/sources/verification-process.png"
+              alt="Flowchart of the verification process: new information is checked for reliability. Reliable sources are processed. Unreliable ones are sorted by event type: terrorist or significant crime is verified with a local source and two other sources; low-level crime with the original source and one other; political or security events by checking updates from the original source. A verified incident is processed. If not, it is verified with three other sources and then processed."
+              style={{ width: "100%", maxWidth: 780, height: "auto", display: "block", border: "1px solid var(--border)", borderRadius: 6, background: "#fff" }}
+            />
+          </figure>
         </div>
       </details>
 
