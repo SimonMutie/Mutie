@@ -237,6 +237,28 @@ export default function SourcesRegister({ onBack }: { onBack: () => void }) {
         Every source behind our reporting, graded for reliability and labelled for ownership and editorial orientation, so you can see not only where our information comes from but how far each source can be trusted and in which direction it leans.
       </div>
 
+      <details open style={{ marginBottom: 18 }} className="panel">
+        <summary style={{ cursor: "pointer", fontSize: 14, fontWeight: 700, padding: "12px 16px" }}>The verification process</summary>
+        <div style={{ padding: "0 16px 14px" }}>
+          <p style={p}>Where a source is reliable, the incident is processed and then logged into a spreadsheet by the CAT after alerting. If the original source is not reliable, the information is verified through at least two of our stringer network. For terrorism-related incidents, authenticity is verified using a local source and at least two other sources. Only verified incidents are logged into the spreadsheet.</p>
+          <div style={h3}>How new information is handled</div>
+          <ol style={{ ...p, paddingLeft: 18 }}>
+            <li>New information is checked for reliability.</li>
+            <li>If the source is reliable, the incident is processed.</li>
+            <li>If the source is not reliable, the kind of event decides how it is verified:
+              <ul style={{ paddingLeft: 18, margin: "4px 0" }}>
+                <li>Terrorist or significant crime: verify with a local source and two other sources.</li>
+                <li>Low-level crime: verify with the original source and one other source.</li>
+                <li>Political or security event: verify by checking updates from the original source.</li>
+              </ul>
+            </li>
+            <li>If that verification succeeds, the incident is processed.</li>
+            <li>If it does not, verify with three other sources, and then process the incident.</li>
+          </ol>
+          <p style={p}>Only verified incidents are logged into the spreadsheet.</p>
+        </div>
+      </details>
+
       <div className="panel" style={{ padding: "14px 16px", marginBottom: 16, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center" }}>
         <div>
           <div style={{ fontSize: 24, fontWeight: 700 }}>{stats.total}</div>
