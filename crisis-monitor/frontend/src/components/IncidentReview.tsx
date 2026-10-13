@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
+import StagingScriptPanel from "./StagingScriptPanel";
 import { api, type IncidentRow, type StagedIncident, type StagingBatch, type StagingStatus } from "../api";
 import SheetGrid, { type SheetColumn, type SheetEdit } from "./SheetGrid";
 
@@ -185,6 +186,7 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
           cell: (it) => (it.source_url ? <a href={it.source_url} target="_blank" rel="noreferrer">{it.source_domain ?? "link"}</a> : "—"),
         }}
       />
+      <StagingScriptPanel />
     </div>
   );
 }

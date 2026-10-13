@@ -1872,6 +1872,12 @@ export const api = {
   electionReviewList: () => req<{ proposals: ElectionProposalRow[] }>(`/api/election-review`),
   electionReviewDecide: (id: string, body: { status: "approved" | "rejected" | "hidden"; date?: string | null; detail?: string | null }) =>
     req<{ ok: boolean }>(`/api/election-review/${encodeURIComponent(id)}`, { method: "POST", body: JSON.stringify(body) }),
+  stagingTaxonomies: () => req<{ name: string; updated_at: string; updated_by: string | null }[]>(`/api/incident-staging/taxonomies`),
+  stagingTaxonomy: (name: string) => req<{ name: string; body: string; updated_at: string }>(`/api/incident-staging/taxonomies/${encodeURIComponent(name)}`),
+  stagingSaveTaxonomy: (name: string, body: string) =>
+    req<{ ok: boolean; name: string }>(`/api/incident-staging/taxonomies/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
+  stagingScript: (body: { script: string; apply: boolean; batch_date?: string }) =>
+    req<StagingScriptResult>(`/api/incident-staging/script`, { method: "POST", body: JSON.stringify(body) }),
   stagingList: (date: string) => req<StagedIncident[]>(`/api/incident-staging?date=${encodeURIComponent(date)}`),
   stagingCollect: (hours = 24) => req<{ staged: number; batchDate: string }>("/api/incident-staging/collect", { method: "POST", body: JSON.stringify({ hours }) }),
   stagingPatch: (id: string, patch: { status?: StagingStatus; row?: Partial<IncidentRow> }) =>
@@ -2318,4 +2324,15 @@ export interface ElectionProposalRow {
   date: string | null;
   detail: string | null;
   reviewed_at: string | null;
+}
+
+/** The outcome of a review script run, or of a preview of one. */
+export interface StagingScriptResult {
+  ok: boolean;
+  applied: boolean;
+  rows_seen: number;
+  rows_changed: number;
+  log: { level: "info" | "warn" | "error"; text: string; row?: string }[];
+  changes: { id: string; batch_date: string; status_from: string; status_to: string; changed_fields: string[]; row: Record<string, unknown>; source_url: string | null }[];
+  error?: { line: number; message: string };
 }

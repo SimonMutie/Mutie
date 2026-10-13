@@ -5,6 +5,7 @@ import { newId } from "../ids";
 import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { ensureStagingTable, stageIncidents } from "../incidentStaging";
+import { ensureTaxonomyTable, runScript, validTaxonomyBody } from "../lib/stagingScript";
 import { incidentInsertStatement, SIMPLE_INCIDENT_FIELDS } from "./incidents";
 
 export const incidentStagingRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -126,4 +127,50 @@ incidentStagingRouter.post("/push", async (c) => {
     ...rows.map((r) => ({ sql: `UPDATE incident_staging SET status = 'pushed', pushed_at = ? WHERE id = ?`, params: [now, r.id] })),
   ]);
   return c.json({ pushed: rows.length, batch_id: batchId });
+});
+
+/** Saved incident-coding taxonomies, named so a review script can refer to them. */
+incidentStagingRouter.get("/taxonomies", async (c) => {
+  await ensureTaxonomyTable(c.env);
+  const rows = await all(c.env.DB, `SELECT name, updated_at, updated_by FROM staging_taxonomies ORDER BY name`);
+  return c.json(rows);
+});
+
+incidentStagingRouter.get("/taxonomies/:name", async (c) => {
+  await ensureTaxonomyTable(c.env);
+  const t = await first<{ name: string; body: string; updated_at: string }>(c.env.DB, `SELECT name, body, updated_at FROM staging_taxonomies WHERE name = ?`, [c.req.param("name")]);
+  return t ? c.json(t) : c.json({ error: "Not found" }, 404);
+});
+
+incidentStagingRouter.put("/taxonomies/:name", async (c) => {
+  await ensureTaxonomyTable(c.env);
+  const name = c.req.param("name").trim();
+  if (!/^[\w .-]{1,80}$/.test(name)) return c.json({ error: "Name: letters, numbers, spaces, dots and dashes, up to 80 characters." }, 400);
+  const body = await c.req.json().then((b) => b?.body).catch(() => undefined);
+  if (!validTaxonomyBody(body)) return c.json({ error: "The taxonomy is empty or longer than 20,000 characters." }, 400);
+  await run(
+    c.env.DB,
+    `INSERT INTO staging_taxonomies (name, body, updated_at, updated_by) VALUES (?,?,?,?)
+     ON CONFLICT(name) DO UPDATE SET body = excluded.body, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+    [name, body, nowIso(), c.get("userId")]
+  );
+  return c.json({ ok: true, name });
+});
+
+const scriptSchema = z.object({
+  script: z.string().min(1).max(20_000),
+  apply: z.boolean().default(false),
+  batch_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+/** Runs a review script. apply=false is a preview: nothing is saved. */
+incidentStagingRouter.post("/script", async (c) => {
+  const parsed = scriptSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const result = await runScript(c.env, parsed.data.script, {
+    apply: parsed.data.apply,
+    batchDate: parsed.data.batch_date,
+    userId: c.get("userId") ?? null,
+  });
+  return c.json(result);
 });
