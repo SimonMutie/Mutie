@@ -32,9 +32,13 @@ export interface GazetteerPlace {
   lon: number;
   kind?: "place" | "region";
   aliases?: string[];
+  /** A site inside a town ("King Fahd International Airport" in Dammam). Named together ("Dammam's King Fahd
+   *  International Airport"), the site is the more exact place, so the town's own mention gives way to it. */
+  within?: string;
 }
 
 const P = (country: string, name: string, lat: number, lon: number, aliases?: string[]): GazetteerPlace => ({ name, country, lat, lon, aliases });
+const S = (country: string, name: string, within: string, lat: number, lon: number, aliases?: string[]): GazetteerPlace => ({ name, country, lat, lon, aliases, within });
 const R = (country: string, name: string, lat: number, lon: number, aliases?: string[]): GazetteerPlace => ({ name, country, lat, lon, kind: "region", aliases });
 
 export const CONFLICT_GAZETTEER: GazetteerPlace[] = [
@@ -816,6 +820,7 @@ export const CONFLICT_GAZETTEER: GazetteerPlace[] = [
   P("SA", "Jizan", 16.8892, 42.5611, ["Jazan"]),
   P("SA", "Abha", 18.2164, 42.5053),
   P("SA", "Dammam", 26.4207, 50.0888),
+  S("SA", "King Fahd International Airport", "Dammam", 26.4712, 49.7979, ["King Fahd Airport", "Dammam airport", "Dammam International Airport", "KFIA"]),
   P("AE", "Abu Dhabi", 24.4539, 54.3773),
   P("AE", "Dubai", 25.2048, 55.2708),
   P("KW", "Kuwait City", 29.3759, 47.9774),

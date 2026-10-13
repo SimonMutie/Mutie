@@ -363,6 +363,7 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
       admin1,
       evidence: [ev.what_happened ?? "", ...(ev.indicators ?? []).map((i) => i?.quote ?? ""), ev.fatalities_quote ?? ""],
       filedFrom: filedFrom,
+      articleText: article.text,
     });
     if (relocated) {
       notes.push(relocated.note);

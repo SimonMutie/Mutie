@@ -32,7 +32,7 @@ const GENERIC_ANCHORS = new Set(["africa", "europe", "middle east"]);
 function fromAfrica(text: string | null | undefined): EventLocation | null {
   const hit = locateText(text);
   if (!hit) return null;
-  const place = hit.precision === "country" ? hit.label : `${hit.label}, ${countryName(hit.countryCode)}`;
+  const place = hit.precision === "country" ? hit.label : `${hit.label}${hit.within ? `, ${hit.within}` : ""}, ${countryName(hit.countryCode)}`;
   return { lat: hit.lat, lon: hit.lon, place, precision: hit.precision, province: provinceFor(hit.countryCode, hit.lat, hit.lon, hit.precision, hit.label) };
 }
 

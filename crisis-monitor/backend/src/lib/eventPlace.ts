@@ -13,8 +13,13 @@ import { stripDatelines } from "./dateline";
  * passing. So:
  *
  *   - a place the description (or its quotes) names is kept;
+ *   - a site inside the coded town that the description names is taken as
+ *     the more exact place (Dammam → King Fahd International Airport);
  *   - a place it does not name is replaced when the description names
- *     exactly one town or region — that one;
+ *     exactly one town or region — that one — but only when the place is the
+ *     story's dateline, or appears nowhere else in the story. A town the
+ *     story itself reports on (an airport hit in Dammam, in a story led by
+ *     Riyadh) is a second event site, not a mistake;
  *   - a place that is only the story's dateline is dropped when the
  *     description names no town at all, leaving the event at the country
  *     the description names (or the country already coded).
@@ -31,6 +36,8 @@ export interface EventPlaceInput {
   evidence: string[];
   /** The places the story's dateline names, if any (see dateline.ts). */
   filedFrom: { label: string; countryCode: string }[];
+  /** The story's text. A coded place it names (outside the dateline) is never moved for not being in the description. */
+  articleText?: string;
 }
 
 export interface EventPlaceFix {
@@ -57,8 +64,19 @@ export function placeFromEvidence(input: EventPlaceInput): EventPlaceFix | null 
   const current = input.place ?? input.admin1;
   const isFiledFrom = !!current && input.filedFrom.some((d) => same(d.label, current));
 
+  // A site inside the coded town that the description names is the more exact place.
+  const sites = current ? distinct.filter((m) => m.within && same(m.within, current) && m.countryCode === input.countryCode) : [];
+  if (current && sites.length === 1) {
+    const to = sites[0];
+    return { countryCode: to.countryCode, place: to.label, admin1: null, note: `Located at ${to.label}, ${to.within}, the site in ${current} that the event's own description names.` };
+  }
+
   // The coded place is named where the event is described: it stands.
   if (current && named(current)) return null;
+
+  // A place the story reports on in its own text (not just its dateline) is kept: it may be a second site of the attack.
+  const inStory = !!current && !!input.articleText && ` ${normalizeName(stripDatelines(input.articleText))} `.includes(` ${normalizeName(current)} `);
+  if (current && !isFiledFrom && (inStory || !input.articleText)) return null;
 
   if (current && distinct.length === 1) {
     const to = distinct[0];
