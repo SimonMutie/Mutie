@@ -11,7 +11,7 @@ import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, loose
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
-import { codeHeadline, headlineText, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
+import { codeHeadline, headlineText, isMajorUnlocated, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
 import { placeFromEvidence } from "./lib/eventPlace";
 import { datelinePlaces } from "./lib/dateline";
 import type { EscalationCandidate } from "./durableObjects/africaWireActor";
@@ -364,6 +364,8 @@ interface ProcessStats {
   reports: number;
   /** Articles for which no model returned a coding this tick. */
   modelFailures: number;
+  /** Major headline-only events queued for an opening-paragraph reading. */
+  priority?: number;
   /** Reports stored this tick by the headline first pass. */
   headlineCoded: number;
 }
@@ -530,7 +532,18 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
   }
 }
 
-async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBudget, stats: ProcessStats): Promise<void> {
+/** The opening paragraph of an article: enough for where and what. Used for
+ *  major events the headline names only by country, so the reading is cheap
+ *  and fast. */
+export function openingParagraph(text: string): string {
+  const paras = text.split(/\n\s*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter((p) => p.length > 0);
+  const first = paras.find((p) => p.length >= 80) ?? paras[0] ?? "";
+  if (first.length <= 1200) return first;
+  const cut = first.slice(0, 1200);
+  return cut.slice(0, Math.max(cut.lastIndexOf(". "), 600) + 1);
+}
+
+async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBudget, stats: ProcessStats, opening = false): Promise<void> {
   const finish = (status: string, fields: { reason?: string | null; note?: string | null; reports?: number; model?: string | null; title?: string | null; textBasis?: string | null; publishedAt?: string | null }) =>
     run(
       env.DB,
@@ -555,7 +568,11 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     const page = await readArticle(c.url);
     let article: ArticleForCoding | null = null;
     if (page) {
-      article = { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
+      // A major event read for location only: the opening paragraph, which is
+      // coded at the reduced confidence of partial text.
+      article = opening
+        ? { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "feed_summary", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain }
+        : { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
     } else if (c.feedText && c.feedText.length >= 200) {
       // The page could not be read; the feed's own summary is long enough to
       // code from, at reduced confidence (see verifyCoding).
@@ -1274,7 +1291,13 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
           .filter((c) => awaitingFullReading.has(c.id) && !seenUpgrade.has(c.id) && !!seenUpgrade.add(c.id))
           .sort((a, b) => Number(flagged.has(b.id)) - Number(flagged.has(a.id)) || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
 
-        const lists = [upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
+        // Major events the headlines name only by country go first: their
+        // opening paragraph is read, so they are not left for the budget.
+        const headlineFresh = [...freshOf(africaWire), ...freshOf(wireFeeds)];
+        const priorityOpening = new Set(headlineFresh.filter((c) => c.title && isMajorUnlocated({ title: c.title, feedText: c.feedText, publishedAt: c.publishedAt }, new Date())).map((c) => c.id));
+        const priorityList = headlineFresh.filter((c) => priorityOpening.has(c.id));
+        stats.priority = priorityList.length;
+        const lists = [priorityList, upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
         stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
         const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
@@ -1286,7 +1309,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
           const chunk = batch.slice(i, i + CODING_CONCURRENCY);
           await Promise.all(
             chunk.map(async (c) => {
-              if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats);
+              if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats, priorityOpening.has(c.id));
             })
           );
           // If no model answered for a whole group, the model is down or out of
