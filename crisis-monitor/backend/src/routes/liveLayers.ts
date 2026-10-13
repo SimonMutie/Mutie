@@ -600,7 +600,7 @@ liveLayersRouter.get("/territory-changes", async (c) => {
 });
 
 /** Provinces with a flagged escalation, shaded red as whole provinces: those holding at least one verified
- *  escalation incident (elevated or critical, last 48 hours) located to a place. Same incidents as the Conflict
+ *  escalation incident (elevated or critical, last 24 hours) located to a place. Same incidents as the Conflict
  *  Escalation layer, so nothing is shaded where nothing is flagged. Not a front line or a control boundary. */
 liveLayersRouter.get("/conflict-zones", async (c) => {
   return cachedJson(
@@ -612,8 +612,8 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
         .map((i) => ({ lat: i.lat, lon: i.lon, level: i.level, label: i.locationLabel }));
       return {
         provinces: conflictProvinces(points),
-        windowHours: 48,
-        basis: "Provinces holding at least one flagged escalation from the last 48 hours. The whole province is shaded; this is not a front line or control boundary.",
+        windowHours: ACTIVE_WINDOW_HOURS,
+        basis: "Provinces holding at least one flagged escalation from the last 24 hours. The whole province is shaded; this is not a front line or control boundary.",
         borders: "Natural Earth; geoBoundaries (CC BY 4.0) for the DR Congo",
         fetchedAt: new Date().toISOString(),
       };

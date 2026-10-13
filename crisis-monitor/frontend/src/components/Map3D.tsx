@@ -1073,7 +1073,7 @@ function CitedText({ text, incident }: { text: string; incident: EscalationIncid
   );
 }
 
-/** "5 Oct, 14:20" — when a source was published, to the minute: only reports from the last 48 hours count. */
+/** "5 Oct, 14:20" — when a source was published, to the minute: only reports from the last 24 hours count. */
 const publishedAt = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—");
 const shortDate = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `${iso}T12:00:00Z` : iso).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
 
@@ -1104,7 +1104,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
           <div className={`osiris-popup-value osiris-popup-value--${incident.level}`}>{LEVEL_LABEL[incident.level]}</div>
         </div>
         <div>
-          <div className="osiris-popup-label">EVENT DATE · LAST 48 H</div>
+          <div className="osiris-popup-label">EVENT DATE · LAST 24 H</div>
           <div className="osiris-popup-value">{dates}</div>
         </div>
         <div>
