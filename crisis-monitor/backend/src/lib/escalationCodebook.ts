@@ -213,7 +213,11 @@ export const EXCLUSIONS: { id: string; description: string }[] = [
 
 /** Reports count toward an incident's level while their event is this
  *  recent: only what has happened in the last two days is flagged. */
-export const ACTIVE_WINDOW_HOURS = 24;
+export const ACTIVE_WINDOW_HOURS = 48;
+/** A severe event — a mass-casualty toll or a critical-tier indicator — stays
+ *  on the map for four days, not two: news of a massacre in a remote area
+ *  often surfaces a day late, and its follow-ups (tolls, probes) keep coming. */
+export const SEVERE_WINDOW_HOURS = 96;
 /** A single event with at least this many reported deaths is Critical. */
 export const MASS_CASUALTY_THRESHOLD = 25;
 /** A contextual-tier event with at least this many reported deaths is Elevated. */

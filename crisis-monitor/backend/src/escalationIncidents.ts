@@ -8,7 +8,7 @@ import { normalizeForMatch, readArticle } from "./lib/articleReader";
 import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
 import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, looseKey, mentionsAfrica, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
-import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
+import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, MASS_CASUALTY_THRESHOLD, SEVERE_WINDOW_HOURS, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
 import { codeHeadline, headlineText, isMajorUnlocated, HEADLINE_CODER, HEADLINE_TEXT_BASIS } from "./lib/headlineCoder";
@@ -494,7 +494,7 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
       const item = { title: c.title, feedText: c.feedText, publishedAt: c.publishedAt };
       const text = headlineText(item);
       const outcome = verifyCoding(codeHeadline(item, now), { url: c.url, title: c.title, text, textBasis: HEADLINE_TEXT_BASIS, publishedAt: c.publishedAt, domain: c.domain }, now);
-      const reports = outcome.reports.filter((r) => isLive({ eventDate: r.eventDate, publishedAt: c.publishedAt }, now));
+      const reports = outcome.reports.filter((r) => isLive({ ...r, publishedAt: c.publishedAt }, now));
       if (reports.length === 0) {
         headlineSeen.add(c.id);
         continue;
@@ -719,23 +719,31 @@ function toStoredReport(r: ReportDbRow): StoredReport {
 const REPORT_SELECT = `SELECT r.*, a.url, a.title, a.domain, a.published_at, a.text_basis FROM escalation_reports r JOIN escalation_articles a ON a.id = r.article_id`;
 
 /**
- * Is this report's event inside the active window (the last 24 hours)?
+ * Is this report's event inside the active window (the last two days; four for a severe event)?
  *
  * Two checks, because an event date is only known to the day:
  *   - the article was published within the window — an article older than
  *     that cannot be reporting something that happened inside it;
  *   - the event's own date (the day the article gives, or the publication
  *     day when it gives none) is today or yesterday.
- * So a marker stands for something reported in the last 24 hours as having
- * happened today or yesterday; older events never count, however recently
- * they were written about.
+ * So a marker stands for something reported in the last two days as having
+ * happened within them; older events never count, however recently they were
+ * written about. A severe event (SEVERE_WINDOW_HOURS: a toll of
+ * MASS_CASUALTY_THRESHOLD or more, or a critical-tier indicator) stays for
+ * four days.
  */
-export function isLive(report: { eventDate: string; publishedAt?: string | null }, now: Date): boolean {
+export function isSevere(report: { fatalities?: number | null; indicators?: { id: string }[] }): boolean {
+  if ((report.fatalities ?? 0) >= MASS_CASUALTY_THRESHOLD) return true;
+  return (report.indicators ?? []).some((i) => INDICATOR_BY_ID[i.id as IndicatorId]?.tier === "critical");
+}
+
+export function isLive(report: { eventDate: string; publishedAt?: string | null; fatalities?: number | null; indicators?: { id: string }[] }, now: Date): boolean {
+  const window = isSevere(report) ? SEVERE_WINDOW_HOURS : ACTIVE_WINDOW_HOURS;
   const start = Date.parse(`${report.eventDate}T00:00:00Z`);
   if (!Number.isFinite(start)) return false;
-  if (now.getTime() - start > (ACTIVE_WINDOW_HOURS + 24) * 3600_000) return false;
+  if (now.getTime() - start > (window + 24) * 3600_000) return false;
   const published = report.publishedAt ? Date.parse(report.publishedAt) : NaN;
-  if (Number.isFinite(published) && now.getTime() - published > ACTIVE_WINDOW_HOURS * 3600_000) return false;
+  if (Number.isFinite(published) && now.getTime() - published > window * 3600_000) return false;
   return true;
 }
 
@@ -1016,7 +1024,24 @@ export async function relocateRecentReports(env: Env): Promise<number> {
   return moved;
 }
 
+/** Brings back reports parked as stale, and incidents expired, that are live
+ *  again — after a widened window, or because a severe event's longer window
+ *  covers them. Only the last week is looked at. */
+async function reviveLive(env: Env): Promise<void> {
+  const now = new Date();
+  const since = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const stale = (await all<ReportDbRow>(env.DB, `${REPORT_SELECT} WHERE r.incident_id = 'stale' AND r.created_at >= ?`, [since])).map(toStoredReport);
+  for (const r of stale) if (isLive(r, now)) await run(env.DB, "UPDATE escalation_reports SET incident_id = NULL WHERE id = ?", [r.id]);
+
+  const expired = await all<{ id: string }>(env.DB, "SELECT id FROM escalation_incidents WHERE status = 'expired' AND updated_at >= ?", [since]);
+  for (const inc of expired) {
+    const reports = (await all<ReportDbRow>(env.DB, `${REPORT_SELECT} WHERE r.incident_id = ?`, [inc.id])).map(toStoredReport);
+    if (reports.some((r) => isLive(r, now))) await run(env.DB, "UPDATE escalation_incidents SET status = 'active', updated_at = ? WHERE id = ?", [nowIso(), inc.id]);
+  }
+}
+
 async function assignNewReports(env: Env): Promise<void> {
+  await reviveLive(env);
   const unassigned = (await all<ReportDbRow>(env.DB, `${REPORT_SELECT} WHERE r.incident_id IS NULL ORDER BY r.created_at`)).map(toStoredReport);
   if (unassigned.length === 0) return;
   const rows = await all<IncidentDbRow & { report_count: number }>(

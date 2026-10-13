@@ -69,21 +69,29 @@ describe("helpers", () => {
   it("canonicalUrl ignores tracking parameters, www and trailing slashes", () => {
     expect(canonicalUrl("https://www.Example.com/news/story/?utm_source=x&id=5#top")).toBe(canonicalUrl("https://example.com/news/story?id=5"));
   });
-  it("isLive keeps only what was reported in the last 24 hours as happening today or yesterday", () => {
+  it("isLive keeps only what was reported in the last two days as happening within them", () => {
     const now = new Date("2026-10-03T06:00:00Z");
     const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
     expect(isLive({ eventDate: "2026-10-03", publishedAt: hoursAgo(2) }, now)).toBe(true);
     expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(20) }, now)).toBe(true);
+    expect(isLive({ eventDate: "2026-10-01", publishedAt: hoursAgo(40) }, now)).toBe(true);
     // Reported an hour ago, but about something four days back.
     expect(isLive({ eventDate: "2026-09-29", publishedAt: hoursAgo(1) }, now)).toBe(false);
-    // Dated yesterday, but the article itself is more than 24 hours old.
-    expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(25) }, now)).toBe(false);
-    expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(23) }, now)).toBe(true);
+    // Dated yesterday, but the article itself is more than two days old.
+    expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(49) }, now)).toBe(false);
+    expect(isLive({ eventDate: "2026-10-02", publishedAt: hoursAgo(47) }, now)).toBe(true);
     // No publication time known: the event date alone decides.
-    expect(isLive({ eventDate: "2026-10-02", publishedAt: null }, now)).toBe(true);
-    // Two days back is outside today or yesterday, so it no longer counts in a 24-hour window.
-    expect(isLive({ eventDate: "2026-10-01", publishedAt: null }, now)).toBe(false);
-    expect(isLive({ eventDate: "2026-09-29", publishedAt: null }, now)).toBe(false);
+    expect(isLive({ eventDate: "2026-10-01", publishedAt: null }, now)).toBe(true);
+    expect(isLive({ eventDate: "2026-09-30", publishedAt: null }, now)).toBe(false);
+  });
+  it("isLive keeps a severe event for four days", () => {
+    // Border gold-mine strikes: Saturday's strike, 200 dead, reported Sunday evening; checked Tuesday morning.
+    const now = new Date("2026-10-13T05:30:00Z");
+    const report = { eventDate: "2026-10-10", publishedAt: "2026-10-11T19:05:39Z" };
+    expect(isLive(report, now)).toBe(false);
+    expect(isLive({ ...report, fatalities: 200 }, now)).toBe(true);
+    expect(isLive({ ...report, fatalities: 3, indicators: [{ id: "mass_atrocity" }] }, now)).toBe(true);
+    expect(isLive({ ...report, fatalities: 200 }, new Date("2026-10-15T20:00:00Z"))).toBe(false);
   });
   it("pickBatch alternates between origins and de-duplicates", () => {
     const c = (id: string, origin: Candidate["origin"]): Candidate => ({ id, url: `https://x/${id}`, domain: "x", origin, title: null, feedText: null, publishedAt: null, priority: 0 });
