@@ -82,6 +82,9 @@ MOCK_MODE = "false"
 # existed, so anything further that day would have been billed. From this
 # date the ceiling alone applies; the line can stay.
 AI_BUDGET_NOT_BEFORE = "2026-10-06"
+# Daily ceiling on Workers AI neurons. Raised from the 9,000 default to use more of
+# the free 10,000, keeping 500 as margin (the internal count is a pessimistic estimate).
+AI_DAILY_NEURON_BUDGET = "9500"
 GDELT_ENABLED = "true"
 
 [observability.logs]
