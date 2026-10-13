@@ -2,6 +2,8 @@ import type { Env } from "../bindings";
 import { callStructured } from "./llm";
 import { normalizeForMatch, quoteAppearsIn } from "./articleReader";
 import { AFRICA_GEO_COUNTRIES, countryName, lookupKnownPlace, normalizeName, resolveCountryCode } from "./africaGeo";
+import { datelinePlaces } from "./dateline";
+import { placeFromEvidence } from "./eventPlace";
 import { CONFLICT_GAZETTEER } from "./conflictGazetteer";
 import {
   codebookText,
@@ -178,7 +180,7 @@ RULES
    - explainers, rights reports, round-ups and updates that restate a long-running war, siege or insurgency without a specific new armed event of its own (commentary_or_analysis or retrospective).
    If such a piece does contain a specific new armed event with its own place and date, code that event only, from the passage that reports it. A standing situation is never an indicator by itself: "the city has been under siege since May" is background; "shelling killed nine in the city on Monday" is an event.
 
-3. LOCATION is where the event physically happened — never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa and the Middle East (Syria, Iraq, Iran, Israel, Palestine/Gaza/West Bank, Lebanon, Jordan, Yemen, Saudi Arabia, Oman, UAE, Kuwait, Qatar, Bahrain, Turkey), reject with outside_africa. Use the country the event happened in; for the Gaza Strip and West Bank use Palestine.
+3. LOCATION is where the event physically happened — never the dateline at the start of a wire story ("DUBAI, Oct 12 (Reuters) -", "BEIRUT (AP) —", "RIYADH:"), which is only where the reporter filed from; never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa and the Middle East (Syria, Iraq, Iran, Israel, Palestine/Gaza/West Bank, Lebanon, Jordan, Yemen, Saudi Arabia, Oman, UAE, Kuwait, Qatar, Bahrain, Turkey), reject with outside_africa. Use the country the event happened in; for the Gaza Strip and West Bank use Palestine.
 
 4. Every indicator needs a QUOTE copied character-for-character from the article, in its original language, that on its own establishes the indicator. If you cannot quote it, do not code it. Code only what is reported as having happened; do not code an indicator from a figurative use ("a clash of views", "under siege from critics"), from a denial, or from a hypothetical.
 
@@ -328,6 +330,8 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
   const publishedDay = published && Number.isFinite(published.getTime()) ? published : null;
   const reports: VerifiedReport[] = [];
   const dropReasons: string[] = [];
+  // Where the story was filed from (DUBAI (Reuters) - …): never, by itself, where its events happened.
+  const filedFrom = datelinePlaces(article.text);
 
   for (const ev of raw.events.slice(0, 3)) {
     const notes: string[] = [];
@@ -349,7 +353,23 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
         place = null;
       }
     }
-    const admin1 = cleanSentence(ev.admin1, 80);
+    let admin1 = cleanSentence(ev.admin1, 80);
+
+    // 2b. The place must be where the event is described as happening — not
+    //     the story's dateline, nor a town mentioned in passing (eventPlace.ts).
+    const relocated = placeFromEvidence({
+      countryCode,
+      place,
+      admin1,
+      evidence: [ev.what_happened ?? "", ...(ev.indicators ?? []).map((i) => i?.quote ?? ""), ev.fatalities_quote ?? ""],
+      filedFrom: filedFrom,
+    });
+    if (relocated) {
+      notes.push(relocated.note);
+      countryCode = relocated.countryCode;
+      place = relocated.place;
+      admin1 = relocated.admin1;
+    }
 
     // 3. Country/place consistency: a curated place that exists only in a
     //    different country overrides the stated country.

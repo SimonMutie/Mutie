@@ -7,7 +7,7 @@
  * Then the dashboard's routes that read it: status, alerts, the escalation
  * incidents a query's own wording matches, stories and names, and notes.
  */
-import { describe, it, expect, beforeEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 import { judge, median, surgeThreshold, runQueryWatch, getWatchStatus, resetWatchTableCheck, isWatchTick, MIN_SURGE_ITEMS } from "../src/queryWatch";
 import { queryInsightsRouter, resetInsightCache } from "../src/routes/queryInsights";
 import { createSessionToken } from "../src/auth";
@@ -113,6 +113,12 @@ function history(queryId: string, perDay: number) {
 const openAlerts = (queryId: string) => db.prepare("SELECT * FROM alerts WHERE query_id = ? AND resolved_at IS NULL").all(queryId) as { id: string; level: string; title: string; description: string; metric_snapshot: string }[];
 
 describe("a run of the watch", () => {
+  // Statuses read back are recomputed when older than half an hour by the real clock, so the clock is held at NOW.
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+  afterAll(() => vi.useRealTimers());
   beforeEach(freshDb);
 
   it("records the status of a query that is running as usual, and raises nothing", async () => {

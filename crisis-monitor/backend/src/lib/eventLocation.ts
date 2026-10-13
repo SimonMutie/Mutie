@@ -1,5 +1,6 @@
 import { countryName, locateText, provinceFor } from "./africaGeo";
 import { findCoords } from "./osintFeed";
+import { stripDatelines } from "./dateline";
 
 /**
  * Where a monitoring-query event (a news article matched by a saved query)
@@ -46,7 +47,15 @@ function fromWorld(text: string | null | undefined): EventLocation | null {
  *  to a country-level match from the world keyword table. Null when the text
  *  names nowhere. */
 export function locateEventText(title: string | null | undefined, body: string | null | undefined): EventLocation | null {
-  const opening = (body ?? "").slice(0, 800);
+  // A wire story's dateline ("DUBAI (Reuters) - …") is where it was filed from, not where it happened.
+  const opening = stripDatelines((body ?? "").slice(0, 800));
+  const titleHit = locateText(title);
+  // A headline that names only a country ("…over the Saudi capital") gives way to a town or region
+  // in the same country that the opening names ("…drones over Riyadh").
+  if (titleHit?.precision === "country") {
+    const bodyHit = locateText(opening);
+    if (bodyHit && bodyHit.precision !== "country" && bodyHit.countryCode === titleHit.countryCode) return fromAfrica(opening);
+  }
   return fromAfrica(title) ?? fromWorld(title) ?? fromAfrica(opening) ?? fromWorld(opening);
 }
 
