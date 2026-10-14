@@ -10,6 +10,7 @@ import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getFlaggedIncidents, getMapIncidents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
+import { activeCountries } from "../lib/ucdpActive";
 import { conflictCountries, conflictProvinces, escalationWaves, type EscalationCountryPoint, type EscalationPoint } from "../lib/conflictZones";
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
@@ -1405,6 +1406,32 @@ liveLayersRouter.get("/ucdp-conflict-events", async (c) => {
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
     3600
+  );
+});
+
+/** Countries with active conflict: UCDP has recorded organised violence there in the last 90 days. Independent of
+ *  the platform's own alerts. Needs UCDP_API_TOKEN; without it this says so rather than failing. */
+liveLayersRouter.get("/active-conflicts", async (c) => {
+  if (!c.env.UCDP_API_TOKEN) {
+    return c.json({ configured: false, windowDays: 90, countries: [], unmatched: [], fetchedAt: new Date().toISOString() });
+  }
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const startDate = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
+      const events: UcdpEvent[] = [];
+      let url: string | null = `https://ucdpapi.pcr.uu.se/api/gedevents/26.1?pagesize=1000&StartDate=${startDate}`;
+      for (let page = 0; url && page < 20; page++) {
+        const res: Response = await fetch(url, { headers: { "x-ucdp-access-token": c.env.UCDP_API_TOKEN! }, signal: AbortSignal.timeout(15000) });
+        if (!res.ok) throw new Error(`UCDP API returned ${res.status}`);
+        const data = (await res.json()) as { Result?: UcdpEvent[]; NextPageUrl?: string | null };
+        events.push(...(data.Result ?? []));
+        url = data.NextPageUrl || null;
+      }
+      const { countries, unmatched } = activeCountries(events);
+      return { configured: true, windowDays: 90, countries, unmatched, fetchedAt: new Date().toISOString() };
+    },
+    21600
   );
 });
 

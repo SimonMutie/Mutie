@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { activeCountries, codeForUcdpCountry } from "../src/lib/ucdpActive";
 import { conflictCountries, conflictProvinces, escalationWaves, intensityOf, provinceAt, trendOf } from "../src/lib/conflictZones";
 
 describe("conflict provinces", () => {
@@ -128,5 +129,27 @@ describe("escalation waves", () => {
       trends
     );
     expect(w.map((x) => x.id)).toEqual(["a"]);
+  });
+});
+
+
+describe("active conflicts from UCDP", () => {
+  it("matches UCDP's country names, including old names in brackets", () => {
+    expect(codeForUcdpCountry("Myanmar (Burma)")).toBe("MM");
+    expect(codeForUcdpCountry("DR Congo (Zaire)")).toBe("CD");
+    expect(codeForUcdpCountry("Yemen (North Yemen)")).toBe("YE");
+    expect(codeForUcdpCountry("Sudan")).toBe("SD");
+    expect(codeForUcdpCountry("Atlantis")).toBeNull();
+  });
+  it("counts events and fatalities per country and lists names it cannot match", () => {
+    const r = activeCountries([
+      { country: "Sudan", best: 10, date_end: "2026-10-01" },
+      { country: "Sudan", best: 5, date_end: "2026-10-09" },
+      { country: "Ethiopia", best: 3, date_end: "2026-09-20" },
+      { country: "Atlantis", best: 1, date_end: "2026-09-20" },
+    ]);
+    expect(r.countries[0]).toMatchObject({ code: "SD", events: 2, fatalities: 15, latest: "2026-10-09" });
+    expect(r.countries.map((c) => c.code)).toEqual(["SD", "ET"]);
+    expect(r.unmatched).toEqual(["Atlantis"]);
   });
 });

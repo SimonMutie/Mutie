@@ -1367,6 +1367,22 @@ export interface ConflictWave {
   locationLabel: string | null;
   countryName: string;
 }
+/** A country where UCDP has recorded organised violence in the last 90 days. */
+export interface ActiveCountry {
+  code: string;
+  name: string;
+  events: number;
+  fatalities: number;
+  latest: string | null;
+}
+export interface ActiveConflicts {
+  /** False when the UCDP token is not set on the server, so no active countries can be shown. */
+  configured: boolean;
+  windowDays: number;
+  countries: ActiveCountry[];
+  unmatched: string[];
+  fetchedAt: string;
+}
 export interface ConflictZones {
   countries: ConflictCountry[];
   waves: ConflictWave[];
@@ -2139,6 +2155,7 @@ export const api = {
   getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
   getIncidentMap: (id: string) => req<{ svg: string; caption: string; province: string | null }>(`/api/live-layers/conflict-escalation/incidents/${encodeURIComponent(id)}/map`),
   getConflictZones: () => req<ConflictZones>("/api/live-layers/conflict-zones"),
+  getActiveConflicts: () => req<ActiveConflicts>("/api/live-layers/active-conflicts"),
   getMarketsBoard: () => req<MarketsBoard>("/api/global-status/markets-board"),
   getMarkets: () => req<MarketsStatus>("/api/global-status/markets"),
   getActivityIndex: () => req<ActivityIndex>("/api/global-status/activity-index"),

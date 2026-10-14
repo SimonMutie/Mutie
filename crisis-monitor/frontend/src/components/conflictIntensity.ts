@@ -10,6 +10,9 @@ export const INTENSITY_STYLE: Record<1 | 2 | 3 | 4, { label: string; fill: strin
   4: { label: "Severe", fill: "#b3121f", opacity: 0.55, line: "#ff4d5a", lineOpacity: 1, text: "several critical reports" },
 };
 
+/** Countries with active conflict (UCDP events in the last 90 days) but no escalation in the last 48 hours. */
+export const ACTIVE_STYLE = { label: "Active conflict", fill: "#8a4b3a", opacity: 0.22, line: "#b9735c", lineOpacity: 0.7 } as const;
+
 /** Tooltip text for one province or country; a trend (new, worsening, steady, improving) is added when given. */
 export function intensityTooltip(p: { name: string; countryName?: string; intensity: 1 | 2 | 3 | 4; counts: { watch: number; elevated: number; critical: number }; trend?: string }): string {
   const place = p.countryName ? `${p.name}, ${p.countryName}` : p.name;

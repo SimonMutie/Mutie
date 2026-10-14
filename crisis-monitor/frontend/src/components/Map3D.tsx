@@ -1,6 +1,6 @@
 import { EscalationMap } from "./EscalationMap";
 import type { FeatureCollection } from "geojson";
-import { INTENSITY_STYLE } from "./conflictIntensity";
+import { ACTIVE_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 import { NEUTRAL_COUNTRY } from "./worldCountries";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -524,8 +524,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         type: "fill",
         source: "osiris-conflict-zones",
         paint: {
-          "fill-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].fill, 2, INTENSITY_STYLE[2].fill, 3, INTENSITY_STYLE[3].fill, 4, INTENSITY_STYLE[4].fill, NEUTRAL_COUNTRY.fill],
-          "fill-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].opacity, 2, INTENSITY_STYLE[2].opacity, 3, INTENSITY_STYLE[3].opacity, 4, INTENSITY_STYLE[4].opacity, NEUTRAL_COUNTRY.fillOpacity],
+          "fill-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].fill, 2, INTENSITY_STYLE[2].fill, 3, INTENSITY_STYLE[3].fill, 4, INTENSITY_STYLE[4].fill, 5, ACTIVE_STYLE.fill, NEUTRAL_COUNTRY.fill],
+          "fill-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].opacity, 2, INTENSITY_STYLE[2].opacity, 3, INTENSITY_STYLE[3].opacity, 4, INTENSITY_STYLE[4].opacity, 5, ACTIVE_STYLE.opacity, NEUTRAL_COUNTRY.fillOpacity],
         },
       });
       map.addLayer({
@@ -533,9 +533,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         type: "line",
         source: "osiris-conflict-zones",
         paint: {
-          "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, 4, INTENSITY_STYLE[4].line, NEUTRAL_COUNTRY.line],
+          "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, 4, INTENSITY_STYLE[4].line, 5, ACTIVE_STYLE.line, NEUTRAL_COUNTRY.line],
           "line-width": ["match", ["get", "intensity"], 4, 1.8, 3, 1.5, 0, NEUTRAL_COUNTRY.lineWidth, 1.1],
-          "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, 4, INTENSITY_STYLE[4].lineOpacity, NEUTRAL_COUNTRY.lineOpacity],
+          "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, 4, INTENSITY_STYLE[4].lineOpacity, 5, ACTIVE_STYLE.lineOpacity, NEUTRAL_COUNTRY.lineOpacity],
         },
       });
       map.addSource("osiris-conflict-waves", { type: "geojson", data: { type: "FeatureCollection", features: [] } });

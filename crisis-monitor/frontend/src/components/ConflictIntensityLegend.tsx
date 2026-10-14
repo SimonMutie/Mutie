@@ -1,7 +1,7 @@
-import { INTENSITY_STYLE } from "./conflictIntensity";
+import { ACTIVE_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 
 /** Key for the conflict map: the four intensities, what each means, and the window. */
-export default function ConflictIntensityLegend({ count }: { count: number }) {
+export default function ConflictIntensityLegend({ count, activeCount, activeConfigured }: { count: number; activeCount: number; activeConfigured: boolean | null }) {
   return (
     <div
       role="group"
@@ -34,6 +34,13 @@ export default function ConflictIntensityLegend({ count }: { count: number }) {
           </span>
         </div>
       ))}
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
+        <span aria-hidden="true" style={{ flex: "0 0 auto", width: 16, height: 12, marginTop: 2, borderRadius: 2, background: ACTIVE_STYLE.fill, opacity: 0.6, border: `1px solid ${ACTIVE_STYLE.line}` }} />
+        <span>
+          <b>{ACTIVE_STYLE.label}</b>:{" "}
+          {activeConfigured === false ? "unavailable (UCDP not configured on the server)" : `${activeCount} with UCDP events in 90 days`}
+        </span>
+      </div>
       <div style={{ opacity: 0.7, marginTop: 4 }}>Countries, last 48 hours. Grey: no escalation. Rings: escalations getting worse. Tooltips give the trend.</div>
     </div>
   );

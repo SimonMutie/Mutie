@@ -92,6 +92,7 @@ import {
   type CyberThreats,
   type MarketsStatus,
   type ConflictCountry,
+  type ActiveCountry,
   type ConflictWave,
   type ActivityIndex,
   type IncidentItem,
@@ -1301,6 +1302,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // Countries with an escalation in the last 48 hours, coded by intensity; worked out on the server.
   const [conflictCountryRows, setConflictCountryRows] = useState<ConflictCountry[]>([]);
   const [conflictWaveRows, setConflictWaveRows] = useState<ConflictWave[]>([]);
+  const [activeRows, setActiveRows] = useState<ActiveCountry[]>([]);
+  const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["conflict-zones"]) {
@@ -1310,6 +1313,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     }
     let cancelled = false;
     loadWorldCountries().then((w) => !cancelled && setWorldOutlines(w)).catch(() => {});
+    const loadActive = () =>
+      api.getActiveConflicts().then((a) => {
+        if (cancelled) return;
+        setActiveRows(a.countries ?? []);
+        setActiveConfigured(a.configured);
+      }).catch(() => {});
+    loadActive();
+    const activeTimer = setInterval(loadActive, 6 * 3_600_000);
     const load = () =>
       api.getConflictZones().then((z) => {
         if (cancelled) return;
@@ -1318,11 +1329,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       }).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
-    return () => { cancelled = true; clearInterval(t); };
+    return () => { cancelled = true; clearInterval(t); clearInterval(activeTimer); };
   }, [enabled["conflict-zones"]]);
   const conflictMap = useMemo(
-    () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows) : null),
-    [enabled["conflict-zones"], worldOutlines, conflictCountryRows]
+    () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows, activeRows) : null),
+    [enabled["conflict-zones"], worldOutlines, conflictCountryRows, activeRows]
   );
   const conflictWaveMap = useMemo(
     () => (enabled["conflict-zones"] ? waveFeatures(conflictWaveRows) : null),
@@ -2076,7 +2087,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
-        {enabled["conflict-zones"] && conflictCountryRows.length > 0 && <ConflictIntensityLegend count={conflictCountryRows.length} />}
+        {enabled["conflict-zones"] && <ConflictIntensityLegend count={conflictCountryRows.length} activeCount={activeRows.length} activeConfigured={activeConfigured} />}
 
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
           <PanelToggle side="left" open={leftOpen} onClick={() => togglePanel("left")} />

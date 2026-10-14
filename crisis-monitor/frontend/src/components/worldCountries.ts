@@ -1,9 +1,9 @@
 import { feature } from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import type { FeatureCollection } from "geojson";
-import type { ConflictCountry } from "../api";
+import type { ActiveCountry, ConflictCountry } from "../api";
 import { ID_TO_ISO2 } from "../data/countryIso";
-import { INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
+import { ACTIVE_STYLE, INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
 
 /**
  * Whole-country shading for the conflict map, the way a conflict tracker codes countries: every country is drawn,
@@ -11,7 +11,8 @@ import { INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
  * Intensity 0 means no escalation.
  */
 
-export type CountryIntensity = 0 | 1 | 2 | 3 | 4;
+/** 0 no escalation and not active; 1-4 the escalation intensity; 5 active conflict with no escalation. */
+export type CountryIntensity = 0 | 1 | 2 | 3 | 4 | 5;
 
 export interface CountryFeatureProps {
   iso2: string;
@@ -38,8 +39,9 @@ export function loadWorldCountries(): Promise<FeatureCollection> {
 }
 
 /** Joins the outlines to the backend's country codes; countries not in the list are neutral. */
-export function countryFeatures(world: FeatureCollection, flagged: ConflictCountry[]): FeatureCollection {
+export function countryFeatures(world: FeatureCollection, flagged: ConflictCountry[], active: ActiveCountry[] = []): FeatureCollection {
   const byCode = new Map(flagged.map((c) => [c.code, c]));
+  const activeByCode = new Map(active.map((c) => [c.code, c]));
   return {
     type: "FeatureCollection",
     features: world.features.map((f) => {
@@ -48,7 +50,9 @@ export function countryFeatures(world: FeatureCollection, flagged: ConflictCount
       const c = byCode.get(iso2);
       const props: CountryFeatureProps = c
         ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) }
-        : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
+        : activeByCode.has(iso2)
+          ? { iso2, name, intensity: 5, label: `${name}: active conflict (${activeByCode.get(iso2)!.events} UCDP events, ${activeByCode.get(iso2)!.fatalities} killed in the last 90 days; no escalation in the last 48 hours)` }
+          : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
       return { type: "Feature", id: f.id, geometry: f.geometry, properties: props as unknown as Record<string, unknown> };
     }),
   };
@@ -66,6 +70,9 @@ export function countryShadingKey(fc: FeatureCollection): string {
 export function countryPathStyle(intensity: CountryIntensity) {
   if (intensity === 0) {
     return { color: NEUTRAL_COUNTRY.line, weight: NEUTRAL_COUNTRY.lineWidth, opacity: NEUTRAL_COUNTRY.lineOpacity, fillColor: NEUTRAL_COUNTRY.fill, fillOpacity: NEUTRAL_COUNTRY.fillOpacity };
+  }
+  if (intensity === 5) {
+    return { color: ACTIVE_STYLE.line, weight: 1.2, opacity: ACTIVE_STYLE.lineOpacity, fillColor: ACTIVE_STYLE.fill, fillOpacity: ACTIVE_STYLE.opacity };
   }
   const s = INTENSITY_STYLE[intensity];
   return { color: s.line, weight: intensity >= 3 ? 1.8 : 1.2, opacity: s.lineOpacity, fillColor: s.fill, fillOpacity: s.opacity };
