@@ -1355,6 +1355,8 @@ export interface ConflictCountry {
   score: number;
   intensity: 1 | 2 | 3 | 4;
   intensityLabel: string;
+  /** How the last two days' reports lean against the two days before. */
+  trend: "new" | "worsening" | "steady" | "improving";
 }
 export interface ConflictZones {
   countries: ConflictCountry[];

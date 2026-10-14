@@ -47,7 +47,7 @@ export function countryFeatures(world: FeatureCollection, flagged: ConflictCount
       const name = String(f.properties?.name ?? iso2);
       const c = byCode.get(iso2);
       const props: CountryFeatureProps = c
-        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts }) }
+        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) }
         : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
       return { type: "Feature", id: f.id, geometry: f.geometry, properties: props as unknown as Record<string, unknown> };
     }),

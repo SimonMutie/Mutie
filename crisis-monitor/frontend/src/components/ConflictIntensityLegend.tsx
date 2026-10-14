@@ -34,7 +34,7 @@ export default function ConflictIntensityLegend({ count }: { count: number }) {
           </span>
         </div>
       ))}
-      <div style={{ opacity: 0.7, marginTop: 4 }}>Whole countries, last 48 hours. Grey: no escalation. Not a front line.</div>
+      <div style={{ opacity: 0.7, marginTop: 4 }}>Countries, last 48 hours. Outlined areas are provinces. Grey: no escalation. Tooltips give the trend. Not a front line.</div>
     </div>
   );
 }

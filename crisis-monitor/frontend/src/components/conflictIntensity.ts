@@ -10,9 +10,10 @@ export const INTENSITY_STYLE: Record<1 | 2 | 3 | 4, { label: string; fill: strin
   4: { label: "Severe", fill: "#b3121f", opacity: 0.55, line: "#ff4d5a", lineOpacity: 1, text: "several critical reports" },
 };
 
-/** Tooltip text for one province. */
-export function intensityTooltip(p: { name: string; countryName?: string; intensity: 1 | 2 | 3 | 4; counts: { watch: number; elevated: number; critical: number } }): string {
+/** Tooltip text for one province or country; a trend (new, worsening, steady, improving) is added when given. */
+export function intensityTooltip(p: { name: string; countryName?: string; intensity: 1 | 2 | 3 | 4; counts: { watch: number; elevated: number; critical: number }; trend?: string }): string {
   const place = p.countryName ? `${p.name}, ${p.countryName}` : p.name;
   const parts = [`${p.counts.critical} critical`, `${p.counts.elevated} elevated`, `${p.counts.watch} watch`];
-  return `${place}: ${INTENSITY_STYLE[p.intensity].label} intensity (${parts.join(", ")}, last 48 hours)`;
+  const trend = p.trend ? `, ${p.trend}` : "";
+  return `${place}: ${INTENSITY_STYLE[p.intensity].label} intensity${trend} (${parts.join(", ")}, last 48 hours)`;
 }

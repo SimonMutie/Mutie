@@ -112,6 +112,7 @@ import {
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
 import { countryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
+import { provinceFeatures, provinceShadingKey } from "./conflictProvinceFeatures";
 import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -1297,15 +1298,22 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // whole new layer checkbox for one closely-related signal.
   // Countries with an escalation in the last 48 hours, coded by intensity; worked out on the server.
   const [conflictCountryRows, setConflictCountryRows] = useState<ConflictCountry[]>([]);
+  const [conflictProvinceRows, setConflictProvinceRows] = useState<ConflictProvince[]>([]);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["conflict-zones"]) {
       setConflictCountryRows([]);
+      setConflictProvinceRows([]);
       return;
     }
     let cancelled = false;
     loadWorldCountries().then((w) => !cancelled && setWorldOutlines(w)).catch(() => {});
-    const load = () => api.getConflictZones().then((z) => !cancelled && setConflictCountryRows(z.countries ?? [])).catch(() => {});
+    const load = () =>
+      api.getConflictZones().then((z) => {
+        if (cancelled) return;
+        setConflictCountryRows(z.countries ?? []);
+        setConflictProvinceRows(z.provinces ?? []);
+      }).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
     return () => { cancelled = true; clearInterval(t); };
@@ -1313,6 +1321,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const conflictMap = useMemo(
     () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows) : null),
     [enabled["conflict-zones"], worldOutlines, conflictCountryRows]
+  );
+  const conflictProvinceMap = useMemo(
+    () => (enabled["conflict-zones"] && conflictProvinceRows.length > 0 ? provinceFeatures(conflictProvinceRows) : null),
+    [enabled["conflict-zones"], conflictProvinceRows]
   );
   const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
   useEffect(() => {
@@ -2015,6 +2027,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
             conflictMap={conflictMap}
+            conflictProvinceMap={conflictProvinceMap}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
             onMapReady={setGlobeMap}
@@ -2030,6 +2043,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             mode={mapMode}
             points={flatMapPoints}
             conflictMap={conflictMap}
+            conflictProvinceMap={conflictProvinceMap}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2346,6 +2360,7 @@ function FlatMap({
   mode,
   points,
   conflictMap,
+  conflictProvinceMap,
   onMapClick,
   drawMode,
   drawPoints,
@@ -2371,6 +2386,7 @@ function FlatMap({
   points: GlobePoint[];
   /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
   conflictMap?: FeatureCollection | null;
+  conflictProvinceMap?: FeatureCollection | null;
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2424,6 +2440,14 @@ function FlatMap({
           key={countryShadingKey(conflictMap)}
           data={conflictMap}
           style={(f) => countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 0) as 0 | 1 | 2 | 3 | 4)}
+          onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
+        />
+      )}
+      {conflictProvinceMap && (
+        <GeoJSON
+          key={provinceShadingKey(conflictProvinceMap)}
+          data={conflictProvinceMap}
+          style={(f) => ({ ...countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 1) as 1 | 2 | 3 | 4), fillOpacity: 0.3 })}
           onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
         />
       )}

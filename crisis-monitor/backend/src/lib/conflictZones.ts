@@ -126,6 +126,24 @@ export interface ConflictCountry {
   score: number;
   intensity: Intensity;
   intensityLabel: string;
+  /** How the last two days' reports lean against the two days before. */
+  trend: Trend;
+}
+
+/** Trend of a country's escalation: New (no reports in the earlier period), Worsening, Steady or Improving. */
+export type Trend = "new" | "worsening" | "steady" | "improving";
+export const TREND_LABEL: Record<Trend, string> = { new: "new", worsening: "worsening", steady: "steady", improving: "improving" };
+
+/**
+ * net: escalation reports minus de-escalation reports in the recent period. recent / prior: report counts.
+ * Countries with no earlier reports are New; otherwise the sign of net decides.
+ */
+export function trendOf(input: { net: number; recent: number; prior: number } | undefined): Trend {
+  if (!input || input.recent === 0) return "steady";
+  if (input.prior === 0) return "new";
+  if (input.net > 0) return "worsening";
+  if (input.net < 0) return "improving";
+  return "steady";
 }
 
 /**
@@ -133,7 +151,10 @@ export interface ConflictCountry {
  * country is coded even when its incidents cannot be placed inside a province, which is why this does not use
  * coordinates. Countries with no escalation are simply absent; the map draws them as neutral.
  */
-export function conflictCountries(points: EscalationCountryPoint[]): ConflictCountry[] {
+export function conflictCountries(
+  points: EscalationCountryPoint[],
+  trends: Map<string, { net: number; recent: number; prior: number }> = new Map()
+): ConflictCountry[] {
   const found = new Map<string, { name: string; counts: { watch: number; elevated: number; critical: number } }>();
   for (const pt of points) {
     const code = pt.code?.trim().toUpperCase();
@@ -156,6 +177,7 @@ export function conflictCountries(points: EscalationCountryPoint[]): ConflictCou
         score,
         intensity,
         intensityLabel: INTENSITY_LABEL[intensity],
+        trend: trendOf(trends.get(code)),
       };
     })
     .sort((a, b) => b.intensity - a.intensity || b.score - a.score || rank[b.level] - rank[a.level] || a.name.localeCompare(b.name));

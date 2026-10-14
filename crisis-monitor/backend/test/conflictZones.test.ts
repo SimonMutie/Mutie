@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictCountries, conflictProvinces, intensityOf, provinceAt } from "../src/lib/conflictZones";
+import { conflictCountries, conflictProvinces, intensityOf, provinceAt, trendOf } from "../src/lib/conflictZones";
 
 describe("conflict provinces", () => {
   it("finds the province a point is in", () => {
@@ -85,5 +85,30 @@ describe("conflict countries", () => {
     expect(one[0]).toMatchObject({ intensity: 1, intensityLabel: "Low", level: "watch" });
     const crit = conflictCountries([{ code: "YE", name: "Yemen", level: "critical" }]);
     expect(crit[0]).toMatchObject({ intensity: 3, intensityLabel: "High" });
+  });
+});
+
+describe("country trend", () => {
+  it("reads the lean of recent reports against the earlier period", () => {
+    expect(trendOf({ net: 2, recent: 2, prior: 0 })).toBe("new");
+    expect(trendOf({ net: 2, recent: 3, prior: 4 })).toBe("worsening");
+    expect(trendOf({ net: -1, recent: 2, prior: 4 })).toBe("improving");
+    expect(trendOf({ net: 0, recent: 2, prior: 4 })).toBe("steady");
+    expect(trendOf(undefined)).toBe("steady");
+  });
+  it("attaches the trend to each country", () => {
+    const trends = new Map([
+      ["SD", { net: 3, recent: 3, prior: 2 }],
+      ["UA", { net: -2, recent: 2, prior: 5 }],
+    ]);
+    const z = conflictCountries(
+      [
+        { code: "SD", name: "Sudan", level: "critical" },
+        { code: "UA", name: "Ukraine", level: "watch" },
+      ],
+      trends
+    );
+    expect(z.find((c) => c.code === "SD")).toMatchObject({ trend: "worsening" });
+    expect(z.find((c) => c.code === "UA")).toMatchObject({ trend: "improving" });
   });
 });
