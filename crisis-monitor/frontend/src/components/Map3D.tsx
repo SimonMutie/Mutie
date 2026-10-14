@@ -1,5 +1,6 @@
 import { EscalationMap } from "./EscalationMap";
 import type { ConflictProvince } from "../api";
+import { INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import MapNavPad from "./MapNavPad";
@@ -514,8 +515,25 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
       // polygon of what changed") — dashed amber outline + light fill so it
       // reads as a reported-area marker, not a crisp/precise boundary.
       map.addSource("osiris-conflict-zones", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({ id: "osiris-conflict-zones-fill", type: "fill", source: "osiris-conflict-zones", paint: { "fill-color": "#e02424", "fill-opacity": ["case", ["==", ["get", "active"], 1], 0.45, 0.3] } });
-      map.addLayer({ id: "osiris-conflict-zones-line", type: "line", source: "osiris-conflict-zones", paint: { "line-color": "#ff5a5a", "line-width": ["case", ["==", ["get", "active"], 1], 1.8, 1.2], "line-opacity": ["case", ["==", ["get", "active"], 1], 0.95, 0.85] } });
+      map.addLayer({
+        id: "osiris-conflict-zones-fill",
+        type: "fill",
+        source: "osiris-conflict-zones",
+        paint: {
+          "fill-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].fill, 2, INTENSITY_STYLE[2].fill, 3, INTENSITY_STYLE[3].fill, INTENSITY_STYLE[4].fill],
+          "fill-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].opacity, 2, INTENSITY_STYLE[2].opacity, 3, INTENSITY_STYLE[3].opacity, INTENSITY_STYLE[4].opacity],
+        },
+      });
+      map.addLayer({
+        id: "osiris-conflict-zones-line",
+        type: "line",
+        source: "osiris-conflict-zones",
+        paint: {
+          "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, INTENSITY_STYLE[4].line],
+          "line-width": ["match", ["get", "intensity"], 4, 1.8, 3, 1.5, 1.1],
+          "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, INTENSITY_STYLE[4].lineOpacity],
+        },
+      });
       map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "osiris-territory-changes-fill",
@@ -809,7 +827,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         type: "FeatureCollection",
         features: (conflictZones ?? []).map((z) => ({
           type: "Feature",
-          properties: { name: `${z.name}, ${z.countryName}`, active: z.level === "critical" ? 1 : 0 },
+          properties: { name: `${z.name}, ${z.countryName}`, intensity: z.intensity, label: intensityTooltip(z) },
           geometry: { type: "MultiPolygon", coordinates: z.rings.map((r) => [r.map(([lat, lng]) => [lng, lat])]) },
         })),
       });

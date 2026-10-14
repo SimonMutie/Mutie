@@ -1329,9 +1329,16 @@ export interface MarketsStatus {
 export interface ConflictProvince {
   id: string;
   tier: "active";
-  /** Flagged escalations inside it, and the highest level among them. */
+  /** Escalations inside it, all levels, and the counts by level. */
   incidents: number;
+  counts: { watch: number; elevated: number; critical: number };
+  /** The highest level among them. */
   level: "watch" | "elevated" | "critical";
+  /** Weighted sum of the levels; sets the intensity. */
+  score: number;
+  /** 1 Low, 2 Moderate, 3 High, 4 Severe. */
+  intensity: 1 | 2 | 3 | 4;
+  intensityLabel: string;
   country: string;
   countryName: string;
   name: string;

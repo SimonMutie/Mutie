@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictProvinces, provinceAt } from "../src/lib/conflictZones";
+import { conflictProvinces, intensityOf, provinceAt } from "../src/lib/conflictZones";
 
 describe("conflict provinces", () => {
   it("finds the province a point is in", () => {
@@ -27,5 +27,39 @@ describe("conflict provinces", () => {
   });
   it("ignores a point outside Africa and the Middle East", () => {
     expect(conflictProvinces([{ lat: 49.99, lon: 36.23, level: "critical" }])).toHaveLength(0);
+  });
+});
+
+describe("intensity of a province", () => {
+  const c = (watch: number, elevated: number, critical: number) => intensityOf({ watch, elevated, critical });
+
+  it("is low for a few watch-level incidents only", () => {
+    expect(c(1, 0, 0).intensity).toBe(1);
+    expect(c(2, 0, 0).intensity).toBe(1);
+  });
+
+  it("is moderate for one elevated incident or three watch-level ones", () => {
+    expect(c(0, 1, 0).intensity).toBe(2);
+    expect(c(3, 0, 0).intensity).toBe(2);
+  });
+
+  it("is high for one critical incident or two elevated ones", () => {
+    expect(c(0, 0, 1).intensity).toBe(3);
+    expect(c(0, 2, 0).intensity).toBe(3);
+  });
+
+  it("is severe for two critical incidents or a score of twelve", () => {
+    expect(c(0, 0, 2).intensity).toBe(4);
+    expect(c(0, 4, 0).intensity).toBe(4);
+  });
+
+  it("sorts the most intense provinces first", () => {
+    const z = conflictProvinces([
+      { lat: 9.9, lon: 32.7, level: "watch" },
+      { lat: 13.4967, lon: 39.4753, level: "critical" },
+      { lat: 13.5, lon: 39.5, level: "critical" },
+    ]);
+    expect(z[0]).toMatchObject({ id: "ET:Tigray", intensity: 4, intensityLabel: "Severe" });
+    expect(z.find((p) => p.id === "SS:Upper Nile")).toMatchObject({ intensity: 1, level: "watch" });
   });
 });

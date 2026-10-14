@@ -109,6 +109,8 @@ import {
   type LocatedMonitoringResult,
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
+import { INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
+import ConflictIntensityLegend from "./ConflictIntensityLegend";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
 // loading for every visit to this view when the intake modal may never
@@ -473,6 +475,16 @@ const LAYER_DEFS: LayerDef[] = [
   },
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
   // Flagged escalation incidents (backend: escalationIncidents.ts) — one
+  // The conflict intensity map: each province with an escalation is shaded by how intense it is. The shading
+  // is drawn from the province data (see the conflict-zones effect), so this layer adds no points of its own.
+  {
+    key: "conflict-zones",
+    label: "Conflict intensity map",
+    group: "Threats & Intel",
+    color: "#e0572a",
+    icon: AlertTriangle,
+    fetcher: async () => [],
+  },
   // marker per incident, placed where the reporting says the event happened.
   // Each one is the product of reports coded against the written codebook
   // — articles read in full, or, until that happens, headlines matched by
@@ -926,6 +938,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "severe-weather": true,
     "conflict-events": true,
     "conflict-escalation": true,
+    "conflict-zones": true,
     "nuclear-facilities": false,
     "global-incidents": false,
     "live-alert-pins": false,
@@ -2039,6 +2052,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
+        {enabled["conflict-zones"] && conflictZoneBoxes.length > 0 && <ConflictIntensityLegend count={conflictZoneBoxes.length} />}
+
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
           <PanelToggle side="left" open={leftOpen} onClick={() => togglePanel("left")} />
           {leftOpen && (
@@ -2396,10 +2411,8 @@ function FlatMap({
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
       {(conflictZones ?? []).map((z) => (
-        <Polygon key={z.id} positions={z.rings} pathOptions={z.level === "critical" ? { color: "#ff5a5a", weight: 1.8, fillColor: "#e02424", fillOpacity: 0.45 } : { color: "#ff8a5a", weight: 1.2, fillColor: "#e0572a", fillOpacity: 0.3 }}>
-          <LeafletTooltip sticky>
-            {z.name}{z.countryName ? `, ${z.countryName}` : ""} — {z.incidents} flagged escalation{z.incidents === 1 ? "" : "s"}, highest level {z.level}
-          </LeafletTooltip>
+        <Polygon key={z.id} positions={z.rings} pathOptions={{ color: INTENSITY_STYLE[z.intensity].line, weight: z.intensity >= 3 ? 1.8 : 1.2, fillColor: INTENSITY_STYLE[z.intensity].fill, fillOpacity: INTENSITY_STYLE[z.intensity].opacity }}>
+          <LeafletTooltip sticky>{intensityTooltip(z)}</LeafletTooltip>
         </Polygon>
       ))}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}

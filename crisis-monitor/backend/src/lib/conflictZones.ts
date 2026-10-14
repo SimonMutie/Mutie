@@ -38,19 +38,48 @@ export interface EscalationPoint {
   label?: string | null;
 }
 
+/** How intense the escalation in a province is, from 1 (low) to 4 (severe). */
+export type Intensity = 1 | 2 | 3 | 4;
+export const INTENSITY_LABEL: Record<Intensity, string> = { 1: "Low", 2: "Moderate", 3: "High", 4: "Severe" };
+
+/** Weight of each level in a province's score: a critical incident counts as much as six watch-level ones. */
+const LEVEL_WEIGHT = { watch: 1, elevated: 3, critical: 6 } as const;
+
 export interface ConflictProvince {
   id: string;
-  /** Always "active": only provinces holding a flagged escalation are returned. */
+  /** Always "active": only provinces with at least one escalation in the window are returned. */
   tier: "active";
   country: string;
   countryName: string;
   name: string;
-  /** Flagged escalations inside it. */
+  /** Escalations inside it, all levels. */
   incidents: number;
+  /** Escalations inside it by level. */
+  counts: { watch: number; elevated: number; critical: number };
   /** The highest level among them. */
-  level: "elevated" | "critical";
+  level: "watch" | "elevated" | "critical";
+  /** Weighted sum of the levels (watch 1, elevated 3, critical 6). */
+  score: number;
+  intensity: Intensity;
+  intensityLabel: string;
   /** [lat, lon] rings, ready to draw. */
   rings: [number, number][][];
+}
+
+/**
+ * Intensity from the weighted score and the worst level:
+ *  Severe   two or more critical incidents, or a score of 12 or more
+ *  High     one critical incident, or a score of 6 or more
+ *  Moderate a score of 3 or more (one elevated incident, or three watch-level ones)
+ *  Low      only watch-level incidents, one or two of them
+ */
+export function intensityOf(counts: { watch: number; elevated: number; critical: number }): { score: number; intensity: Intensity } {
+  const score = counts.watch * LEVEL_WEIGHT.watch + counts.elevated * LEVEL_WEIGHT.elevated + counts.critical * LEVEL_WEIGHT.critical;
+  let intensity: Intensity = 1;
+  if (counts.critical >= 2 || score >= 12) intensity = 4;
+  else if (counts.critical >= 1 || score >= 6) intensity = 3;
+  else if (score >= 3) intensity = 2;
+  return { score, intensity };
 }
 
 function inRing(lon: number, lat: number, ring: Ring): boolean {
@@ -81,24 +110,34 @@ export function provinceAt(lat: number, lon: number): Province | null {
 }
 
 export function conflictProvinces(points: EscalationPoint[]): ConflictProvince[] {
-  const found = new Map<Province, { n: number; level: "elevated" | "critical" }>();
+  const found = new Map<Province, { watch: number; elevated: number; critical: number }>();
   for (const pt of points) {
     if (!Number.isFinite(pt.lat) || !Number.isFinite(pt.lon)) continue;
     const prov = provinceAt(pt.lat, pt.lon);
     if (!prov) continue;
-    const cur = found.get(prov) ?? { n: 0, level: "elevated" as const };
-    found.set(prov, { n: cur.n + 1, level: cur.level === "critical" || pt.level === "critical" ? "critical" : "elevated" });
+    const cur = found.get(prov) ?? { watch: 0, elevated: 0, critical: 0 };
+    cur[pt.level] += 1;
+    found.set(prov, cur);
   }
+  const rank: Record<ConflictProvince["level"], number> = { critical: 2, elevated: 1, watch: 0 };
   return [...found.entries()]
-    .map(([p, v]) => ({
-      id: `${p.country}:${p.name}`,
-      tier: "active" as const,
-      country: p.country,
-      countryName: countryName(p.country),
-      name: p.name,
-      incidents: v.n,
-      level: v.level,
-      rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
-    }))
-    .sort((a, b) => (a.level === b.level ? b.incidents - a.incidents : a.level === "critical" ? -1 : 1));
+    .map(([p, counts]) => {
+      const { score, intensity } = intensityOf(counts);
+      const level: ConflictProvince["level"] = counts.critical > 0 ? "critical" : counts.elevated > 0 ? "elevated" : "watch";
+      return {
+        id: `${p.country}:${p.name}`,
+        tier: "active" as const,
+        country: p.country,
+        countryName: countryName(p.country),
+        name: p.name,
+        incidents: counts.watch + counts.elevated + counts.critical,
+        counts,
+        level,
+        score,
+        intensity,
+        intensityLabel: INTENSITY_LABEL[intensity],
+        rings: p.rings.map((r) => r.map(([lon, lat]) => [lat, lon] as [number, number])),
+      };
+    })
+    .sort((a, b) => b.intensity - a.intensity || b.score - a.score || rank[b.level] - rank[a.level]);
 }
