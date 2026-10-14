@@ -6,6 +6,7 @@ import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { ensureStagingTable, stageIncidents } from "../incidentStaging";
 import { ensureTaxonomyTable, runScript, validTaxonomyBody } from "../lib/stagingScript";
+import { runAiCommand } from "../lib/stagingAi";
 import { incidentInsertStatement, SIMPLE_INCIDENT_FIELDS } from "./incidents";
 
 export const incidentStagingRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -161,6 +162,27 @@ const scriptSchema = z.object({
   script: z.string().min(1).max(20_000),
   apply: z.boolean().default(false),
   batch_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+const aiCommandSchema = z.object({
+  prompt: z.string().min(1).max(2000),
+  row_ids: z.array(z.string().min(1).max(64)).min(1).max(50),
+  taxonomy: z.string().min(1).max(80).nullable().optional(),
+  apply: z.boolean().default(false),
+});
+
+/** Runs an analyst's instruction, in any words, over chosen rows. apply=false is a preview: nothing is saved. */
+incidentStagingRouter.post("/ai-command", async (c) => {
+  const parsed = aiCommandSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const result = await runAiCommand(c.env, {
+    prompt: parsed.data.prompt,
+    rowIds: parsed.data.row_ids,
+    taxonomy: parsed.data.taxonomy ?? null,
+    apply: parsed.data.apply,
+    userId: c.get("userId") ?? null,
+  });
+  return c.json(result);
 });
 
 /** Runs a review script. apply=false is a preview: nothing is saved. */

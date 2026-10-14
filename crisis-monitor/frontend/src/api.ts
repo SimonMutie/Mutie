@@ -387,6 +387,30 @@ export interface PreviewResult {
 }
 export type StagingStatus = "pending" | "approved" | "rejected" | "pushed";
 export interface StagingBatch { batch_date: string; pending: number; approved: number; rejected: number; pushed: number; total: number }
+export interface AiChange {
+  field: string;
+  before: string;
+  after: string;
+}
+/** One row's part of an AI command plan. */
+export interface AiPlanItem {
+  rowId: string;
+  kind: "update" | "reject" | "insert" | "none";
+  note: string;
+  changes: AiChange[];
+  inserts: { fields: Record<string, string | number> }[];
+}
+export interface AiCommandResult {
+  applied: boolean;
+  rows_seen: number;
+  updated: number;
+  rejected: number;
+  inserted: number;
+  plan: AiPlanItem[];
+  warnings: string[];
+  error?: string;
+}
+
 export interface StagedIncident {
   id: string; batch_date: string; status: StagingStatus; row: IncidentRow;
   source_url: string | null; source_title: string | null; source_domain: string | null;
@@ -1925,6 +1949,8 @@ export const api = {
     req<{ ok: boolean; name: string }>(`/api/incident-staging/taxonomies/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify({ body }) }),
   stagingScript: (body: { script: string; apply: boolean; batch_date?: string }) =>
     req<StagingScriptResult>(`/api/incident-staging/script`, { method: "POST", body: JSON.stringify(body) }),
+  stagingAiCommand: (body: { prompt: string; row_ids: string[]; taxonomy?: string | null; apply: boolean }) =>
+    req<AiCommandResult>(`/api/incident-staging/ai-command`, { method: "POST", body: JSON.stringify(body) }),
   stagingList: (date: string) => req<StagedIncident[]>(`/api/incident-staging?date=${encodeURIComponent(date)}`),
   stagingCollect: (hours = 24) => req<{ staged: number; batchDate: string }>("/api/incident-staging/collect", { method: "POST", body: JSON.stringify({ hours }) }),
   stagingPatch: (id: string, patch: { status?: StagingStatus; row?: Partial<IncidentRow> }) =>

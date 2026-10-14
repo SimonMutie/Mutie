@@ -1,4 +1,5 @@
 import { parseCommand, applyToText, resolveColumns, describe, COMMAND_HELP, type Command } from "./sheetCommands";
+import AiCommandPanel, { type AiCommandProps } from "./AiCommandPanel";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 /**
@@ -53,6 +54,8 @@ interface Props<T> {
   /** Reports how many rows the filters leave, and which, so the page can act on "what I can see". */
   onVisible?: (rows: T[]) => void;
   empty?: ReactNode;
+  /** Turns the Command box into a Rules / AI choice. Only the review table turns it on. */
+  aiCommand?: { taxonomies: string[]; run: AiCommandProps["run"]; onApplied: AiCommandProps["onApplied"] };
 }
 
 const BLANK = "(Blanks)";
@@ -75,7 +78,7 @@ interface Sel {
   to: number;
 }
 
-export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, onSave, isLocked, lead, tail, rowStyle, maxHeight = "60vh", onVisible, empty }: Props<T>) {
+export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, onSave, isLocked, lead, tail, rowStyle, maxHeight = "60vh", onVisible, empty, aiCommand }: Props<T>) {
   const [filters, setFilters] = useState<Record<string, Set<string>>>({});
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null);
@@ -93,6 +96,7 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
   const [redo, setRedo] = useState<Change[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [cmdMode, setCmdMode] = useState<"rules" | "ai">("rules");
   const [cmdText, setCmdText] = useState("");
   const [cmdVisibleOnly, setCmdVisibleOnly] = useState(true);
   const [cmdPlan, setCmdPlan] = useState<{ cmd: Command; edits: SheetEdit[]; rows: number; samples: string[] } | { error: string } | null>(null);
@@ -434,7 +438,28 @@ export default function SheetGrid<T>({ rows, rowId, columns, getValue, onEdit, o
           Save as I go
         </label>
       </div>
-      {cmdOpen && (
+      {cmdOpen && aiCommand && (
+        <div style={{ display: "flex", gap: 6, margin: "0 0 6px" }} role="tablist" aria-label="Command type">
+          {(["rules", "ai"] as const).map((m) => (
+            <button key={m} type="button" role="tab" aria-selected={cmdMode === m} onClick={() => setCmdMode(m)} style={barBtn(cmdMode === m, cmdMode === m)}>
+              {m === "rules" ? "Rules" : "AI"}
+            </button>
+          ))}
+        </div>
+      )}
+      {cmdOpen && aiCommand && cmdMode === "ai" && (
+        <AiCommandPanel
+          taxonomies={aiCommand.taxonomies}
+          run={aiCommand.run}
+          onApplied={aiCommand.onApplied}
+          scopeIds={(cmdVisibleOnly && filterCount > 0 ? visible : rows).filter((r) => !isLocked?.(r)).map((r) => rowId(r))}
+          filtersOn={filterCount > 0}
+          visibleOnly={cmdVisibleOnly}
+          onVisibleOnly={setCmdVisibleOnly}
+          unsavedCount={unsaved.length}
+        />
+      )}
+      {cmdOpen && (!aiCommand || cmdMode === "rules") && (
         <div style={{ margin: "0 0 8px", padding: "8px 10px", border: "1px solid var(--border-soft, #ddd)", borderRadius: 8, background: "var(--panel, #fff)", fontSize: 12.5 }}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input

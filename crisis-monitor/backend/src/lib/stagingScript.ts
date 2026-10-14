@@ -327,7 +327,7 @@ function matchesFilter(it: Item, f: { field: string; value: string }): boolean {
   return String(v ?? "").trim().toLowerCase() === f.value.trim().toLowerCase();
 }
 
-async function fetchPageText(url: string, cache: Map<string, string | null>): Promise<string | null> {
+export async function fetchPageText(url: string, cache: Map<string, string | null>, maxChars = PAGE_TEXT_CHARS): Promise<string | null> {
   if (cache.has(url)) return cache.get(url)!;
   let text: string | null = null;
   try {
@@ -338,7 +338,7 @@ async function fetchPageText(url: string, cache: Map<string, string | null>): Pr
     });
     if (res.ok) {
       const html = await res.text();
-      text = htmlToText(html).replace(/\s+\n/g, "\n").trim().slice(0, PAGE_TEXT_CHARS) || null;
+      text = htmlToText(html).replace(/\s+\n/g, "\n").trim().slice(0, maxChars) || null;
     }
   } catch {
     text = null;

@@ -93,6 +93,10 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
     setBusy(true); setMessage(null);
     try { await fn(); if (done) setMessage(done); } catch (e) { setMessage(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
+  const [taxNames, setTaxNames] = useState<string[]>([]);
+  useEffect(() => {
+    api.stagingTaxonomies().then((t) => setTaxNames(t.map((x) => x.name))).catch(() => setTaxNames([]));
+  }, []);
   const reload = async () => { await loadBatches(); if (date) setItems(await api.stagingList(date)); };
 
   function setStatus(it: StagedIncident, status: StagingStatus) {
@@ -160,6 +164,11 @@ export default function IncidentReview({ onPushed }: { onPushed: () => void }) {
       <SheetGrid
         rows={shown}
         rowId={(it) => it.id}
+        aiCommand={{
+          taxonomies: taxNames,
+          run: (a) => api.stagingAiCommand({ prompt: a.prompt, row_ids: a.rowIds.slice(0, 50), taxonomy: a.taxonomy, apply: a.apply }),
+          onApplied: reload,
+        }}
         columns={EDIT_FIELDS}
         getValue={(it, key) => it.row[key as keyof IncidentRow] as string | number | null | undefined}
         onEdit={applyEdits}
