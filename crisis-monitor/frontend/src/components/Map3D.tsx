@@ -1,6 +1,7 @@
 import { EscalationMap } from "./EscalationMap";
-import type { ConflictProvince } from "../api";
-import { INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
+import type { FeatureCollection } from "geojson";
+import { INTENSITY_STYLE } from "./conflictIntensity";
+import { NEUTRAL_COUNTRY } from "./worldCountries";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import MapNavPad from "./MapNavPad";
@@ -114,7 +115,8 @@ interface Map3DProps {
   paths: Map3DPath[];
   territoryChanges: Map3DTerritoryChange[];
   /** Provinces with active conflict, shaded red. */
-  conflictZones?: ConflictProvince[];
+  /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
+  conflictMap?: FeatureCollection | null;
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
@@ -351,7 +353,7 @@ function toGeoJsonHeat(points: [number, number, number][] | null | undefined): G
   };
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, conflictZones, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, conflictMap, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -520,8 +522,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         type: "fill",
         source: "osiris-conflict-zones",
         paint: {
-          "fill-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].fill, 2, INTENSITY_STYLE[2].fill, 3, INTENSITY_STYLE[3].fill, INTENSITY_STYLE[4].fill],
-          "fill-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].opacity, 2, INTENSITY_STYLE[2].opacity, 3, INTENSITY_STYLE[3].opacity, INTENSITY_STYLE[4].opacity],
+          "fill-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].fill, 2, INTENSITY_STYLE[2].fill, 3, INTENSITY_STYLE[3].fill, 4, INTENSITY_STYLE[4].fill, NEUTRAL_COUNTRY.fill],
+          "fill-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].opacity, 2, INTENSITY_STYLE[2].opacity, 3, INTENSITY_STYLE[3].opacity, 4, INTENSITY_STYLE[4].opacity, NEUTRAL_COUNTRY.fillOpacity],
         },
       });
       map.addLayer({
@@ -529,9 +531,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
         type: "line",
         source: "osiris-conflict-zones",
         paint: {
-          "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, INTENSITY_STYLE[4].line],
-          "line-width": ["match", ["get", "intensity"], 4, 1.8, 3, 1.5, 1.1],
-          "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, INTENSITY_STYLE[4].lineOpacity],
+          "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, 4, INTENSITY_STYLE[4].line, NEUTRAL_COUNTRY.line],
+          "line-width": ["match", ["get", "intensity"], 4, 1.8, 3, 1.5, 0, NEUTRAL_COUNTRY.lineWidth, 1.1],
+          "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, 4, INTENSITY_STYLE[4].lineOpacity, NEUTRAL_COUNTRY.lineOpacity],
         },
       });
       map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
@@ -823,17 +825,10 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
     const map = mapRef.current;
     if (!map) return;
     const apply = () =>
-      (map.getSource("osiris-conflict-zones") as GeoJSONSource | undefined)?.setData({
-        type: "FeatureCollection",
-        features: (conflictZones ?? []).map((z) => ({
-          type: "Feature",
-          properties: { name: `${z.name}, ${z.countryName}`, intensity: z.intensity, label: intensityTooltip(z) },
-          geometry: { type: "MultiPolygon", coordinates: z.rings.map((r) => [r.map(([lat, lng]) => [lng, lat])]) },
-        })),
-      });
+      (map.getSource("osiris-conflict-zones") as GeoJSONSource | undefined)?.setData(conflictMap ?? { type: "FeatureCollection", features: [] });
     if (map.getSource("osiris-conflict-zones")) apply();
     else map.once("load", apply);
-  }, [conflictZones]);
+  }, [conflictMap]);
 
   useEffect(() => {
     const map = mapRef.current;

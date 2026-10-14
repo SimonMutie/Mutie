@@ -22,7 +22,7 @@ export default function ConflictIntensityLegend({ count }: { count: number }) {
         pointerEvents: "none",
       }}
     >
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>Conflict intensity · {count} place{count === 1 ? "" : "s"}</div>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>Countries by conflict intensity · {count} countr{count === 1 ? "y" : "ies"}</div>
       {([4, 3, 2, 1] as const).map((k) => (
         <div key={k} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
           <span
@@ -34,7 +34,7 @@ export default function ConflictIntensityLegend({ count }: { count: number }) {
           </span>
         </div>
       ))}
-      <div style={{ opacity: 0.7, marginTop: 4 }}>Whole provinces, last 48 hours. Not a front line.</div>
+      <div style={{ opacity: 0.7, marginTop: 4 }}>Whole countries, last 48 hours. Grey: no escalation. Not a front line.</div>
     </div>
   );
 }

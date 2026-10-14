@@ -5,7 +5,7 @@ import { STANDING_HOTSPOTS } from "../standingHotspots";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapCompass } from "./LeafletMapControls";
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
-import { MapContainer, TileLayer, CircleMarker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, GeoJSON, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
 import { Studio3D } from "../studio/Studio3D";
@@ -92,6 +92,7 @@ import {
   type CyberThreats,
   type MarketsStatus,
   type ConflictProvince,
+  type ConflictCountry,
   type ActivityIndex,
   type IncidentItem,
   type IncidentFilters as IncidentFilterOptions,
@@ -109,8 +110,9 @@ import {
   type LocatedMonitoringResult,
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
-import { INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
+import { countryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
+import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
 // loading for every visit to this view when the intake modal may never
@@ -1293,19 +1295,25 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // GlobePoint pipeline above; polled separately the same way myIncidentRows
   // is, and tied to the same Conflict Escalation toggle rather than adding a
   // whole new layer checkbox for one closely-related signal.
-  // Active conflict areas, shaded red; worked out on the server from the last two days of reporting.
-  const [conflictZoneBoxes, setConflictZoneBoxes] = useState<ConflictProvince[]>([]);
+  // Countries with an escalation in the last 48 hours, coded by intensity; worked out on the server.
+  const [conflictCountryRows, setConflictCountryRows] = useState<ConflictCountry[]>([]);
+  const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["conflict-zones"]) {
-      setConflictZoneBoxes([]);
+      setConflictCountryRows([]);
       return;
     }
     let cancelled = false;
-    const load = () => api.getConflictZones().then((z) => !cancelled && setConflictZoneBoxes(z.provinces)).catch(() => {});
+    loadWorldCountries().then((w) => !cancelled && setWorldOutlines(w)).catch(() => {});
+    const load = () => api.getConflictZones().then((z) => !cancelled && setConflictCountryRows(z.countries ?? [])).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
     return () => { cancelled = true; clearInterval(t); };
   }, [enabled["conflict-zones"]]);
+  const conflictMap = useMemo(
+    () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows) : null),
+    [enabled["conflict-zones"], worldOutlines, conflictCountryRows]
+  );
   const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
   useEffect(() => {
     if (!enabled["conflict-escalation"]) {
@@ -2006,7 +2014,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             points={mapPoints}
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
-            conflictZones={conflictZoneBoxes}
+            conflictMap={conflictMap}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
             onMapReady={setGlobeMap}
@@ -2021,7 +2029,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <FlatMap
             mode={mapMode}
             points={flatMapPoints}
-            conflictZones={conflictZoneBoxes}
+            conflictMap={conflictMap}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2052,7 +2060,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
-        {enabled["conflict-zones"] && conflictZoneBoxes.length > 0 && <ConflictIntensityLegend count={conflictZoneBoxes.length} />}
+        {enabled["conflict-zones"] && conflictCountryRows.length > 0 && <ConflictIntensityLegend count={conflictCountryRows.length} />}
 
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
           <PanelToggle side="left" open={leftOpen} onClick={() => togglePanel("left")} />
@@ -2337,7 +2345,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 function FlatMap({
   mode,
   points,
-  conflictZones,
+  conflictMap,
   onMapClick,
   drawMode,
   drawPoints,
@@ -2361,7 +2369,8 @@ function FlatMap({
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
-  conflictZones?: ConflictProvince[];
+  /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
+  conflictMap?: FeatureCollection | null;
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2410,11 +2419,14 @@ function FlatMap({
       <MapNavPad />
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
-      {(conflictZones ?? []).map((z) => (
-        <Polygon key={z.id} positions={z.rings} pathOptions={{ color: INTENSITY_STYLE[z.intensity].line, weight: z.intensity >= 3 ? 1.8 : 1.2, fillColor: INTENSITY_STYLE[z.intensity].fill, fillOpacity: INTENSITY_STYLE[z.intensity].opacity }}>
-          <LeafletTooltip sticky>{intensityTooltip(z)}</LeafletTooltip>
-        </Polygon>
-      ))}
+      {conflictMap && (
+        <GeoJSON
+          key={countryShadingKey(conflictMap)}
+          data={conflictMap}
+          style={(f) => countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 0) as 0 | 1 | 2 | 3 | 4)}
+          onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
+        />
+      )}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
         <Polyline positions={drawPoints} pathOptions={{ color: "#ffd23f", weight: 2 }} />

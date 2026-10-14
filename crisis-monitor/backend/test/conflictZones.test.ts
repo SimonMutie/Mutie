@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictProvinces, intensityOf, provinceAt } from "../src/lib/conflictZones";
+import { conflictCountries, conflictProvinces, intensityOf, provinceAt } from "../src/lib/conflictZones";
 
 describe("conflict provinces", () => {
   it("finds the province a point is in", () => {
@@ -61,5 +61,29 @@ describe("intensity of a province", () => {
     ]);
     expect(z[0]).toMatchObject({ id: "ET:Tigray", intensity: 4, intensityLabel: "Severe" });
     expect(z.find((p) => p.id === "SS:Upper Nile")).toMatchObject({ intensity: 1, level: "watch" });
+  });
+});
+
+describe("conflict countries", () => {
+  it("codes nothing when nothing is flagged", () => {
+    expect(conflictCountries([])).toHaveLength(0);
+  });
+  it("counts escalations under their own country, whether or not they can be placed", () => {
+    const z = conflictCountries([
+      { code: "SD", name: "Sudan", level: "critical" },
+      { code: "SD", name: "Sudan", level: "critical" },
+      { code: "UA", name: "Ukraine", level: "watch" },
+      { code: "ua", name: "Ukraine", level: "elevated" },
+      { code: "", name: "Nowhere", level: "critical" },
+    ]);
+    expect(z.map((c) => c.code)).toEqual(["SD", "UA"]);
+    expect(z[0]).toMatchObject({ code: "SD", intensity: 4, intensityLabel: "Severe", level: "critical", incidents: 2 });
+    expect(z[1]).toMatchObject({ code: "UA", intensity: 2, intensityLabel: "Moderate", level: "elevated", incidents: 2 });
+  });
+  it("uses the same tiers as provinces", () => {
+    const one = conflictCountries([{ code: "LB", name: "Lebanon", level: "watch" }]);
+    expect(one[0]).toMatchObject({ intensity: 1, intensityLabel: "Low", level: "watch" });
+    const crit = conflictCountries([{ code: "YE", name: "Yemen", level: "critical" }]);
+    expect(crit[0]).toMatchObject({ intensity: 3, intensityLabel: "High" });
   });
 });

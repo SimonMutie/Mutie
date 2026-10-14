@@ -10,7 +10,7 @@ import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getFlaggedIncidents, getMapIncidents, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
-import { conflictProvinces, type EscalationPoint } from "../lib/conflictZones";
+import { conflictCountries, conflictProvinces, type EscalationCountryPoint, type EscalationPoint } from "../lib/conflictZones";
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
@@ -599,8 +599,9 @@ liveLayersRouter.get("/territory-changes", async (c) => {
   );
 });
 
-/** Provinces with an escalation, shaded by intensity as whole provinces: every escalation incident (watch,
- *  elevated or critical) from the last 48 hours that is located to a place. Not a front line or a control boundary. */
+/** Countries with an escalation, coded by intensity: every escalation incident (watch, elevated or critical) from the
+ *  last 48 hours, counted under the country it is in. Provinces are returned too, for places where they are drawn
+ *  in detail, but the map shades whole countries. Not a front line or a control boundary. */
 liveLayersRouter.get("/conflict-zones", async (c) => {
   return cachedJson(
     c.req.raw,
@@ -609,11 +610,13 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
       const points: EscalationPoint[] = incidents
         .filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate" || i.geoPrecision === "region")
         .map((i) => ({ lat: i.lat, lon: i.lon, level: i.level, label: i.locationLabel }));
+      const countryPoints: EscalationCountryPoint[] = incidents.map((i) => ({ code: i.countryCode, name: i.countryName, level: i.level }));
       return {
+        countries: conflictCountries(countryPoints),
         provinces: conflictProvinces(points),
         windowHours: ACTIVE_WINDOW_HOURS,
-        basis: "Provinces with an escalation in the last 48 hours, shaded by intensity: how many incidents there are and how severe. The whole province is shaded; this is not a front line or control boundary.",
-        borders: "Natural Earth; geoBoundaries (CC BY 4.0) for the DR Congo",
+        basis: "Countries with an escalation in the last 48 hours, coded by intensity: how many incidents there are and how severe. Whole countries; this is not a front line or control boundary.",
+        borders: "Natural Earth (public domain); geoBoundaries (CC BY 4.0) for the DR Congo",
         fetchedAt: new Date().toISOString(),
       };
     },

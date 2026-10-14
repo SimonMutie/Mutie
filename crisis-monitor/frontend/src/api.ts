@@ -1345,7 +1345,19 @@ export interface ConflictProvince {
   /** [lat, lon] rings */
   rings: [number, number][][];
 }
+/** A country with an escalation in the last 48 hours, coded by intensity. */
+export interface ConflictCountry {
+  code: string;
+  name: string;
+  incidents: number;
+  counts: { watch: number; elevated: number; critical: number };
+  level: "watch" | "elevated" | "critical";
+  score: number;
+  intensity: 1 | 2 | 3 | 4;
+  intensityLabel: string;
+}
 export interface ConflictZones {
+  countries: ConflictCountry[];
   provinces: ConflictProvince[];
   windowHours: number;
   basis: string;

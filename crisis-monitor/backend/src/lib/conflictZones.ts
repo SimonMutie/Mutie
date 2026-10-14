@@ -109,6 +109,58 @@ export function provinceAt(lat: number, lon: number): Province | null {
   return best;
 }
 
+/** One escalation, placed by its country (ISO-3166 alpha-2) rather than by coordinates. */
+export interface EscalationCountryPoint {
+  code: string;
+  name: string;
+  level: "watch" | "elevated" | "critical";
+}
+
+/** A country with at least one flagged escalation in the window, coded by intensity like a conflict tracker. */
+export interface ConflictCountry {
+  code: string;
+  name: string;
+  incidents: number;
+  counts: { watch: number; elevated: number; critical: number };
+  level: "watch" | "elevated" | "critical";
+  score: number;
+  intensity: Intensity;
+  intensityLabel: string;
+}
+
+/**
+ * Countries coded by the intensity of their escalations in the window. Every incident carries its country, so a
+ * country is coded even when its incidents cannot be placed inside a province, which is why this does not use
+ * coordinates. Countries with no escalation are simply absent; the map draws them as neutral.
+ */
+export function conflictCountries(points: EscalationCountryPoint[]): ConflictCountry[] {
+  const found = new Map<string, { name: string; counts: { watch: number; elevated: number; critical: number } }>();
+  for (const pt of points) {
+    const code = pt.code?.trim().toUpperCase();
+    if (!code || code.length !== 2) continue;
+    const cur = found.get(code) ?? { name: pt.name, counts: { watch: 0, elevated: 0, critical: 0 } };
+    cur.counts[pt.level] += 1;
+    found.set(code, cur);
+  }
+  const rank: Record<ConflictCountry["level"], number> = { critical: 2, elevated: 1, watch: 0 };
+  return [...found.entries()]
+    .map(([code, { name, counts }]) => {
+      const { score, intensity } = intensityOf(counts);
+      const level: ConflictCountry["level"] = counts.critical > 0 ? "critical" : counts.elevated > 0 ? "elevated" : "watch";
+      return {
+        code,
+        name: name || countryName(code),
+        incidents: counts.watch + counts.elevated + counts.critical,
+        counts,
+        level,
+        score,
+        intensity,
+        intensityLabel: INTENSITY_LABEL[intensity],
+      };
+    })
+    .sort((a, b) => b.intensity - a.intensity || b.score - a.score || rank[b.level] - rank[a.level] || a.name.localeCompare(b.name));
+}
+
 export function conflictProvinces(points: EscalationPoint[]): ConflictProvince[] {
   const found = new Map<Province, { watch: number; elevated: number; critical: number }>();
   for (const pt of points) {
