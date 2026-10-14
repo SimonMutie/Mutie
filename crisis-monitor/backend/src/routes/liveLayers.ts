@@ -7,10 +7,10 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getFlaggedIncidents, getMapIncidents, getCountryTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
+import { getFlaggedIncidents, getMapIncidents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
-import { conflictCountries, conflictProvinces, type EscalationCountryPoint, type EscalationPoint } from "../lib/conflictZones";
+import { conflictCountries, conflictProvinces, escalationWaves, type EscalationCountryPoint, type EscalationPoint } from "../lib/conflictZones";
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
@@ -599,7 +599,7 @@ liveLayersRouter.get("/territory-changes", async (c) => {
   );
 });
 
-/** Countries with an escalation, coded by intensity and trend: every escalation incident (watch, elevated or critical) from the
+/** Countries with an escalation, coded by intensity and trend, and waves at located escalations that are getting worse: every escalation incident (watch, elevated or critical) from the
  *  last 48 hours, counted under the country it is in. Provinces are returned too, for places where they are drawn
  *  in detail, but the map shades whole countries. Not a front line or a control boundary. */
 liveLayersRouter.get("/conflict-zones", async (c) => {
@@ -612,7 +612,13 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
         .map((i) => ({ lat: i.lat, lon: i.lon, level: i.level, label: i.locationLabel }));
       const countryPoints: EscalationCountryPoint[] = incidents.map((i) => ({ code: i.countryCode, name: i.countryName, level: i.level }));
       return {
-        countries: conflictCountries(countryPoints, await getCountryTrendInputs(c.env)),
+        countries: conflictCountries(countryPoints, await getTrendInputs(c.env, "country_code")),
+        waves: escalationWaves(
+          incidents
+            .filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate" || i.geoPrecision === "region")
+            .map((i) => ({ id: i.id, lat: i.lat, lon: i.lon, level: i.level, locationLabel: i.locationLabel, countryName: i.countryName })),
+          await getTrendInputs(c.env, "incident_id")
+        ),
         provinces: conflictProvinces(points),
         windowHours: ACTIVE_WINDOW_HOURS,
         basis: "Countries with an escalation in the last 48 hours, coded by intensity: how many incidents there are and how severe. Whole countries; this is not a front line or control boundary.",

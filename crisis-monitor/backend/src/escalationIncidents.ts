@@ -1522,23 +1522,24 @@ export async function getFlaggedIncidents(env: Env): Promise<IncidentView[]> {
 }
 
 /**
- * Per country, how the reports of the last two days lean compared with the two days before: the net of escalation
- * minus de-escalation reports, and how many reports each period has. Feeds the trend on the conflict map.
+ * How the reports of the last two days lean compared with the two days before, grouped by country or by incident:
+ * the net of escalation minus de-escalation reports, and how many reports each period has.
  */
-export async function getCountryTrendInputs(env: Env): Promise<Map<string, { net: number; recent: number; prior: number }>> {
+export async function getTrendInputs(env: Env, by: "country_code" | "incident_id"): Promise<Map<string, { net: number; recent: number; prior: number }>> {
   await ensureTables(env);
   const today = new Date();
   const day = (offset: number) => new Date(today.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
   const recentFrom = day(-1);
   const priorFrom = day(-3);
-  const rows = await all<{ country_code: string; event_date: string; trajectory: string }>(
+  const rows = await all<{ key: string | null; event_date: string; trajectory: string }>(
     env.DB,
-    "SELECT country_code, event_date, trajectory FROM escalation_reports WHERE event_date >= ?",
+    `SELECT ${by} AS key, event_date, trajectory FROM escalation_reports WHERE event_date >= ? AND ${by} IS NOT NULL`,
     [priorFrom]
   );
   const out = new Map<string, { net: number; recent: number; prior: number }>();
   for (const r of rows) {
-    const cur = out.get(r.country_code) ?? { net: 0, recent: 0, prior: 0 };
+    if (!r.key) continue;
+    const cur = out.get(r.key) ?? { net: 0, recent: 0, prior: 0 };
     if (r.event_date >= recentFrom) {
       cur.recent += 1;
       if (r.trajectory === "escalation") cur.net += 1;
@@ -1546,7 +1547,7 @@ export async function getCountryTrendInputs(env: Env): Promise<Map<string, { net
     } else {
       cur.prior += 1;
     }
-    out.set(r.country_code, cur);
+    out.set(r.key, cur);
   }
   return out;
 }

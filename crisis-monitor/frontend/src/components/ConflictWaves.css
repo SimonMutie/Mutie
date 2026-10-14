@@ -1,0 +1,25 @@
+/* Rings on the 2D conflict map: escalations whose recent reports lean towards escalation. */
+.conflict-wave-icon { background: none; border: 0; }
+.conflict-wave {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50%;
+  border: 2px solid #ff4d5a;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.4);
+  animation: conflict-wave 2.4s ease-out infinite;
+}
+.conflict-wave--late { animation-delay: 1.2s; }
+.conflict-wave--critical { width: 56px; height: 56px; }
+.conflict-wave--elevated { width: 40px; height: 40px; }
+.conflict-wave--watch { width: 28px; height: 28px; }
+@keyframes conflict-wave {
+  0% { transform: translate(-50%, -50%) scale(0.4); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .conflict-wave { animation: none; opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
+  .conflict-wave--late { display: none; }
+}

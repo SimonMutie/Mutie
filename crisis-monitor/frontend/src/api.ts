@@ -1358,8 +1358,18 @@ export interface ConflictCountry {
   /** How the last two days' reports lean against the two days before. */
   trend: "new" | "worsening" | "steady" | "improving";
 }
+/** A located escalation whose recent reports lean towards escalation. */
+export interface ConflictWave {
+  id: string;
+  lat: number;
+  lon: number;
+  level: "watch" | "elevated" | "critical";
+  locationLabel: string | null;
+  countryName: string;
+}
 export interface ConflictZones {
   countries: ConflictCountry[];
+  waves: ConflictWave[];
   provinces: ConflictProvince[];
   windowHours: number;
   basis: string;

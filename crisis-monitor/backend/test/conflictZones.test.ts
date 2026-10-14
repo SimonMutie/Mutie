@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conflictCountries, conflictProvinces, intensityOf, provinceAt, trendOf } from "../src/lib/conflictZones";
+import { conflictCountries, conflictProvinces, escalationWaves, intensityOf, provinceAt, trendOf } from "../src/lib/conflictZones";
 
 describe("conflict provinces", () => {
   it("finds the province a point is in", () => {
@@ -110,5 +110,23 @@ describe("country trend", () => {
     );
     expect(z.find((c) => c.code === "SD")).toMatchObject({ trend: "worsening" });
     expect(z.find((c) => c.code === "UA")).toMatchObject({ trend: "improving" });
+  });
+});
+
+describe("escalation waves", () => {
+  it("draws waves only where recent reports lean towards escalation", () => {
+    const trends = new Map([
+      ["a", { net: 2, recent: 2, prior: 3 }],
+      ["b", { net: -1, recent: 1, prior: 3 }],
+    ]);
+    const w = escalationWaves(
+      [
+        { id: "a", lat: 15, lon: 32, level: "critical", locationLabel: "Khartoum", countryName: "Sudan" },
+        { id: "b", lat: 9, lon: 38, level: "elevated", locationLabel: null, countryName: "Ethiopia" },
+        { id: "c", lat: 2, lon: 45, level: "watch", locationLabel: null, countryName: "Somalia" },
+      ],
+      trends
+    );
+    expect(w.map((x) => x.id)).toEqual(["a"]);
   });
 });

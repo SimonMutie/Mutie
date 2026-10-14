@@ -5,7 +5,7 @@ import { STANDING_HOTSPOTS } from "../standingHotspots";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapCompass } from "./LeafletMapControls";
 import type { CircleMarker as LeafletCircleMarker } from "leaflet";
-import { MapContainer, TileLayer, CircleMarker, GeoJSON, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, GeoJSON, Marker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
 import { Studio3D } from "../studio/Studio3D";
@@ -91,8 +91,8 @@ import {
   type SpaceWeather,
   type CyberThreats,
   type MarketsStatus,
-  type ConflictProvince,
   type ConflictCountry,
+  type ConflictWave,
   type ActivityIndex,
   type IncidentItem,
   type IncidentFilters as IncidentFilterOptions,
@@ -112,7 +112,9 @@ import {
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
 import { countryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
-import { provinceFeatures, provinceShadingKey } from "./conflictProvinceFeatures";
+import { waveFeatures } from "./conflictWaves";
+import "./ConflictWaves.css";
+import { divIcon } from "leaflet";
 import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -1298,12 +1300,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // whole new layer checkbox for one closely-related signal.
   // Countries with an escalation in the last 48 hours, coded by intensity; worked out on the server.
   const [conflictCountryRows, setConflictCountryRows] = useState<ConflictCountry[]>([]);
-  const [conflictProvinceRows, setConflictProvinceRows] = useState<ConflictProvince[]>([]);
+  const [conflictWaveRows, setConflictWaveRows] = useState<ConflictWave[]>([]);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["conflict-zones"]) {
       setConflictCountryRows([]);
-      setConflictProvinceRows([]);
+      setConflictWaveRows([]);
       return;
     }
     let cancelled = false;
@@ -1312,7 +1314,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       api.getConflictZones().then((z) => {
         if (cancelled) return;
         setConflictCountryRows(z.countries ?? []);
-        setConflictProvinceRows(z.provinces ?? []);
+        setConflictWaveRows(z.waves ?? []);
       }).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
@@ -1322,9 +1324,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows) : null),
     [enabled["conflict-zones"], worldOutlines, conflictCountryRows]
   );
-  const conflictProvinceMap = useMemo(
-    () => (enabled["conflict-zones"] && conflictProvinceRows.length > 0 ? provinceFeatures(conflictProvinceRows) : null),
-    [enabled["conflict-zones"], conflictProvinceRows]
+  const conflictWaveMap = useMemo(
+    () => (enabled["conflict-zones"] ? waveFeatures(conflictWaveRows) : null),
+    [enabled["conflict-zones"], conflictWaveRows]
   );
   const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
   useEffect(() => {
@@ -2027,7 +2029,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
             conflictMap={conflictMap}
-            conflictProvinceMap={conflictProvinceMap}
+            conflictWaves={conflictWaveMap}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
             onMapReady={setGlobeMap}
@@ -2043,7 +2045,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             mode={mapMode}
             points={flatMapPoints}
             conflictMap={conflictMap}
-            conflictProvinceMap={conflictProvinceMap}
+            conflictWaveRows={enabled["conflict-zones"] ? conflictWaveRows : []}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2360,7 +2362,7 @@ function FlatMap({
   mode,
   points,
   conflictMap,
-  conflictProvinceMap,
+  conflictWaveRows,
   onMapClick,
   drawMode,
   drawPoints,
@@ -2386,7 +2388,8 @@ function FlatMap({
   points: GlobePoint[];
   /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
   conflictMap?: FeatureCollection | null;
-  conflictProvinceMap?: FeatureCollection | null;
+  /** Rings at escalations getting worse (see the conflict-zones effect). */
+  conflictWaveRows?: ConflictWave[];
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2443,14 +2446,18 @@ function FlatMap({
           onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
         />
       )}
-      {conflictProvinceMap && (
-        <GeoJSON
-          key={provinceShadingKey(conflictProvinceMap)}
-          data={conflictProvinceMap}
-          style={(f) => ({ ...countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 1) as 1 | 2 | 3 | 4), fillOpacity: 0.3 })}
-          onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
+      {(conflictWaveRows ?? []).map((w) => (
+        <Marker
+          key={w.id}
+          position={[w.lat, w.lon]}
+          interactive={false}
+          icon={divIcon({
+            className: "conflict-wave-icon",
+            iconSize: [0, 0],
+            html: `<span class="conflict-wave conflict-wave--${w.level}"></span><span class="conflict-wave conflict-wave--${w.level} conflict-wave--late"></span>`,
+          })}
         />
-      )}
+      ))}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
         <Polyline positions={drawPoints} pathOptions={{ color: "#ffd23f", weight: 2 }} />

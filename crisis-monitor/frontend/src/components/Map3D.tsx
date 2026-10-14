@@ -117,8 +117,8 @@ interface Map3DProps {
   /** Provinces with active conflict, shaded red. */
   /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
   conflictMap?: FeatureCollection | null;
-  /** Province outlines with an escalation, drawn over the country shading (null when the layer is off). */
-  conflictProvinceMap?: FeatureCollection | null;
+  /** Rings at escalations getting worse (null when the layer is off). */
+  conflictWaves?: FeatureCollection | null;
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
   drawAreaRing: [number, number][] | null;
   onMapClick?: (lat: number, lng: number) => void;
@@ -355,7 +355,7 @@ function toGeoJsonHeat(points: [number, number, number][] | null | undefined): G
   };
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, conflictMap, conflictProvinceMap, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, conflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -538,26 +538,15 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
           "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, 4, INTENSITY_STYLE[4].lineOpacity, NEUTRAL_COUNTRY.lineOpacity],
         },
       });
-      map.addSource("osiris-conflict-provinces", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      map.addLayer({
-        id: "osiris-conflict-provinces-fill",
-        type: "fill",
-        source: "osiris-conflict-provinces",
-        paint: {
-          "fill-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].fill, 2, INTENSITY_STYLE[2].fill, 3, INTENSITY_STYLE[3].fill, INTENSITY_STYLE[4].fill],
-          "fill-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].opacity, 2, INTENSITY_STYLE[2].opacity, 3, INTENSITY_STYLE[3].opacity, INTENSITY_STYLE[4].opacity],
-        },
-      });
-      map.addLayer({
-        id: "osiris-conflict-provinces-line",
-        type: "line",
-        source: "osiris-conflict-provinces",
-        paint: {
-          "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, INTENSITY_STYLE[4].line],
-          "line-width": ["match", ["get", "intensity"], 4, 1.8, 3, 1.5, 1.1],
-          "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, INTENSITY_STYLE[4].lineOpacity],
-        },
-      });
+      map.addSource("osiris-conflict-waves", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      for (const id of ["osiris-conflict-waves-a", "osiris-conflict-waves-b"]) {
+        map.addLayer({
+          id,
+          type: "circle",
+          source: "osiris-conflict-waves",
+          paint: { "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": INTENSITY_STYLE[4].line, "circle-stroke-width": 2, "circle-radius": 8, "circle-stroke-opacity": 0.9 },
+        });
+      }
       map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "osiris-territory-changes-fill",
@@ -852,14 +841,39 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
     else map.once("load", apply);
   }, [conflictMap]);
 
+  // Waves: two rings per escalation, offset half a cycle, each growing and fading. Reduced motion holds them still.
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     const apply = () =>
-      (map.getSource("osiris-conflict-provinces") as GeoJSONSource | undefined)?.setData(conflictProvinceMap ?? { type: "FeatureCollection", features: [] });
-    if (map.getSource("osiris-conflict-provinces")) apply();
+      (map.getSource("osiris-conflict-waves") as GeoJSONSource | undefined)?.setData(conflictWaves ?? { type: "FeatureCollection", features: [] });
+    if (map.getSource("osiris-conflict-waves")) apply();
     else map.once("load", apply);
-  }, [conflictProvinceMap]);
+  }, [conflictWaves]);
+
+  useEffect(() => {
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const period = 2400;
+    const start = performance.now();
+    let raf = 0;
+    const setRing = (map: MapLibreMap, id: string, phase: number, still: boolean) => {
+      if (!map.getLayer(id)) return;
+      const scale = still ? 1 : 0.4 + 1.6 * phase;
+      map.setPaintProperty(id, "circle-radius", ["*", ["get", "r"], scale]);
+      map.setPaintProperty(id, "circle-stroke-opacity", still ? 0.6 : 0.9 * (1 - phase));
+    };
+    const frame = (now: number) => {
+      const map = mapRef.current;
+      if (map) {
+        const phase = ((now - start) % period) / period;
+        setRing(map, "osiris-conflict-waves-a", phase, !!reduce);
+        setRing(map, "osiris-conflict-waves-b", (phase + 0.5) % 1, !!reduce);
+      }
+      if (!reduce) raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;

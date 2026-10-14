@@ -146,6 +146,25 @@ export function trendOf(input: { net: number; recent: number; prior: number } | 
   return "steady";
 }
 
+/** A located escalation whose recent reports lean towards escalation: drawn as a wave on the map. */
+export interface ConflictWave {
+  id: string;
+  lat: number;
+  lon: number;
+  level: "watch" | "elevated" | "critical";
+  locationLabel: string | null;
+  countryName: string;
+}
+
+export function escalationWaves(
+  points: (ConflictWave & { trendKey?: string })[],
+  trends: Map<string, { net: number; recent: number; prior: number }>
+): ConflictWave[] {
+  return points
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && trendOf(trends.get(p.trendKey ?? p.id)) === "worsening")
+    .map(({ id, lat, lon, level, locationLabel, countryName }) => ({ id, lat, lon, level, locationLabel, countryName }));
+}
+
 /**
  * Countries coded by the intensity of their escalations in the window. Every incident carries its country, so a
  * country is coded even when its incidents cannot be placed inside a province, which is why this does not use
