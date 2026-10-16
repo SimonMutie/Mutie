@@ -117,6 +117,8 @@ interface Map3DProps {
   /** Provinces with active conflict, shaded red. */
   /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
   conflictMap?: FeatureCollection | null;
+  /** Active conflict countries (UCDP) with no alert, graded 5-8; drawn above the alert shading. */
+  activeConflictMap?: FeatureCollection | null;
   /** Rings at escalations getting worse (null when the layer is off). */
   conflictWaves?: FeatureCollection | null;
   /** A closed [lat,lng] ring for the in-progress area-drawing shape, or null. */
@@ -355,7 +357,7 @@ function toGeoJsonHeat(points: [number, number, number][] | null | undefined): G
   };
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, conflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, conflictMap, activeConflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -536,6 +538,26 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
           "line-color": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].line, 2, INTENSITY_STYLE[2].line, 3, INTENSITY_STYLE[3].line, 4, INTENSITY_STYLE[4].line, 5, ACTIVE_INTENSITY_STYLE[1].line, 6, ACTIVE_INTENSITY_STYLE[2].line, 7, ACTIVE_INTENSITY_STYLE[3].line, 8, ACTIVE_INTENSITY_STYLE[4].line, NEUTRAL_COUNTRY.line],
           "line-width": ["match", ["get", "intensity"], 4, 1.8, 3, 1.5, 0, NEUTRAL_COUNTRY.lineWidth, 1.1],
           "line-opacity": ["match", ["get", "intensity"], 1, INTENSITY_STYLE[1].lineOpacity, 2, INTENSITY_STYLE[2].lineOpacity, 3, INTENSITY_STYLE[3].lineOpacity, 4, INTENSITY_STYLE[4].lineOpacity, 5, ACTIVE_INTENSITY_STYLE[1].lineOpacity, 6, ACTIVE_INTENSITY_STYLE[2].lineOpacity, 7, ACTIVE_INTENSITY_STYLE[3].lineOpacity, 8, ACTIVE_INTENSITY_STYLE[4].lineOpacity, NEUTRAL_COUNTRY.lineOpacity],
+        },
+      });
+      map.addSource("osiris-active-conflicts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "osiris-active-conflicts-fill",
+        type: "fill",
+        source: "osiris-active-conflicts",
+        paint: {
+          "fill-color": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].fill, 6, ACTIVE_INTENSITY_STYLE[2].fill, 7, ACTIVE_INTENSITY_STYLE[3].fill, 8, ACTIVE_INTENSITY_STYLE[4].fill, NEUTRAL_COUNTRY.fill],
+          "fill-opacity": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].opacity, 6, ACTIVE_INTENSITY_STYLE[2].opacity, 7, ACTIVE_INTENSITY_STYLE[3].opacity, 8, ACTIVE_INTENSITY_STYLE[4].opacity, 0],
+        },
+      });
+      map.addLayer({
+        id: "osiris-active-conflicts-line",
+        type: "line",
+        source: "osiris-active-conflicts",
+        paint: {
+          "line-color": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].line, 6, ACTIVE_INTENSITY_STYLE[2].line, 7, ACTIVE_INTENSITY_STYLE[3].line, 8, ACTIVE_INTENSITY_STYLE[4].line, NEUTRAL_COUNTRY.line],
+          "line-width": ["match", ["get", "intensity"], 7, 1.4, 8, 1.6, 1.2],
+          "line-opacity": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].lineOpacity, 6, ACTIVE_INTENSITY_STYLE[2].lineOpacity, 7, ACTIVE_INTENSITY_STYLE[3].lineOpacity, 8, ACTIVE_INTENSITY_STYLE[4].lineOpacity, 0],
         },
       });
       map.addSource("osiris-conflict-waves", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -840,6 +862,16 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, conflic
     if (map.getSource("osiris-conflict-zones")) apply();
     else map.once("load", apply);
   }, [conflictMap]);
+
+  // Active conflict (UCDP) shading, drawn above the alert shading so the purple scale sits where no alert is.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () =>
+      (map.getSource("osiris-active-conflicts") as GeoJSONSource | undefined)?.setData(activeConflictMap ?? { type: "FeatureCollection", features: [] });
+    if (map.getSource("osiris-active-conflicts")) apply();
+    else map.once("load", apply);
+  }, [activeConflictMap]);
 
   // Waves: two rings per escalation, offset half a cycle, each growing and fading. Reduced motion holds them still.
   useEffect(() => {

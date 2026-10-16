@@ -39,26 +39,42 @@ export function loadWorldCountries(): Promise<FeatureCollection> {
   return worldPromise;
 }
 
-/** Joins the outlines to the backend's country codes; countries not in the list are neutral. */
-export function countryFeatures(world: FeatureCollection, flagged: ConflictCountry[], active: ActiveCountry[] = []): FeatureCollection {
+/** Alert shading: joins the outlines to the backend's escalation codes; countries not in the list are neutral. */
+export function countryFeatures(world: FeatureCollection, flagged: ConflictCountry[]): FeatureCollection {
   const byCode = new Map(flagged.map((c) => [c.code, c]));
-  const activeByCode = new Map(active.map((c) => [c.code, c]));
   return {
     type: "FeatureCollection",
     features: world.features.map((f) => {
       const iso2 = ID_TO_ISO2[String(f.id)] ?? "";
       const name = String(f.properties?.name ?? iso2);
       const c = byCode.get(iso2);
-      const a = activeByCode.get(iso2);
-      const activeText = a ? `active conflict, ${a.intensityLabel.toLowerCase()}: ${a.events} UCDP events, ${a.fatalities} killed in the last 90 days` : "";
       const props: CountryFeatureProps = c
-        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) + (a ? `. ${activeText}` : "") }
-        : a
-          ? { iso2, name, intensity: (4 + a.intensity) as CountryIntensity, label: `${name}: ${activeText}; no escalation in the last 48 hours` }
-          : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
+        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) }
+        : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
       return { type: "Feature", id: f.id, geometry: f.geometry, properties: props as unknown as Record<string, unknown> };
     }),
   };
+}
+
+/** Active-conflict shading (UCDP, 90 days), graded 5-8. Only countries with no alert are included: an alert
+ *  takes precedence, so the two layers never overlap. Countries not active are left out entirely. */
+export function activeCountryFeatures(world: FeatureCollection, active: ActiveCountry[], alertCodes: Set<string>): FeatureCollection {
+  const byCode = new Map(active.map((a) => [a.code, a]));
+  const features: FeatureCollection["features"] = [];
+  for (const f of world.features) {
+    const iso2 = ID_TO_ISO2[String(f.id)] ?? "";
+    const a = byCode.get(iso2);
+    if (!a || alertCodes.has(iso2)) continue;
+    const name = String(f.properties?.name ?? iso2);
+    const props: CountryFeatureProps = {
+      iso2,
+      name: name,
+      intensity: (4 + a.intensity) as CountryIntensity,
+      label: `${name}: active conflict, ${a.intensityLabel.toLowerCase()} (${a.events} UCDP events, ${a.fatalities} killed in the last 90 days)`,
+    };
+    features.push({ type: "Feature", id: f.id, geometry: f.geometry, properties: props as unknown as Record<string, unknown> });
+  }
+  return { type: "FeatureCollection", features };
 }
 
 /** Stable key that changes whenever the shading does, so renderers that cannot diff data can redraw. */

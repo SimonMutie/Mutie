@@ -112,7 +112,7 @@ import {
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
-import { countryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
+import { activeCountryFeatures, countryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
 import { divIcon } from "leaflet";
@@ -480,6 +480,16 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
+  // Active conflict: countries with organised violence recorded by UCDP in the last 90 days, graded by killed.
+  // Drawn from the active-conflict data (see the active-conflicts effect), so this adds no points of its own.
+  {
+    key: "active-conflicts",
+    label: "Active conflicts (UCDP)",
+    group: "Threats & Intel",
+    color: "#7e62d0",
+    icon: AlertTriangle,
+    fetcher: async () => [],
+  },
   // Flagged escalation incidents (backend: escalationIncidents.ts) — one
   // The conflict intensity map: each province with an escalation is shaded by how intense it is. The shading
   // is drawn from the province data (see the conflict-zones effect), so this layer adds no points of its own.
@@ -945,6 +955,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "conflict-events": true,
     "conflict-escalation": true,
     "conflict-zones": true,
+    "active-conflicts": true,
     "nuclear-facilities": false,
     "global-incidents": false,
     "live-alert-pins": false,
@@ -1306,21 +1317,18 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
+    if (!enabled["conflict-zones"] && !enabled["active-conflicts"]) return;
+    let cancelled = false;
+    loadWorldCountries().then((w) => !cancelled && setWorldOutlines(w)).catch(() => {});
+    return () => { cancelled = true; };
+  }, [enabled["conflict-zones"], enabled["active-conflicts"]]);
+  useEffect(() => {
     if (!enabled["conflict-zones"]) {
       setConflictCountryRows([]);
       setConflictWaveRows([]);
       return;
     }
     let cancelled = false;
-    loadWorldCountries().then((w) => !cancelled && setWorldOutlines(w)).catch(() => {});
-    const loadActive = () =>
-      api.getActiveConflicts().then((a) => {
-        if (cancelled) return;
-        setActiveRows(a.countries ?? []);
-        setActiveConfigured(a.configured);
-      }).catch(() => {});
-    loadActive();
-    const activeTimer = setInterval(loadActive, 6 * 3_600_000);
     const load = () =>
       api.getConflictZones().then((z) => {
         if (cancelled) return;
@@ -1329,11 +1337,35 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       }).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
-    return () => { cancelled = true; clearInterval(t); clearInterval(activeTimer); };
+    return () => { cancelled = true; clearInterval(t); };
   }, [enabled["conflict-zones"]]);
+  useEffect(() => {
+    if (!enabled["active-conflicts"]) {
+      setActiveRows([]);
+      return;
+    }
+    let cancelled = false;
+    const loadActive = () =>
+      api.getActiveConflicts().then((a) => {
+        if (cancelled) return;
+        setActiveRows(a.countries ?? []);
+        setActiveConfigured(a.configured);
+      }).catch(() => {});
+    loadActive();
+    const activeTimer = setInterval(loadActive, 6 * 3_600_000);
+    return () => { cancelled = true; clearInterval(activeTimer); };
+  }, [enabled["active-conflicts"]]);
   const conflictMap = useMemo(
-    () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows, activeRows) : null),
-    [enabled["conflict-zones"], worldOutlines, conflictCountryRows, activeRows]
+    () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows) : null),
+    [enabled["conflict-zones"], worldOutlines, conflictCountryRows]
+  );
+  const activeConflictMap = useMemo(
+    () => {
+      if (!enabled["active-conflicts"] || !worldOutlines) return null;
+      const alertCodes = new Set(enabled["conflict-zones"] ? conflictCountryRows.map((c) => c.code) : []);
+      return activeCountryFeatures(worldOutlines, activeRows, alertCodes);
+    },
+    [enabled["active-conflicts"], enabled["conflict-zones"], worldOutlines, activeRows, conflictCountryRows]
   );
   const conflictWaveMap = useMemo(
     () => (enabled["conflict-zones"] ? waveFeatures(conflictWaveRows) : null),
@@ -2040,6 +2072,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
             conflictMap={conflictMap}
+            activeConflictMap={activeConflictMap}
             conflictWaves={conflictWaveMap}
             drawAreaRing={drawAreaRing}
             onMapClick={handleMapClick}
@@ -2056,6 +2089,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             mode={mapMode}
             points={flatMapPoints}
             conflictMap={conflictMap}
+            activeConflictMap={activeConflictMap}
             conflictWaveRows={enabled["conflict-zones"] ? conflictWaveRows : []}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
@@ -2087,7 +2121,15 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
-        {enabled["conflict-zones"] && <ConflictIntensityLegend count={conflictCountryRows.length} activeCount={activeRows.length} activeConfigured={activeConfigured} />}
+        {(enabled["conflict-zones"] || enabled["active-conflicts"]) && (
+          <ConflictIntensityLegend
+            showAlerts={enabled["conflict-zones"]}
+            showActive={enabled["active-conflicts"]}
+            count={conflictCountryRows.length}
+            activeCount={activeRows.length}
+            activeConfigured={activeConfigured}
+          />
+        )}
 
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
           <PanelToggle side="left" open={leftOpen} onClick={() => togglePanel("left")} />
@@ -2373,6 +2415,7 @@ function FlatMap({
   mode,
   points,
   conflictMap,
+  activeConflictMap,
   conflictWaveRows,
   onMapClick,
   drawMode,
@@ -2399,6 +2442,8 @@ function FlatMap({
   points: GlobePoint[];
   /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
   conflictMap?: FeatureCollection | null;
+  /** Active conflict countries with no alert, drawn above the alert shading. */
+  activeConflictMap?: FeatureCollection | null;
   /** Rings at escalations getting worse (see the conflict-zones effect). */
   conflictWaveRows?: ConflictWave[];
   /** Set only while Drawing Tools, Route, or Shapes is the active
@@ -2454,6 +2499,14 @@ function FlatMap({
           key={countryShadingKey(conflictMap)}
           data={conflictMap}
           style={(f) => countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 0) as 0 | 1 | 2 | 3 | 4)}
+          onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
+        />
+      )}
+      {activeConflictMap && (
+        <GeoJSON
+          key={countryShadingKey(activeConflictMap)}
+          data={activeConflictMap}
+          style={(f) => countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 0) as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8)}
           onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
         />
       )}

@@ -1,7 +1,25 @@
 import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 
-/** Key for the conflict map: the four intensities, what each means, and the window. */
-export default function ConflictIntensityLegend({ count, activeCount, activeConfigured }: { count: number; activeCount: number; activeConfigured: boolean | null }) {
+/** Key for the conflict layers: the alert scale and the active-conflict scale, each shown only when its layer is on. */
+export default function ConflictIntensityLegend({
+  showAlerts,
+  showActive,
+  count,
+  activeCount,
+  activeConfigured,
+}: {
+  showAlerts: boolean;
+  showActive: boolean;
+  count: number;
+  activeCount: number;
+  activeConfigured: boolean | null;
+}) {
+  const swatch = (fill: string, opacity: number, line: string) => (
+    <span
+      aria-hidden="true"
+      style={{ flex: "0 0 auto", width: 16, height: 12, marginTop: 2, borderRadius: 2, background: fill, opacity: Math.min(1, opacity + 0.35), border: `1px solid ${line}` }}
+    />
+  );
   return (
     <div
       role="group"
@@ -22,34 +40,39 @@ export default function ConflictIntensityLegend({ count, activeCount, activeConf
         pointerEvents: "none",
       }}
     >
-      <div style={{ fontWeight: 700, marginBottom: 6 }}>Countries by conflict intensity · {count} countr{count === 1 ? "y" : "ies"}</div>
-      {([4, 3, 2, 1] as const).map((k) => (
-        <div key={k} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
-          <span
-            aria-hidden="true"
-            style={{ flex: "0 0 auto", width: 16, height: 12, marginTop: 2, borderRadius: 2, background: INTENSITY_STYLE[k].fill, opacity: Math.min(1, INTENSITY_STYLE[k].opacity + 0.35), border: `1px solid ${INTENSITY_STYLE[k].line}` }}
-          />
-          <span>
-            <b>{INTENSITY_STYLE[k].label}</b>: {INTENSITY_STYLE[k].text}
-          </span>
-        </div>
-      ))}
-      <div style={{ fontWeight: 700, margin: "8px 0 6px" }}>
-        Active conflict (UCDP, 90 days) · {activeConfigured === false ? "not configured" : `${activeCount} countr${activeCount === 1 ? "y" : "ies"}`}
+      {showAlerts && (
+        <>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Alerts, last 48 hours · {count} countr{count === 1 ? "y" : "ies"}</div>
+          {([4, 3, 2, 1] as const).map((k) => (
+            <div key={k} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
+              {swatch(INTENSITY_STYLE[k].fill, INTENSITY_STYLE[k].opacity, INTENSITY_STYLE[k].line)}
+              <span>
+                <b>{INTENSITY_STYLE[k].label}</b>: {INTENSITY_STYLE[k].text}
+              </span>
+            </div>
+          ))}
+        </>
+      )}
+      {showActive && (
+        <>
+          <div style={{ fontWeight: 700, margin: showAlerts ? "8px 0 6px" : "0 0 6px" }}>
+            Active conflict (UCDP, 90 days) · {activeConfigured === false ? "not configured" : `${activeCount} countr${activeCount === 1 ? "y" : "ies"}`}
+          </div>
+          {([4, 3, 2, 1] as const).map((k) => (
+            <div key={`a${k}`} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
+              {swatch(ACTIVE_INTENSITY_STYLE[k].fill, ACTIVE_INTENSITY_STYLE[k].opacity, ACTIVE_INTENSITY_STYLE[k].line)}
+              <span>
+                <b>{ACTIVE_INTENSITY_STYLE[k].label}</b>: {ACTIVE_INTENSITY_STYLE[k].text}
+              </span>
+            </div>
+          ))}
+          {activeConfigured === false && <div style={{ opacity: 0.7, marginBottom: 4 }}>Unavailable: UCDP is not configured on the server.</div>}
+        </>
+      )}
+      <div style={{ opacity: 0.7, marginTop: 4 }}>
+        {showAlerts && showActive ? "Active purple, shown where there is no alert. " : ""}
+        Rings: alerts getting worse. Tooltips give the detail.
       </div>
-      {([4, 3, 2, 1] as const).map((k) => (
-        <div key={`a${k}`} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
-          <span
-            aria-hidden="true"
-            style={{ flex: "0 0 auto", width: 16, height: 12, marginTop: 2, borderRadius: 2, background: ACTIVE_INTENSITY_STYLE[k].fill, opacity: Math.min(1, ACTIVE_INTENSITY_STYLE[k].opacity + 0.35), border: `1px solid ${ACTIVE_INTENSITY_STYLE[k].line}` }}
-          />
-          <span>
-            <b>{ACTIVE_INTENSITY_STYLE[k].label}</b>: {ACTIVE_INTENSITY_STYLE[k].text}
-          </span>
-        </div>
-      ))}
-      {activeConfigured === false && <div style={{ opacity: 0.7, marginBottom: 4 }}>Unavailable: UCDP is not configured on the server.</div>}
-      <div style={{ opacity: 0.7, marginTop: 4 }}>Red-orange: alerts in the last 48 hours. Purple: active conflict. Rings: alerts getting worse. Tooltips give the detail.</div>
     </div>
   );
 }
