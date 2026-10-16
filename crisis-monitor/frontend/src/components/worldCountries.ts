@@ -1,9 +1,9 @@
 import { feature } from "topojson-client";
 import type { Topology, GeometryCollection } from "topojson-specification";
 import type { FeatureCollection } from "geojson";
-import type { ActiveCountry, ConflictCountry } from "../api";
+import type { ActiveCountry } from "../api";
 import { ID_TO_ISO2 } from "../data/countryIso";
-import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
+import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 
 /**
  * Whole-country shading for the conflict map, the way a conflict tracker codes countries: every country is drawn,
@@ -39,32 +39,14 @@ export function loadWorldCountries(): Promise<FeatureCollection> {
   return worldPromise;
 }
 
-/** Alert shading: joins the outlines to the backend's escalation codes; countries not in the list are neutral. */
-export function countryFeatures(world: FeatureCollection, flagged: ConflictCountry[]): FeatureCollection {
-  const byCode = new Map(flagged.map((c) => [c.code, c]));
-  return {
-    type: "FeatureCollection",
-    features: world.features.map((f) => {
-      const iso2 = ID_TO_ISO2[String(f.id)] ?? "";
-      const name = String(f.properties?.name ?? iso2);
-      const c = byCode.get(iso2);
-      const props: CountryFeatureProps = c
-        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) }
-        : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
-      return { type: "Feature", id: f.id, geometry: f.geometry, properties: props as unknown as Record<string, unknown> };
-    }),
-  };
-}
-
-/** Active-conflict shading (UCDP, 90 days), graded 5-8. Only countries with no alert are included: an alert
- *  takes precedence, so the two layers never overlap. Countries not active are left out entirely. */
-export function activeCountryFeatures(world: FeatureCollection, active: ActiveCountry[], alertCodes: Set<string>): FeatureCollection {
+/** Active-conflict shading (UCDP, 90 days), graded 5-8. Countries not active are left out entirely. */
+export function activeCountryFeatures(world: FeatureCollection, active: ActiveCountry[]): FeatureCollection {
   const byCode = new Map(active.map((a) => [a.code, a]));
   const features: FeatureCollection["features"] = [];
   for (const f of world.features) {
     const iso2 = ID_TO_ISO2[String(f.id)] ?? "";
     const a = byCode.get(iso2);
-    if (!a || alertCodes.has(iso2)) continue;
+    if (!a) continue;
     const name = String(f.properties?.name ?? iso2);
     const props: CountryFeatureProps = {
       iso2,

@@ -91,7 +91,6 @@ import {
   type SpaceWeather,
   type CyberThreats,
   type MarketsStatus,
-  type ConflictCountry,
   type ActiveCountry,
   type ConflictWave,
   type ActivityIndex,
@@ -112,7 +111,7 @@ import {
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
-import { activeCountryFeatures, countryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
+import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
 import { divIcon } from "leaflet";
@@ -491,16 +490,6 @@ const LAYER_DEFS: LayerDef[] = [
     fetcher: async () => [],
   },
   // Flagged escalation incidents (backend: escalationIncidents.ts) — one
-  // The conflict intensity map: each province with an escalation is shaded by how intense it is. The shading
-  // is drawn from the province data (see the conflict-zones effect), so this layer adds no points of its own.
-  {
-    key: "conflict-zones",
-    label: "Conflict intensity map",
-    group: "Threats & Intel",
-    color: "#e0572a",
-    icon: AlertTriangle,
-    fetcher: async () => [],
-  },
   // marker per incident, placed where the reporting says the event happened.
   // Each one is the product of reports coded against the written codebook
   // — articles read in full, or, until that happens, headlines matched by
@@ -954,7 +943,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "severe-weather": true,
     "conflict-events": true,
     "conflict-escalation": true,
-    "conflict-zones": true,
     "active-conflicts": true,
     "nuclear-facilities": false,
     "global-incidents": false,
@@ -1311,34 +1299,28 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // is, and tied to the same Conflict Escalation toggle rather than adding a
   // whole new layer checkbox for one closely-related signal.
   // Countries with an escalation in the last 48 hours, coded by intensity; worked out on the server.
-  const [conflictCountryRows, setConflictCountryRows] = useState<ConflictCountry[]>([]);
   const [conflictWaveRows, setConflictWaveRows] = useState<ConflictWave[]>([]);
   const [activeRows, setActiveRows] = useState<ActiveCountry[]>([]);
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
-    if (!enabled["conflict-zones"] && !enabled["active-conflicts"]) return;
+    if (!enabled["active-conflicts"]) return;
     let cancelled = false;
     loadWorldCountries().then((w) => !cancelled && setWorldOutlines(w)).catch(() => {});
     return () => { cancelled = true; };
-  }, [enabled["conflict-zones"], enabled["active-conflicts"]]);
+  }, [enabled["active-conflicts"]]);
+  // Escalation rings: always on, polled from the conflict-zones endpoint (its country list is no longer drawn).
   useEffect(() => {
-    if (!enabled["conflict-zones"]) {
-      setConflictCountryRows([]);
-      setConflictWaveRows([]);
-      return;
-    }
     let cancelled = false;
     const load = () =>
       api.getConflictZones().then((z) => {
         if (cancelled) return;
-        setConflictCountryRows(z.countries ?? []);
         setConflictWaveRows(z.waves ?? []);
       }).catch(() => {});
     load();
     const t = setInterval(load, 5 * 60_000);
     return () => { cancelled = true; clearInterval(t); };
-  }, [enabled["conflict-zones"]]);
+  }, []);
   useEffect(() => {
     if (!enabled["active-conflicts"]) {
       setActiveRows([]);
@@ -1355,21 +1337,16 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     const activeTimer = setInterval(loadActive, 6 * 3_600_000);
     return () => { cancelled = true; clearInterval(activeTimer); };
   }, [enabled["active-conflicts"]]);
-  const conflictMap = useMemo(
-    () => (enabled["conflict-zones"] && worldOutlines ? countryFeatures(worldOutlines, conflictCountryRows) : null),
-    [enabled["conflict-zones"], worldOutlines, conflictCountryRows]
-  );
   const activeConflictMap = useMemo(
     () => {
       if (!enabled["active-conflicts"] || !worldOutlines) return null;
-      const alertCodes = new Set(enabled["conflict-zones"] ? conflictCountryRows.map((c) => c.code) : []);
-      return activeCountryFeatures(worldOutlines, activeRows, alertCodes);
+      return activeCountryFeatures(worldOutlines, activeRows);
     },
-    [enabled["active-conflicts"], enabled["conflict-zones"], worldOutlines, activeRows, conflictCountryRows]
+    [enabled["active-conflicts"], worldOutlines, activeRows]
   );
   const conflictWaveMap = useMemo(
-    () => (enabled["conflict-zones"] ? waveFeatures(conflictWaveRows) : null),
-    [enabled["conflict-zones"], conflictWaveRows]
+    () => waveFeatures(conflictWaveRows),
+    [conflictWaveRows]
   );
   const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
   useEffect(() => {
@@ -2071,7 +2048,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             points={mapPoints}
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
-            conflictMap={conflictMap}
             activeConflictMap={activeConflictMap}
             conflictWaves={conflictWaveMap}
             drawAreaRing={drawAreaRing}
@@ -2088,9 +2064,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <FlatMap
             mode={mapMode}
             points={flatMapPoints}
-            conflictMap={conflictMap}
             activeConflictMap={activeConflictMap}
-            conflictWaveRows={enabled["conflict-zones"] ? conflictWaveRows : []}
+            conflictWaveRows={conflictWaveRows}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2121,14 +2096,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
-        {(enabled["conflict-zones"] || enabled["active-conflicts"]) && (
-          <ConflictIntensityLegend
-            showAlerts={enabled["conflict-zones"]}
-            showActive={enabled["active-conflicts"]}
-            count={conflictCountryRows.length}
-            activeCount={activeRows.length}
-            activeConfigured={activeConfigured}
-          />
+        {enabled["active-conflicts"] && (
+          <ConflictIntensityLegend activeCount={activeRows.length} activeConfigured={activeConfigured} />
         )}
 
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
@@ -2414,7 +2383,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 function FlatMap({
   mode,
   points,
-  conflictMap,
   activeConflictMap,
   conflictWaveRows,
   onMapClick,
@@ -2440,11 +2408,9 @@ function FlatMap({
 }: {
   mode: Exclude<MapMode, "3d">;
   points: GlobePoint[];
-  /** Every country outline, shaded by intensity where there is an escalation (null when the layer is off). */
-  conflictMap?: FeatureCollection | null;
   /** Active conflict countries with no alert, drawn above the alert shading. */
   activeConflictMap?: FeatureCollection | null;
-  /** Rings at escalations getting worse (see the conflict-zones effect). */
+  /** Rings at escalations getting worse. */
   conflictWaveRows?: ConflictWave[];
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
@@ -2494,14 +2460,6 @@ function FlatMap({
       <MapNavPad />
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
-      {conflictMap && (
-        <GeoJSON
-          key={countryShadingKey(conflictMap)}
-          data={conflictMap}
-          style={(f) => countryPathStyle(((f?.properties as { intensity?: number })?.intensity ?? 0) as 0 | 1 | 2 | 3 | 4)}
-          onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
-        />
-      )}
       {activeConflictMap && (
         <GeoJSON
           key={countryShadingKey(activeConflictMap)}
