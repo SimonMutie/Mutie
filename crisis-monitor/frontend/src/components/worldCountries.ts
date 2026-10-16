@@ -3,7 +3,7 @@ import type { Topology, GeometryCollection } from "topojson-specification";
 import type { FeatureCollection } from "geojson";
 import type { ActiveCountry, ConflictCountry } from "../api";
 import { ID_TO_ISO2 } from "../data/countryIso";
-import { ACTIVE_STYLE, INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
+import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE, intensityTooltip } from "./conflictIntensity";
 
 /**
  * Whole-country shading for the conflict map, the way a conflict tracker codes countries: every country is drawn,
@@ -11,8 +11,9 @@ import { ACTIVE_STYLE, INTENSITY_STYLE, intensityTooltip } from "./conflictInten
  * Intensity 0 means no escalation.
  */
 
-/** 0 no escalation and not active; 1-4 the escalation intensity; 5 active conflict with no escalation. */
-export type CountryIntensity = 0 | 1 | 2 | 3 | 4 | 5;
+/** 0 neither; 1-4 an alert escalation (intensity 1-4); 5-8 active conflict from UCDP (level 1-4, stored as 4 more).
+ *  Where a country has both, the alert value is used. */
+export type CountryIntensity = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export interface CountryFeatureProps {
   iso2: string;
@@ -48,10 +49,12 @@ export function countryFeatures(world: FeatureCollection, flagged: ConflictCount
       const iso2 = ID_TO_ISO2[String(f.id)] ?? "";
       const name = String(f.properties?.name ?? iso2);
       const c = byCode.get(iso2);
+      const a = activeByCode.get(iso2);
+      const activeText = a ? `active conflict, ${a.intensityLabel.toLowerCase()}: ${a.events} UCDP events, ${a.fatalities} killed in the last 90 days` : "";
       const props: CountryFeatureProps = c
-        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) }
-        : activeByCode.has(iso2)
-          ? { iso2, name, intensity: 5, label: `${name}: active conflict (${activeByCode.get(iso2)!.events} UCDP events, ${activeByCode.get(iso2)!.fatalities} killed in the last 90 days; no escalation in the last 48 hours)` }
+        ? { iso2, name: c.name || name, intensity: c.intensity, label: intensityTooltip({ name: c.name || name, intensity: c.intensity, counts: c.counts, trend: c.trend }) + (a ? `. ${activeText}` : "") }
+        : a
+          ? { iso2, name, intensity: (4 + a.intensity) as CountryIntensity, label: `${name}: ${activeText}; no escalation in the last 48 hours` }
           : { iso2, name, intensity: 0, label: `${name}: no escalation in the last 48 hours` };
       return { type: "Feature", id: f.id, geometry: f.geometry, properties: props as unknown as Record<string, unknown> };
     }),
@@ -71,9 +74,10 @@ export function countryPathStyle(intensity: CountryIntensity) {
   if (intensity === 0) {
     return { color: NEUTRAL_COUNTRY.line, weight: NEUTRAL_COUNTRY.lineWidth, opacity: NEUTRAL_COUNTRY.lineOpacity, fillColor: NEUTRAL_COUNTRY.fill, fillOpacity: NEUTRAL_COUNTRY.fillOpacity };
   }
-  if (intensity === 5) {
-    return { color: ACTIVE_STYLE.line, weight: 1.2, opacity: ACTIVE_STYLE.lineOpacity, fillColor: ACTIVE_STYLE.fill, fillOpacity: ACTIVE_STYLE.opacity };
+  if (intensity >= 5) {
+    const s = ACTIVE_INTENSITY_STYLE[(intensity - 4) as 1 | 2 | 3 | 4];
+    return { color: s.line, weight: 1.2, opacity: s.lineOpacity, fillColor: s.fill, fillOpacity: s.opacity };
   }
-  const s = INTENSITY_STYLE[intensity];
+  const s = INTENSITY_STYLE[intensity as 1 | 2 | 3 | 4];
   return { color: s.line, weight: intensity >= 3 ? 1.8 : 1.2, opacity: s.lineOpacity, fillColor: s.fill, fillOpacity: s.opacity };
 }

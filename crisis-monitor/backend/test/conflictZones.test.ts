@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeCountries, codeForUcdpCountry } from "../src/lib/ucdpActive";
+import { activeCountries, activeIntensityOf, codeForUcdpCountry } from "../src/lib/ucdpActive";
 import { conflictCountries, conflictProvinces, escalationWaves, intensityOf, provinceAt, trendOf } from "../src/lib/conflictZones";
 
 describe("conflict provinces", () => {
@@ -151,5 +151,20 @@ describe("active conflicts from UCDP", () => {
     expect(r.countries[0]).toMatchObject({ code: "SD", events: 2, fatalities: 15, latest: "2026-10-09" });
     expect(r.countries.map((c) => c.code)).toEqual(["SD", "ET"]);
     expect(r.unmatched).toEqual(["Atlantis"]);
+  });
+  it("grades active countries by killed in the window", () => {
+    expect(activeIntensityOf(0)).toBe(1);
+    expect(activeIntensityOf(19)).toBe(1);
+    expect(activeIntensityOf(20)).toBe(2);
+    expect(activeIntensityOf(100)).toBe(3);
+    expect(activeIntensityOf(500)).toBe(4);
+    const r = activeCountries([
+      { country: "Sudan", best: 600, date_end: "2026-10-01" },
+      { country: "Ethiopia", best: 4, date_end: "2026-09-20" },
+    ]);
+    expect(r.countries).toMatchObject([
+      { code: "SD", intensity: 4, intensityLabel: "Severe" },
+      { code: "ET", intensity: 1, intensityLabel: "Low" },
+    ]);
   });
 });

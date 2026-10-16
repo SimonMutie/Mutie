@@ -1398,6 +1398,9 @@ export interface ActiveCountry {
   events: number;
   fatalities: number;
   latest: string | null;
+  /** Graded by killed over the 90-day window: 1 low, 2 moderate, 3 high, 4 severe. */
+  intensity: 1 | 2 | 3 | 4;
+  intensityLabel: string;
 }
 export interface ActiveConflicts {
   /** False when the UCDP token is not set on the server, so no active countries can be shown. */

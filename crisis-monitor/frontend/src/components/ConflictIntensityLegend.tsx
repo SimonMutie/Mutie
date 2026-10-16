@@ -1,4 +1,4 @@
-import { ACTIVE_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
+import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 
 /** Key for the conflict map: the four intensities, what each means, and the window. */
 export default function ConflictIntensityLegend({ count, activeCount, activeConfigured }: { count: number; activeCount: number; activeConfigured: boolean | null }) {
@@ -34,14 +34,22 @@ export default function ConflictIntensityLegend({ count, activeCount, activeConf
           </span>
         </div>
       ))}
-      <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
-        <span aria-hidden="true" style={{ flex: "0 0 auto", width: 16, height: 12, marginTop: 2, borderRadius: 2, background: ACTIVE_STYLE.fill, opacity: 0.6, border: `1px solid ${ACTIVE_STYLE.line}` }} />
-        <span>
-          <b>{ACTIVE_STYLE.label}</b>:{" "}
-          {activeConfigured === false ? "unavailable (UCDP not configured on the server)" : `${activeCount} with UCDP events in 90 days`}
-        </span>
+      <div style={{ fontWeight: 700, margin: "8px 0 6px" }}>
+        Active conflict (UCDP, 90 days) · {activeConfigured === false ? "not configured" : `${activeCount} countr${activeCount === 1 ? "y" : "ies"}`}
       </div>
-      <div style={{ opacity: 0.7, marginTop: 4 }}>Countries, last 48 hours. Grey: no escalation. Rings: escalations getting worse. Tooltips give the trend.</div>
+      {([4, 3, 2, 1] as const).map((k) => (
+        <div key={`a${k}`} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 4 }}>
+          <span
+            aria-hidden="true"
+            style={{ flex: "0 0 auto", width: 16, height: 12, marginTop: 2, borderRadius: 2, background: ACTIVE_INTENSITY_STYLE[k].fill, opacity: Math.min(1, ACTIVE_INTENSITY_STYLE[k].opacity + 0.35), border: `1px solid ${ACTIVE_INTENSITY_STYLE[k].line}` }}
+          />
+          <span>
+            <b>{ACTIVE_INTENSITY_STYLE[k].label}</b>: {ACTIVE_INTENSITY_STYLE[k].text}
+          </span>
+        </div>
+      ))}
+      {activeConfigured === false && <div style={{ opacity: 0.7, marginBottom: 4 }}>Unavailable: UCDP is not configured on the server.</div>}
+      <div style={{ opacity: 0.7, marginTop: 4 }}>Red-orange: alerts in the last 48 hours. Purple: active conflict. Rings: alerts getting worse. Tooltips give the detail.</div>
     </div>
   );
 }

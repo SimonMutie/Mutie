@@ -13,12 +13,29 @@ export interface UcdpEvent {
   best?: number | null;
 }
 
+/** How intense a country's active conflict is over the 90-day window, from 1 (low) to 4 (severe). */
+export type ActiveIntensity = 1 | 2 | 3 | 4;
+export const ACTIVE_INTENSITY_LABEL: Record<ActiveIntensity, string> = { 1: "Low", 2: "Moderate", 3: "High", 4: "Severe" };
+
+/** Killed (UCDP best estimate) over the window at which each level starts. Any recorded event is at least Low. */
+export const ACTIVE_THRESHOLDS = { high: 500, elevated: 100, moderate: 20 } as const;
+
+/** Intensity from the death toll: severe 500+, high 100+, moderate 20+, otherwise low. */
+export function activeIntensityOf(fatalities: number): ActiveIntensity {
+  if (fatalities >= ACTIVE_THRESHOLDS.high) return 4;
+  if (fatalities >= ACTIVE_THRESHOLDS.elevated) return 3;
+  if (fatalities >= ACTIVE_THRESHOLDS.moderate) return 2;
+  return 1;
+}
+
 export interface ActiveCountry {
   code: string;
   name: string;
   events: number;
   fatalities: number;
   latest: string | null;
+  intensity: ActiveIntensity;
+  intensityLabel: string;
 }
 
 /** Lower-case, accent-free, letters and digits only. */
@@ -63,15 +80,19 @@ export function activeCountries(events: UcdpEvent[]): { countries: ActiveCountry
       unmatched.add(e.country);
       continue;
     }
-    const cur = found.get(code) ?? { code, name: NAME_OF.get(code) ?? e.country, events: 0, fatalities: 0, latest: null };
+    const cur = found.get(code) ?? { code, name: NAME_OF.get(code) ?? e.country, events: 0, fatalities: 0, latest: null, intensity: 1 as ActiveIntensity, intensityLabel: ACTIVE_INTENSITY_LABEL[1] };
     cur.events += 1;
     cur.fatalities += e.best ?? 0;
     const when = e.date_end ?? e.date_start ?? null;
     if (when && (!cur.latest || when > cur.latest)) cur.latest = when;
     found.set(code, cur);
   }
+  for (const c of found.values()) {
+    c.intensity = activeIntensityOf(c.fatalities);
+    c.intensityLabel = ACTIVE_INTENSITY_LABEL[c.intensity];
+  }
   return {
-    countries: [...found.values()].sort((a, b) => b.events - a.events || a.name.localeCompare(b.name)),
+    countries: [...found.values()].sort((a, b) => b.intensity - a.intensity || b.fatalities - a.fatalities || b.events - a.events || a.name.localeCompare(b.name)),
     unmatched: [...unmatched].sort(),
   };
 }
