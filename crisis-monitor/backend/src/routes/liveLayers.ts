@@ -1336,6 +1336,11 @@ liveLayersRouter.get("/ais-vessels", async (c) => {
   );
 });
 
+/** UCDP's GED 26.1 is the annual release, and its coverage stops at the end of the previous year, so a recent
+ *  window comes back empty. The monthly Candidate release (same endpoint, candidate version string) carries
+ *  the most recent months. Bump this when UCDP publishes a newer candidate version. */
+const UCDP_RECENT_VERSION = "26.0.8";
+
 interface UcdpEvent {
   id: number;
   date_start: string;
@@ -1378,7 +1383,7 @@ liveLayersRouter.get("/ucdp-conflict-events", async (c) => {
     c.req.raw,
     async () => {
       const startDate = new Date(Date.now() - 180 * 86_400_000).toISOString().slice(0, 10);
-      const url = `https://ucdpapi.pcr.uu.se/api/gedevents/26.1?pagesize=500&StartDate=${startDate}`;
+      const url = `https://ucdpapi.pcr.uu.se/api/gedevents/${UCDP_RECENT_VERSION}?pagesize=500&StartDate=${startDate}`;
       const res = await fetch(url, {
         headers: { "x-ucdp-access-token": c.env.UCDP_API_TOKEN! },
         signal: AbortSignal.timeout(12000),
@@ -1420,7 +1425,7 @@ liveLayersRouter.get("/active-conflicts", async (c) => {
     async () => {
       const startDate = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
       const events: UcdpEvent[] = [];
-      let url: string | null = `https://ucdpapi.pcr.uu.se/api/gedevents/26.1?pagesize=1000&StartDate=${startDate}`;
+      let url: string | null = `https://ucdpapi.pcr.uu.se/api/gedevents/${UCDP_RECENT_VERSION}?pagesize=1000&StartDate=${startDate}`;
       for (let page = 0; url && page < 20; page++) {
         const res: Response = await fetch(url, { headers: { "x-ucdp-access-token": c.env.UCDP_API_TOKEN! }, signal: AbortSignal.timeout(15000) });
         if (!res.ok) throw new Error(`UCDP API returned ${res.status}`);
