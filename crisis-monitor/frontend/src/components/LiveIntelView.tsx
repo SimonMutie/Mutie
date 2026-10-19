@@ -1302,6 +1302,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [conflictWaveRows, setConflictWaveRows] = useState<ConflictWave[]>([]);
   const [activeRows, setActiveRows] = useState<ActiveCountry[]>([]);
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
+  /** The conflict key is hidden until asked for, so it doesn't sit over the map. */
+  const [conflictKeyOpen, setConflictKeyOpen] = useState(false);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["active-conflicts"]) return;
@@ -2097,7 +2099,16 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         )}
 
         {enabled["active-conflicts"] && (
-          <ConflictIntensityLegend activeCount={activeRows.length} activeConfigured={activeConfigured} />
+          <>
+            <button
+              onClick={() => setConflictKeyOpen((v) => !v)}
+              aria-expanded={conflictKeyOpen}
+              style={{ position: "absolute", left: 12, bottom: 8, zIndex: 500, padding: "4px 9px", borderRadius: 6, background: "rgba(8, 14, 24, 0.82)", border: "1px solid rgba(255,255,255,0.12)", color: "#e6edf7", fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}
+            >
+              {conflictKeyOpen ? "Hide key" : "Key"}
+            </button>
+            {conflictKeyOpen && <ConflictIntensityLegend activeCount={activeRows.length} activeConfigured={activeConfigured} />}
+          </>
         )}
 
         <div style={{ position: "absolute", top: 12, left: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8, maxHeight: "calc(100% - 24px)" }}>
