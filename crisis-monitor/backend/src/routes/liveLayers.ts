@@ -1441,7 +1441,7 @@ liveLayersRouter.get("/firms-fires", async (c) => {
       const results = await Promise.all(
         jobs.map(async ({ region, source }) => {
           const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/${region}/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=0&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
-          const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
           if (!res.ok) throw new Error(`FIRMS returned ${res.status}`);
           return { region, source, data: (await res.json()) as { features?: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] } };
         })
