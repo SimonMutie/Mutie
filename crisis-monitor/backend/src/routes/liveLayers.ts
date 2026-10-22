@@ -1465,7 +1465,13 @@ liveLayersRouter.get("/firms-fires", async (c) => {
           });
         }
       }
-      return { configured: true, type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+      const diagnostics = results.map(({ source, data }) => ({
+        source,
+        rawFeatures: data.features?.length ?? 0,
+        firstFeatureKeys: data.features?.[0]?.properties ? Object.keys(data.features[0].properties) : [],
+        firstGeometry: (data.features?.[0]?.geometry as { type?: string } | undefined)?.type ?? null,
+      }));
+      return { configured: true, type: "FeatureCollection", features, diagnostics, fetchedAt: new Date().toISOString() };
     },
     3600
   );
