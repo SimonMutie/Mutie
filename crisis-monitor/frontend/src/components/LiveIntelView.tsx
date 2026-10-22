@@ -115,6 +115,7 @@ import ConflictIntensityLegend from "./ConflictIntensityLegend";
 import FireTimeline, { FireMapLayer, fireRangeFrom, unusualFireDays, type FireRangeMode } from "./FireTimeline";
 import { ImageryControl, imageryTemplate, type ImageryKey } from "./ImageryOverlays";
 import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
+import { MapSearchPanel } from "./MapSearch";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -2607,6 +2608,7 @@ function FlatMap({
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
       <RegionFly region={regionView} seq={regionSeq} />
+      <MapSearchPanel />
       {outlines && <HornOutlines />}
       {hotCells.length > 0 && <HotspotWaves cells={hotCells} />}
       {overlay && <TileLayer key={imagery} url={overlay.url} attribution={overlay.attribution} maxNativeZoom={overlay.maxNativeZoom} opacity={0.9} zIndex={5} />}
