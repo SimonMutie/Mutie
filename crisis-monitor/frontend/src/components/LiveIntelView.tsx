@@ -546,6 +546,16 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Siren,
     fetcher: async () => fromGateway("#ff6b6b", "UCDP Conflict Events")(await api.getLiveUcdpConflictEvents()),
   },
+  // Satellite fire detections from NASA FIRMS (VIIRS), last 24 hours over the Horn of Africa and Sudan. Unlike the
+  // EONET wildfire list above, these are individual satellite detections, updated every few hours.
+  {
+    key: "firms-fires",
+    label: "Satellite fire detections",
+    group: "Natural Hazards",
+    color: "#ff7a1a",
+    icon: Flame,
+    fetcher: async () => fromGateway("#ff7a1a", "Satellite fire detections")(await api.getLiveFirmsFires()),
+  },
   // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
   // a dedicated rail icon, separate from Threats & Intel, with rows LIVE
   // MALWARE and BOTNET C2 SERVERS) — Botnet C2 Servers moves here from
@@ -973,6 +983,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "submarine-cables": false,
     "ais-vessels": false,
     "ucdp-conflict-events": false,
+    "firms-fires": true,
   });
   const [mapMode, setMapMode] = useState<MapMode>("3d");
   // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.

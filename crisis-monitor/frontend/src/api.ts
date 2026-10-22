@@ -2144,6 +2144,7 @@ export const api = {
   getLiveBroadcasts: () => req<LiveBroadcastData>("/api/live-layers/live-broadcasts"),
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
+  getLiveFirmsFires: () => req<LiveLayerCollection & { configured?: boolean }>("/api/live-layers/firms-fires"),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
   // Flagged escalation incidents — one point per incident, located from the
   // reporting, each carrying its criteria, indicators (with quotes) and

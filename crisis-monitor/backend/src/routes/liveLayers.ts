@@ -1414,6 +1414,63 @@ liveLayersRouter.get("/ucdp-conflict-events", async (c) => {
   );
 });
 
+/** Satellite fire detections (NASA FIRMS, VIIRS on NOAA-20 and Suomi NPP, and NOAA-21), last 24 hours, over the
+ *  Horn of Africa and Sudan. Each detection is a roughly 375 m pixel where the satellite saw heat. The WFS endpoint and
+ *  its source names follow FIRMS's MapServer documentation; BBOX order is south, west, north, east. Needs FIRMS_MAP_KEY. */
+const FIRMS_BBOX = "3,21,24,52";
+const FIRMS_SOURCES = ["fires_noaa20_24hrs", "fires_snpp_24hrs", "fires_noaa21_24hrs"] as const;
+
+liveLayersRouter.get("/firms-fires", async (c) => {
+  const key = c.env.FIRMS_MAP_KEY;
+  if (!key) {
+    return c.json({ configured: false, type: "FeatureCollection", features: [], fetchedAt: new Date().toISOString() });
+  }
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const seen = new Set<string>();
+      const features: NormalizedFeature[] = [];
+      const results = await Promise.all(
+        FIRMS_SOURCES.map(async (source) => {
+          const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/Europe/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=0&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+          if (!res.ok) throw new Error(`FIRMS returned ${res.status}`);
+          return { source, data: (await res.json()) as { features?: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] } };
+        })
+      );
+      for (const { source, data } of results) {
+        for (const f of data.features ?? []) {
+          const [lon, lat] = f.geometry?.coordinates ?? [];
+          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+          const p = f.properties ?? {};
+          const date = typeof p.acq_date === "string" ? p.acq_date : null;
+          const time = typeof p.acq_time === "string" || typeof p.acq_time === "number" ? String(p.acq_time).padStart(4, "0") : "";
+          const frp = typeof p.frp === "number" ? p.frp : Number(p.frp) || 0;
+          const confidence = p.confidence != null ? String(p.confidence) : "";
+          const id = `firms:${lat.toFixed(4)}:${lon.toFixed(4)}:${date ?? ""}:${time}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          features.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [lon, lat] },
+            properties: {
+              id,
+              title: `Satellite fire detection${frp ? `, ${frp.toFixed(1)} MW` : ""}`,
+              time: date ? `${date}T${time.slice(0, 2)}:${time.slice(2, 4)}:00Z` : null,
+              intensity: Math.min(frp / 50, 1),
+              intensityLabel: frp ? `${frp.toFixed(1)} MW radiative power` : "fire detected",
+              detail: `${source.includes("noaa20") ? "NOAA-20" : source.includes("noaa21") ? "NOAA-21" : "Suomi NPP"} VIIRS${confidence ? `, confidence ${confidence}` : ""}. Source: NASA FIRMS.`,
+              url: null,
+            },
+          });
+        }
+      }
+      return { configured: true, type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+    },
+    3600
+  );
+});
+
 /** Countries with active conflict: UCDP has recorded organised violence there in the last 90 days. Independent of
  *  the platform's own alerts. Needs UCDP_API_TOKEN; without it this says so rather than failing. */
 liveLayersRouter.get("/active-conflicts", async (c) => {

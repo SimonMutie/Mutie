@@ -56,6 +56,10 @@ export interface Env {
    *  one. Optional: the route reports it's unconfigured until this is set,
    *  same pattern as ABUSECH_AUTH_KEY/AISSTREAM_API_KEY. */
   UCDP_API_TOKEN?: string;
+  /** NASA FIRMS map key (free, emailed on registration at firms.modaps.eosdis.nasa.gov/api/map_key; 5,000 requests per
+   *  10 minutes). Used by /api/live-layers/firms-fires for VIIRS and MODIS satellite fire detections. Optional: the
+   *  route reports it as unconfigured until this is set. */
+  FIRMS_MAP_KEY?: string;
   /** Personal access token for a Mastodon account, used by
    *  /api/social-listening to search public posts for a keyword (full-text
    *  status search needs an authenticated call even for public posts).
