@@ -1554,6 +1554,46 @@ liveLayersRouter.get("/fire-history/days", async (c) => {
   return c.json({ configured: true, from, to, coveredFrom: earliest?.d ?? null, days, lastCollectedAt: last?.finished_at ?? null });
 });
 
+/** Fires over a span of days, grouped into cells of about 5 km (0.05 degrees): one point per cell with its count, so a
+ *  long range stays a few thousand points rather than every detection. */
+liveLayersRouter.get("/fire-history/range", async (c) => {
+  if (!c.env.FIRMS_MAP_KEY) return c.json({ configured: false, type: "FeatureCollection", features: [] });
+  const from = c.req.query("from") ?? "";
+  const to = c.req.query("to") ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) {
+    return c.json({ error: "from and to must be YYYY-MM-DD, with from not after to" }, 400);
+  }
+  await ensureFireHistorySchema(c.env.DB);
+  const rows = await c.env.DB.prepare(
+    `SELECT CAST(ROUND(lat / 0.05) AS INTEGER) AS gy, CAST(ROUND(lon / 0.05) AS INTEGER) AS gx,
+            COUNT(*) AS n, SUM(COALESCE(frp, 0)) AS frp,
+            AVG(lat) AS lat, AVG(lon) AS lon,
+            MIN(acq_date || acq_time) AS first_at, MAX(acq_date || acq_time) AS last_at
+       FROM fire_detections WHERE acq_date BETWEEN ? AND ? GROUP BY gy, gx`
+  )
+    .bind(from, to)
+    .all<{ gy: number; gx: number; n: number; frp: number; lat: number; lon: number; first_at: string; last_at: string }>();
+  const iso = (v: string) => `${v.slice(0, 10)}T${v.slice(10, 12)}:${v.slice(12, 14)}:00Z`;
+  const features = (rows.results ?? []).map((r) => ({
+    type: "Feature" as const,
+    geometry: { type: "Point" as const, coordinates: [r.lon, r.lat] as [number, number] },
+    properties: {
+      id: `cell:${r.gy}:${r.gx}`,
+      title: "Fire detections in this area",
+      time: iso(r.last_at),
+      intensity: Math.min(r.n / 50, 1),
+      intensityLabel: `${r.n} detection${r.n === 1 ? "" : "s"}`,
+      detail: `${r.n} detections between ${from} and ${to}. Total radiative power ${Math.round(r.frp)} MW. Source: NASA FIRMS.`,
+      url: null,
+      count: r.n,
+      frpTotal: Math.round(r.frp),
+      firstTime: iso(r.first_at),
+      lastTime: iso(r.last_at),
+    },
+  }));
+  return c.json({ configured: true, type: "FeatureCollection", from, to, features });
+});
+
 /** Every stored detection for one UTC day, as the same point features the map already draws. */
 liveLayersRouter.get("/fire-history/day", async (c) => {
   if (!c.env.FIRMS_MAP_KEY) return c.json({ configured: false, type: "FeatureCollection", features: [] });

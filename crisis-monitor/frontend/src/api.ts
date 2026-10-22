@@ -2165,6 +2165,8 @@ export const api = {
   getLiveFirmsFires: (window: "24h" | "7d" = "24h") => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/firms-fires?window=${window}`),
   /** Per-day fire counts from the stored history (collected every three hours). */
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
+  /** Fires over a span of days, one point per ~5 km cell with its count. */
+  getFireHistoryRange: (from: string, to: string) => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/fire-history/range?from=${from}&to=${to}`),
   /** Every stored fire detection for one UTC day (YYYY-MM-DD). */
   getFireHistoryDay: (date: string) => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/fire-history/day?date=${encodeURIComponent(date)}`),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),

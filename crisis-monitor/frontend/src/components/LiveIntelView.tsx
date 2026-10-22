@@ -112,7 +112,8 @@ import {
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
-import FireTimeline, { FireMapLayer, unusualFireDays } from "./FireTimeline";
+import FireTimeline, { FireMapLayer, FIRE_RANGE_FROM, unusualFireDays } from "./FireTimeline";
+import { ImageryControl, imageryTemplate, type ImageryKey } from "./ImageryOverlays";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -367,10 +368,16 @@ function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeat
       }));
 }
 
-/** The fire day the satellite layer shows. Read by its poll, and set by the timeline under the map. */
-const fireDateRef: { current: string | null } = { current: null };
-/** Receives each fire day's raw collection, so the flat map can draw heat and framed popups from it. */
-const fireSinkRef: { current: ((c: LiveLayerCollection) => void) | null } = { current: null };
+/** What the satellite layer shows: one fire day, or every fire from the range start up to a day. Read by its poll, and set by the timeline. */
+type FireView = { mode: "day"; date: string } | { mode: "range"; from: string; to: string };
+const fireViewRef: { current: FireView | null } = { current: null };
+/** Receives each view's raw collection, so the flat map can draw heat and framed popups from it. */
+const fireSinkRef: { current: ((c: LiveLayerCollection, cells: boolean) => void) | null } = { current: null };
+/** Loads one fire view from the stored history. Range views come back as ~5 km cells. */
+async function fetchFireView(view: FireView): Promise<{ collection: LiveLayerCollection; cells: boolean }> {
+  if (view.mode === "day") return { collection: await api.getFireHistoryDay(view.date), cells: false };
+  return { collection: await api.getFireHistoryRange(view.from, view.to), cells: true };
+}
 
 const LAYER_DEFS: LayerDef[] = [
   { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", icon: Activity, fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
@@ -562,10 +569,10 @@ const LAYER_DEFS: LayerDef[] = [
     color: "#ff7a1a",
     icon: Flame,
     fetcher: async () => {
-      const date = fireDateRef.current;
-      if (!date) return [];
-      const collection = await api.getFireHistoryDay(date);
-      fireSinkRef.current?.(collection);
+      const view = fireViewRef.current;
+      if (!view) return [];
+      const { collection, cells } = await fetchFireView(view);
+      fireSinkRef.current?.(collection, cells);
       return fromGateway("#ff7a1a", "Satellite fire detections")(collection);
     },
   },
@@ -1331,24 +1338,37 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [fireHistory, setFireHistory] = useState<FireHistoryDays | null>(null);
   const [fireDate, setFireDate] = useState<string | null>(null);
   const [firePlaying, setFirePlaying] = useState(false);
-  const [fireCollection, setFireCollection] = useState<LiveLayerCollection | null>(null);
+  const [fireData, setFireData] = useState<{ collection: LiveLayerCollection | null; cells: boolean }>({ collection: null, cells: false });
+  const [fireRangeOn, setFireRangeOn] = useState(false);
+  const [fireOnlyUnusual, setFireOnlyUnusual] = useState(false);
   const fireOn = enabled["firms-fires"];
   useEffect(() => {
-    fireSinkRef.current = setFireCollection;
+    fireSinkRef.current = (collection, cells) => setFireData({ collection, cells });
     return () => { fireSinkRef.current = null; };
   }, []);
-  // Chooses a fire day, and loads its detections into the satellite layer and the flat map.
-  const selectFireDay = useCallback((date: string) => {
-    fireDateRef.current = date;
-    setFireDate(date);
-    api.getFireHistoryDay(date)
-      .then((c) => {
-        if (fireDateRef.current !== date) return;
-        setFireCollection(c);
-        setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Satellite fire detections")(c), loading: false, error: null } }));
+  // Shows a fire view on the map: loads it, then updates the satellite layer and the flat map.
+  const applyFireView = useCallback((view: FireView) => {
+    fireViewRef.current = view;
+    fetchFireView(view)
+      .then(({ collection, cells }) => {
+        if (fireViewRef.current !== view) return;
+        setFireData({ collection, cells });
+        setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Satellite fire detections")(collection), loading: false, error: null } }));
       })
       .catch((err) => setLayers((prev) => ({ ...prev, "firms-fires": { ...prev["firms-fires"], loading: false, error: err instanceof Error ? err.message : "Feed unavailable" } })));
   }, []);
+  // The timeline picks a day; in the range view that day is the end of the range.
+  const selectFireDay = useCallback((date: string) => {
+    setFireDate(date);
+    applyFireView(fireRangeOn ? { mode: "range", from: FIRE_RANGE_FROM, to: date } : { mode: "day", date });
+  }, [fireRangeOn, applyFireView]);
+  const setRangeOn = useCallback((on: boolean) => {
+    setFireRangeOn(on);
+    const date = fireDate ?? fireHistory?.days[fireHistory.days.length - 1]?.date;
+    if (!date) return;
+    setFireDate(date);
+    applyFireView(on ? { mode: "range", from: FIRE_RANGE_FROM, to: date } : { mode: "day", date });
+  }, [fireDate, fireHistory, applyFireView]);
   // Stored fire history for the timeline: refreshed every ten minutes while the layer is on.
   useEffect(() => {
     if (!fireOn) return;
@@ -2147,7 +2167,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             routeStyle={routeStyle}
             savedShapes={savedShapes}
             savedRoutes={savedRoutes}
-            fireCollection={fireOn ? fireCollection : null}
+            fireCollection={fireOn && (!fireOnlyUnusual || fireRangeOn || (fireDate !== null && fireUnusual.has(fireDate))) ? fireData.collection : null}
+            fireCells={fireData.cells}
             fireUnusual={fireUnusual}
             incidentsOn={enabled["my-incidents"]}
             incidentRows={incidentRowsForFlatMap}
@@ -2181,6 +2202,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onPlayingChange={setFirePlaying}
             right={130}
             left={enabled["active-conflicts"] ? 130 : 12}
+            rangeOn={fireRangeOn}
+            onRangeChange={setRangeOn}
+            onlyUnusual={fireOnlyUnusual}
+            onOnlyUnusualChange={setFireOnlyUnusual}
           />
         )}
         {enabled["active-conflicts"] && (
@@ -2492,6 +2517,7 @@ function FlatMap({
   editPoints,
   onEditPoint,
   fireCollection,
+  fireCells,
   fireUnusual,
   incidentsOn,
   incidentRows,
@@ -2534,6 +2560,8 @@ function FlatMap({
    *  flatMapPoints/incidentRowsForFlatMap comments at the call site. */
   /** The selected fire day's detections (satellite layer), drawn as heat or framed points. */
   fireCollection?: LiveLayerCollection | null;
+  /** True when fireCollection is ~5 km cells (the range view) rather than single detections. */
+  fireCells?: boolean;
   /** Fire days flagged as unusual, with their typical count. */
   fireUnusual?: Map<string, number>;
   incidentsOn?: boolean;
@@ -2556,12 +2584,16 @@ function FlatMap({
     () => incidentHeatPoints(visibleIncidentRows ?? [], incidentHeatmapStyle ?? DEFAULT_HEATMAP_STYLE),
     [visibleIncidentRows, incidentHeatmapStyle]
   );
+  const [imagery, setImagery] = useState<ImageryKey>("none");
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
+  const overlay = imageryTemplate(imagery);
   return (
+    <>
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump zoomControl={false} style={{ height: "100%", width: "100%", background: "#000308" }}>
       <MapNavPad />
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
+      {overlay && <TileLayer key={imagery} url={overlay.url} attribution={overlay.attribution} maxNativeZoom={overlay.maxNativeZoom} opacity={0.9} zIndex={5} />}
       {activeConflictMap && (
         <GeoJSON
           key={countryShadingKey(activeConflictMap)}
@@ -2628,7 +2660,7 @@ function FlatMap({
         </CircleMarker>
         )
       )}
-      {fireCollection && <FireMapLayer collection={fireCollection} unusual={fireUnusual ?? new Map()} />}
+      {fireCollection && <FireMapLayer collection={fireCollection} unusual={fireUnusual ?? new Map()} cells={!!fireCells} />}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (() => {
         const markers = visibleIncidentRows.map((i) => (
           <IncidentMarker
@@ -2652,6 +2684,8 @@ function FlatMap({
       )}
       {incidentsOn && incidentRows && hiddenIncidents && <HiddenIncidentsControl incidents={incidentRows} hidden={hiddenIncidents} />}
     </MapContainer>
+    <ImageryControl value={imagery} onChange={setImagery} />
+    </>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Play, Pause } from "lucide-react";
 import { CircleMarker, Popup, useMap, useMapEvents } from "react-leaflet";
 import type { FireHistoryDay, LiveLayerCollection } from "../api";
@@ -10,6 +10,8 @@ export const FIRE_SATELLITE_COLORS = {
   snpp: "#ffd23f",
   noaa21: "#ff3b30",
 } as const;
+/** Start of the range the "since" view covers: the date Adulis's own fire filter starts from. */
+export const FIRE_RANGE_FROM = "2026-09-22";
 export const FIRE_SATELLITE_LABELS = { noaa20: "NOAA-20", snpp: "Suomi NPP", noaa21: "NOAA-21" } as const;
 
 /** Fewest collected days, before the day itself, needed before any day can be called unusual. */
@@ -42,14 +44,14 @@ export function fireHeatWeight(frp: number): number {
   return Math.min(1, 0.25 + frp / 40);
 }
 
-function StackedBar({ day, max, selected, uncovered, unusual }: { day: FireHistoryDay; max: number; selected: boolean; uncovered: boolean; unusual: boolean }) {
+function StackedBar({ day, max, selected, uncovered, unusual, dimmed }: { day: FireHistoryDay; max: number; selected: boolean; uncovered: boolean; unusual: boolean; dimmed: boolean }) {
   const h = max > 0 ? (day.total / max) * 100 : 0;
   const sats = ["noaa20", "snpp", "noaa21"] as const;
   return (
     <div
       data-date={day.date}
       title={uncovered ? `${day.date}: not collected yet` : `${day.date}: ${day.total.toLocaleString()} detections${unusual ? " (unusual for the season)" : ""}`}
-      style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end", minWidth: 0, pointerEvents: "none", position: "relative" }}
+      style={{ flex: 1, height: "100%", display: "flex", alignItems: "flex-end", minWidth: 0, pointerEvents: "none", position: "relative", opacity: dimmed ? 0.35 : 1 }}
     >
       {uncovered ? (
         <div style={{ width: "100%", height: 3, borderTop: "1px dashed rgba(255,255,255,0.25)" }} />
@@ -86,6 +88,10 @@ export default function FireTimeline({
   onPlayingChange,
   right,
   left = 12,
+  rangeOn,
+  onRangeChange,
+  onlyUnusual,
+  onOnlyUnusualChange,
 }: {
   days: FireHistoryDay[];
   coveredFrom: string | null | undefined;
@@ -98,6 +104,12 @@ export default function FireTimeline({
   /** Space kept clear on the right, for the map's own zoom pad, and on the left for the conflict key button. */
   right: number;
   left?: number;
+  /** "Since 22 Sep" view: the map shows every fire from FIRE_RANGE_FROM up to the selected day. */
+  rangeOn: boolean;
+  onRangeChange: (on: boolean) => void;
+  /** Only the days flagged as unusual for the season are shown on the map. */
+  onlyUnusual: boolean;
+  onOnlyUnusualChange: (on: boolean) => void;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const max = Math.max(1, ...days.map((d) => d.total));
@@ -132,6 +144,18 @@ export default function FireTimeline({
   const first = days[0]?.date;
   const last = days[days.length - 1]?.date;
   const handlePct = days.length ? ((selectedIndex + 0.5) / days.length) * 100 : 0;
+  const rangeLabel = `${new Date(`${FIRE_RANGE_FROM}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })} to ${selectedDay ? new Date(`${selectedDay.date}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" }) : ""}`;
+  const chip = (on: boolean): CSSProperties => ({
+    padding: "3px 8px",
+    borderRadius: 5,
+    fontSize: 10.5,
+    fontFamily: "inherit",
+    cursor: "pointer",
+    color: "#e6edf7",
+    background: on ? "rgba(255,122,26,0.35)" : "rgba(255,255,255,0.06)",
+    border: "1px solid rgba(255,255,255,0.14)",
+    whiteSpace: "nowrap",
+  });
 
   return (
     <div
@@ -161,13 +185,21 @@ export default function FireTimeline({
           {playing ? <Pause size={13} /> : <Play size={13} />}
         </button>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <b>{selectedDay ? new Date(`${selectedDay.date}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "No fire history yet"}</b>
+          <b>{!selectedDay ? "No fire history yet" : rangeOn ? rangeLabel : new Date(`${selectedDay.date}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}</b>
           {selectedDay && (
             <span style={{ opacity: 0.75 }}>
-              {" "}· {isUncovered(selectedDay.date) ? "not collected" : `${selectedDay.total.toLocaleString()} detections`}
-              {unusual.has(selectedDay.date) && <span style={{ color: "#ff8a80", fontWeight: 700 }}> · unusual for the season</span>}
+              {" "}· {rangeOn ? "all detections in the range" : isUncovered(selectedDay.date) ? "not collected" : `${selectedDay.total.toLocaleString()} detections`}
+              {!rangeOn && unusual.has(selectedDay.date) && <span style={{ color: "#ff8a80", fontWeight: 700 }}> · unusual for the season</span>}
             </span>
           )}
+          <span style={{ display: "inline-flex", gap: 6, marginLeft: 10, verticalAlign: "middle" }}>
+            <button onClick={() => onRangeChange(!rangeOn)} aria-pressed={rangeOn} style={chip(rangeOn)}>
+              Since {new Date(`${FIRE_RANGE_FROM}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })}
+            </button>
+            <button onClick={() => onOnlyUnusualChange(!onlyUnusual)} aria-pressed={onlyUnusual} style={chip(onlyUnusual)}>
+              Only unusual{unusual.size > 0 ? ` (${unusual.size})` : ""}
+            </button>
+          </span>
         </div>
         <span style={{ opacity: 0.6, whiteSpace: "nowrap" }}>
           {lastCollectedAt ? `Collected ${new Date(lastCollectedAt).toISOString().slice(0, 16).replace("T", " ")} UTC` : "Collecting"}
@@ -207,6 +239,7 @@ export default function FireTimeline({
             selected={d.date === selected}
             uncovered={isUncovered(d.date)}
             unusual={unusual.has(d.date)}
+            dimmed={rangeOn && (d.date < FIRE_RANGE_FROM || d.date > (selectedDay?.date ?? ""))}
           />
         ))}
         {days.length > 0 && (
@@ -241,14 +274,29 @@ const FIRE_HEAT_STYLE = { radius: 16, blur: 14, max: 1, gradient: "redFade" as c
 
 interface FireFeature {
   geometry: { coordinates: [number, number] };
-  properties: { id: string; time: string | null; intensityLabel: string; detail: string; intensity: number };
+  properties: {
+    id: string;
+    time: string | null;
+    intensityLabel: string;
+    detail: string;
+    intensity: number;
+    /** Range view only: detections in this ~5 km cell over the range, and their total radiative power. */
+    count?: number;
+    frpTotal?: number;
+    firstTime?: string;
+    lastTime?: string;
+  };
 }
 
 /** The framed card shown when a fire point is clicked. */
-function FireDetectionCard({ feature, dayTotal, typicalDay }: { feature: FireFeature; dayTotal: number; typicalDay: number | null }) {
+function utcStamp(iso: string | null | undefined): string {
+  return iso ? new Date(iso).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "unknown";
+}
+
+function FireDetectionCard({ feature, dayTotal, typicalDay, cell }: { feature: FireFeature; dayTotal: number; typicalDay: number | null; cell?: boolean }) {
   const [lng, lat] = feature.geometry.coordinates;
   const parts = feature.properties.detail.split(". ").filter(Boolean);
-  const when = feature.properties.time ? new Date(feature.properties.time).toISOString().slice(0, 16).replace("T", " ") + " UTC" : "time unknown";
+  const when = feature.properties.time ? utcStamp(feature.properties.time) : "time unknown";
   const row = (label: string, value: string) => (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "2px 0", borderBottom: "1px dotted rgba(255,255,255,0.1)" }}>
       <span style={{ opacity: 0.6 }}>{label}</span>
@@ -258,14 +306,29 @@ function FireDetectionCard({ feature, dayTotal, typicalDay }: { feature: FireFea
   return (
     <div style={{ fontFamily: "monospace", fontSize: 12, width: 240, color: "#e6edf7" }}>
       <div style={{ border: "1px solid rgba(255,122,26,0.9)", borderRadius: 4, padding: 9, background: "#0b1220", boxShadow: "inset 0 0 0 3px #0b1220, inset 0 0 0 4px rgba(255,122,26,0.35)" }}>
-        <div style={{ fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", color: "#ff7a1a" }}>Satellite fire detection</div>
-        <div style={{ fontWeight: 700, marginTop: 4, fontSize: 13 }}>{when}</div>
-        <div style={{ marginTop: 6 }}>
-          {row("Radiative power", feature.properties.intensityLabel)}
-          {row("Position", `${lat.toFixed(3)}, ${lng.toFixed(3)}`)}
-          {parts.slice(0, 3).map((p, i) => row(i === 0 ? "Satellite" : i === 1 ? "Confidence" : "Detail", p))}
-        </div>
-        {typicalDay !== null && (
+        {cell ? (
+          <>
+            <div style={{ fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", color: "#ff7a1a" }}>Fires in this area</div>
+            <div style={{ fontWeight: 700, marginTop: 4, fontSize: 13 }}>{(feature.properties.count ?? 0).toLocaleString()} detections</div>
+            <div style={{ marginTop: 6 }}>
+              {row("Total radiative power", `${(feature.properties.frpTotal ?? 0).toLocaleString()} MW`)}
+              {row("First detection", utcStamp(feature.properties.firstTime))}
+              {row("Latest detection", utcStamp(feature.properties.lastTime))}
+              {row("Centre", `${lat.toFixed(3)}, ${lng.toFixed(3)}`)}
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 10, letterSpacing: 1.2, textTransform: "uppercase", color: "#ff7a1a" }}>Satellite fire detection</div>
+            <div style={{ fontWeight: 700, marginTop: 4, fontSize: 13 }}>{when}</div>
+            <div style={{ marginTop: 6 }}>
+              {row("Radiative power", feature.properties.intensityLabel)}
+              {row("Position", `${lat.toFixed(3)}, ${lng.toFixed(3)}`)}
+              {parts.slice(0, 3).map((p, i) => row(i === 0 ? "Satellite" : i === 1 ? "Confidence" : "Detail", p))}
+            </div>
+          </>
+        )}
+        {!cell && typicalDay !== null && (
           <div style={{ marginTop: 8, padding: "5px 7px", borderRadius: 3, background: "rgba(255,59,48,0.22)", color: "#ffb4ac" }}>
             <div style={{ fontWeight: 700 }}>Unusual for the season</div>
             <div style={{ fontSize: 10.5, marginTop: 2, opacity: 0.9 }}>
@@ -273,7 +336,7 @@ function FireDetectionCard({ feature, dayTotal, typicalDay }: { feature: FireFea
             </div>
           </div>
         )}
-        <div style={{ opacity: 0.5, fontSize: 10, marginTop: 7 }}>Each point is about a 375 m pixel. Source: NASA FIRMS.</div>
+        <div style={{ opacity: 0.5, fontSize: 10, marginTop: 7 }}>{cell ? "Cells are about 5 km. Source: NASA FIRMS." : "Each point is about a 375 m pixel. Source: NASA FIRMS."}</div>
       </div>
     </div>
   );
@@ -283,7 +346,7 @@ function FireDetectionCard({ feature, dayTotal, typicalDay }: { feature: FireFea
  * The selected day's fire detections on a flat map: heat blobs when zoomed out, one framed, clickable point each when
  * zoomed in. Points outside the current view are skipped.
  */
-export function FireMapLayer({ collection, unusual }: { collection: { features: FireFeature[] }; unusual: Map<string, number> }) {
+export function FireMapLayer({ collection, unusual, cells = false }: { collection: { features: FireFeature[] }; unusual: Map<string, number>; cells?: boolean }) {
   const map = useMap();
   const [zoom, setZoom] = useState(() => map.getZoom());
   // Bumped on every move, so the visible points are picked again from the new bounds.
@@ -295,8 +358,13 @@ export function FireMapLayer({ collection, unusual }: { collection: { features: 
   const features = collection.features;
   const dayTotal = features.length;
   const heat = useMemo(
-    () => features.map((f) => [f.geometry.coordinates[1], f.geometry.coordinates[0], fireHeatWeight(f.properties.intensity * 50)] as [number, number, number]),
-    [features]
+    () =>
+      features.map((f) => {
+        // A single day weighs each detection by its power. A range weighs each cell by how many detections it holds.
+        const w = cells ? Math.min(1, 0.25 + (f.properties.count ?? 1) / 30) : fireHeatWeight(f.properties.intensity * 50);
+        return [f.geometry.coordinates[1], f.geometry.coordinates[0], w] as [number, number, number];
+      }),
+    [features, cells]
   );
   if (zoom < POINT_ZOOM) return <HeatmapLayer points={heat} style={FIRE_HEAT_STYLE} />;
 
@@ -307,16 +375,17 @@ export function FireMapLayer({ collection, unusual }: { collection: { features: 
       {visible.map((f) => {
         const day = f.properties.time?.slice(0, 10) ?? "";
         const typical = unusual.get(day) ?? null;
-        const satColor = f.properties.detail.startsWith("NOAA-20") ? FIRE_SATELLITE_COLORS.noaa20 : f.properties.detail.startsWith("Suomi") ? FIRE_SATELLITE_COLORS.snpp : FIRE_SATELLITE_COLORS.noaa21;
+        // Cells in the range view have no single satellite, so they take the first colour.
+        const satColor = cells ? "#ff7a1a" : f.properties.detail.startsWith("NOAA-20") ? FIRE_SATELLITE_COLORS.noaa20 : f.properties.detail.startsWith("Suomi") ? FIRE_SATELLITE_COLORS.snpp : FIRE_SATELLITE_COLORS.noaa21;
         return (
           <CircleMarker
             key={f.properties.id}
             center={[f.geometry.coordinates[1], f.geometry.coordinates[0]]}
-            radius={3 + Math.min(f.properties.intensity, 1) * 4}
+            radius={cells ? 4 + Math.min(f.properties.count ?? 1, 60) / 6 : 3 + Math.min(f.properties.intensity, 1) * 4}
             pathOptions={{ color: "#ffffff", weight: 0.6, fillColor: satColor, fillOpacity: 0.9 }}
           >
             <Popup maxWidth={260}>
-              <FireDetectionCard feature={f} dayTotal={dayTotal} typicalDay={typical} />
+              <FireDetectionCard feature={f} dayTotal={dayTotal} typicalDay={typical} cell={cells} />
             </Popup>
           </CircleMarker>
         );
