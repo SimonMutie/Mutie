@@ -83,6 +83,7 @@ import EscalationHoverCard from "./EscalationHoverCard";
 import {
   api,
   type LiveLayerCollection,
+  type FireHistoryDays,
   type LiveLayerFeature,
   type IssPosition,
   type NewsItem,
@@ -111,6 +112,7 @@ import {
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
+import FireTimeline, { FireMapLayer, unusualFireDays } from "./FireTimeline";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -365,8 +367,10 @@ function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeat
       }));
 }
 
-/** Time window for the satellite fire layer ("24h" or "7d"). Read by its poll, and set by the window buttons on the map. */
-const firmsWindowRef: { current: "24h" | "7d" } = { current: "24h" };
+/** The fire day the satellite layer shows. Read by its poll, and set by the timeline under the map. */
+const fireDateRef: { current: string | null } = { current: null };
+/** Receives each fire day's raw collection, so the flat map can draw heat and framed popups from it. */
+const fireSinkRef: { current: ((c: LiveLayerCollection) => void) | null } = { current: null };
 
 const LAYER_DEFS: LayerDef[] = [
   { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", icon: Activity, fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
@@ -557,7 +561,13 @@ const LAYER_DEFS: LayerDef[] = [
     group: "Natural Hazards",
     color: "#ff7a1a",
     icon: Flame,
-    fetcher: async () => fromGateway("#ff7a1a", "Satellite fire detections")(await api.getLiveFirmsFires(firmsWindowRef.current)),
+    fetcher: async () => {
+      const date = fireDateRef.current;
+      if (!date) return [];
+      const collection = await api.getFireHistoryDay(date);
+      fireSinkRef.current?.(collection);
+      return fromGateway("#ff7a1a", "Satellite fire detections")(collection);
+    },
   },
   // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
   // a dedicated rail icon, separate from Threats & Intel, with rows LIVE
@@ -1318,7 +1328,50 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   /** The conflict key is hidden until asked for, so it doesn't sit over the map. */
   const [conflictKeyOpen, setConflictKeyOpen] = useState(false);
-  const [firmsWindow, setFirmsWindow] = useState<"24h" | "7d">("24h");
+  const [fireHistory, setFireHistory] = useState<FireHistoryDays | null>(null);
+  const [fireDate, setFireDate] = useState<string | null>(null);
+  const [firePlaying, setFirePlaying] = useState(false);
+  const [fireCollection, setFireCollection] = useState<LiveLayerCollection | null>(null);
+  const fireOn = enabled["firms-fires"];
+  useEffect(() => {
+    fireSinkRef.current = setFireCollection;
+    return () => { fireSinkRef.current = null; };
+  }, []);
+  // Chooses a fire day, and loads its detections into the satellite layer and the flat map.
+  const selectFireDay = useCallback((date: string) => {
+    fireDateRef.current = date;
+    setFireDate(date);
+    api.getFireHistoryDay(date)
+      .then((c) => {
+        if (fireDateRef.current !== date) return;
+        setFireCollection(c);
+        setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Satellite fire detections")(c), loading: false, error: null } }));
+      })
+      .catch((err) => setLayers((prev) => ({ ...prev, "firms-fires": { ...prev["firms-fires"], loading: false, error: err instanceof Error ? err.message : "Feed unavailable" } })));
+  }, []);
+  // Stored fire history for the timeline: refreshed every ten minutes while the layer is on.
+  useEffect(() => {
+    if (!fireOn) return;
+    let cancelled = false;
+    function load() {
+      api.getFireHistoryDays(30).then((h) => !cancelled && setFireHistory(h)).catch(() => {});
+    }
+    load();
+    const interval = setInterval(load, 10 * 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [fireOn]);
+  // Opens on the latest day once the history arrives.
+  useEffect(() => {
+    const days = fireHistory?.days ?? [];
+    if (days.length === 0) return;
+    if (!fireDate || !days.some((d) => d.date === fireDate)) selectFireDay(days[days.length - 1].date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fireHistory]);
+  // Playing steps the timeline once a second (see FireTimeline).
+  const fireUnusual = useMemo(() => unusualFireDays(fireHistory?.days ?? [], fireHistory?.coveredFrom), [fireHistory]);
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["active-conflicts"]) return;
@@ -1990,7 +2043,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // layer below instead of a generic colored dot — drop the generic version
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
   // Map3D (3D mode) keeps the generic GlobePoint version via `mapPoints`.
-  const flatMapPoints = useMemo(() => mapPoints.filter((p) => p.layerKey !== "My Incidents"), [mapPoints]);
+  // Satellite fires are drawn by FireMapLayer on the flat maps (heat, then framed points), so the generic dots are left out there.
+  const flatMapPoints = useMemo(() => mapPoints.filter((p) => p.layerKey !== "My Incidents" && p.layerKey !== "Satellite fire detections"), [mapPoints]);
 
   // Draw/route lines, merged alongside the shipping lanes for the 3D globe's
   // single pathsData layer — a color field on each entry (shipping lanes
@@ -2093,6 +2147,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             routeStyle={routeStyle}
             savedShapes={savedShapes}
             savedRoutes={savedRoutes}
+            fireCollection={fireOn ? fireCollection : null}
+            fireUnusual={fireUnusual}
             incidentsOn={enabled["my-incidents"]}
             incidentRows={incidentRowsForFlatMap}
             incidentViewMode={incidentViewMode}
@@ -2113,25 +2169,19 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
-        {enabled["firms-fires"] && (
-          <div style={{ position: "absolute", left: 12, bottom: 40, zIndex: 500, display: "flex", gap: 4 }}>
-            {(["24h", "7d"] as const).map((w) => (
-              <button
-                key={w}
-                onClick={() => {
-                  firmsWindowRef.current = w;
-                  setFirmsWindow(w);
-                  api.getLiveFirmsFires(w)
-                    .then((c) => setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Satellite fire detections")(c), loading: false, error: null } })))
-                    .catch((err) => setLayers((prev) => ({ ...prev, "firms-fires": { ...prev["firms-fires"], loading: false, error: err instanceof Error ? err.message : "Feed unavailable" } })));
-                }}
-                aria-pressed={firmsWindow === w}
-                style={{ padding: "4px 9px", borderRadius: 6, background: firmsWindow === w ? "rgba(255,122,26,0.35)" : "rgba(8, 14, 24, 0.82)", border: "1px solid rgba(255,255,255,0.12)", color: "#e6edf7", fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}
-              >
-                Fires {w === "24h" ? "24 h" : "7 days"}
-              </button>
-            ))}
-          </div>
+        {fireOn && fireHistory && fireHistory.days.length > 0 && (
+          <FireTimeline
+            days={fireHistory.days}
+            coveredFrom={fireHistory.coveredFrom}
+            lastCollectedAt={fireHistory.lastCollectedAt}
+            selected={fireDate}
+            unusual={fireUnusual}
+            onSelect={selectFireDay}
+            playing={firePlaying}
+            onPlayingChange={setFirePlaying}
+            right={130}
+            left={enabled["active-conflicts"] ? 130 : 12}
+          />
         )}
         {enabled["active-conflicts"] && (
           <>
@@ -2441,6 +2491,8 @@ function FlatMap({
   studioActive,
   editPoints,
   onEditPoint,
+  fireCollection,
+  fireUnusual,
   incidentsOn,
   incidentRows,
   incidentViewMode,
@@ -2480,6 +2532,10 @@ function FlatMap({
   /** "My Incidents", rendered rich (bullet icons, editable/pinnable popups,
    *  adjustable heatmap) instead of as generic GlobePoint dots — see the
    *  flatMapPoints/incidentRowsForFlatMap comments at the call site. */
+  /** The selected fire day's detections (satellite layer), drawn as heat or framed points. */
+  fireCollection?: LiveLayerCollection | null;
+  /** Fire days flagged as unusual, with their typical count. */
+  fireUnusual?: Map<string, number>;
   incidentsOn?: boolean;
   incidentRows?: IncidentItem[];
   incidentViewMode?: "markers" | "heatmap";
@@ -2572,6 +2628,7 @@ function FlatMap({
         </CircleMarker>
         )
       )}
+      {fireCollection && <FireMapLayer collection={fireCollection} unusual={fireUnusual ?? new Map()} />}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (() => {
         const markers = visibleIncidentRows.map((i) => (
           <IncidentMarker

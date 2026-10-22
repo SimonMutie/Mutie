@@ -1392,6 +1392,24 @@ export interface ConflictWave {
   countryName: string;
 }
 /** A country where UCDP has recorded organised violence in the last 90 days. */
+/** One UTC day of stored satellite fire history: detections per satellite. */
+export interface FireHistoryDay {
+  date: string;
+  total: number;
+  noaa20: number;
+  snpp: number;
+  noaa21: number;
+}
+export interface FireHistoryDays {
+  configured: boolean;
+  from?: string;
+  to?: string;
+  /** Earliest day with any stored detection. Days before it were never collected. */
+  coveredFrom?: string | null;
+  days: FireHistoryDay[];
+  lastCollectedAt: string | null;
+}
+
 export interface ActiveCountry {
   code: string;
   name: string;
@@ -2145,6 +2163,10 @@ export const api = {
   getLiveAisVessels: () => req<LiveLayerCollection>("/api/live-layers/ais-vessels"),
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveFirmsFires: (window: "24h" | "7d" = "24h") => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/firms-fires?window=${window}`),
+  /** Per-day fire counts from the stored history (collected every three hours). */
+  getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
+  /** Every stored fire detection for one UTC day (YYYY-MM-DD). */
+  getFireHistoryDay: (date: string) => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/fire-history/day?date=${encodeURIComponent(date)}`),
   getLiveGlobalIncidents: () => req<LiveLayerCollection>("/api/live-layers/global-incidents"),
   // Flagged escalation incidents — one point per incident, located from the
   // reporting, each carrying its criteria, indicators (with quotes) and

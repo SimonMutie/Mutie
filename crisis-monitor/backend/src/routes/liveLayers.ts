@@ -1534,6 +1534,8 @@ liveLayersRouter.get("/fire-history/days", async (c) => {
     .bind(from, to)
     .all<{ date: string; satellite: string; n: number }>();
   const last = await c.env.DB.prepare(`SELECT finished_at FROM fire_collector_runs WHERE run_key = 'firms'`).first<{ finished_at: string | null }>();
+  // The earliest day collected: days before it were never fetched, so the timeline must not read them as quiet.
+  const earliest = await c.env.DB.prepare(`SELECT MIN(acq_date) AS d FROM fire_detections`).first<{ d: string | null }>();
 
   const byDate = new Map<string, Record<string, number>>();
   for (const r of rows.results ?? []) {
@@ -1549,7 +1551,7 @@ liveLayersRouter.get("/fire-history/days", async (c) => {
     const bySat = Object.fromEntries(sats.map((s) => [s, counts[s] ?? 0]));
     days.push({ date, total: sats.reduce((sum, s) => sum + bySat[s], 0), ...bySat });
   }
-  return c.json({ configured: true, from, to, days, lastCollectedAt: last?.finished_at ?? null });
+  return c.json({ configured: true, from, to, coveredFrom: earliest?.d ?? null, days, lastCollectedAt: last?.finished_at ?? null });
 });
 
 /** Every stored detection for one UTC day, as the same point features the map already draws. */
