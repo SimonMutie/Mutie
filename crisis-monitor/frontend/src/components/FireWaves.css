@@ -1,0 +1,41 @@
+/* Ray waves on the flat map: a sweeping beam and ripples radiating from a hotspot. */
+.fire-wave-icon { background: none; border: 0; }
+.fire-beam,
+.fire-wave {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--fire-size, 60px);
+  height: var(--fire-size, 60px);
+  border-radius: 50%;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.fire-beam {
+  background: conic-gradient(from 0deg, rgba(255, 122, 26, 0) 0deg, rgba(255, 122, 26, 0.6) 22deg, rgba(255, 122, 26, 0) 44deg);
+  -webkit-mask: radial-gradient(circle, transparent 0 10%, #000 70%);
+          mask: radial-gradient(circle, transparent 0 10%, #000 70%);
+  opacity: 0.8;
+  animation: fire-sweep 3.6s linear infinite;
+}
+.fire-wave {
+  border: 2px solid rgba(255, 122, 26, 0.9);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.2);
+  animation: fire-ripple 2.8s ease-out infinite;
+}
+.fire-wave--late { animation-delay: 0.93s; }
+.fire-wave--later { animation-delay: 1.86s; }
+@keyframes fire-ripple {
+  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0.9; }
+  100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+}
+@keyframes fire-sweep {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fire-beam { animation: none; }
+  .fire-wave { animation: none; opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+  .fire-wave--late, .fire-wave--later { display: none; }
+}

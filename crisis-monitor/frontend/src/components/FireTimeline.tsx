@@ -12,6 +12,15 @@ export const FIRE_SATELLITE_COLORS = {
 } as const;
 /** Start of the range the "since" view covers: the date Adulis's own fire filter starts from. */
 export const FIRE_RANGE_FROM = "2026-09-22";
+/** The map's time view: one day, every fire since FIRE_RANGE_FROM, or the seven days up to the selected day. */
+export type FireRangeMode = "day" | "since" | "week";
+/** Start of the range for a mode ending on `to`, or null for a single day. */
+export function fireRangeFrom(mode: FireRangeMode, to: string): string | null {
+  if (mode === "day") return null;
+  if (mode === "since") return FIRE_RANGE_FROM;
+  return new Date(Date.parse(`${to}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10);
+}
+const shortDate = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
 export const FIRE_SATELLITE_LABELS = { noaa20: "NOAA-20", snpp: "Suomi NPP", noaa21: "NOAA-21" } as const;
 
 /** Fewest collected days, before the day itself, needed before any day can be called unusual. */
@@ -88,8 +97,8 @@ export default function FireTimeline({
   onPlayingChange,
   right,
   left = 12,
-  rangeOn,
-  onRangeChange,
+  rangeMode,
+  onRangeModeChange,
   onlyUnusual,
   onOnlyUnusualChange,
 }: {
@@ -104,9 +113,8 @@ export default function FireTimeline({
   /** Space kept clear on the right, for the map's own zoom pad, and on the left for the conflict key button. */
   right: number;
   left?: number;
-  /** "Since 22 Sep" view: the map shows every fire from FIRE_RANGE_FROM up to the selected day. */
-  rangeOn: boolean;
-  onRangeChange: (on: boolean) => void;
+  rangeMode: FireRangeMode;
+  onRangeModeChange: (m: FireRangeMode) => void;
   /** Only the days flagged as unusual for the season are shown on the map. */
   onlyUnusual: boolean;
   onOnlyUnusualChange: (on: boolean) => void;
@@ -144,7 +152,9 @@ export default function FireTimeline({
   const first = days[0]?.date;
   const last = days[days.length - 1]?.date;
   const handlePct = days.length ? ((selectedIndex + 0.5) / days.length) * 100 : 0;
-  const rangeLabel = `${new Date(`${FIRE_RANGE_FROM}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })} to ${selectedDay ? new Date(`${selectedDay.date}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" }) : ""}`;
+  const rangeOn = rangeMode !== "day";
+  const rangeStart = selectedDay ? fireRangeFrom(rangeMode, selectedDay.date) : null;
+  const rangeLabel = rangeStart && selectedDay ? `${shortDate(rangeStart)} to ${shortDate(selectedDay.date)}` : "";
   const chip = (on: boolean): CSSProperties => ({
     padding: "3px 8px",
     borderRadius: 5,
@@ -193,8 +203,11 @@ export default function FireTimeline({
             </span>
           )}
           <span style={{ display: "inline-flex", gap: 6, marginLeft: 10, verticalAlign: "middle" }}>
-            <button onClick={() => onRangeChange(!rangeOn)} aria-pressed={rangeOn} style={chip(rangeOn)}>
-              Since {new Date(`${FIRE_RANGE_FROM}T12:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" })}
+            <button onClick={() => onRangeModeChange(rangeMode === "since" ? "day" : "since")} aria-pressed={rangeMode === "since"} style={chip(rangeMode === "since")}>
+              Since {shortDate(FIRE_RANGE_FROM)}
+            </button>
+            <button onClick={() => onRangeModeChange(rangeMode === "week" ? "day" : "week")} aria-pressed={rangeMode === "week"} style={chip(rangeMode === "week")}>
+              Past 7 days
             </button>
             <button onClick={() => onOnlyUnusualChange(!onlyUnusual)} aria-pressed={onlyUnusual} style={chip(onlyUnusual)}>
               Only unusual{unusual.size > 0 ? ` (${unusual.size})` : ""}
@@ -239,7 +252,7 @@ export default function FireTimeline({
             selected={d.date === selected}
             uncovered={isUncovered(d.date)}
             unusual={unusual.has(d.date)}
-            dimmed={rangeOn && (d.date < FIRE_RANGE_FROM || d.date > (selectedDay?.date ?? ""))}
+            dimmed={rangeOn && !!rangeStart && (d.date < rangeStart || d.date > (selectedDay?.date ?? ""))}
           />
         ))}
         {days.length > 0 && (

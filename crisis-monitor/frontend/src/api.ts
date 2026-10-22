@@ -1133,6 +1133,11 @@ export interface LiveLayerFeature {
     intensityLabel: string;
     detail: string;
     url: string | null;
+    /** Fire range cells only: detections in the cell over the range, and their total power and first and last times. */
+    count?: number;
+    frpTotal?: number;
+    firstTime?: string;
+    lastTime?: string;
     /** Air-traffic only — see the backend's classifyAviation() for exactly
      *  what each value means and how it's derived. Undefined on every
      *  other layer. */

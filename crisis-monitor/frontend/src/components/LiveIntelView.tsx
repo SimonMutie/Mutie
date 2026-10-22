@@ -112,8 +112,9 @@ import {
 } from "../api";
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
-import FireTimeline, { FireMapLayer, FIRE_RANGE_FROM, unusualFireDays } from "./FireTimeline";
+import FireTimeline, { FireMapLayer, fireRangeFrom, unusualFireDays, type FireRangeMode } from "./FireTimeline";
 import { ImageryControl, imageryTemplate, type ImageryKey } from "./ImageryOverlays";
+import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -1339,7 +1340,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [fireDate, setFireDate] = useState<string | null>(null);
   const [firePlaying, setFirePlaying] = useState(false);
   const [fireData, setFireData] = useState<{ collection: LiveLayerCollection | null; cells: boolean }>({ collection: null, cells: false });
-  const [fireRangeOn, setFireRangeOn] = useState(false);
+  const [fireRangeMode, setFireRangeMode] = useState<FireRangeMode>("day");
   const [fireOnlyUnusual, setFireOnlyUnusual] = useState(false);
   const fireOn = enabled["firms-fires"];
   useEffect(() => {
@@ -1358,16 +1359,20 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       .catch((err) => setLayers((prev) => ({ ...prev, "firms-fires": { ...prev["firms-fires"], loading: false, error: err instanceof Error ? err.message : "Feed unavailable" } })));
   }, []);
   // The timeline picks a day; in the range view that day is the end of the range.
+  const viewFor = (mode: FireRangeMode, date: string): FireView => {
+    const from = fireRangeFrom(mode, date);
+    return from ? { mode: "range", from, to: date } : { mode: "day", date };
+  };
   const selectFireDay = useCallback((date: string) => {
     setFireDate(date);
-    applyFireView(fireRangeOn ? { mode: "range", from: FIRE_RANGE_FROM, to: date } : { mode: "day", date });
-  }, [fireRangeOn, applyFireView]);
-  const setRangeOn = useCallback((on: boolean) => {
-    setFireRangeOn(on);
+    applyFireView(viewFor(fireRangeMode, date));
+  }, [fireRangeMode, applyFireView]);
+  const setRangeMode = useCallback((mode: FireRangeMode) => {
+    setFireRangeMode(mode);
     const date = fireDate ?? fireHistory?.days[fireHistory.days.length - 1]?.date;
     if (!date) return;
     setFireDate(date);
-    applyFireView(on ? { mode: "range", from: FIRE_RANGE_FROM, to: date } : { mode: "day", date });
+    applyFireView(viewFor(mode, date));
   }, [fireDate, fireHistory, applyFireView]);
   // Stored fire history for the timeline: refreshed every ten minutes while the layer is on.
   useEffect(() => {
@@ -2167,7 +2172,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             routeStyle={routeStyle}
             savedShapes={savedShapes}
             savedRoutes={savedRoutes}
-            fireCollection={fireOn && (!fireOnlyUnusual || fireRangeOn || (fireDate !== null && fireUnusual.has(fireDate))) ? fireData.collection : null}
+            fireCollection={fireOn && (!fireOnlyUnusual || fireRangeMode !== "day" || (fireDate !== null && fireUnusual.has(fireDate))) ? fireData.collection : null}
             fireCells={fireData.cells}
             fireUnusual={fireUnusual}
             incidentsOn={enabled["my-incidents"]}
@@ -2202,8 +2207,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onPlayingChange={setFirePlaying}
             right={130}
             left={enabled["active-conflicts"] ? 130 : 12}
-            rangeOn={fireRangeOn}
-            onRangeChange={setRangeOn}
+            rangeMode={fireRangeMode}
+            onRangeModeChange={setRangeMode}
             onlyUnusual={fireOnlyUnusual}
             onOnlyUnusualChange={setFireOnlyUnusual}
           />
@@ -2585,6 +2590,14 @@ function FlatMap({
     [visibleIncidentRows, incidentHeatmapStyle]
   );
   const [imagery, setImagery] = useState<ImageryKey>("none");
+  const [regionView, setRegionView] = useState<RegionView | null>(null);
+  const [regionSeq, setRegionSeq] = useState(0);
+  const [outlines, setOutlines] = useState(false);
+  const [waves, setWaves] = useState(false);
+  const hotCells = useMemo(
+    () => (waves && fireCollection ? hotCellsFrom(fireCollection.features, !!fireCells, 5, 40) : []),
+    [waves, fireCollection, fireCells]
+  );
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
   const overlay = imageryTemplate(imagery);
   return (
@@ -2593,6 +2606,9 @@ function FlatMap({
       <MapNavPad />
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
+      <RegionFly region={regionView} seq={regionSeq} />
+      {outlines && <HornOutlines />}
+      {hotCells.length > 0 && <HotspotWaves cells={hotCells} />}
       {overlay && <TileLayer key={imagery} url={overlay.url} attribution={overlay.attribution} maxNativeZoom={overlay.maxNativeZoom} opacity={0.9} zIndex={5} />}
       {activeConflictMap && (
         <GeoJSON
@@ -2685,6 +2701,14 @@ function FlatMap({
       {incidentsOn && incidentRows && hiddenIncidents && <HiddenIncidentsControl incidents={incidentRows} hidden={hiddenIncidents} />}
     </MapContainer>
     <ImageryControl value={imagery} onChange={setImagery} />
+    <AdulisBar
+      region={regionView?.key ?? null}
+      onRegion={(r) => { setRegionView(r); setRegionSeq((n) => n + 1); }}
+      outlines={outlines}
+      onOutlines={setOutlines}
+      waves={waves}
+      onWaves={setWaves}
+    />
     </>
   );
 }
