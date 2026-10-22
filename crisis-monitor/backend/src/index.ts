@@ -35,6 +35,7 @@ import { dueDiligenceRouter } from "./routes/dueDiligence";
 import { refreshStaleLists } from "./lib/dd/sanctionsLists";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
 import { ensureSchema } from "./lib/schemaHeal";
+import { collectFireDetections } from "./lib/firmsHistory";
 import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
@@ -223,6 +224,15 @@ export default {
     // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
     // newly flagged incident reaches email/Signal in the same tick.
     ctx.waitUntil(stageDailyIfDue(env, controller.scheduledTime).catch((err) => console.error("[staging] daily collection failed", err)));
+
+    // Satellite fire history (see lib/firmsHistory.ts). Runs every five minutes but only collects about every three hours.
+    ctx.waitUntil(
+      collectFireDetections(env)
+        .then((r) => {
+          if (!r.skipped) console.log(`[firms] stored ${r.inserted} new of ${r.fetched} detections; truncated=${r.truncated.length}; errors=${r.errors.length}`);
+        })
+        .catch((err) => console.error("[firms] collection failed", err))
+    );
     ctx.waitUntil(refreshStaleLists(env).catch((err) => console.error("[dd] list refresh failed", err)));
 
     ctx.waitUntil(

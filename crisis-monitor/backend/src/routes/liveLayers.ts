@@ -16,6 +16,7 @@ import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
+import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -1515,6 +1516,75 @@ liveLayersRouter.get("/firms-fires", async (c) => {
     },
     3600
   );
+});
+
+/** Fire history from D1 (collected by lib/firmsHistory.ts): one row per UTC day, with the count per satellite. */
+liveLayersRouter.get("/fire-history/days", async (c) => {
+  if (!c.env.FIRMS_MAP_KEY) return c.json({ configured: false, days: [], lastCollectedAt: null });
+  await ensureFireHistorySchema(c.env.DB);
+  const requested = Number(c.req.query("days"));
+  const span = Number.isFinite(requested) ? Math.min(Math.max(Math.floor(requested), 1), 90) : 30;
+  const toDate = new Date();
+  const dayKey = (d: Date) => d.toISOString().slice(0, 10);
+  const to = dayKey(toDate);
+  const from = dayKey(new Date(toDate.getTime() - (span - 1) * 86_400_000));
+  const rows = await c.env.DB.prepare(
+    `SELECT acq_date AS date, satellite, COUNT(*) AS n FROM fire_detections WHERE acq_date BETWEEN ? AND ? GROUP BY acq_date, satellite`
+  )
+    .bind(from, to)
+    .all<{ date: string; satellite: string; n: number }>();
+  const last = await c.env.DB.prepare(`SELECT finished_at FROM fire_collector_runs WHERE run_key = 'firms'`).first<{ finished_at: string | null }>();
+
+  const byDate = new Map<string, Record<string, number>>();
+  for (const r of rows.results ?? []) {
+    const entry = byDate.get(r.date) ?? {};
+    entry[r.satellite] = r.n;
+    byDate.set(r.date, entry);
+  }
+  const days = [];
+  for (let i = 0; i < span; i++) {
+    const date = dayKey(new Date(Date.parse(from) + i * 86_400_000));
+    const counts = byDate.get(date) ?? {};
+    const sats = Object.keys(FIRMS_HISTORY_SATELLITES) as (keyof typeof FIRMS_HISTORY_SATELLITES)[];
+    const bySat = Object.fromEntries(sats.map((s) => [s, counts[s] ?? 0]));
+    days.push({ date, total: sats.reduce((sum, s) => sum + bySat[s], 0), ...bySat });
+  }
+  return c.json({ configured: true, from, to, days, lastCollectedAt: last?.finished_at ?? null });
+});
+
+/** Every stored detection for one UTC day, as the same point features the map already draws. */
+liveLayersRouter.get("/fire-history/day", async (c) => {
+  if (!c.env.FIRMS_MAP_KEY) return c.json({ configured: false, type: "FeatureCollection", features: [] });
+  const date = c.req.query("date") ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
+  await ensureFireHistorySchema(c.env.DB);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, acq_date, acq_time, lat, lon, satellite, frp, confidence, daynight FROM fire_detections WHERE acq_date = ? LIMIT 50000`
+  )
+    .bind(date)
+    .all<{ id: string; acq_date: string; acq_time: string; lat: number; lon: number; satellite: string; frp: number | null; confidence: string | null; daynight: string | null }>();
+  const features: NormalizedFeature[] = (rows.results ?? []).map((r) => {
+    const satName = FIRMS_HISTORY_SATELLITES[r.satellite as keyof typeof FIRMS_HISTORY_SATELLITES] ?? "VIIRS";
+    const frp = r.frp ?? 0;
+    return {
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [r.lon, r.lat] },
+      properties: {
+        id: r.id,
+        title: "Satellite fire detection",
+        time: `${r.acq_date}T${r.acq_time.slice(0, 2)}:${r.acq_time.slice(2, 4)}:00Z`,
+        intensity: Math.min(frp / 50, 1),
+        intensityLabel: frp ? `${frp.toFixed(1)} MW` : "fire detected",
+        detail: [
+          `${satName}, ${r.daynight === "N" ? "night" : "day"} pass`,
+          r.confidence ? `${r.confidence} confidence` : null,
+          "375 m pixel. Source: NASA FIRMS.",
+        ].filter(Boolean).join(". "),
+        url: null,
+      },
+    };
+  });
+  return c.json({ configured: true, type: "FeatureCollection", date, features });
 });
 
 /** Countries with active conflict: UCDP has recorded organised violence there in the last 90 days. Independent of
