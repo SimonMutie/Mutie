@@ -1417,9 +1417,10 @@ liveLayersRouter.get("/ucdp-conflict-events", async (c) => {
 /** Satellite fire detections (NASA FIRMS, VIIRS on NOAA-20 and Suomi NPP, and NOAA-21), last 24 hours, over the
  *  Horn of Africa and Sudan. Each detection is a roughly 375 m pixel where the satellite saw heat. The WFS endpoint and
  *  its region and source names follow FIRMS's MapServer documentation (firms2 wfs-info); BBOX order is south, west, north, east. Needs FIRMS_MAP_KEY. */
-const FIRMS_BBOX = "3,21,24,52";
-/** FIRMS serves each region from its own WFS path; the Europe path returns nothing for Africa. */
-const FIRMS_REGION = "Northern_and_Central_Africa";
+const FIRMS_BBOX = "-35,-18,38,52";
+/** FIRMS serves each region from its own WFS path. Africa is split across these two; the Europe path returns nothing for Africa.
+ *  The Middle East is not covered yet: no FIRMS region for it is confirmed in FIRMS's documentation. */
+const FIRMS_REGIONS = ["Northern_and_Central_Africa", "Southern_Africa"] as const;
 const FIRMS_SOURCES = ["fires_noaa20_24hrs", "fires_snpp_24hrs", "fires_noaa21_24hrs"] as const;
 
 liveLayersRouter.get("/firms-fires", async (c) => {
@@ -1432,12 +1433,13 @@ liveLayersRouter.get("/firms-fires", async (c) => {
     async () => {
       const seen = new Set<string>();
       const features: NormalizedFeature[] = [];
+      const jobs = FIRMS_REGIONS.flatMap((region) => FIRMS_SOURCES.map((source) => ({ region, source })));
       const results = await Promise.all(
-        FIRMS_SOURCES.map(async (source) => {
-          const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/${FIRMS_REGION}/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=0&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
+        jobs.map(async ({ region, source }) => {
+          const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/${region}/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=0&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
           const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
           if (!res.ok) throw new Error(`FIRMS returned ${res.status}`);
-          return { source, data: (await res.json()) as { features?: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] } };
+          return { region, source, data: (await res.json()) as { features?: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] } };
         })
       );
       for (const { source, data } of results) {
@@ -1467,7 +1469,8 @@ liveLayersRouter.get("/firms-fires", async (c) => {
           });
         }
       }
-      const diagnostics = results.map(({ source, data }) => ({
+      const diagnostics = results.map(({ region, source, data }) => ({
+        region,
         source,
         rawFeatures: data.features?.length ?? 0,
         firstFeatureKeys: data.features?.[0]?.properties ? Object.keys(data.features[0].properties) : [],
