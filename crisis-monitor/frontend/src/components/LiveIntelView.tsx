@@ -365,6 +365,9 @@ function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeat
       }));
 }
 
+/** Time window for the satellite fire layer ("24h" or "7d"). Read by its poll, and set by the window buttons on the map. */
+const firmsWindowRef: { current: "24h" | "7d" } = { current: "24h" };
+
 const LAYER_DEFS: LayerDef[] = [
   { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", icon: Activity, fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
   // Both real rows below share NASA EONET's own event feed, split by the
@@ -554,7 +557,7 @@ const LAYER_DEFS: LayerDef[] = [
     group: "Natural Hazards",
     color: "#ff7a1a",
     icon: Flame,
-    fetcher: async () => fromGateway("#ff7a1a", "Satellite fire detections")(await api.getLiveFirmsFires()),
+    fetcher: async () => fromGateway("#ff7a1a", "Satellite fire detections")(await api.getLiveFirmsFires(firmsWindowRef.current)),
   },
   // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
   // a dedicated rail icon, separate from Threats & Intel, with rows LIVE
@@ -1315,6 +1318,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   /** The conflict key is hidden until asked for, so it doesn't sit over the map. */
   const [conflictKeyOpen, setConflictKeyOpen] = useState(false);
+  const [firmsWindow, setFirmsWindow] = useState<"24h" | "7d">("24h");
   const [worldOutlines, setWorldOutlines] = useState<FeatureCollection | null>(null);
   useEffect(() => {
     if (!enabled["active-conflicts"]) return;
@@ -2109,6 +2113,26 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
         )}
 
+        {enabled["firms-fires"] && (
+          <div style={{ position: "absolute", left: 12, bottom: 40, zIndex: 500, display: "flex", gap: 4 }}>
+            {(["24h", "7d"] as const).map((w) => (
+              <button
+                key={w}
+                onClick={() => {
+                  firmsWindowRef.current = w;
+                  setFirmsWindow(w);
+                  api.getLiveFirmsFires(w)
+                    .then((c) => setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Satellite fire detections")(c), loading: false, error: null } })))
+                    .catch((err) => setLayers((prev) => ({ ...prev, "firms-fires": { ...prev["firms-fires"], loading: false, error: err instanceof Error ? err.message : "Feed unavailable" } })));
+                }}
+                aria-pressed={firmsWindow === w}
+                style={{ padding: "4px 9px", borderRadius: 6, background: firmsWindow === w ? "rgba(255,122,26,0.35)" : "rgba(8, 14, 24, 0.82)", border: "1px solid rgba(255,255,255,0.12)", color: "#e6edf7", fontSize: 11, fontFamily: "inherit", cursor: "pointer" }}
+              >
+                Fires {w === "24h" ? "24 h" : "7 days"}
+              </button>
+            ))}
+          </div>
+        )}
         {enabled["active-conflicts"] && (
           <>
             <button

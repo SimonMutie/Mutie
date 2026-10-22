@@ -1421,10 +1421,14 @@ const FIRMS_BBOX = "-35,-18,38,52";
 /** FIRMS serves each region from its own WFS path. Africa is split across these two; the Europe path returns nothing for Africa.
  *  The Middle East is not covered yet: no FIRMS region for it is confirmed in FIRMS's documentation. */
 const FIRMS_REGIONS = ["Northern_and_Central_Africa", "Southern_Africa"] as const;
-const FIRMS_SOURCES = ["fires_noaa20_24hrs", "fires_snpp_24hrs", "fires_noaa21_24hrs"] as const;
+const FIRMS_SATELLITES = { noaa20: "NOAA-20 (VIIRS)", snpp: "Suomi NPP (VIIRS)", noaa21: "NOAA-21 (VIIRS)" } as const;
+/** Pixels within about 1 km (0.01 degrees) of each other in the same satellite pass count as touching. */
+const FIRMS_TOUCH_DEG = 0.01;
 
 liveLayersRouter.get("/firms-fires", async (c) => {
   const key = c.env.FIRMS_MAP_KEY;
+  const window = c.req.query("window") === "7d" ? "7days" : "24hrs";
+  const sources = (Object.keys(FIRMS_SATELLITES) as (keyof typeof FIRMS_SATELLITES)[]).map((sat) => `fires_${sat}_${window}`);
   if (!key) {
     return c.json({ configured: false, type: "FeatureCollection", features: [], fetchedAt: new Date().toISOString() });
   }
@@ -1433,7 +1437,7 @@ liveLayersRouter.get("/firms-fires", async (c) => {
     async () => {
       const seen = new Set<string>();
       const features: NormalizedFeature[] = [];
-      const jobs = FIRMS_REGIONS.flatMap((region) => FIRMS_SOURCES.map((source) => ({ region, source })));
+      const jobs = FIRMS_REGIONS.flatMap((region) => sources.map((source) => ({ region, source })));
       const results = await Promise.all(
         jobs.map(async ({ region, source }) => {
           const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/${region}/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=0&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
@@ -1442,6 +1446,9 @@ liveLayersRouter.get("/firms-fires", async (c) => {
           return { region, source, data: (await res.json()) as { features?: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] } };
         })
       );
+      // Raw detections first, so each one can be checked against its neighbours in the same pass.
+      type Raw = { lat: number; lon: number; source: string; date: string | null; time: string; frp: number; confidence: string; daynight: string | null };
+      const raw: Raw[] = [];
       for (const { source, data } of results) {
         for (const f of data.features ?? []) {
           const [lon, lat] = f.geometry?.coordinates ?? [];
@@ -1451,23 +1458,51 @@ liveLayersRouter.get("/firms-fires", async (c) => {
           const time = typeof p.acq_time === "string" || typeof p.acq_time === "number" ? String(p.acq_time).padStart(4, "0") : "";
           const frp = typeof p.frp === "number" ? p.frp : Number(p.frp) || 0;
           const confidence = p.confidence != null ? String(p.confidence) : "";
-          const id = `firms:${lat.toFixed(4)}:${lon.toFixed(4)}:${date ?? ""}:${time}`;
-          if (seen.has(id)) continue;
-          seen.add(id);
-          features.push({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [lon, lat] },
-            properties: {
-              id,
-              title: `Satellite fire detection${frp ? `, ${frp.toFixed(1)} MW` : ""}`,
-              time: date ? `${date}T${time.slice(0, 2)}:${time.slice(2, 4)}:00Z` : null,
-              intensity: Math.min(frp / 50, 1),
-              intensityLabel: frp ? `${frp.toFixed(1)} MW radiative power` : "fire detected",
-              detail: `${source.includes("noaa20") ? "NOAA-20" : source.includes("noaa21") ? "NOAA-21" : "Suomi NPP"} VIIRS${confidence ? `, confidence ${confidence}` : ""}. Source: NASA FIRMS.`,
-              url: null,
-            },
-          });
+          const daynight = typeof p.daynight === "string" ? p.daynight : null;
+          raw.push({ lat, lon, source, date, time, frp, confidence, daynight });
         }
+      }
+      // Count touching detections: same satellite, same pass (date and time), within about 1 km.
+      const cell = (v: number) => Math.floor(v / FIRMS_TOUCH_DEG);
+      const buckets = new Map<string, Raw[]>();
+      for (const r of raw) {
+        const k = `${r.source}|${r.date}|${r.time}|${cell(r.lat)}|${cell(r.lon)}`;
+        const arr = buckets.get(k);
+        if (arr) arr.push(r); else buckets.set(k, [r]);
+      }
+      const touching = (r: Raw) => {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const arr = buckets.get(`${r.source}|${r.date}|${r.time}|${cell(r.lat) + dy}|${cell(r.lon) + dx}`);
+          if (arr) for (const o of arr) if (o !== r && Math.abs(o.lat - r.lat) <= FIRMS_TOUCH_DEG && Math.abs(o.lon - r.lon) <= FIRMS_TOUCH_DEG) n++;
+        }
+        return n;
+      };
+      for (const r of raw) {
+        const id = `firms:${r.lat.toFixed(4)}:${r.lon.toFixed(4)}:${r.date ?? ""}:${r.time}:${r.source}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const satName = Object.entries(FIRMS_SATELLITES).find(([k]) => r.source.includes(`_${k}_`))?.[1] ?? "VIIRS";
+        const iso = r.date ? `${r.date}T${r.time.slice(0, 2)}:${r.time.slice(2, 4)}:00Z` : null;
+        const near = touching(r);
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [r.lon, r.lat] },
+          properties: {
+            id,
+            title: "Satellite fire detection",
+            time: iso,
+            intensity: Math.min(r.frp / 50, 1),
+            intensityLabel: r.frp ? `${r.frp.toFixed(1)} MW` : "fire detected",
+            detail: [
+              `${satName}, ${r.daynight === "N" ? "night" : "day"} pass`,
+              r.confidence ? `${r.confidence} confidence` : null,
+              near > 0 ? `${near + 1} touching detections in the same pass` : "single detection",
+              "375 m pixel. Source: NASA FIRMS.",
+            ].filter(Boolean).join(". "),
+            url: null,
+          },
+        });
       }
       const diagnostics = results.map(({ region, source, data }) => ({
         region,
