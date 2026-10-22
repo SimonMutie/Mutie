@@ -90,6 +90,7 @@ export default function FireTimeline({
   days,
   coveredFrom,
   lastCollectedAt,
+  lastRun,
   selected,
   unusual,
   onSelect,
@@ -105,6 +106,7 @@ export default function FireTimeline({
   days: FireHistoryDay[];
   coveredFrom: string | null | undefined;
   lastCollectedAt: string | null;
+  lastRun?: { status: string | null; inserted: number; error: string | null } | null;
   selected: string | null;
   unusual: Map<string, number>;
   onSelect: (date: string) => void;
@@ -263,6 +265,14 @@ export default function FireTimeline({
         )}
       </div>
 
+      {lastRun && lastRun.status !== "ok" && (
+        <div role="status" style={{ marginTop: 4, padding: "4px 6px", borderRadius: 4, background: "rgba(255,59,48,0.18)", color: "#ffb4ac", fontSize: 10.5 }}>
+          Fire collector: {lastRun.status ?? "unknown"}{lastRun.error ? `. ${lastRun.error.slice(0, 220)}` : ""}
+        </div>
+      )}
+      {lastRun && lastRun.status === "ok" && lastRun.inserted === 0 && (
+        <div style={{ marginTop: 4, opacity: 0.7, fontSize: 10.5 }}>The last run found no new detections. Quiet weather, or FIRMS had nothing new.</div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 3, opacity: 0.7, fontSize: 10 }}>
         <span>{first ?? ""}</span>
         <span style={{ display: "flex", gap: 10 }}>

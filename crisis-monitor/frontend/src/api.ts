@@ -1413,6 +1413,8 @@ export interface FireHistoryDays {
   coveredFrom?: string | null;
   days: FireHistoryDay[];
   lastCollectedAt: string | null;
+  /** What the last collection run did. Null before any run. */
+  lastRun?: { startedAt: string; finishedAt: string | null; status: string | null; fetched: number; inserted: number; truncated: string | null; error: string | null } | null;
 }
 
 export interface ActiveCountry {

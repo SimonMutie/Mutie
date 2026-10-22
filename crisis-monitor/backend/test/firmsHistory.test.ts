@@ -41,6 +41,18 @@ describe("FIRMS fire history collector", () => {
     expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
+  it("records a failed run with its error, and keeps going job by job", async () => {
+    const { DB, db } = fakeD1();
+    const env = { DB, FIRMS_MAP_KEY: "k" } as never;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+    const result = await collectFireDetections(env, new Date("2026-10-22T12:00:00Z"));
+    expect(result.errors.length).toBe(6);
+    expect(result.inserted).toBe(0);
+    const run = db.prepare("SELECT status, error FROM fire_collector_runs WHERE run_key = 'firms'").get() as { status: string; error: string };
+    expect(run.status).toBe("failed");
+    expect(run.error).toContain("returned 500");
+  });
+
   it("does nothing without a FIRMS key", async () => {
     const { DB } = fakeD1();
     const result = await collectFireDetections({ DB } as never);

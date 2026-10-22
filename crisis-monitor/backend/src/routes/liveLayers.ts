@@ -1533,7 +1533,9 @@ liveLayersRouter.get("/fire-history/days", async (c) => {
   )
     .bind(from, to)
     .all<{ date: string; satellite: string; n: number }>();
-  const last = await c.env.DB.prepare(`SELECT finished_at FROM fire_collector_runs WHERE run_key = 'firms'`).first<{ finished_at: string | null }>();
+  const last = await c.env.DB.prepare(
+    `SELECT started_at, finished_at, status, fetched, inserted, truncated, error FROM fire_collector_runs WHERE run_key = 'firms'`
+  ).first<{ started_at: string; finished_at: string | null; status: string | null; fetched: number | null; inserted: number | null; truncated: string | null; error: string | null }>();
   // The earliest day collected: days before it were never fetched, so the timeline must not read them as quiet.
   const earliest = await c.env.DB.prepare(`SELECT MIN(acq_date) AS d FROM fire_detections`).first<{ d: string | null }>();
 
@@ -1551,7 +1553,18 @@ liveLayersRouter.get("/fire-history/days", async (c) => {
     const bySat = Object.fromEntries(sats.map((s) => [s, counts[s] ?? 0]));
     days.push({ date, total: sats.reduce((sum, s) => sum + bySat[s], 0), ...bySat });
   }
-  return c.json({ configured: true, from, to, coveredFrom: earliest?.d ?? null, days, lastCollectedAt: last?.finished_at ?? null });
+  return c.json({
+    configured: true,
+    from,
+    to,
+    coveredFrom: earliest?.d ?? null,
+    days,
+    lastCollectedAt: last?.finished_at ?? null,
+    // What the last collection run did, so a zero timeline can be explained from the app.
+    lastRun: last
+      ? { startedAt: last.started_at, finishedAt: last.finished_at, status: last.status, fetched: last.fetched ?? 0, inserted: last.inserted ?? 0, truncated: last.truncated, error: last.error }
+      : null,
+  });
 });
 
 /** Fires over a span of days, grouped into cells of about 5 km (0.05 degrees): one point per cell with its count, so a

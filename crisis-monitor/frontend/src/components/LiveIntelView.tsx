@@ -2201,6 +2201,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             days={fireHistory.days}
             coveredFrom={fireHistory.coveredFrom}
             lastCollectedAt={fireHistory.lastCollectedAt}
+            lastRun={fireHistory.lastRun ?? null}
             selected={fireDate}
             unusual={fireUnusual}
             onSelect={selectFireDay}

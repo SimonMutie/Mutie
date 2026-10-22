@@ -35,11 +35,11 @@ const MIN_INTERVAL_MS = 3 * 3600_000;
 const IN_FLIGHT_MS = 15 * 60_000;
 const RUN_KEY = "firms";
 
-let schemaReady = false;
+const schemaReady = new WeakSet<object>();
 
 /** Creates the tables on first use. Safe to call repeatedly (IF NOT EXISTS), and once per isolate it is a no-op. */
 export async function ensureFireHistorySchema(db: D1Database): Promise<void> {
-  if (schemaReady) return;
+  if (schemaReady.has(db)) return;
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS fire_detections (
       id TEXT PRIMARY KEY,
@@ -65,7 +65,7 @@ export async function ensureFireHistorySchema(db: D1Database): Promise<void> {
       error TEXT
     )`),
   ]);
-  schemaReady = true;
+  schemaReady.add(db);
 }
 
 export interface FireCollectResult {
@@ -89,7 +89,7 @@ interface FetchedFeature {
   daynight: string | null;
 }
 
-async function fetchJob(key: string, region: string, sat: FireSatellite, window: "7days"): Promise<{ features: FetchedFeature[]; truncated: boolean }> {
+async function fetchJob(key: string, region: string, sat: FireSatellite, window: "24hrs" | "7days"): Promise<{ features: FetchedFeature[]; truncated: boolean }> {
   const source = `fires_${sat}_${window}`;
   const features: FetchedFeature[] = [];
   let start = 0;
@@ -136,6 +136,28 @@ export function fireDetectionId(lat: number, lon: number, date: string, time: st
   return `firms:${lat.toFixed(4)}:${lon.toFixed(4)}:${date}:${time}:fires_${sat}`;
 }
 
+/** Stores one job's detections. Each job is written as soon as it is fetched, so a run cut short still keeps what it had. */
+async function storeFeatures(db: D1Database, features: FetchedFeature[], collectedAt: string): Promise<number> {
+  const stmt = `INSERT OR IGNORE INTO fire_detections (id, acq_date, acq_time, lat, lon, satellite, frp, confidence, daynight, collected_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  let inserted = 0;
+  const CHUNK = 100;
+  for (let i = 0; i < features.length; i += CHUNK) {
+    const results = await db.batch(
+      features.slice(i, i + CHUNK).map((f) =>
+        db.prepare(stmt).bind(fireDetectionId(f.lat, f.lon, f.date, f.time, f.satellite), f.date, f.time, f.lat, f.lon, f.satellite, f.frp, f.confidence, f.daynight, collectedAt)
+      )
+    );
+    for (const res of results) inserted += res.meta?.changes ?? 0;
+  }
+  return inserted;
+}
+
+/**
+ * One collection run. The first successful run pulls the 7-day window to backfill the timeline. Later runs pull the
+ * 24-hour window, which is a seventh of the size, so a run stays well inside the Worker's limits. Runs overlap, so
+ * nothing is missed while the cron keeps running.
+ */
 export async function collectFireDetections(env: Env, now: Date = new Date()): Promise<FireCollectResult> {
   const key = env.FIRMS_MAP_KEY;
   if (!key) return { skipped: true, reason: "FIRMS_MAP_KEY is not set", fetched: 0, inserted: 0, truncated: [], errors: [] };
@@ -143,9 +165,9 @@ export async function collectFireDetections(env: Env, now: Date = new Date()): P
   await ensureFireHistorySchema(db);
 
   const last = await db
-    .prepare(`SELECT started_at, finished_at FROM fire_collector_runs WHERE run_key = ?`)
+    .prepare(`SELECT started_at, finished_at, status FROM fire_collector_runs WHERE run_key = ?`)
     .bind(RUN_KEY)
-    .first<{ started_at: string; finished_at: string | null }>();
+    .first<{ started_at: string; finished_at: string | null; status: string | null }>();
   const nowMs = now.getTime();
   if (last) {
     const startedMs = Date.parse(last.started_at);
@@ -156,59 +178,35 @@ export async function collectFireDetections(env: Env, now: Date = new Date()): P
       return { skipped: true, reason: "last run was less than three hours ago", fetched: 0, inserted: 0, truncated: [], errors: [] };
     }
   }
+  const window: "24hrs" | "7days" = last?.status === "ok" ? "24hrs" : "7days";
 
-  const startedAt = now.toISOString();
   await db
     .prepare(
       `INSERT INTO fire_collector_runs (run_key, started_at, finished_at, status, fetched, inserted, truncated, error)
        VALUES (?, ?, NULL, 'running', 0, 0, NULL, NULL)
        ON CONFLICT(run_key) DO UPDATE SET started_at = excluded.started_at, finished_at = NULL, status = 'running', error = NULL`
     )
-    .bind(RUN_KEY, startedAt)
+    .bind(RUN_KEY, now.toISOString())
     .run();
 
   const jobs = FIRMS_HISTORY_REGIONS.flatMap((region) =>
     (Object.keys(FIRMS_HISTORY_SATELLITES) as FireSatellite[]).map((sat) => ({ region, sat }))
   );
-  const settled = await Promise.allSettled(jobs.map((j) => fetchJob(key, j.region, j.sat, "7days")));
-
   const errors: string[] = [];
   const truncated: string[] = [];
-  const fetched: FetchedFeature[] = [];
-  settled.forEach((s, i) => {
-    const label = `${jobs[i].region} ${jobs[i].sat}`;
-    if (s.status === "rejected") errors.push(`${label}: ${String(s.reason?.message ?? s.reason)}`);
-    else {
-      fetched.push(...s.value.features);
-      if (s.value.truncated) truncated.push(label);
-    }
-  });
-
-  const collectedAt = new Date().toISOString();
-  const rows = fetched.map((f) => ({
-    id: fireDetectionId(f.lat, f.lon, f.date, f.time, f.satellite),
-    date: f.date,
-    time: f.time,
-    lat: f.lat,
-    lon: f.lon,
-    satellite: f.satellite,
-    frp: f.frp,
-    confidence: f.confidence,
-    daynight: f.daynight,
-  }));
-
-  // One INSERT OR IGNORE per detection, sent to D1 in batches.
-  const stmt = `INSERT OR IGNORE INTO fire_detections (id, acq_date, acq_time, lat, lon, satellite, frp, confidence, daynight, collected_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  let fetched = 0;
   let inserted = 0;
-  const CHUNK = 100;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const results = await db.batch(
-      rows.slice(i, i + CHUNK).map((r) =>
-        db.prepare(stmt).bind(r.id, r.date, r.time, r.lat, r.lon, r.satellite, r.frp, r.confidence, r.daynight, collectedAt)
-      )
-    );
-    for (const res of results) inserted += res.meta?.changes ?? 0;
+  // One job at a time: each is stored before the next starts.
+  for (const job of jobs) {
+    const label = `${job.region} ${job.sat}`;
+    try {
+      const got = await fetchJob(key, job.region, job.sat, window);
+      if (got.truncated) truncated.push(label);
+      fetched += got.features.length;
+      inserted += await storeFeatures(db, got.features, new Date().toISOString());
+    } catch (err) {
+      errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   await db
@@ -217,8 +215,8 @@ export async function collectFireDetections(env: Env, now: Date = new Date()): P
     )
     .bind(
       new Date().toISOString(),
-      errors.length ? "partial" : "ok",
-      rows.length,
+      errors.length === jobs.length ? "failed" : errors.length ? "partial" : "ok",
+      fetched,
       inserted,
       truncated.length ? truncated.join("; ") : null,
       errors.length ? errors.join("; ") : null,
@@ -226,5 +224,5 @@ export async function collectFireDetections(env: Env, now: Date = new Date()): P
     )
     .run();
 
-  return { skipped: false, fetched: rows.length, inserted, truncated, errors };
+  return { skipped: false, fetched, inserted, truncated, errors };
 }
