@@ -1266,3 +1266,46 @@
 .pv-link { flex-basis: 100%; display: flex; }
 .pv-link input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); }
 
+
+/* ── county outlook: turnout history, votes by candidate, coalitions ── */
+.co-wrap { display: flex; flex-direction: column; gap: 14px; }
+.co-controls { display: flex; flex-wrap: wrap; gap: 18px 28px; align-items: flex-end; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.co-controls label { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
+.co-label { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600; display: block; margin-bottom: 6px; }
+.co-controls label .co-label { margin-bottom: 0; }
+.co-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.co-seg button { background: none; border: 0; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--text-muted); cursor: pointer; }
+.co-seg button + button { border-left: 1px solid var(--border); }
+.co-seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--bg, #fff); }
+.co-tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+.co-tabs button { background: none; border: 1px solid transparent; border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; color: var(--text-muted); cursor: pointer; }
+.co-tabs button[aria-selected="true"] { border-color: var(--border); background: var(--panel); color: var(--text-primary); font-weight: 600; }
+.co-tabs button:focus-visible, .co-seg button:focus-visible, .co-th:focus-visible, .co-pick:focus-visible, .co-cell:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; }
+.co-callouts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.co-callouts > div { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.co-callouts strong { font-family: var(--font-display); font-size: 20px; line-height: 1.15; }
+.co-callouts span { font-size: 13px; color: var(--text-muted); line-height: 1.45; }
+.co-filter, .co-pickers { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; font-size: 13px; }
+.co-filter select, .co-pickers select { font: inherit; margin-left: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: inherit; }
+.co-note { font-size: 13px; line-height: 1.5; background: color-mix(in srgb, var(--info) 8%, var(--panel)); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 0; }
+.co-h { font-family: var(--font-display); font-size: 16px; margin: 10px 0 0; }
+.co-table { white-space: nowrap; }
+.co-table th[scope="row"] { position: sticky; left: 0; background: var(--bg, var(--panel)); font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 13px; color: inherit; z-index: 1; }
+.co-table tbody tr:hover th[scope="row"], .co-table tbody tr:hover td { background: color-mix(in srgb, var(--panel) 70%, var(--border)); }
+.co-table tfoot th, .co-table tfoot td { border-top: 2px solid var(--border); font-weight: 600; }
+.co-group th { text-align: center; border-bottom: 1px solid var(--border); font-size: 11px; }
+.co-th { background: none; border: 0; padding: 0; font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit; cursor: pointer; font-weight: inherit; }
+.co-small { font-size: 12px; color: var(--text-muted); }
+.co-lead { font-weight: 700; }
+.co-picked th, .co-picked td { background: color-mix(in srgb, var(--info) 10%, transparent); }
+.co-pick { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; cursor: pointer; text-align: left; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+.co-matrix td { text-align: center; padding: 0; }
+.co-cell { width: 100%; background: none; border: 0; padding: 8px 10px; font: inherit; cursor: pointer; display: flex; flex-direction: column; gap: 2px; align-items: center; color: inherit; }
+.co-cell span { font-size: 11px; color: var(--text-muted); }
+.co-win { background: color-mix(in srgb, var(--ok, #2e7d32) 14%, transparent); }
+.co-loss { background: color-mix(in srgb, var(--danger, #b3261e) 12%, transparent); }
+.co-detail { display: flex; flex-direction: column; gap: 10px; }
+.co-method { font-size: 13px; line-height: 1.55; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 16px; }
+.co-method summary { cursor: pointer; font-weight: 600; }
+.co-method ul { margin: 10px 0 4px; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 640px) { .co-controls label { min-width: 100%; } }
