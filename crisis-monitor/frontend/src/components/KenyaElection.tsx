@@ -22,6 +22,7 @@ import { GroupedHBars, HBars, Timeline, type TimelineEvent } from "./charts";
 import ElectionManage from "./ElectionManage";
 import ElectionReviewPanel from "./ElectionReviewPanel";
 import ElectionSimulator from "./ElectionSimulator";
+import KenyaCountyOutlook from "./KenyaCountyOutlook";
 import MonthlyReport from "./MonthlyReport";
 import { SectionFrame } from "./SectionToggle";
 import "./Election.css";
@@ -40,6 +41,7 @@ const SECTIONS = [
   { id: "report", label: "Monitor" },
   { id: "timeline", label: "Timeline" },
   { id: "voters", label: "Voters" },
+  { id: "county-outlook", label: "County outlook" },
   { id: "population", label: "Population" },
   { id: "candidates", label: "Candidates" },
   { id: "polls", label: "Polls" },
@@ -137,6 +139,9 @@ export default function KenyaElection({ onBack, isAdmin = false }: { onBack: () 
         </Section>
         <TimelineSection />
         <VotersSection />
+        <Section id="county-outlook" kicker="Turnout history and 2027 scenarios" title="County turnout, 2022 votes and coalition scenarios" intro={<p>For each county: what turnout was in 2013, 2017 and 2022, where it could land in 2027, and where each candidate’s votes could come from. The 2022 results are IEBC’s. Everything forward-looking, including how 2022 voters divide among 2027 candidates and how coalitions would shift the count, is Afrilens analysis and is labelled as such.</p>}>
+          <KenyaCountyOutlook live={live} />
+        </Section>
         <PopulationSection />
         <CandidatesSection />
         <PollsSection />
