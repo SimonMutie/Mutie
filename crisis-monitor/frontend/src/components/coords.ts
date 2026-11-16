@@ -1,3 +1,5 @@
+import { forward as mgrsForward, toPoint as mgrsToPoint } from "mgrs";
+
 /** Coordinate formats for the map's readouts. Pure functions, so they are easy to check. */
 
 /** Decimal degrees, five places (about 1 m). */
@@ -40,4 +42,33 @@ export function bearingDeg(from: { lat: number; lng: number }, to: { lat: number
   const y = Math.sin(Δλ) * Math.cos(φ2);
   const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
   return ((Math.atan2(y, x) / toRad) + 360) % 360;
+}
+
+/** Military Grid Reference System, to 1 m, spaced for reading: 37P DL 12345 67890. Empty near the poles, where MGRS does not apply. */
+export function toMgrs(lat: number, lng: number): string {
+  if (lat < -80 || lat > 84) return "";
+  try {
+    const raw = mgrsForward([lng, lat], 5);
+    const m = raw.match(/^(\d{1,2}[A-Z])([A-Z]{2})(\d{5})(\d{5})$/);
+    return m ? `${m[1]} ${m[2]} ${m[3]} ${m[4]}` : raw;
+  } catch {
+    return "";
+  }
+}
+
+/** Reads an MGRS reference as typed or pasted, with or without spaces. Returns null when the text is not one. */
+export function parseMgrs(text: string): { lat: number; lng: number } | null {
+  const compact = text.replace(/\s+/g, "").toUpperCase();
+  if (!/^\d{1,2}[C-HJ-NP-X][A-HJ-NP-Z]{2}(\d{2}|\d{4}|\d{6}|\d{8}|\d{10})$/.test(compact)) return null;
+  try {
+    const [lng, lat] = mgrsToPoint(compact);
+    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Decimal degrees or MGRS, whichever the text is. */
+export function parsePoint(text: string): { lat: number; lng: number } | null {
+  return parseDecimal(text) ?? parseMgrs(text);
 }
