@@ -41,6 +41,7 @@ import {
   Hexagon,
   Flag,
   Landmark,
+  HeartPulse,
   LineChart,
   MapPin,
   Megaphone,
@@ -96,6 +97,7 @@ import {
   type ActiveCountry,
   type ConflictWave,
   type IncidentPulse,
+  type SituationEvent,
   type ActivityIndex,
   type IncidentItem,
   type IncidentFilters as IncidentFilterOptions,
@@ -122,6 +124,7 @@ import { ConnectivityLayer, ConnectivityPanel, useConnectivity } from "./Connect
 import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
 import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
+import SituationPanel from "./SituationPanel";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -289,6 +292,22 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    Toolkit" (port/MAC/IP scanning, self-track) and "Marauder" (Bluetooth
  *    device sweeps).
  */
+
+/** Map points for humanitarian or political events; bigger for higher severity, labelled with their sourcing. */
+function situationPoints(events: SituationEvent[], layerKey: string, color: string): GlobePoint[] {
+  return events.map((e) => ({
+    id: `sit:${e.id}`,
+    layerKey,
+    lat: e.lat,
+    lng: e.lon,
+    color,
+    size: e.severity === 3 ? 0.26 : e.severity === 2 ? 0.18 : 0.12,
+    title: `S${e.severity} · ${e.typeLabel}: ${e.place ? `${e.place}, ` : ""}${e.countryName}`,
+    subtitle: `${e.summary} (${e.confidence === "confirmed" ? `${e.outlets} outlets` : "single source"}${e.precision === "country" ? "; placed at the country's centre" : ""})`,
+    time: e.lastDate,
+    url: e.sources[0]?.url ?? null,
+  }));
+}
 
 interface GlobePoint {
   id: string;
@@ -738,6 +757,49 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Telescope,
     fetcher: async () => fromGateway("#ffd23f", "Stations / Telescopes", (f) => f.properties.satelliteCategory === "stations-telescopes")(await api.getLiveSatellites()),
   },
+  // Humanitarian and political events: what the incident pipeline reads but does not count as armed conflict
+  // (displacement, outbreaks, hunger, disasters, unrest, elections, changes of government). Graded S1 to S3.
+  {
+    key: "humanitarian-events",
+    label: "Humanitarian Events",
+    group: "Threats & Intel",
+    color: "#38bdf8",
+    icon: HeartPulse,
+    fetcher: async () => situationPoints((await api.getSituationEvents()).events.filter((e) => e.category === "humanitarian"), "Humanitarian Events", "#38bdf8"),
+  },
+  {
+    key: "political-events",
+    label: "Political Events",
+    group: "Threats & Intel",
+    color: "#e879f9",
+    icon: Landmark,
+    fetcher: async () => situationPoints((await api.getSituationEvents()).events.filter((e) => e.category === "political"), "Political Events", "#e879f9"),
+  },
+  // Squares where aircraft report poor satellite-navigation accuracy: a sign of GPS jamming or spoofing.
+  {
+    key: "gps-interference",
+    label: "GPS Interference",
+    group: "Threats & Intel",
+    color: "#f97316",
+    icon: Satellite,
+    fetcher: async () => {
+      const data = await api.getGpsInterference();
+      return data.cells
+        .filter((c) => c.level !== "low")
+        .map((c): GlobePoint => ({
+          id: `gps:${c.lat}:${c.lon}`,
+          layerKey: "GPS Interference",
+          lat: c.lat,
+          lng: c.lon,
+          color: c.level === "high" ? "#ef4444" : "#f59e0b",
+          size: c.level === "high" ? 0.26 : 0.16,
+          title: `${c.level === "high" ? "High" : "Medium"} GPS interference: ${Math.round(c.share * 100)}% of aircraft`,
+          subtitle: `${c.poor} of ${c.aircraft} aircraft in this 55 km square reported poor position accuracy since ${data.since}. A sign of jamming or spoofing, not proof. ${data.attribution}.`,
+          time: data.fetchedAt,
+          url: null,
+        }));
+    },
+  },
   // Telegram posts that name a place the Lens can put on the map. The point sits at that country's or region's
   // centre, not at the event: the incident pipeline is what locates events properly, and Telegram posts feed it too.
   {
@@ -902,7 +964,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -1026,6 +1088,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "my-incidents": false,
     "osint-alerts": false,
     "telegram-posts": true,
+    "humanitarian-events": true,
+    "political-events": true,
+    "gps-interference": false,
     "live-broadcasts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
     // chokepoints) — this toggles the shipping-lane arcs (maritimeLanes,
@@ -2203,6 +2268,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             activeConflictMap={activeConflictMap}
             conflictWaveRows={conflictWaveRows}
             incidentPulses={incidentPulses}
+            onLayersOn={(keys) => setEnabled((prev) => ({ ...prev, ...Object.fromEntries(keys.map((k) => [k, true])) }))}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2431,6 +2497,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {rightTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
+        {rightTool === "events" && (
+          <ToolPanelShell title="Humanitarian & political events">
+            <SituationPanel />
+          </ToolPanelShell>
+        )}
         {rightTool === "telegram" && (
           <ToolPanelShell title="Telegram">
             <TelegramPanel />
@@ -2560,6 +2631,7 @@ function FlatMap({
   activeConflictMap,
   conflictWaveRows,
   incidentPulses,
+  onLayersOn,
   onMapClick,
   drawMode,
   drawPoints,
@@ -2593,6 +2665,8 @@ function FlatMap({
   conflictWaveRows?: ConflictWave[];
   /** Surges of incidents and single serious incidents, drawn as pulsing rings. */
   incidentPulses?: IncidentPulse[];
+  /** Switches map layers on, for region presets such as the Red Sea view. */
+  onLayersOn?: (keys: string[]) => void;
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2779,7 +2853,11 @@ function FlatMap({
     <ImageryControl value={imagery} onChange={setImagery} shownDay={imageryDay} />
     <AdulisBar
       region={regionView?.key ?? null}
-      onRegion={(r) => { setRegionView(r); setRegionSeq((n) => n + 1); }}
+      onRegion={(r) => {
+        setRegionView(r);
+        setRegionSeq((n) => n + 1);
+        if (r?.layers) onLayersOn?.(r.layers);
+      }}
       outlines={outlines}
       onOutlines={setOutlines}
       waves={waves}
@@ -3704,6 +3782,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "space", icon: Rss, label: "Space" },
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "telegram", icon: Send, label: "Telegram" },
+    { key: "events", icon: HeartPulse, label: "Events" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const alertsPaused = useAlertsPaused();
