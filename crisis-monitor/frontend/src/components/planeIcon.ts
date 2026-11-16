@@ -6,4 +6,4 @@ export function planeSvg(color: string, size = 16): string {
 }
 
 /** Layer keys whose points are aircraft. */
-export const AIRCRAFT_LAYER_KEYS = new Set(["Commercial Flights", "Private Aircraft", "Military Aircraft"]);
+export const AIRCRAFT_LAYER_KEYS = new Set(["Commercial Flights", "Private Aircraft", "Private Jets", "Military Aircraft"]);
