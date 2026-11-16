@@ -19,7 +19,7 @@ import { africaChannelStatus, buildOsintFeed, type OsintAlertItem } from "../lib
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
-import { fetchAdsbLolAircraft } from "../lib/aviationFeeds";
+import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCollector";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
 
 /**
@@ -665,7 +665,6 @@ liveLayersRouter.get("/incident-pulses", async (c) => {
   );
 });
 
-const AIR_TRAFFIC_TTL_SECONDS = 900; // 15 min
 
 /** Real, sourced (not invented) signals for splitting OpenSky's one global
  *  feed into Commercial / Private / Military, used by the frontend's
@@ -720,56 +719,74 @@ liveLayersRouter.get("/air-traffic", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      // OpenSky first, for worldwide coverage. It often refuses cloud servers (a 522), so adsb.lol is read alongside
-      // it for Africa and the Middle East and for military aircraft worldwide (see lib/aviationFeeds.ts). The layer
-      // fails only when both do.
-      const [opensky, adsb] = await Promise.all([readOpenSky().catch((err: unknown) => err instanceof Error ? err : new Error(String(err))), fetchAdsbLolAircraft().catch(() => null)]);
+      // Aircraft over Africa and the Middle East are collected every five minutes by the cron (lib/aircraftCollector.ts)
+      // and read here from the database. OpenSky, which often refuses cloud servers, is asked too, with a short wait, for
+      // aircraft elsewhere in the world.
+      let snap = await readSnapshot(c.env.DB);
+      if (!snap) {
+        await collectAircraft(c.env).catch(() => null);
+        snap = await readSnapshot(c.env.DB);
+      }
+      const opensky = await readOpenSky().catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))));
       const features: NormalizedFeature[] = [];
       const seen = new Set<string>();
-      if (adsb) {
-        for (const a of adsb.aircraft) {
-          seen.add(a.hex);
-          const intensity = Math.max(0, Math.min(1, (a.speedKts ?? 0) / 550));
-          features.push({
-            type: "Feature",
-            geometry: { type: "Point", coordinates: [a.lon, a.lat] },
-            properties: {
-              id: a.hex,
-              title: a.callsign || a.registration || a.hex,
-              time: new Date().toISOString(),
-              intensity,
-              intensityLabel: a.speedKts != null ? `${Math.round(a.speedKts)} kt` : "in flight",
-              detail: [a.aircraftType, a.registration].filter(Boolean).join(" · ") || "adsb.lol",
-              url: null,
-              aviationClass: a.military ? "military" : classifyAviation(a.hex, a.callsign),
-            },
-          });
-        }
+      for (const [hex, callsign, reg, type, mil, lat, lon, alt, spd, trk] of snap?.aircraft ?? []) {
+        seen.add(hex);
+        features.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [lon, lat] },
+          properties: {
+            id: hex,
+            title: callsign || reg || hex,
+            time: snap!.at,
+            intensity: Math.max(0, Math.min(1, (spd ?? 0) / 550)),
+            intensityLabel: [spd != null ? `${spd} kt` : null, alt != null ? `${alt.toLocaleString("en-GB")} ft` : null, trk != null ? `heading ${trk}°` : null].filter(Boolean).join(" · ") || "in flight",
+            detail: [type, reg].filter(Boolean).join(" · ") || "adsb.lol",
+            url: null,
+            aviationClass: mil ? "military" : classifyAviation(hex, callsign),
+          },
+        });
       }
-      if (!(opensky instanceof Error)) {
-        for (const f of opensky) if (!seen.has(String(f.properties.id))) features.push(f);
-      }
+      if (!(opensky instanceof Error)) for (const f of opensky) if (!seen.has(String(f.properties.id))) features.push(f);
       if (features.length === 0) {
-        throw new Error(`no aircraft feed answered (${opensky instanceof Error ? opensky.message : "OpenSky returned no aircraft"}; adsb.lol ${adsb ? `answered ${adsb.pointsRead} of ${adsb.pointsRead + adsb.pointsFailed} areas with no aircraft` : "could not be reached"})`);
+        throw new Error(`no aircraft yet (${snap ? `stored picture from ${snap.at} is empty` : "the first collection has not finished"}; ${opensky instanceof Error ? opensky.message : "OpenSky returned none"})`);
       }
       return {
         type: "FeatureCollection",
         features,
-        fetchedAt: new Date().toISOString(),
-        sources: {
-          opensky: opensky instanceof Error ? `unavailable: ${opensky.message}` : "ok",
-          adsbLol: adsb ? `${adsb.pointsRead} of ${adsb.pointsRead + adsb.pointsFailed} areas read` : "unavailable",
-        },
-        attribution: adsb ? "Aircraft: adsb.lol (ODbL)" + (opensky instanceof Error ? "" : " and OpenSky Network") : "Aircraft: OpenSky Network",
+        fetchedAt: snap?.at ?? new Date().toISOString(),
+        sources: { adsbLol: snap ? `${snap.aircraft.length} aircraft at ${snap.at}, ${snap.pointsRead} of ${snap.pointsRead + snap.pointsFailed} areas read` : "no picture yet", opensky: opensky instanceof Error ? `unavailable: ${opensky.message}` : "ok" },
+        attribution: "Aircraft: adsb.lol (ODbL)" + (opensky instanceof Error ? "" : " and OpenSky Network"),
       };
     },
-    AIR_TRAFFIC_TTL_SECONDS
+    60
   );
 });
 
-/** OpenSky's anonymous worldwide snapshot, as map features. Throws when OpenSky does not answer within 10 seconds. */
+/** One aircraft's track: stored positions every fifteen minutes for up to three days, plus where it is now. */
+liveLayersRouter.get("/aircraft-track/:hex", async (c) => {
+  const hex = c.req.param("hex");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return c.json({ error: "not an aircraft address" }, 400);
+  const hours = Number(c.req.query("hours")) || 24;
+  return c.json(await aircraftTrack(c.env.DB, hex, hours));
+});
+
+/** OpenSky's anonymous quota allows about a hundred worldwide snapshots a day, so one answer (or failure) is reused for 15 minutes. */
+let openSkyMemo: { at: number; result: NormalizedFeature[] | Error } | null = null;
 async function readOpenSky(): Promise<NormalizedFeature[]> {
-  const res = await fetch("https://opensky-network.org/api/states/all", { signal: AbortSignal.timeout(10000) });
+  if (openSkyMemo && Date.now() - openSkyMemo.at < 15 * 60_000) {
+    if (openSkyMemo.result instanceof Error) throw openSkyMemo.result;
+    return openSkyMemo.result;
+  }
+  const result = await fetchOpenSky().catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))));
+  openSkyMemo = { at: Date.now(), result };
+  if (result instanceof Error) throw result;
+  return result;
+}
+
+/** OpenSky's anonymous worldwide snapshot, as map features. Throws when OpenSky does not answer within 6 seconds. */
+async function fetchOpenSky(): Promise<NormalizedFeature[]> {
+  const res = await fetch("https://opensky-network.org/api/states/all", { signal: AbortSignal.timeout(6000) });
   if (!res.ok) throw new Error(`OpenSky returned ${res.status}`);
   const raw = (await res.json()) as {
     time: number;
