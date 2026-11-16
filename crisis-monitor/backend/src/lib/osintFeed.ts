@@ -65,30 +65,27 @@ const TELEGRAM_CHANNELS: Feed[] = [
   // anonymous aggregator is labelled as one. These posts also feed the escalation pipeline (fetchTelegramPostItems).
   { handle: "africaintel", name: "Africa Intel", lean: "Anonymous aggregator, continental security", bloc: "independent", africa: true, seen: true },
   { handle: "AfricanMilitaryCollective", name: "African Intelligence Collective", lean: "Anonymous aggregator, military", bloc: "independent", africa: true },
-  { handle: "AfricaWars", name: "War in Africa", lean: "Anonymous aggregator, conflict", bloc: "independent", africa: true },
-  { handle: "sahelintel2", name: "Sahel Intel", lean: "Anonymous aggregator, Sahel", bloc: "independent", africa: true },
   { handle: "sahelmonitor", name: "Sahel Monitor", lean: "Anonymous aggregator, Sahel and Horn", bloc: "independent", africa: true, seen: true },
-  { handle: "KSUcountrywide", name: "Kenya Security Updates", lean: "Anonymous aggregator, Kenya", bloc: "independent", africa: true },
   { handle: "allafrica", name: "AllAfrica (Telegram)", lean: "Pan-African wire aggregator", bloc: "regional", africa: true, seen: true },
   { handle: "sntvnews", name: "Somali National Television", lean: "Somali state broadcaster", bloc: "regional", africa: true, lang: "so" },
   { handle: "sputnik_africa", name: "Sputnik Africa", lean: "Russian state media", bloc: "russian", africa: true },
-  { handle: "sputnik_afrique", name: "Sputnik Afrique", lean: "Russian state media, French", bloc: "russian", africa: true, lang: "fr" },
   { handle: "sputnik_ethiopia", name: "Sputnik Ethiopia", lean: "Russian state media, Amharic", bloc: "russian", africa: true, lang: "am" },
   { handle: "TheAfricanCorps", name: "The African Corps", lean: "Aligned with Russia's Africa Corps, a party to conflicts it reports", bloc: "russian", africa: true, seen: true },
   { handle: "arabicafrica", name: "Arab Africa", lean: "Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
   { handle: "SeraaTripoli", name: "Seraa Tripoli", lean: "Libya, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar", seen: true },
   { handle: "AL24newschannel", name: "AL24 News", lean: "Algerian state-owned channel", bloc: "regional", africa: true, lang: "ar" },
-  { handle: "sfaxalaan24", name: "Sfax Alaan 24", lean: "Tunisia, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
   { handle: "MorNewsAr", name: "MorNewsAr", lean: "Morocco, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
+  // Removed after the first live reading on 2026-11-16: KSUcountrywide, sahelintel2, sfaxalaan24 and AfricaWars had
+  // not posted for about three years or more; sputnik_afrique and shahidalsudan showed no public preview.
   // Found by search on 2026-11-16. Each of these had a public preview page (t.me/s/<handle>) or an official link
   // to it in the search results that day, so the handle is known to exist; none could be opened from the build
   // environment. Armed forces' own channels are included because their claims are part of the record, and are
   // labelled as a party to the war they report.
   { handle: "RSFSudan", name: "Rapid Support Forces", lean: "Official channel of the RSF, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar", seen: true },
-  { handle: "Sudanesearmy56", name: "Sudanese Armed Forces", lean: "SAF spokesperson's office, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar", seen: true },
+  // The army's page on Facebook gives this handle. Its earlier one here (Sudanesearmy56) had been silent for four months when checked on the live Lens.
+  { handle: "sudanesearmyforces", name: "Sudanese Armed Forces", lean: "SAF spokesperson's office, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar" },
   { handle: "NewsfromSudan", name: "News from Sudan", lean: "Anonymous aggregator, Sudan", bloc: "independent", africa: true, seen: true },
   { handle: "SudanNewsEnglish", name: "Sudan News Network", lean: "Anonymous aggregator, Sudan", bloc: "independent", africa: true, seen: true },
-  { handle: "shahidalsudan", name: "Sudan Witness (Shahid al Sudan)", lean: "Centre for Information Resilience, verified open-source research, Arabic", bloc: "western", africa: true, lang: "ar", seen: true },
   { handle: "sudaaan", name: "Al-Sudan", lean: "Anonymous aggregator, Sudan, Arabic; leans to the army", bloc: "regional", africa: true, lang: "ar", seen: true },
   { handle: "tikvahethiopia", name: "Tikvah-Ethiopia", lean: "Ethiopia's largest Telegram news channel, Amharic", bloc: "regional", africa: true, lang: "am", seen: true },
   { handle: "AddisstandardEng", name: "Addis Standard", lean: "Ethiopian independent newsroom", bloc: "regional", africa: true, seen: true },
