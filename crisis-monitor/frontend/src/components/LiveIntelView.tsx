@@ -65,6 +65,7 @@ import {
   Ship,
   Siren,
   Sun,
+  ZoomIn,
   Telescope,
   TrendingDown,
   TrendingUp,
@@ -1079,13 +1080,14 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
 }
 
 export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, onNewQuery, onEditQuery, initialTool = null }: LiveIntelViewProps) {
+  // Every layer starts off at login except the escalation icons; the hotspot pulses and waves are on too (see FlatMap).
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
-    earthquakes: true,
-    "active-fires": true,
-    "severe-weather": true,
-    "conflict-events": true,
+    earthquakes: false,
+    "active-fires": false,
+    "severe-weather": false,
+    "conflict-events": false,
     "conflict-escalation": true,
-    "active-conflicts": true,
+    "active-conflicts": false,
     "nuclear-facilities": false,
     "global-incidents": false,
     "live-alert-pins": false,
@@ -1103,9 +1105,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "satellites-stations-telescopes": false,
     "my-incidents": false,
     "osint-alerts": false,
-    "telegram-posts": true,
-    "humanitarian-events": true,
-    "political-events": true,
+    "telegram-posts": false,
+    "humanitarian-events": false,
+    "political-events": false,
     "gps-interference": false,
     "live-broadcasts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
@@ -1119,7 +1121,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "submarine-cables": false,
     "ais-vessels": false,
     "ucdp-conflict-events": false,
-    "firms-fires": true,
+    "firms-fires": false,
   });
   const [mapMode, setMapMode] = useState<MapMode>(() => (readViewParams().at ? "sat" : "3d"));
   // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
@@ -1179,6 +1181,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [showDayNight, setShowDayNight] = useState(false);
   const [showBuildings, setShowBuildings] = useState(false);
   const [showTerrain, setShowTerrain] = useState(false);
+  // Map controls that start hidden and are switched on from the Display group: zoom and pan buttons, and the fire timeline.
+  const [showNav, setShowNav] = useState(false);
+  const [showFirePanel, setShowFirePanel] = useState(false);
 
   // --- Right-side tools: at most one open at a time (see RightTool). ---
   const [activeTool, setActiveTool] = useState<RightTool>(initialTool);
@@ -2316,6 +2321,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             showDayNight={showDayNight}
             showBuildings={showBuildings}
             showTerrain={showTerrain}
+            showNav={showNav}
           />
         ) : (
           <FlatMap
@@ -2325,6 +2331,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             conflictWaveRows={conflictWaveRows}
             incidentPulses={incidentPulses}
             aircraftTrack={aircraftTrackLine}
+            showNav={showNav}
             followAircraft={followAircraft}
             onAircraftClick={(hex, label) => setSelectedAircraft({ hex, label })}
             selectedAircraftId={selectedAircraft?.hex ?? null}
@@ -2373,11 +2380,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onFollow={setFollowAircraft}
             track={aircraftTrack}
             trackError={aircraftTrackError}
-            bottom={fireOn && fireHistory && fireHistory.days.length > 0 ? 150 : 16}
+            bottom={showFirePanel && fireOn && fireHistory && fireHistory.days.length > 0 ? 150 : 16}
           />
         )}
 
-        {fireOn && fireHistory && fireHistory.days.length > 0 && (
+        {showFirePanel && fireOn && fireHistory && fireHistory.days.length > 0 && (
           <FireTimeline
             days={fireHistory.days}
             coveredFrom={fireHistory.coveredFrom}
@@ -2465,6 +2472,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 onToggleDayNight={() => setShowDayNight((v) => !v)}
                 onToggleBuildings={() => setShowBuildings((v) => !v)}
                 onToggleTerrain={() => setShowTerrain((v) => !v)}
+                nav={showNav}
+                firePanel={showFirePanel}
+                onToggleNav={() => setShowNav((v) => !v)}
+                onToggleFirePanel={() => {
+                  // The timeline needs the fire layer, so turning the panel on turns the layer on too.
+                  if (!showFirePanel) setEnabled((prev) => ({ ...prev, "firms-fires": true }));
+                  setShowFirePanel((v) => !v);
+                }}
               />
               <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
             </>
@@ -2706,6 +2721,7 @@ function FlatMap({
   conflictWaveRows,
   incidentPulses,
   aircraftTrack,
+  showNav,
   followAircraft,
   onAircraftClick,
   selectedAircraftId,
@@ -2743,6 +2759,8 @@ function FlatMap({
   conflictWaveRows?: ConflictWave[];
   /** Surges of incidents and single serious incidents, drawn as pulsing rings. */
   incidentPulses?: IncidentPulse[];
+  /** Show the zoom and pan buttons. */
+  showNav?: boolean;
   /** The traced aircraft's positions, oldest first; drawn as a line. */
   aircraftTrack?: LatLng[];
   /** Keep the map centred on the traced aircraft's latest position. */
@@ -2815,7 +2833,7 @@ function FlatMap({
   const [regionView, setRegionView] = useState<RegionView | null>(null);
   const [regionSeq, setRegionSeq] = useState(0);
   const [outlines, setOutlines] = useState(false);
-  const [waves, setWaves] = useState(false);
+  const [waves, setWaves] = useState(true);
   const hotCells = useMemo(
     () => (waves && fireCollection ? hotCellsFrom(fireCollection.features, !!fireCells, 5, 40) : []),
     [waves, fireCollection, fireCells]
@@ -2828,7 +2846,7 @@ function FlatMap({
   return (
     <>
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump zoomControl={false} style={{ height: "100%", width: "100%", background: "#000308" }}>
-      <MapNavPad />
+      {showNav && <MapNavPad />}
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
       <RegionFly region={regionView} seq={regionSeq} />
@@ -3028,6 +3046,10 @@ function LayerPanel({
   onRefreshListening,
   onOpenListeningDashboard,
   show3DDisplayGroup,
+  nav,
+  firePanel,
+  onToggleNav,
+  onToggleFirePanel,
   dayNight,
   buildings,
   terrain,
@@ -3062,6 +3084,10 @@ function LayerPanel({
    *  same as every other group here. Undefined/false hides the group
    *  entirely (2D/satellite modes, where none of these three apply). */
   show3DDisplayGroup?: boolean;
+  nav?: boolean;
+  firePanel?: boolean;
+  onToggleNav?: () => void;
+  onToggleFirePanel?: () => void;
   dayNight?: boolean;
   buildings?: boolean;
   terrain?: boolean;
@@ -3124,9 +3150,14 @@ function LayerPanel({
           />
         </div>
       )}
-      {show3DDisplayGroup && (
+      {(
         <div style={{ borderTop: "1px solid rgba(212,175,55,0.12)", paddingTop: 4, marginTop: 2 }}>
           <DisplayRailGroup
+            show3D={!!show3DDisplayGroup}
+            nav={!!nav}
+            firePanel={!!firePanel}
+            onToggleNav={onToggleNav!}
+            onToggleFirePanel={onToggleFirePanel!}
             dayNight={!!dayNight}
             buildings={!!buildings}
             terrain={!!terrain}
@@ -3566,6 +3597,11 @@ function RailHoverToggle({
  *  collapse it into the left panel", nothing shows now until this rail
  *  icon itself is hovered. */
 function DisplayRailGroup({
+  show3D,
+  nav,
+  firePanel,
+  onToggleNav,
+  onToggleFirePanel,
   dayNight,
   buildings,
   terrain,
@@ -3573,6 +3609,11 @@ function DisplayRailGroup({
   onToggleBuildings,
   onToggleTerrain,
 }: {
+  show3D: boolean;
+  nav: boolean;
+  firePanel: boolean;
+  onToggleNav: () => void;
+  onToggleFirePanel: () => void;
   dayNight: boolean;
   buildings: boolean;
   terrain: boolean;
@@ -3582,9 +3623,15 @@ function DisplayRailGroup({
 }) {
   const [hovered, setHovered] = useState(false);
   const rows: { label: string; hint?: string; icon: LucideIcon; on: boolean; onToggle: () => void }[] = [
-    { label: "Day / Night Cycle", icon: Sun, on: dayNight, onToggle: onToggleDayNight },
-    { label: "3D Buildings", hint: "City detail — zoom 14.5+", icon: Building2, on: buildings, onToggle: onToggleBuildings },
-    { label: "3D Terrain", hint: "Mountains — zoom 10+", icon: Mountain, on: terrain, onToggle: onToggleTerrain },
+    { label: "Zoom & Pan Buttons", icon: ZoomIn, on: nav, onToggle: onToggleNav },
+    { label: "Fire Timeline Panel", hint: "Turns the fire layer on too", icon: Flame, on: firePanel, onToggle: onToggleFirePanel },
+    ...(show3D
+      ? [
+          { label: "Day / Night Cycle", icon: Sun, on: dayNight, onToggle: onToggleDayNight },
+          { label: "3D Buildings", hint: "City detail — zoom 14.5+", icon: Building2, on: buildings, onToggle: onToggleBuildings },
+          { label: "3D Terrain", hint: "Mountains — zoom 10+", icon: Mountain, on: terrain, onToggle: onToggleTerrain },
+        ]
+      : []),
   ];
   const activeCount = rows.filter((r) => r.on).length;
   const allActive = activeCount === rows.length;
