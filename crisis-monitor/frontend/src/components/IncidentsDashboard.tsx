@@ -35,31 +35,21 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
     <Suspense fallback={<div style={{ padding: 24, color: "var(--text-muted)" }}>Loading…</div>}>
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 24px", borderBottom: "1px solid var(--border-soft)" }}>
-        <button onClick={() => setTab("country")} style={tabBtnStyle(tab === "country")}>
-          Country Dashboard
-        </button>
-        <button onClick={() => setTab("dashboard")} style={tabBtnStyle(tab === "dashboard")}>
-          Dashboard
-        </button>
-        <button onClick={() => setTab("map")} style={tabBtnStyle(tab === "map")}>
-          Mapping
-        </button>
-        <button onClick={() => setTab("upload")} style={tabBtnStyle(tab === "upload")}>
-          Upload
-        </button>
-        {/* Previously only reachable through a hidden "Incident Log" icon
-         *  button buried inside the Mapping tab's map toolbar — a bulk
-         *  upload (e.g. a 70k-row file) completed successfully there with
-         *  no obvious way back to see it, since this bar only ever showed
-         *  Dashboard/Mapping. Uploads and their row counts live here. */}
-        <button onClick={() => setTab("manage")} style={tabBtnStyle(tab === "manage")}>
-          Manage / Uploads
-        </button>
-        {/* Moved here from the top navigation: datasets feed the dashboards
-         *  and maps on this page, so they sit alongside them. */}
-        <button onClick={() => setTab("datasets")} style={tabBtnStyle(tab === "datasets")}>
-          Datasets
-        </button>
+        {/* One tab per job. Upload and Manage / Uploads were two tabs for the same thing; they are now one
+         *  "Uploads" tab with the upload form above the list of uploads and their rows. */}
+        {(
+          [
+            ["country", "Countries"],
+            ["dashboard", "Dashboards"],
+            ["map", "Map"],
+            ["manage", "Uploads"],
+            ["datasets", "Datasets"],
+          ] as [Tab, string][]
+        ).map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)} style={tabBtnStyle(tab === key || (key === "manage" && tab === "upload"))}>
+            {label}
+          </button>
+        ))}
 
         {stats && <div style={{ marginLeft: "auto", fontSize: 12.5, color: "var(--text-muted)" }}>{stats.total.toLocaleString()} incidents total</div>}
       </div>
@@ -91,22 +81,17 @@ export default function IncidentsDashboard({ user }: { user: AuthUser }) {
         </div>
       )}
 
-      {tab === "manage" && (
-        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          <IncidentManageTable
-            refreshKey={manageRefreshKey}
-            onChanged={() => {
+      {(tab === "manage" || tab === "upload") && (
+        <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 24 }}>
+          <IncidentUpload
+            onUploaded={() => {
               loadAll();
               setManageRefreshKey((k) => k + 1);
             }}
           />
-        </div>
-      )}
-
-      {tab === "upload" && (
-        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
-          <IncidentUpload
-            onUploaded={() => {
+          <IncidentManageTable
+            refreshKey={manageRefreshKey}
+            onChanged={() => {
               loadAll();
               setManageRefreshKey((k) => k + 1);
             }}
