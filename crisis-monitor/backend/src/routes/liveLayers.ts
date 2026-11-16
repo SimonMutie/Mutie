@@ -17,6 +17,7 @@ import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, N
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
+import { readConnectivity } from "../lib/ioda";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -1517,6 +1518,9 @@ liveLayersRouter.get("/firms-fires", async (c) => {
     3600
   );
 });
+
+/** Internet connectivity by country against a quiet baseline week, from IODA. Cached for 15 minutes. */
+liveLayersRouter.get("/connectivity", (c) => cachedJson(c.req.raw, () => readConnectivity(), 900));
 
 /** Fire history from D1 (collected by lib/firmsHistory.ts): one row per UTC day, with the count per satellite. */
 liveLayersRouter.get("/fire-history/days", async (c) => {
