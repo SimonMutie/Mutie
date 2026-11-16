@@ -2,10 +2,11 @@ import { all, first, run, nowIso } from "./db";
 import { newId } from "./ids";
 import type { Env } from "./bindings";
 import { toGdeltTimestamp } from "./connectors/gdeltBulk";
+import { groupSituationRows, type SituationEvent, type SituationRow } from "./lib/situationEvents";
 import { hashId, fetchWireArticleItems, fetchTelegramPostItems, TELEGRAM_OUTLET } from "./lib/osintFeed";
 import { candidatePriority, isCandidateText } from "./lib/escalationKeywords";
 import { normalizeForMatch, readArticle } from "./lib/articleReader";
-import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
+import { codeArticle, verifyCoding, verifySituation, type VerifiedSituation, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
 import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, looseKey, mentionsAfrica, normalizeName, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
 import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, MASS_CASUALTY_THRESHOLD, SEVERE_WINDOW_HOURS, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
@@ -671,6 +672,9 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
       }
       stats.rejected++;
       await dropFirstPass();
+      // Not armed conflict, but it may still be a humanitarian or political event worth showing (lib/situationEvents.ts).
+      const situation = verifySituation(coded.raw, article);
+      if (situation) await storeSituation(env, c, article, situation, geocodeBudget).catch((err) => console.error("[situation] could not store", err));
       await finish("rejected", { reason: outcome.rejectionReason, note: outcome.rejectionNote, model: coded.model, title: article.title, textBasis: article.textBasis, publishedAt: article.publishedAt });
       return;
     }
@@ -686,6 +690,51 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     if (firstPass) await keepFirstPass("counted").catch(() => {});
     else await finish("error", { reason: "processing_error", note: err instanceof Error ? err.message.slice(0, 200) : "unknown error" }).catch(() => {});
   }
+}
+
+// ── Humanitarian and political events ────────────────────────────────────
+
+let situationReady = false;
+async function ensureSituationTable(env: Env): Promise<void> {
+  if (situationReady) return;
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS situation_events (
+      id TEXT PRIMARY KEY, article_id TEXT NOT NULL, url TEXT NOT NULL, domain TEXT NOT NULL, title TEXT NOT NULL,
+      type TEXT NOT NULL, category TEXT NOT NULL, severity INTEGER NOT NULL, country_code TEXT NOT NULL, country_name TEXT NOT NULL,
+      place TEXT, lat REAL NOT NULL, lon REAL NOT NULL, precision TEXT NOT NULL, event_date TEXT NOT NULL,
+      deaths INTEGER, affected INTEGER, summary TEXT NOT NULL, quote TEXT NOT NULL, confidence TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_situation_events_date ON situation_events (event_date)`),
+  ]);
+  situationReady = true;
+}
+
+async function storeSituation(env: Env, c: Candidate, article: ArticleForCoding, v: VerifiedSituation, budget: GeocodeBudget): Promise<void> {
+  await ensureSituationTable(env);
+  const loc = await resolvePlace(env, { countryCode: v.countryCode, place: v.place, admin1: v.admin1, modelLat: v.modelLat, modelLon: v.modelLon }, budget);
+  await run(
+    env.DB,
+    `INSERT OR REPLACE INTO situation_events (id, article_id, url, domain, title, type, category, severity, country_code, country_name, place, lat, lon, precision, event_date, deaths, affected, summary, quote, confidence, created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [`sit:${c.id}`, c.id, c.url, c.domain, article.title, v.type, v.category, v.severity, v.countryCode, v.countryName, loc.precision === "country" ? null : loc.label, loc.lat, loc.lon, loc.precision, v.eventDate, v.deaths, v.affected, v.summary, v.quote, v.confidence, nowIso()]
+  );
+}
+
+/** Humanitarian and political events of the last `days` days, with reports of the same event folded together. */
+export async function getSituationEvents(env: Env, days = 7): Promise<SituationEvent[]> {
+  await ensureSituationTable(env);
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const rows = await all<Record<string, unknown>>(env.DB, `SELECT * FROM situation_events WHERE event_date >= ? ORDER BY event_date DESC LIMIT 2000`, [since]);
+  return groupSituationRows(
+    rows.map((r) => ({
+      id: String(r.id), articleId: String(r.article_id), url: String(r.url), domain: String(r.domain), title: String(r.title),
+      type: String(r.type), category: r.category as SituationRow["category"], severity: Number(r.severity) as SituationRow["severity"],
+      countryCode: String(r.country_code), countryName: String(r.country_name), place: (r.place as string | null) ?? null,
+      lat: Number(r.lat), lon: Number(r.lon), precision: String(r.precision), eventDate: String(r.event_date),
+      deaths: r.deaths == null ? null : Number(r.deaths), affected: r.affected == null ? null : Number(r.affected),
+      summary: String(r.summary), quote: String(r.quote), confidence: String(r.confidence),
+    }))
+  );
 }
 
 // ── Incidents ────────────────────────────────────────────────────────────
