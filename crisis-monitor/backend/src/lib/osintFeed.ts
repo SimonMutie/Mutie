@@ -37,7 +37,9 @@ interface Feed {
   /** An Africa-focused Telegram channel whose posts also go to the escalation pipeline as single-source claims. */
   africa?: boolean;
   /** Language of the posts, when not English. English posts are keyword-filtered before coding; others are not. */
-  lang?: "fr" | "ar" | "am" | "so";
+  lang?: "fr" | "ar" | "am" | "so" | "om" | "ru";
+  /** True when a public preview of the channel was seen in search results on the day it was added. */
+  seen?: boolean;
 }
 
 /**
@@ -61,30 +63,55 @@ const TELEGRAM_CHANNELS: Feed[] = [
   // could not be opened from the build environment, so none is confirmed to exist: a handle that returns nothing
   // shows a count of 0 in the feed's source list. "lean" says who runs the channel as far as is known; an
   // anonymous aggregator is labelled as one. These posts also feed the escalation pipeline (fetchTelegramPostItems).
-  { handle: "africaintel", name: "Africa Intel", lean: "Anonymous aggregator, continental security", bloc: "independent", africa: true },
+  { handle: "africaintel", name: "Africa Intel", lean: "Anonymous aggregator, continental security", bloc: "independent", africa: true, seen: true },
   { handle: "AfricanMilitaryCollective", name: "African Intelligence Collective", lean: "Anonymous aggregator, military", bloc: "independent", africa: true },
   { handle: "AfricaWars", name: "War in Africa", lean: "Anonymous aggregator, conflict", bloc: "independent", africa: true },
   { handle: "sahelintel2", name: "Sahel Intel", lean: "Anonymous aggregator, Sahel", bloc: "independent", africa: true },
-  { handle: "sahelmonitor", name: "Sahel Monitor", lean: "Anonymous aggregator, Sahel and Horn", bloc: "independent", africa: true },
+  { handle: "sahelmonitor", name: "Sahel Monitor", lean: "Anonymous aggregator, Sahel and Horn", bloc: "independent", africa: true, seen: true },
   { handle: "KSUcountrywide", name: "Kenya Security Updates", lean: "Anonymous aggregator, Kenya", bloc: "independent", africa: true },
-  { handle: "allafrica", name: "AllAfrica (Telegram)", lean: "Pan-African wire aggregator", bloc: "regional", africa: true },
+  { handle: "allafrica", name: "AllAfrica (Telegram)", lean: "Pan-African wire aggregator", bloc: "regional", africa: true, seen: true },
   { handle: "sntvnews", name: "Somali National Television", lean: "Somali state broadcaster", bloc: "regional", africa: true, lang: "so" },
   { handle: "sputnik_africa", name: "Sputnik Africa", lean: "Russian state media", bloc: "russian", africa: true },
   { handle: "sputnik_afrique", name: "Sputnik Afrique", lean: "Russian state media, French", bloc: "russian", africa: true, lang: "fr" },
   { handle: "sputnik_ethiopia", name: "Sputnik Ethiopia", lean: "Russian state media, Amharic", bloc: "russian", africa: true, lang: "am" },
-  { handle: "TheAfricanCorps", name: "The African Corps", lean: "Aligned with Russia's Africa Corps, a party to conflicts it reports", bloc: "russian", africa: true },
+  { handle: "TheAfricanCorps", name: "The African Corps", lean: "Aligned with Russia's Africa Corps, a party to conflicts it reports", bloc: "russian", africa: true, seen: true },
   { handle: "arabicafrica", name: "Arab Africa", lean: "Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
-  { handle: "SeraaTripoli", name: "Seraa Tripoli", lean: "Libya, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
+  { handle: "SeraaTripoli", name: "Seraa Tripoli", lean: "Libya, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar", seen: true },
   { handle: "AL24newschannel", name: "AL24 News", lean: "Algerian state-owned channel", bloc: "regional", africa: true, lang: "ar" },
   { handle: "sfaxalaan24", name: "Sfax Alaan 24", lean: "Tunisia, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
   { handle: "MorNewsAr", name: "MorNewsAr", lean: "Morocco, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
+  // Found by search on 2026-11-16. Each of these had a public preview page (t.me/s/<handle>) or an official link
+  // to it in the search results that day, so the handle is known to exist; none could be opened from the build
+  // environment. Armed forces' own channels are included because their claims are part of the record, and are
+  // labelled as a party to the war they report.
+  { handle: "RSFSudan", name: "Rapid Support Forces", lean: "Official channel of the RSF, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "Sudanesearmy56", name: "Sudanese Armed Forces", lean: "SAF spokesperson's office, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "NewsfromSudan", name: "News from Sudan", lean: "Anonymous aggregator, Sudan", bloc: "independent", africa: true, seen: true },
+  { handle: "SudanNewsEnglish", name: "Sudan News Network", lean: "Anonymous aggregator, Sudan", bloc: "independent", africa: true, seen: true },
+  { handle: "shahidalsudan", name: "Sudan Witness (Shahid al Sudan)", lean: "Centre for Information Resilience, verified open-source research, Arabic", bloc: "western", africa: true, lang: "ar", seen: true },
+  { handle: "sudaaan", name: "Al-Sudan", lean: "Anonymous aggregator, Sudan, Arabic; leans to the army", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "tikvahethiopia", name: "Tikvah-Ethiopia", lean: "Ethiopia's largest Telegram news channel, Amharic", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "AddisstandardEng", name: "Addis Standard", lean: "Ethiopian independent newsroom", bloc: "regional", africa: true, seen: true },
+  { handle: "AddisstandardAmh", name: "Addis Standard Amharic", lean: "Ethiopian independent newsroom, Amharic", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "AddisstandardAO", name: "Addis Standard Afaan Oromoo", lean: "Ethiopian independent newsroom, Afaan Oromoo", bloc: "regional", africa: true, lang: "om", seen: true },
+  { handle: "garoweonline", name: "Garowe Online", lean: "Puntland-based newsroom", bloc: "regional", africa: true, seen: true },
+  { handle: "TheSomaliDigest", name: "The Somali Digest", lean: "Somali news in English", bloc: "independent", africa: true, seen: true },
+  { handle: "congonet24", name: "Congonet 24", lean: "DR Congo news aggregator, French", bloc: "regional", africa: true, lang: "fr", seen: true },
+  { handle: "VoiceOfCongo", name: "Voice Of Congo", lean: "DR Congo, French; anonymous, leans to Kinshasa", bloc: "regional", africa: true, lang: "fr", seen: true },
+  { handle: "HumAngleMedia", name: "HumAngle Media", lean: "Nigerian conflict and humanitarian newsroom", bloc: "independent", africa: true, seen: true },
+  { handle: "NaijaNews", name: "Naija News", lean: "Nigerian online newsroom", bloc: "regional", africa: true, seen: true },
+  { handle: "freshreporters", name: "FreshReporters", lean: "Nigerian news aggregator", bloc: "regional", africa: true, seen: true },
+  { handle: "africaninitiativeen", name: "African Initiative", lean: "Russian state-linked news agency on Africa", bloc: "russian", africa: true, seen: true },
+  { handle: "africaninitiativefr", name: "African Initiative FR", lean: "Russian state-linked news agency on Africa, French", bloc: "russian", africa: true, lang: "fr", seen: true },
+  { handle: "rybar_africa", name: "Afrikar (Rybar Africa)", lean: "Russian military blog's Africa channel, Russian", bloc: "russian", africa: true, lang: "ru", seen: true },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
 /** Africa channels read by the pipeline on one tick. With a five-minute tick, each is read about every fifteen minutes. */
 const PIPELINE_CHANNELS_PER_TICK = 6;
-const PIPELINE_CHANNEL_TTL_MS = 14 * 60_000;
+/** How long a stored reading of an Africa channel is used before the channel is read again. */
+const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
 /**
  * Wire services and national newsrooms — covers the ground the channels
@@ -365,39 +392,97 @@ export async function fetchWireArticleItems(): Promise<{ title: string; descript
   );
 }
 
-/** The Africa channels due on this tick: a rotating third of the list, so one tick never reads them all. */
-export function africaChannelsDue(now: number, perTick = PIPELINE_CHANNELS_PER_TICK): string[] {
-  const africa = TELEGRAM_CHANNELS.filter((c) => c.africa);
-  const slot = Math.floor(now / 300_000);
-  return Array.from({ length: Math.min(perTick, africa.length) }, (_, i) => africa[(slot * perTick + i) % africa.length].handle);
+/**
+ * The Africa channels are too many to read on every request, so each one's latest reading is kept in D1 and only
+ * the few that are oldest are read again on any one call. The feed and the escalation pipeline share the store.
+ */
+const africaSchemaReady = new WeakSet<object>();
+async function ensureAfricaSchema(db: D1Database): Promise<void> {
+  if (africaSchemaReady.has(db)) return;
+  await db
+    .prepare(`CREATE TABLE IF NOT EXISTS telegram_channel_cache (handle TEXT PRIMARY KEY, fetched_at TEXT NOT NULL, status TEXT NOT NULL, posts TEXT NOT NULL)`)
+    .run();
+  africaSchemaReady.add(db);
+}
+
+/** Which Africa channels to read now: those never read or read longest ago, a few at a time. */
+export function africaChannelsDue(readAt: Map<string, number>, now: number, perCall = PIPELINE_CHANNELS_PER_TICK): string[] {
+  return TELEGRAM_CHANNELS.filter((c) => c.africa)
+    .map((c) => ({ handle: c.handle, at: readAt.get(c.handle) ?? 0 }))
+    .filter((c) => now - c.at >= AFRICA_CHANNEL_TTL_MS)
+    .sort((a, b) => a.at - b.at)
+    .slice(0, perCall)
+    .map((c) => c.handle);
+}
+
+type ChannelReader = (channel: Feed) => Promise<TelegramPost[]>;
+
+/** Latest stored posts for every Africa channel, after reading the few that are due. */
+export async function africaChannelPosts(db: D1Database, now = Date.now(), read: ChannelReader = fetchChannel, readDue = true): Promise<Map<string, { posts: TelegramPost[]; fetchedAt: string | null; status: string | null }>> {
+  await ensureAfricaSchema(db);
+  const rows = await db.prepare(`SELECT handle, fetched_at, status, posts FROM telegram_channel_cache`).all<{ handle: string; fetched_at: string; status: string; posts: string }>();
+  const out = new Map<string, { posts: TelegramPost[]; fetchedAt: string | null; status: string | null }>();
+  for (const r of rows.results ?? []) {
+    let posts: TelegramPost[] = [];
+    try { posts = JSON.parse(r.posts) as TelegramPost[]; } catch { /* a damaged row reads as empty and is replaced on the next reading */ }
+    out.set(r.handle, { posts, fetchedAt: r.fetched_at, status: r.status });
+  }
+  const readAt = new Map([...out].map(([h, v]) => [h, Date.parse(v.fetchedAt ?? "") || 0]));
+  const due = readDue ? africaChannelsDue(readAt, now) : [];
+  await Promise.all(
+    due.map(async (handle) => {
+      const channel = TELEGRAM_CHANNELS.find((c) => c.handle === handle)!;
+      let posts: TelegramPost[] = [];
+      let status = "ok";
+      try {
+        posts = (await read(channel)).slice(-POSTS_PER_CHANNEL);
+        if (posts.length === 0) status = "no posts found: the channel may not exist, may be private, or may have previews turned off";
+      } catch (err) {
+        status = `could not be read: ${err instanceof Error ? err.message : String(err)}`;
+        posts = out.get(handle)?.posts ?? [];
+      }
+      const fetchedAt = new Date(now).toISOString();
+      out.set(handle, { posts, fetchedAt, status });
+      await db
+        .prepare(`INSERT INTO telegram_channel_cache (handle, fetched_at, status, posts) VALUES (?,?,?,?) ON CONFLICT(handle) DO UPDATE SET fetched_at = excluded.fetched_at, status = excluded.status, posts = excluded.posts`)
+        .bind(handle, fetchedAt, status, JSON.stringify(posts.map((p) => ({ ...p, text: p.text.slice(0, 4000), media: p.media ? { ...p.media, video: null } : null }))))
+        .run()
+        .catch((err) => console.error("[telegram] could not store", handle, err));
+    })
+  );
+  return out;
+}
+
+/** Every Africa channel with when it was last read and what came back, for checking which handles are alive. */
+export async function africaChannelStatus(db: D1Database, now = Date.now()) {
+  const stored = await africaChannelPosts(db, now, fetchChannel, false);
+  return TELEGRAM_CHANNELS.filter((c) => c.africa).map((c) => {
+    const s = stored.get(c.handle);
+    const recent = s ? recentPosts(s.posts, now) : [];
+    return { handle: c.handle, name: c.name, lean: c.lean, bloc: c.bloc, lang: c.lang ?? "en", seenInSearch: !!c.seen, fetchedAt: s?.fetchedAt ?? null, status: s?.status ?? "not read yet", posts72h: recent.length, latest: s?.posts.length ? s.posts[s.posts.length - 1].publishedAt : null };
+  });
 }
 
 /**
  * Recent posts from the Africa-focused Telegram channels, for the escalation pipeline. A post has no article behind
- * it, so the pipeline codes it from its own text, as a single-source claim under the one outlet "t.me". Only the
- * channels due on this tick are fetched; the rest come from the shared cache while it is warm.
+ * it, so the pipeline codes it from its own text, as a single-source claim under the one outlet "t.me".
  */
-export async function fetchTelegramPostItems(now = Date.now()): Promise<{ title: string; text: string; link: string; published: string; channel: string; english: boolean }[]> {
-  const due = new Set(africaChannelsDue(now));
-  const perChannel = await Promise.all(
-    TELEGRAM_CHANNELS.filter((c) => c.africa).map(async (channel) => {
-      const key = `tg:${channel.handle}`;
-      const warm = sourceCache.get(key);
-      if (!due.has(channel.handle)) return { channel, posts: warm && now - warm.at < PIPELINE_CHANNEL_TTL_MS ? warm.data : [] };
-      return { channel, posts: await cachedFetch(key, CHANNEL_TTL_MS, () => fetchChannel(channel)).catch(() => [] as TelegramPost[]) };
-    })
-  );
-  return perChannel.flatMap(({ channel, posts }) =>
-    recentPosts(posts, now)
+export async function fetchTelegramPostItems(db: D1Database, now = Date.now()): Promise<{ title: string; text: string; link: string; published: string; channel: string; english: boolean }[]> {
+  const stored = await africaChannelPosts(db, now);
+  return TELEGRAM_CHANNELS.filter((c) => c.africa).flatMap((channel) =>
+    recentPosts(stored.get(channel.handle)?.posts ?? [], now)
       .filter((p) => p.text.length >= 60 && /^https?:\/\//i.test(p.url))
       .map((p) => ({ title: `${p.headline} (Telegram: ${channel.name})`, text: p.text, link: p.url, published: p.publishedAt, channel: channel.name, english: !channel.lang }))
   );
 }
 
-export async function buildOsintFeed(): Promise<OsintFeedPayload> {
+export async function buildOsintFeed(db?: D1Database): Promise<OsintFeedPayload> {
   const now = Date.now();
+  // Africa channels come from the shared store (a few are re-read per call); without a database they are left out.
+  const africa = db ? await africaChannelPosts(db, now).catch(() => new Map<string, { posts: TelegramPost[] }>()) : new Map<string, { posts: TelegramPost[] }>();
   const all = await Promise.all([
-    ...TELEGRAM_CHANNELS.map(async (channel) => ({ channel, kind: "telegram" as const, all: await cachedFetch(`tg:${channel.handle}`, CHANNEL_TTL_MS, () => fetchChannel(channel)).catch(() => [] as TelegramPost[]) })),
+    ...TELEGRAM_CHANNELS.filter((c) => c.africa).map(async (channel) => ({ channel, kind: "telegram" as const, all: africa.get(channel.handle)?.posts ?? [] })),
+    ...TELEGRAM_CHANNELS.filter((c) => !c.africa).map(async (channel) => ({ channel, kind: "telegram" as const, all: await cachedFetch(`tg:${channel.handle}`, CHANNEL_TTL_MS, () => fetchChannel(channel)).catch(() => [] as TelegramPost[]) })),
     ...WIRE_FEEDS.map(async (feed) => ({ channel: feed, kind: "wire" as const, all: await cachedFetch(`wire:${feed.handle}`, WIRE_TTL_MS, () => fetchWire(feed)).catch(() => [] as TelegramPost[]) })),
   ]);
 
