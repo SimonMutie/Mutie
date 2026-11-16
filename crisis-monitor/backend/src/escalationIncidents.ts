@@ -308,7 +308,8 @@ async function gatherTelegram(env: Env): Promise<Candidate[]> {
         title: it.title,
         feedText: it.text,
         publishedAt: it.published,
-        priority: it.english ? candidatePriority(it.text) : 0,
+        // Posts in Amharic, Oromo, Somali... are ranked by their own conflict words too, not read last by default.
+        priority: candidatePriority(it.text),
       }))
       .sort((a, b) => b.priority - a.priority || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
   } catch (err) {
@@ -336,10 +337,13 @@ async function gatherGdelt(env: Env): Promise<Candidate[]> {
     );
     // The boxes above also take in parts of Europe, the Caucasus and South Asia, so the rows are cut to Africa and
     // the Middle East here, and only then to the reading budget; otherwise those events would crowd out the rest.
-    return rows
-      .filter((r) => countryAt(r.lat, r.lon) !== null || resolveCountryCode((r.place_name ?? "").split(",").pop()?.trim()) !== null)
-      .slice(0, 600)
-      .map((r) => ({
+    // The reading budget is then shared out country by country, most-mentioned first within each, so that the
+    // heavily reported wars (Sudan, Gaza) cannot fill all 600 places and leave none for Ethiopia or Mozambique.
+    const located = rows
+      .map((r) => ({ r, country: countryAt(r.lat, r.lon) ?? resolveCountryCode((r.place_name ?? "").split(",").pop()?.trim()) }))
+      .filter((x): x is { r: (typeof rows)[number]; country: string } => x.country !== null);
+    return interleaveByKey(located, (x) => x.country, 600)
+      .map(({ r }) => ({
         id: hashId(canonicalUrl(r.source_url)),
         url: r.source_url,
         domain: domainOf(r.source_url),
@@ -353,6 +357,31 @@ async function gatherGdelt(env: Env): Promise<Candidate[]> {
     console.error("[escalation] GDELT candidates failed", err);
     return [];
   }
+}
+
+/** Takes up to `n` items, one per key in turn (each key's items in their existing order), so that no one key can
+ *  take every place. */
+export function interleaveByKey<T>(items: T[], key: (t: T) => string, n: number): T[] {
+  const groups = new Map<string, T[]>();
+  for (const it of items) {
+    const k = key(it);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(it);
+  }
+  const queues = [...groups.values()];
+  const out: T[] = [];
+  for (let i = 0; out.length < n; i++) {
+    let took = false;
+    for (const q of queues) {
+      if (i < q.length) {
+        out.push(q[i]);
+        took = true;
+        if (out.length >= n) break;
+      }
+    }
+    if (!took) break;
+  }
+  return out;
 }
 
 /** Round-robin across the three origins so no single source starves the
@@ -1686,8 +1715,12 @@ export async function getAuditLog(env: Env, opts: { country?: string | null; q?:
   const params: unknown[] = [];
   const code = opts.country ? resolveCountryCode(opts.country) : null;
   if (code) {
-    where.push("EXISTS (SELECT 1 FROM escalation_reports r WHERE r.article_id = a.id AND r.country_code = ?)");
-    params.push(code);
+    // An article coded to the country, or one that names it in its headline or address: a rejected or unreadable
+    // article has no coded report, and before this it never showed under its country, which made a country with
+    // everything rejected look as if nothing had been read at all.
+    const name = countryName(code);
+    where.push("(EXISTS (SELECT 1 FROM escalation_reports r WHERE r.article_id = a.id AND r.country_code = ?) OR a.title LIKE ? OR a.url LIKE ?)");
+    params.push(code, `%${name}%`, `%${name.toLowerCase().replace(/\s+/g, "-")}%`);
   }
   if (opts.q) {
     where.push("(a.title LIKE ? OR a.url LIKE ? OR a.rejection_note LIKE ?)");
