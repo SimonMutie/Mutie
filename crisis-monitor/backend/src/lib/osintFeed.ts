@@ -34,6 +34,10 @@ interface Feed {
   name: string;
   lean: string;
   bloc: Bloc;
+  /** An Africa-focused Telegram channel whose posts also go to the escalation pipeline as single-source claims. */
+  africa?: boolean;
+  /** Language of the posts, when not English. English posts are keyword-filtered before coding; others are not. */
+  lang?: "fr" | "ar" | "am" | "so";
 }
 
 /**
@@ -53,7 +57,34 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "AlMayadeenEnglish", name: "Al Mayadeen English", lean: "Lebanese / Resistance Axis", bloc: "regional" },
   { handle: "intelslava", name: "Intel Slava Z", lean: "Russian military OSINT", bloc: "russian" },
   { handle: "PressTV", name: "Press TV", lean: "Iranian state broadcaster", bloc: "regional" },
+  // Africa-focused channels, added at Simon's request (2026-11-16). The handles came from a list he supplied and
+  // could not be opened from the build environment, so none is confirmed to exist: a handle that returns nothing
+  // shows a count of 0 in the feed's source list. "lean" says who runs the channel as far as is known; an
+  // anonymous aggregator is labelled as one. These posts also feed the escalation pipeline (fetchTelegramPostItems).
+  { handle: "africaintel", name: "Africa Intel", lean: "Anonymous aggregator, continental security", bloc: "independent", africa: true },
+  { handle: "AfricanMilitaryCollective", name: "African Intelligence Collective", lean: "Anonymous aggregator, military", bloc: "independent", africa: true },
+  { handle: "AfricaWars", name: "War in Africa", lean: "Anonymous aggregator, conflict", bloc: "independent", africa: true },
+  { handle: "sahelintel2", name: "Sahel Intel", lean: "Anonymous aggregator, Sahel", bloc: "independent", africa: true },
+  { handle: "sahelmonitor", name: "Sahel Monitor", lean: "Anonymous aggregator, Sahel and Horn", bloc: "independent", africa: true },
+  { handle: "KSUcountrywide", name: "Kenya Security Updates", lean: "Anonymous aggregator, Kenya", bloc: "independent", africa: true },
+  { handle: "allafrica", name: "AllAfrica (Telegram)", lean: "Pan-African wire aggregator", bloc: "regional", africa: true },
+  { handle: "sntvnews", name: "Somali National Television", lean: "Somali state broadcaster", bloc: "regional", africa: true, lang: "so" },
+  { handle: "sputnik_africa", name: "Sputnik Africa", lean: "Russian state media", bloc: "russian", africa: true },
+  { handle: "sputnik_afrique", name: "Sputnik Afrique", lean: "Russian state media, French", bloc: "russian", africa: true, lang: "fr" },
+  { handle: "sputnik_ethiopia", name: "Sputnik Ethiopia", lean: "Russian state media, Amharic", bloc: "russian", africa: true, lang: "am" },
+  { handle: "TheAfricanCorps", name: "The African Corps", lean: "Aligned with Russia's Africa Corps, a party to conflicts it reports", bloc: "russian", africa: true },
+  { handle: "arabicafrica", name: "Arab Africa", lean: "Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
+  { handle: "SeraaTripoli", name: "Seraa Tripoli", lean: "Libya, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
+  { handle: "AL24newschannel", name: "AL24 News", lean: "Algerian state-owned channel", bloc: "regional", africa: true, lang: "ar" },
+  { handle: "sfaxalaan24", name: "Sfax Alaan 24", lean: "Tunisia, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
+  { handle: "MorNewsAr", name: "MorNewsAr", lean: "Morocco, Arabic; operator not established", bloc: "regional", africa: true, lang: "ar" },
 ];
+
+/** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
+export const TELEGRAM_OUTLET = "t.me";
+/** Africa channels read by the pipeline on one tick. With a five-minute tick, each is read about every fifteen minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 6;
+const PIPELINE_CHANNEL_TTL_MS = 14 * 60_000;
 
 /**
  * Wire services and national newsrooms — covers the ground the channels
@@ -331,6 +362,35 @@ export async function fetchWireArticleItems(): Promise<{ title: string; descript
     recentPosts(posts, now)
       .filter((p) => /^https?:\/\//i.test(p.url))
       .map((p) => ({ title: p.headline, description: p.text, link: p.url, published: p.publishedAt, domain: sourceRef(feed) }))
+  );
+}
+
+/** The Africa channels due on this tick: a rotating third of the list, so one tick never reads them all. */
+export function africaChannelsDue(now: number, perTick = PIPELINE_CHANNELS_PER_TICK): string[] {
+  const africa = TELEGRAM_CHANNELS.filter((c) => c.africa);
+  const slot = Math.floor(now / 300_000);
+  return Array.from({ length: Math.min(perTick, africa.length) }, (_, i) => africa[(slot * perTick + i) % africa.length].handle);
+}
+
+/**
+ * Recent posts from the Africa-focused Telegram channels, for the escalation pipeline. A post has no article behind
+ * it, so the pipeline codes it from its own text, as a single-source claim under the one outlet "t.me". Only the
+ * channels due on this tick are fetched; the rest come from the shared cache while it is warm.
+ */
+export async function fetchTelegramPostItems(now = Date.now()): Promise<{ title: string; text: string; link: string; published: string; channel: string; english: boolean }[]> {
+  const due = new Set(africaChannelsDue(now));
+  const perChannel = await Promise.all(
+    TELEGRAM_CHANNELS.filter((c) => c.africa).map(async (channel) => {
+      const key = `tg:${channel.handle}`;
+      const warm = sourceCache.get(key);
+      if (!due.has(channel.handle)) return { channel, posts: warm && now - warm.at < PIPELINE_CHANNEL_TTL_MS ? warm.data : [] };
+      return { channel, posts: await cachedFetch(key, CHANNEL_TTL_MS, () => fetchChannel(channel)).catch(() => [] as TelegramPost[]) };
+    })
+  );
+  return perChannel.flatMap(({ channel, posts }) =>
+    recentPosts(posts, now)
+      .filter((p) => p.text.length >= 60 && /^https?:\/\//i.test(p.url))
+      .map((p) => ({ title: `${p.headline} (Telegram: ${channel.name})`, text: p.text, link: p.url, published: p.publishedAt, channel: channel.name, english: !channel.lang }))
   );
 }
 
