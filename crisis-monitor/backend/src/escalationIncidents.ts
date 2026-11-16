@@ -291,9 +291,9 @@ async function gatherWireFeeds(): Promise<Candidate[]> {
  * coder as they are, after the English ones. Every post is filed under the one outlet "t.me", so Telegram channels
  * never count as corroborating one another, and an incident known only from Telegram stays a single-source claim.
  */
-async function gatherTelegram(): Promise<Candidate[]> {
+async function gatherTelegram(env: Env): Promise<Candidate[]> {
   try {
-    const items = await fetchTelegramPostItems();
+    const items = await fetchTelegramPostItems(env.DB);
     return items
       .filter((it) => !it.english || isCandidateText(it.text))
       .filter((it) => !(Date.now() - Date.parse(it.published ?? "") > CANDIDATE_MAX_AGE_HOURS * 3600_000))
@@ -1368,7 +1368,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     if ((env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false") {
       const reading = paceLimit > 0;
       // GDELT rows carry no headline, so they are only fetched when articles can be read in full.
-      const [africaWire, wireFeeds, gdelt, telegram] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), reading ? gatherGdelt(env) : Promise.resolve([] as Candidate[]), gatherTelegram()]);
+      const [africaWire, wireFeeds, gdelt, telegram] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), reading ? gatherGdelt(env) : Promise.resolve([] as Candidate[]), gatherTelegram(env)]);
       // Wire feeds are generalist (world news); order them by priority so the
       // Africa-relevant conflict items are read first.
       wireFeeds.sort((a, b) => b.priority - a.priority || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
