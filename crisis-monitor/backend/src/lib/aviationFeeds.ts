@@ -36,6 +36,12 @@ export interface AircraftPosition {
   military: boolean;
   registration: string | null;
   aircraftType: string | null;
+  /** Barometric altitude in feet. */
+  altitudeFt: number | null;
+  /** Heading over the ground, degrees from north. */
+  trackDeg: number | null;
+  /** Position accuracy category (NACp) broadcast by ADS-B aircraft; null for other position sources. Used for GPS interference. */
+  nacp: number | null;
 }
 
 /** Airborne aircraft with a position, from one adsb.lol response. */
@@ -57,6 +63,9 @@ export function readAdsbLol(body: unknown): AircraftPosition[] {
       military: (flags & 1) === 1,
       registration: typeof a.r === "string" ? a.r : null,
       aircraftType: typeof a.t === "string" ? a.t : null,
+      altitudeFt: typeof a.alt_baro === "number" ? a.alt_baro : null,
+      trackDeg: typeof a.track === "number" ? a.track : null,
+      nacp: typeof a.type === "string" && a.type.startsWith("adsb") && typeof a.nac_p === "number" ? a.nac_p : null,
     });
   }
   return out;
