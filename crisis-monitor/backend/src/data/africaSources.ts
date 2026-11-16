@@ -174,6 +174,14 @@ export const AFRICA_SOURCES: AfricaSource[] = [
   { url: "https://www.ena.et/", country: "ET" },
   { url: "https://www.capitalethiopia.com/", country: "ET" },
   { url: "https://www.borkena.com/", country: "ET" },
+  // Ethiopian-language reporting. Most conflict news from Amhara and Oromia is published in Amharic or Afaan Oromoo,
+  // not English, and state outlets rarely report the fighting. The BBC's are its own published RSS feeds.
+  { url: "https://feeds.bbci.co.uk/amharic/rss.xml", country: "ET" },
+  { url: "https://feeds.bbci.co.uk/afaanoromoo/rss.xml", country: "ET" },
+  { url: "https://feeds.bbci.co.uk/tigrinya/rss.xml", country: "ET" },
+  { url: "https://amharic.voanews.com/", country: "ET" },
+  { url: "https://ethiopiainsider.com/", country: "ET" },
+  { url: "https://wazemaradio.com/", country: "ET" },
   // ── Djibouti ──
   { url: "https://www.djiboutipost.com/", country: "DJ" },
   { url: "https://www.lanation.dj/", country: "DJ" },
