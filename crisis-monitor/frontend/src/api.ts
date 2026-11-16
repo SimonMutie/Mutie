@@ -1487,6 +1487,53 @@ export interface CloudflareRadarData {
   fetchedAt: string;
 }
 
+/** An OI forecast run; see the backend's lib/oi.ts. */
+export interface OiRun {
+  id: string;
+  question: string;
+  worldCount: number;
+  periodCount: number;
+  stage: "context" | "graph" | "agents" | "simulate" | "report" | "done" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  context: { id: string; kind: string; title: string; text: string; source: string; url: string | null; date: string | null }[];
+  frame: { kind: "binary" | "choice"; proposition: string; outcomes: string[]; resolution: string; horizon: string; baseRate: number[]; baseRateReason: string; uncertainties: string[] } | null;
+  actors: { id: string; name: string; kind: string; lat: number | null; lng: number | null; stance: string; goal?: string; levers?: string[]; redLines?: string[]; style?: string }[];
+  links: { from: string; to: string; relation: string }[];
+  periods: { label: string; from: string; to: string }[];
+  worlds: { id: string; temper: string; periods: { period: number; moves: { actor: string; move: string }[]; events: string[]; standing: { resolved: string | null; shares: number[] }; note: string }[] }[];
+  injects: { text: string; fromPeriod: number; at: string }[];
+  report: {
+    shares: number[];
+    confidence: "low" | "medium" | "high";
+    headline: string;
+    summary: string;
+    path: { period: number; what: string }[];
+    actorOutlook: { actor: string; expectation: string }[];
+    drivers: { text: string; sources: string[] }[];
+    scenarios: { name: string; probability: number; description: string }[];
+    signposts: string[];
+    caveats: string;
+  } | null;
+  pooled: number[] | null;
+  error: string | null;
+  model: string | null;
+  chat: { role: "user" | "oi"; target: string; text: string; at: string }[];
+  busy?: boolean;
+}
+
+export interface OiAssistAction {
+  type: "fly" | "layers" | "panel" | "mark" | "forecast";
+  lat?: number;
+  lng?: number;
+  zoom?: number;
+  on?: string[];
+  off?: string[];
+  panel?: string;
+  marks?: { lat: number; lng: number; title: string; url: string | null }[];
+  question?: string;
+}
+
 export interface GpsInterference {
   cells: { lat: number; lon: number; aircraft: number; poor: number; share: number; level: "low" | "medium" | "high" }[];
   areas: { name: string; readAt: string | null; status: string; aircraft: number }[];
@@ -2288,6 +2335,15 @@ export const api = {
   getAircraftTrack: (hex: string, hours = 24) => req<AircraftTrack>(`/api/live-layers/aircraft-track/${hex}?hours=${hours}`),
   getWatchZones: () => req<{ zones: WatchZone[]; basis: string; fetchedAt: string }>("/api/live-layers/watch-zones"),
   getCloudflareRadar: () => req<CloudflareRadarData>("/api/live-layers/cloudflare-radar"),
+  oiCreateRun: (question: string, material: string, worlds: number, periods: number) => req<OiRun>("/api/oi/runs", { method: "POST", body: JSON.stringify({ question, material, worlds, periods }) }),
+  oiListRuns: () => req<{ runs: { id: string; question: string; stage: string; created_at: string; updated_at: string }[] }>("/api/oi/runs"),
+  oiGetRun: (id: string) => req<OiRun>(`/api/oi/runs/${id}`),
+  oiStep: (id: string) => req<OiRun>(`/api/oi/runs/${id}/step`, { method: "POST" }),
+  oiInject: (id: string, text: string) => req<OiRun>(`/api/oi/runs/${id}/inject`, { method: "POST", body: JSON.stringify({ text }) }),
+  oiAsk: (id: string, target: string, message: string) => req<OiRun>(`/api/oi/runs/${id}/ask`, { method: "POST", body: JSON.stringify({ target, message }) }),
+  oiDeleteRun: (id: string) => req<{ ok: boolean }>(`/api/oi/runs/${id}`, { method: "DELETE" }),
+  oiAssist: (message: string, layers: { key: string; label: string; group: string }[], view: { lat: number; lng: number; zoom: number } | null) =>
+    req<{ reply: string; actions: OiAssistAction[] }>("/api/oi/assist", { method: "POST", body: JSON.stringify({ message, layers, view }) }),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
