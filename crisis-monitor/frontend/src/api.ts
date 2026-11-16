@@ -1141,7 +1141,7 @@ export interface LiveLayerFeature {
     /** Air-traffic only — see the backend's classifyAviation() for exactly
      *  what each value means and how it's derived. Undefined on every
      *  other layer. */
-    aviationClass?: "commercial" | "private" | "military";
+    aviationClass?: "commercial" | "private" | "jet" | "military";
     /** Air-traffic only: heading in degrees from north, when the aircraft reports it. */
     heading?: number;
     /** Space Tracking only — see the backend's SATELLITE_CATEGORY_GROUPS
@@ -1464,6 +1464,27 @@ export interface AircraftTrack {
   points: { t: string; lat: number; lon: number; alt: number | null; spd: number | null }[];
   current: [string, string | null, string | null, string | null, 0 | 1, number, number, number | null, number | null, number | null] | null;
   snapshotAt: string | null;
+}
+
+/** A standing watch zone (Afrilens editorial rating), with the reports and escalation incidents that fall in it. */
+export interface WatchZone {
+  id: string;
+  label: string;
+  severity: "war" | "high" | "elevated";
+  lat: number;
+  lng: number;
+  description: string;
+  headlines: { title: string; url: string; source: string; published: string | null; telegram: boolean }[];
+  headlineCount: number;
+  incidents: { id: string; headline: string; level: string; place: string; lat: number; lon: number }[];
+}
+
+export interface CloudflareRadarData {
+  configured: boolean;
+  outages: { id: string; lat: number; lon: number; country: string; countryName: string; scope: string; eventType: string; cause: string; description: string; start: string; end: string | null; ongoing: boolean; url: string }[];
+  attackOrigins: { country: string; countryName: string; lat: number; lon: number; share: number }[];
+  errors: string[];
+  fetchedAt: string;
 }
 
 export interface GpsInterference {
@@ -2265,6 +2286,8 @@ export const api = {
   getTelegramChannels: () => req<{ channels: TelegramChannelStatus[]; fetchedAt: string }>("/api/live-layers/telegram-channels"),
   getSituationEvents: (days = 7) => req<{ events: SituationEvent[]; days: number; fetchedAt: string }>(`/api/live-layers/situation-events?days=${days}`),
   getAircraftTrack: (hex: string, hours = 24) => req<AircraftTrack>(`/api/live-layers/aircraft-track/${hex}?hours=${hours}`),
+  getWatchZones: () => req<{ zones: WatchZone[]; basis: string; fetchedAt: string }>("/api/live-layers/watch-zones"),
+  getCloudflareRadar: () => req<CloudflareRadarData>("/api/live-layers/cloudflare-radar"),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
