@@ -6,7 +6,7 @@ import { requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
-import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
+import { queryBulkEvents, TONE_OVERRIDE_THRESHOLD, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getSituationEvents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
@@ -425,12 +425,21 @@ liveLayersRouter.get("/conflict-events", async (c) => {
  *  Also now served from D1 (see /conflict-events above) — this row is the
  *  broader net, QuadClass >= 3 ("Verbal Conflict" or "Material Conflict"),
  *  over a longer 72h window, rather than /conflict-events' narrower
- *  Material-Conflict-only, 48h feed. */
+ *  Material-Conflict-only, 48h feed.
+ *
+ *  It no longer repeats that feed: events /conflict-events would show (material conflict, or very negative tone)
+ *  are left out here, so this layer is the threats, demands and tensions short of fighting ("Threats & Tensions
+ *  (GDELT)") and the two can be on together without duplicate pins. */
+function isStrictConflict(e: BulkEventPoint): boolean {
+  return e.quadClass >= 4 || (e.avgTone !== null && e.avgTone <= TONE_OVERRIDE_THRESHOLD);
+}
+
 liveLayersRouter.get("/global-incidents", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const events = await queryBulkEvents(c.env, { hours: 72, minQuadClass: 3 });
+      // Only what /conflict-events does not already show, so no event is pinned twice when both layers are on.
+      const events = (await queryBulkEvents(c.env, { hours: 72, minQuadClass: 3 })).filter((e) => !isStrictConflict(e));
       const features = events.filter(isPlausiblyLocated).map(bulkEventToFeature);
       return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
     },
