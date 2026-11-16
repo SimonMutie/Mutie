@@ -19,6 +19,7 @@ import { africaChannelStatus, buildOsintFeed, type OsintAlertItem } from "../lib
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
+import { fetchAdsbLolAircraft } from "../lib/aviationFeeds";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
 
 /**
@@ -719,65 +720,84 @@ liveLayersRouter.get("/air-traffic", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const res = await fetch("https://opensky-network.org/api/states/all");
-      if (!res.ok) throw new Error(`OpenSky returned ${res.status}`);
-      const raw = (await res.json()) as {
-        time: number;
-        // Each state vector is a fixed-position array, not an object — this
-        // is OpenSky's own wire format (documented at openskynetwork.github.io),
-        // not a shape chosen here.
-        states: Array<
-          [
-            string, // icao24
-            string | null, // callsign
-            string, // origin_country
-            number | null, // time_position
-            number | null, // last_contact
-            number | null, // longitude
-            number | null, // latitude
-            number | null, // baro_altitude
-            boolean, // on_ground
-            number | null, // velocity (m/s)
-            number | null, // true_track (deg)
-            number | null, // vertical_rate
-            number[] | null, // sensors
-            number | null, // geo_altitude
-            string | null, // squawk
-            boolean, // spi
-            number, // position_source
-          ]
-        > | null;
-      };
-
+      // OpenSky first, for worldwide coverage. It often refuses cloud servers (a 522), so adsb.lol is read alongside
+      // it for Africa and the Middle East and for military aircraft worldwide (see lib/aviationFeeds.ts). The layer
+      // fails only when both do.
+      const [opensky, adsb] = await Promise.all([readOpenSky().catch((err: unknown) => err instanceof Error ? err : new Error(String(err))), fetchAdsbLolAircraft().catch(() => null)]);
       const features: NormalizedFeature[] = [];
-      for (const s of raw.states ?? []) {
-        const [icao24, callsign, originCountry, , , lon, lat, , onGround, velocity] = s;
-        if (lon == null || lat == null || onGround) continue;
-        const speedKts = velocity != null ? velocity * 1.94384 : 0;
-        // Reference ceiling near a fast commercial jet's typical cruise
-        // speed — same "don't let one outlier flatten everything else"
-        // reasoning as the other layers' intensity scales above.
-        const intensity = Math.max(0, Math.min(1, speedKts / 550));
-        features.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [lon, lat] },
-          properties: {
-            id: icao24,
-            title: callsign?.trim() || icao24,
-            time: raw.time ? new Date(raw.time * 1000).toISOString() : null,
-            intensity,
-            intensityLabel: velocity != null ? `${Math.round(speedKts)} kt` : "in flight",
-            detail: originCountry,
-            url: null,
-            aviationClass: classifyAviation(icao24, callsign),
-          },
-        });
+      const seen = new Set<string>();
+      if (adsb) {
+        for (const a of adsb.aircraft) {
+          seen.add(a.hex);
+          const intensity = Math.max(0, Math.min(1, (a.speedKts ?? 0) / 550));
+          features.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [a.lon, a.lat] },
+            properties: {
+              id: a.hex,
+              title: a.callsign || a.registration || a.hex,
+              time: new Date().toISOString(),
+              intensity,
+              intensityLabel: a.speedKts != null ? `${Math.round(a.speedKts)} kt` : "in flight",
+              detail: [a.aircraftType, a.registration].filter(Boolean).join(" · ") || "adsb.lol",
+              url: null,
+              aviationClass: a.military ? "military" : classifyAviation(a.hex, a.callsign),
+            },
+          });
+        }
       }
-      return { type: "FeatureCollection", features, fetchedAt: new Date().toISOString() };
+      if (!(opensky instanceof Error)) {
+        for (const f of opensky) if (!seen.has(String(f.properties.id))) features.push(f);
+      }
+      if (features.length === 0) {
+        throw new Error(`no aircraft feed answered (${opensky instanceof Error ? opensky.message : "OpenSky returned no aircraft"}; adsb.lol ${adsb ? `answered ${adsb.pointsRead} of ${adsb.pointsRead + adsb.pointsFailed} areas with no aircraft` : "could not be reached"})`);
+      }
+      return {
+        type: "FeatureCollection",
+        features,
+        fetchedAt: new Date().toISOString(),
+        sources: {
+          opensky: opensky instanceof Error ? `unavailable: ${opensky.message}` : "ok",
+          adsbLol: adsb ? `${adsb.pointsRead} of ${adsb.pointsRead + adsb.pointsFailed} areas read` : "unavailable",
+        },
+        attribution: adsb ? "Aircraft: adsb.lol (ODbL)" + (opensky instanceof Error ? "" : " and OpenSky Network") : "Aircraft: OpenSky Network",
+      };
     },
     AIR_TRAFFIC_TTL_SECONDS
   );
 });
+
+/** OpenSky's anonymous worldwide snapshot, as map features. Throws when OpenSky does not answer within 10 seconds. */
+async function readOpenSky(): Promise<NormalizedFeature[]> {
+  const res = await fetch("https://opensky-network.org/api/states/all", { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`OpenSky returned ${res.status}`);
+  const raw = (await res.json()) as {
+    time: number;
+    // OpenSky's own fixed-position state vectors (openskynetwork.github.io).
+    states: Array<[string, string | null, string, number | null, number | null, number | null, number | null, number | null, boolean, number | null]> | null;
+  };
+  const features: NormalizedFeature[] = [];
+  for (const s of raw.states ?? []) {
+    const [icao24, callsign, originCountry, , , lon, lat, , onGround, velocity] = s;
+    if (lon == null || lat == null || onGround) continue;
+    const speedKts = velocity != null ? velocity * 1.94384 : 0;
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [lon, lat] },
+      properties: {
+        id: icao24,
+        title: callsign?.trim() || icao24,
+        time: raw.time ? new Date(raw.time * 1000).toISOString() : null,
+        intensity: Math.max(0, Math.min(1, speedKts / 550)),
+        intensityLabel: velocity != null ? `${Math.round(speedKts)} kt` : "in flight",
+        detail: originCountry,
+        url: null,
+        aviationClass: classifyAviation(icao24, callsign),
+      },
+    });
+  }
+  return features;
+}
 
 /** Country-code (ISO 3166-1 alpha-2) centroids, for attributing a feed
  *  entry that only carries a country code (never a precise lat/lng) to an
