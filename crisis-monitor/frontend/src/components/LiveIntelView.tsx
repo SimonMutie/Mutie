@@ -449,15 +449,15 @@ const LAYER_DEFS: LayerDef[] = [
   // directly from a screenshot of its actual flyout rather than assumed.
   {
     key: "active-fires",
-    label: "Active Fires",
+    label: "Wildfires (NASA EONET)",
     group: "Natural Hazards",
     color: "#ffb020",
     icon: Flame,
-    fetcher: async () => fromGateway("#ffb020", "Active Fires", (f) => f.properties.naturalHazardCategory === "wildfire")(await api.getLiveNaturalEvents()),
+    fetcher: async () => fromGateway("#ffb020", "Wildfires (NASA EONET)", (f) => f.properties.naturalHazardCategory === "wildfire")(await api.getLiveNaturalEvents()),
   },
   // Rain radar and infrared clouds (RainViewer), drawn as map imagery on the flat map; see WeatherTiles.
   { key: "rain-radar", label: "Rain Radar", group: "Natural Hazards", color: "#60a5fa", icon: CloudRain, fetcher: async () => [] },
-  { key: "live-clouds", label: "Live Clouds (infrared)", group: "Natural Hazards", color: "#cbd5e1", icon: Cloud, fetcher: async () => [] },
+  { key: "live-clouds", label: "Live Clouds (Infrared)", group: "Natural Hazards", color: "#cbd5e1", icon: Cloud, fetcher: async () => [] },
   {
     key: "severe-weather",
     label: "Severe Weather",
@@ -511,11 +511,11 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     key: "global-incidents",
-    label: "Global Incidents",
+    label: "Threats & Tensions (GDELT)",
     group: "Threats & Intel",
     color: "#ff9d4f",
     icon: Siren,
-    fetcher: async () => fromGateway("#ff9d4f", "Global Incidents")(await api.getLiveGlobalIncidents()),
+    fetcher: async () => fromGateway("#ff9d4f", "Threats & Tensions (GDELT)")(await api.getLiveGlobalIncidents()),
   },
   {
     key: "live-alert-pins",
@@ -556,12 +556,12 @@ const LAYER_DEFS: LayerDef[] = [
       return out;
     },
   },
-  { key: "conflict-events", label: "GDELT Events", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "GDELT Events")(await api.getLiveConflictEvents()) },
+  { key: "conflict-events", label: "Fighting & Attacks (GDELT)", group: "Threats & Intel", color: "#7c9cff", icon: AlertTriangle, fetcher: async () => fromGateway("#7c9cff", "Fighting & Attacks (GDELT)")(await api.getLiveConflictEvents()) },
   // Active conflict: countries with organised violence recorded by UCDP in the last 90 days, graded by killed.
   // Drawn from the active-conflict data (see the active-conflicts effect), so this adds no points of its own.
   {
     key: "active-conflicts",
-    label: "Active conflicts (UCDP)",
+    label: "Active Conflicts (UCDP)",
     group: "Threats & Intel",
     color: "#7e62d0",
     icon: AlertTriangle,
@@ -618,17 +618,17 @@ const LAYER_DEFS: LayerDef[] = [
   // empty rather than erroring the whole poll loop.
   {
     key: "ucdp-conflict-events",
-    label: "UCDP Conflict Events",
+    label: "Conflict Events (UCDP)",
     group: "Threats & Intel",
     color: "#ff6b6b",
     icon: Siren,
-    fetcher: async () => fromGateway("#ff6b6b", "UCDP Conflict Events")(await api.getLiveUcdpConflictEvents()),
+    fetcher: async () => fromGateway("#ff6b6b", "Conflict Events (UCDP)")(await api.getLiveUcdpConflictEvents()),
   },
   // Satellite fire detections from NASA FIRMS (VIIRS), last 24 hours over the Horn of Africa and Sudan. Unlike the
   // EONET wildfire list above, these are individual satellite detections, updated every few hours.
   {
     key: "firms-fires",
-    label: "Satellite fire detections",
+    label: "Fire Detections (NASA FIRMS)",
     group: "Natural Hazards",
     color: "#ff7a1a",
     icon: Flame,
@@ -637,7 +637,7 @@ const LAYER_DEFS: LayerDef[] = [
       if (!view) return [];
       const { collection, cells } = await fetchFireView(view);
       fireSinkRef.current?.(collection, cells);
-      return fromGateway("#ff7a1a", "Satellite fire detections")(collection);
+      return fromGateway("#ff7a1a", "Fire Detections (NASA FIRMS)")(collection);
     },
   },
   // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
@@ -677,7 +677,7 @@ const LAYER_DEFS: LayerDef[] = [
   // same endpoint don't cost three times the upstream credit budget.
   {
     key: "air-traffic-commercial",
-    label: "Commercial",
+    label: "Commercial Airliners",
     group: "Aviation",
     color: "#2fe0c8",
     icon: Plane,
@@ -685,7 +685,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     key: "air-traffic-private",
-    label: "Private",
+    label: "General Aviation",
     group: "Aviation",
     color: "#00E676",
     icon: Plane,
@@ -693,7 +693,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     key: "air-traffic-jets",
-    label: "Private Jets",
+    label: "Business Jets",
     group: "Aviation",
     color: "#FF9F1C",
     icon: Plane,
@@ -701,7 +701,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     key: "air-traffic-military",
-    label: "Military",
+    label: "Military Aircraft",
     group: "Aviation",
     color: "#FF3D3D",
     icon: Shield,
@@ -945,13 +945,13 @@ const LAYER_DEFS: LayerDef[] = [
         }));
     },
   },
-  // "OSINT Alerts" and "Live Broadcasts" — Media group. Both adapted from
+  // "News Reports" and "Live Broadcasts" — Media group. Both adapted from
   // OSIRIS (github.com/simplifaisoul/osiris, MIT license); see the backend
   // routes (osint-alerts, live-broadcasts) for the full source roster and
   // what's deliberately different from OSIRIS's own version.
   {
     key: "osint-alerts",
-    label: "OSINT Alerts",
+    label: "News Reports",
     group: "Media",
     color: "#ff9d4f",
     icon: Radio,
@@ -960,13 +960,14 @@ const LAYER_DEFS: LayerDef[] = [
     // needs its own popup fields (bloc-colored, not layer-colored).
     fetcher: async () => {
       const feed = await api.getOsintAlerts();
+      // Telegram posts are the Telegram Posts layer's, so they are not pinned twice.
       return feed.alerts
-        .filter((a) => a.coords)
+        .filter((a) => a.coords && !a.source.startsWith("t.me/"))
         .map((a): GlobePoint => {
           const blocColor: Record<string, string> = { western: "#4fd1ff", russian: "#ff5d5d", regional: "#ffd23f", independent: "#00E676" };
           return {
             id: a.id,
-            layerKey: "OSINT Alerts",
+            layerKey: "News Reports",
             lat: a.coords![0],
             lng: a.coords![1],
             color: (a.bloc && blocColor[a.bloc]) || "#ff9d4f",
@@ -1611,7 +1612,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       .then(({ collection, cells }) => {
         if (fireViewRef.current !== view) return;
         setFireData({ collection, cells });
-        setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Satellite fire detections")(collection), loading: false, error: null } }));
+        setLayers((prev) => ({ ...prev, "firms-fires": { data: fromGateway("#ff7a1a", "Fire Detections (NASA FIRMS)")(collection), loading: false, error: null } }));
       })
       .catch((err) => setLayers((prev) => ({ ...prev, "firms-fires": { ...prev["firms-fires"], loading: false, error: err instanceof Error ? err.message : "Feed unavailable" } })));
   }, []);
@@ -2341,7 +2342,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
   // Map3D (3D mode) keeps the generic GlobePoint version via `mapPoints`.
   // Satellite fires are drawn by FireMapLayer on the flat maps (heat, then framed points), so the generic dots are left out there.
-  const flatMapPoints = useMemo(() => mapPoints.filter((p) => p.layerKey !== "My Incidents" && p.layerKey !== "Satellite fire detections"), [mapPoints]);
+  const flatMapPoints = useMemo(() => mapPoints.filter((p) => p.layerKey !== "My Incidents" && p.layerKey !== "Fire Detections (NASA FIRMS)"), [mapPoints]);
 
   // Draw/route lines, merged alongside the shipping lanes for the 3D globe's
   // single pathsData layer — a color field on each entry (shipping lanes
@@ -2419,7 +2420,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     >
       <div
         // The zoom pad keeps clear of the tool rail, and of a tool's own panel when one is open beside it.
-        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool === "economy" ? "min(648px, 55%)" : rightTool === "markets" ? "min(508px, 50%)" : rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
+        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool === "economy" ? "min(648px, 55%)" : rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
       >
         {mapMode === "3d" ? (
           <Map3D
@@ -2712,23 +2713,23 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {rightTool === "news" && (
-          <ToolPanelShell title="Live Alerts">
+          <ToolPanelShell title="Alerts">
             <LiveAlertsPanel
               onLocate={(lat, lng, zoom = 6) => setFocus((f) => ({ lat, lng, zoom, seq: (f?.seq ?? 0) + 1 }))}
-              pinsOn={!!enabled["live-alert-pins"]}
-              onTogglePins={(on) => setEnabled((prev) => ({ ...prev, "live-alert-pins": on }))}
+              pinsOn={!!enabled["osint-alerts"]}
+              onTogglePins={(on) => setEnabled((prev) => ({ ...prev, "osint-alerts": on }))}
               warningsOn={!!enabled["watch-zones"]}
               onToggleWarnings={(on) => setEnabled((prev) => ({ ...prev, "watch-zones": on }))}
             />
           </ToolPanelShell>
         )}
         {rightTool === "events" && (
-          <ToolPanelShell title="Humanitarian & political events">
+          <ToolPanelShell title="Events">
             <SituationPanel />
           </ToolPanelShell>
         )}
         {rightTool === "oi" && (
-          <ToolPanelShell title="OI · Assist and Forecast">
+          <ToolPanelShell title="OI">
             <OiPanel
               layers={oiLayerCatalog}
               onFly={(lat, lng, zoom) => setFocus((f) => ({ lat, lng, zoom, seq: (f?.seq ?? 0) + 1 }))}
@@ -2775,12 +2776,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
         {rightTool === "economy" && (
-          <ToolPanelShell title="Economy" width={560}>
+          <ToolPanelShell title="Economy" width={PANEL_WIDE}>
             <EconomyPanel data={econData} loading={econLoading} error={econError} />
           </ToolPanelShell>
         )}
         {rightTool === "markets" && (
-          <ToolPanelShell title="Markets" width={420}>
+          <ToolPanelShell title="Markets">
             <MarketsPanel />
           </ToolPanelShell>
         )}
@@ -4141,10 +4142,19 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
  *  positioning (just left of the icon rail) and card chrome as the rail
  *  itself, so opening any tool feels like one consistent system rather
  *  than four separately-designed popovers. */
-function ToolPanelShell({ title, children, width = 260 }: { title: string; children: ReactNode; width?: number }) {
+/** Every right-rail tool opens in the same frame: one standard width (wide only for Economy's tables), the same
+ *  glass card, and the same title line, which names the tool as the rail does. */
+const PANEL_WIDTH = 400;
+const PANEL_WIDE = 560;
+function panelFrame(width: number = PANEL_WIDTH): React.CSSProperties {
+  return { ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: `min(${width}px, calc(100% - 100px))`, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 };
+}
+const PANEL_TITLE: React.CSSProperties = { fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 };
+
+function ToolPanelShell({ title, children, width = PANEL_WIDTH }: { title: string; children: ReactNode; width?: number }) {
   return (
-    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: `min(${width}px, calc(100% - 100px))`, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>{title}</div>
+    <div style={panelFrame(width)}>
+      <div style={PANEL_TITLE}>{title}</div>
       {children}
     </div>
   );
@@ -4178,9 +4188,9 @@ function MonitoringToolPanel({
 }) {
   const linkBtn: React.CSSProperties = { background: "transparent", border: "none", padding: 0, color: HUD.textSecondary, fontSize: 10.5, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline", textUnderlineOffset: 2 };
   return (
-    <div style={{ ...glassPanel(), position: "absolute", top: 12, right: 76, zIndex: 500, width: 320, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={panelFrame()}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Live Monitoring</div>
+        <div style={PANEL_TITLE}>Monitor</div>
         <button
           onClick={onNew}
           style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, border: `1px solid ${HUD.gold}`, background: "rgba(212,175,55,0.15)", color: HUD.gold, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}
@@ -4294,7 +4304,7 @@ function DrawingToolPanel({
   const areaKm2 = mode === "area" ? sphericalPolygonAreaKm2(points) : 0;
   const canExport = (mode === "distance" && points.length >= 2) || (mode === "area" && points.length >= 3);
   return (
-    <ToolPanelShell title="Drawing Tools">
+    <ToolPanelShell title="Draw">
       <div style={{ display: "flex", gap: 6 }}>
         <ToolButton active={mode === "distance"} onClick={() => onSetMode(mode === "distance" ? null : "distance")}>
           Distance
@@ -4485,7 +4495,7 @@ const iconOnlyBtnStyle: React.CSSProperties = {
 
 function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string | null }) {
   return (
-    <ToolPanelShell title="Live From Space">
+    <ToolPanelShell title="Space">
       {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
       {pos ? (
         <div style={{ fontSize: 11, color: HUD.textSecondary, lineHeight: 1.6 }}>
@@ -4755,7 +4765,7 @@ function CryptoToolPanel({
   error: string | null;
 }) {
   return (
-    <ToolPanelShell title="Crypto Intel">
+    <ToolPanelShell title="Crypto">
       <div style={{ fontSize: 11, color: HUD.textSecondary }}>
         Look up a Bitcoin, Ethereum or Solana address: balance, activity, counterparties, and an OFAC sanctions screen.
       </div>
@@ -4915,24 +4925,9 @@ function SocialListeningPanel({
   onRefreshSaved: (id: string) => void;
 }) {
   return (
-    <div
-      style={{
-        ...glassPanel(),
-        position: "absolute",
-        top: 12,
-        right: 76,
-        zIndex: 500,
-        width: 400,
-        maxHeight: "calc(100% - 24px)",
-        overflowY: "auto",
-        padding: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-      }}
-    >
+    <div style={panelFrame()}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Social Listening</div>
+        <div style={PANEL_TITLE}>Listen</div>
         <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: 2 }}>
           {(["search", "dashboard"] as const).map((t) => (
             <button
