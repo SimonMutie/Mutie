@@ -17,6 +17,7 @@ noting exactly what was reused and what was changed:
 - `crisis-monitor/backend/src/lib/cloudflareRadar.ts` — Cloudflare Radar outage and attack-origin mapping, adapted
 - `crisis-monitor/frontend/src/components/LiveAlertsPanel.tsx` — Live Alerts panel design (All / News / Warnings / Quakes / Feeds tabs, source-perspective badges), rewritten for the Lens
 - `crisis-monitor/frontend/src/components/WeatherTiles.tsx` — RainViewer rain radar and infrared cloud layers, after OSIRIS's Rain and Live Clouds layers
+- `crisis-monitor/backend/src/lib/oi.ts`, `routes/oi.ts` and `frontend/src/components/OiPanel.tsx` — OI, the prediction engine (research, framing with a base rate, cast actors, parallel simulated worlds, report) and the talk-to-the-map assistant, after OSIRIS's OI Forecast and OI Assist, which follow the method MiroFish made popular; rewritten for the Lens's own feeds and model, no code copied
 
 Deliberately **not** reused from OSIRIS: its "RECON Toolkit" (port
 scanning / DNS / WHOIS / SSL / vulnerability scanning — active
