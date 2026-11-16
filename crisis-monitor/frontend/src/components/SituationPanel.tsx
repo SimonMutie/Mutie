@@ -1,16 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api, type SituationEvent } from "../api";
+import { chip, muted, select, tag, text } from "./panelUi";
 
 /**
  * The Events tool: humanitarian and political events of the last week, most serious first. These come from
  * articles the incident pipeline read and found were not armed conflict, so they never raise an escalation level.
  */
-const text = "#e6edf7";
-const muted = "#93a1b8";
 const SEV_COLOUR = { 3: "#ff6b6b", 2: "#ffb020", 1: "#93a1b8" } as const;
 const CAT_COLOUR = { humanitarian: "#38bdf8", political: "#e879f9" } as const;
-const chip = (on: boolean): CSSProperties => ({ padding: "4px 9px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", color: text, background: on ? "rgba(124,156,255,0.22)" : "transparent", border: "1px solid rgba(124,156,255,0.25)", borderRadius: 6 });
-const tag = (c: string): CSSProperties => ({ fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", color: c, border: `1px solid ${c}66`, borderRadius: 4, padding: "1px 5px" });
 const num = (n: number) => n.toLocaleString("en-GB");
 
 function ago(day: string): string {
@@ -54,7 +51,7 @@ export default function SituationPanel() {
         {([3, 2, 1] as const).map((s) => (
           <button key={s} style={chip(minSeverity === s)} aria-pressed={minSeverity === s} onClick={() => setMinSeverity(s)}>{s === 1 ? "All levels" : `S${s}${s === 2 ? " and up" : " only"}`}</button>
         ))}
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period" style={{ fontFamily: "inherit", fontSize: 11, padding: "4px 6px", background: "#0b1422", color: text, border: "1px solid rgba(124,156,255,0.25)", borderRadius: 6 }}>
+        <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Period" style={select}>
           <option value={3}>Last 3 days</option>
           <option value={7}>Last 7 days</option>
           <option value={14}>Last 14 days</option>
