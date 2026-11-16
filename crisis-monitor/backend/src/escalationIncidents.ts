@@ -8,8 +8,9 @@ import { candidatePriority, isCandidateText } from "./lib/escalationKeywords";
 import { normalizeForMatch, readArticle } from "./lib/articleReader";
 import { codeArticle, verifyCoding, verifySituation, type VerifiedSituation, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
 import { resolvePlace, type GeocodeBudget } from "./lib/geocoder";
+import { restrictedCountries, restrictionFor, type RestrictionReport } from "./lib/commsRestrictions";
 import { countryAt, countryName, distanceKm, locateText, lookupKnownPlace, looseKey, mentionsAfrica, normalizeName, resolveCountryCode, type GeoPrecision } from "./lib/africaGeo";
-import { ACTIVE_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, MASS_CASUALTY_THRESHOLD, SEVERE_WINDOW_HOURS, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
+import { ACTIVE_WINDOW_HOURS, RESTRICTED_WINDOW_HOURS, decideLevel, INDICATOR_BY_ID, MASS_CASUALTY_THRESHOLD, SEVERE_WINDOW_HOURS, type Confidence, type EscalationLevel, type IndicatorId, type Trajectory } from "./lib/escalationCodebook";
 import { CODER_BUDGET_SHARE, describeProvider, getLastModelError } from "./lib/llm";
 import { getAiUsage, type AiUsage } from "./lib/aiBudget";
 import { proposeElectionEntries } from "./lib/electionTimeline";
@@ -468,7 +469,7 @@ async function storeReports(env: Env, articleId: string, reports: VerifiedReport
       [
         newId(), articleId, r.countryCode, r.countryName, r.place, r.admin1, loc.lat, loc.lon, loc.precision, loc.method, loc.label,
         r.eventDate, r.dateBasis, JSON.stringify(r.actors), JSON.stringify(r.indicators), r.fatalities, r.trajectory, r.trajectoryReason,
-        r.whatHappened, r.significance, r.confidence, JSON.stringify(r.notes), excerptAround(text, r.indicators), nowIso(),
+        r.whatHappened, r.significance, r.confidence, JSON.stringify(lateReportNotes(r, loc.label)), excerptAround(text, r.indicators), nowIso(),
       ]
     );
   }
@@ -840,7 +841,10 @@ const REPORT_SELECT = `SELECT r.*, a.url, a.title, a.domain, a.published_at, a.t
  *     day when it gives none) is today or yesterday.
  * So a marker stands for something reported in the last two days as having
  * happened within them; older events never count, however recently they were
- * written about. A severe event (SEVERE_WINDOW_HOURS: a toll of
+ * written about — except in areas under internet restrictions
+ * (COMMS_RESTRICTED_AREAS, or a country IODA measures as degraded), where the
+ * event may be up to seven days old because news gets out late; the report
+ * must still be fresh. A severe event (SEVERE_WINDOW_HOURS: a toll of
  * MASS_CASUALTY_THRESHOLD or more, or a critical-tier indicator) stays for
  * four days.
  */
@@ -849,11 +853,30 @@ export function isSevere(report: { fatalities?: number | null; indicators?: { id
   return (report.indicators ?? []).some((i) => INDICATOR_BY_ID[i.id as IndicatorId]?.tier === "critical");
 }
 
-export function isLive(report: { eventDate: string; publishedAt?: string | null; fatalities?: number | null; indicators?: { id: string }[] }, now: Date): boolean {
+/** A report's notes, plus one saying why an event older than the usual window still counts, when it does. */
+export function lateReportNotes(r: { countryCode: string; admin1: string | null; place: string | null; eventDate: string; notes: string[] }, geoLabel: string | null, now: Date = new Date()): string[] {
+  const ageHours = (now.getTime() - Date.parse(`${r.eventDate}T00:00:00Z`)) / 3600_000;
+  if (!(ageHours > ACTIVE_WINDOW_HOURS + 24)) return r.notes;
+  const why = restrictionFor({ countryCode: r.countryCode, admin1: r.admin1, place: r.place, geoLabel }, degradedCountries);
+  return why ? [...r.notes, `Reported late from an area under ${why}: the event is older than the usual two days and still counts.`] : r.notes;
+}
+
+/** Countries IODA measures as degraded, set at the start of each pipeline tick (lib/commsRestrictions.ts). */
+let degradedCountries = new Set<string>();
+/** Test hook. */
+export function setDegradedCountries(codes: Iterable<string>): void {
+  degradedCountries = new Set(codes);
+}
+
+export function isLive(report: { eventDate: string; publishedAt?: string | null; fatalities?: number | null; indicators?: { id: string }[] } & Partial<RestrictionReport>, now: Date): boolean {
   const window = isSevere(report) ? SEVERE_WINDOW_HOURS : ACTIVE_WINDOW_HOURS;
   const start = Date.parse(`${report.eventDate}T00:00:00Z`);
   if (!Number.isFinite(start)) return false;
-  if (now.getTime() - start > (window + 24) * 3600_000) return false;
+  // Under internet restrictions news gets out late, so the event may be up to a week old; the report itself must
+  // still be fresh (the publication check below is unchanged).
+  const restricted = report.countryCode ? restrictionFor(report as RestrictionReport, degradedCountries) !== null : false;
+  const eventWindow = restricted ? Math.max(window, RESTRICTED_WINDOW_HOURS) : window;
+  if (now.getTime() - start > (eventWindow + 24) * 3600_000) return false;
   const published = report.publishedAt ? Date.parse(report.publishedAt) : NaN;
   if (Number.isFinite(published) && now.getTime() - published > window * 3600_000) return false;
   return true;
@@ -1432,6 +1455,8 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
   let aiBudgetReached = false;
   try {
     await retireLegacyAlerts(env);
+    // Where the internet is down, late-reported events still count (isLive).
+    degradedCountries = await restrictedCountries(env).catch(() => degradedCountries);
 
     // On the free Workers AI allowance, reading stops for the day once the
     // coder's share of it is spent (lib/aiBudget.ts). Checked here, before
