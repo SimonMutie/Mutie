@@ -216,6 +216,41 @@ export const EXCLUSIONS: { id: string; description: string }[] = [
 export const ACTIVE_WINDOW_HOURS = 48;
 /** Severe events use the same window as everything else (48 hours). */
 export const SEVERE_WINDOW_HOURS = ACTIVE_WINDOW_HOURS;
+
+/**
+ * Where the internet is cut or heavily restricted, news of an event can take days to get out. There, an event
+ * still counts if it happened in the last seven days, as long as the report itself is fresh (published within
+ * the usual 48 hours). Seven days is also the oldest event the coder accepts at publication.
+ */
+export const RESTRICTED_WINDOW_HOURS = 7 * 24;
+
+/**
+ * Regions under long-running internet restrictions, which a national connectivity reading does not show (a cut in
+ * one region barely moves a country's total). An Afrilens editorial list: review it when access is restored or a
+ * new shutdown begins. Whole countries that IODA measures as degraded are added live (lib/commsRestrictions.ts).
+ * `terms` are matched against a report's region, place and location label, so a report placed only at a town
+ * (Gondar, Nyala) is still recognised.
+ */
+export const COMMS_RESTRICTED_AREAS: { country: string; region: string; terms: string[]; note: string }[] = [
+  {
+    country: "ET",
+    region: "Amhara",
+    terms: ["amhara", "gondar", "gonder", "bahir dar", "gojjam", "gojam", "wollo", "wello", "debre markos", "debre tabor", "debre birhan", "dessie", "woldia", "weldiya", "lalibela", "kobo", "shewa robit", "metema", "debre elias", "finote selam", "injibara", "bichena", "mota", "dangila", "kemise", "sekota", "wag hemra"],
+    note: "Mobile internet cut in Amhara since the Fano insurgency began in August 2023; reports of clashes and strikes routinely surface days late.",
+  },
+  {
+    country: "SD",
+    region: "Darfur",
+    terms: ["darfur", "el fasher", "al fashir", "nyala", "geneina", "el geneina", "zalingei", "ed daein", "el daein", "tawila", "kutum", "mellit", "kabkabiya"],
+    note: "Telecoms largely down across Darfur since 2023; much news travels by satellite link and arrives late.",
+  },
+  {
+    country: "SD",
+    region: "Kordofan",
+    terms: ["kordofan", "el obeid", "al ubayyid", "kadugli", "dilling", "babanusa", "el fula", "al fulah", "bara", "um ruwaba", "en nahud", "an nahud", "abu zabad"],
+    note: "Repeated telecoms blackouts across the Kordofan states during the fighting.",
+  },
+];
 /** A single event with at least this many reported deaths is Critical. */
 export const MASS_CASUALTY_THRESHOLD = 25;
 /** A contextual-tier event with at least this many reported deaths is Elevated. */
