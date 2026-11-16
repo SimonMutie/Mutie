@@ -9,6 +9,8 @@ export interface RegionView {
   key: string;
   label: string;
   bounds: [[number, number], [number, number]];
+  /** Map layers the view switches on when chosen. */
+  layers?: string[];
 }
 export const ADULIS_REGIONS: RegionView[] = [
   { key: "tigray", label: "Tigray", bounds: [[12.2, 36.4], [14.95, 39.9]] },
@@ -16,6 +18,8 @@ export const ADULIS_REGIONS: RegionView[] = [
   { key: "sudan", label: "Sudan", bounds: [[8.6, 21.8], [23.2, 38.6]] },
   { key: "somalia", label: "Somalia", bounds: [[-1.7, 40.9], [12.0, 51.5]] },
   { key: "horn", label: "Horn", bounds: [[-2.0, 32.0], [18.0, 51.5]] },
+  // Shipping view: ships, shipping lanes and GPS interference over the Red Sea, Bab al-Mandab and Gulf of Aden.
+  { key: "redsea", label: "Red Sea", bounds: [[10.5, 32.0], [30.5, 51.5]], layers: ["ais-vessels", "maritime-lines", "gps-interference", "maritime"] },
 ];
 
 /** Horn countries as numeric ISO codes, as the world outline data identifies them: Ethiopia, Eritrea, Sudan, South Sudan, Somalia, Djibouti, Kenya. */
