@@ -83,6 +83,7 @@ import {
   PanelRightOpen,
   PanelRightClose,
   type LucideIcon,
+  BrainCircuit,
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
@@ -130,6 +131,8 @@ import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type Re
 import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
+import OiPanel from "./OiPanel";
+import type { OiRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
 import { WeatherTiles, useRainViewer } from "./WeatherTiles";
 import FlightCard, { type SelectedAircraft } from "./FlightCard";
@@ -1080,7 +1083,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "oi" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -1405,6 +1408,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
   // Where the map should fly to, from a Locate button in Live Alerts; seq makes a repeat request count.
   const [focus, setFocus] = useState<{ lat: number; lng: number; zoom: number; seq: number } | null>(null);
+  // OI: items OI Assist marked (cyan), and the forecast run on screen, whose actors and relations are drawn.
+  const [oiMarks, setOiMarks] = useState<{ lat: number; lng: number; title: string; url: string | null }[]>([]);
+  const [oiRun, setOiRun] = useState<OiRun | null>(null);
+  const oiLayerCatalog = useMemo(() => LAYER_DEFS.map((d) => ({ key: d.key, label: d.label, group: d.group as string })), []);
 
   // --- Economy tool: World Bank indicators (GDP, growth, inflation, trade)
   // across Afrilens's African coverage set — fetched lazily on first open,
@@ -1826,7 +1833,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, []);
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
-  // Keyboard shortcuts, as OSIRIS has: F flights, E earthquakes, S satellites, D day/night, Esc closes the side panels.
+  // Keyboard shortcuts, as OSIRIS has: F flights, E earthquakes, S satellites, D day/night, O opens OI, Esc closes the side panels.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -1837,6 +1844,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       else if (k === "e") flip(["earthquakes"]);
       else if (k === "s") flip(["satellites-all"]);
       else if (k === "d") setShowDayNight((v) => !v);
+      else if (k === "o") setActiveTool((prev) => (prev === "oi" ? null : "oi"));
       else if (e.key === "Escape") { setSelectedAircraft(null); setMap3DSelectedFeature(null); }
     };
     window.addEventListener("keydown", onKey);
@@ -2319,7 +2327,15 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     return extra;
   }, [savedListeningQueries, activeListeningIds, listeningLiveData]);
 
-  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints], [points, toolPoints, listeningLayerPoints, monitorLayerPoints]);
+  const oiPoints = useMemo(() => {
+    const out: GlobePoint[] = oiMarks.map((m, i) => ({ id: `oi-mark-${i}`, layerKey: "OI marks", lat: m.lat, lng: m.lng, color: "#22d3ee", size: 0.5, title: m.title, subtitle: "Marked by OI Assist", time: null, url: m.url }));
+    for (const a of oiRun?.actors ?? []) {
+      if (a.lat == null || a.lng == null) continue;
+      out.push({ id: `oi-actor-${a.id}`, layerKey: "OI actors", lat: a.lat, lng: a.lng, color: "#22d3ee", size: 0.42, title: `${a.name} (${a.kind})`, subtitle: `OI forecast actor: ${a.stance}`.slice(0, 220), time: null, url: null, details: a.goal ? `Goal: ${a.goal}` : undefined });
+    }
+    return out;
+  }, [oiMarks, oiRun]);
+  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...oiPoints], [points, toolPoints, listeningLayerPoints, monitorLayerPoints, oiPoints]);
   // Flat map renders "My Incidents" through the rich IncidentMarker/heatmap
   // layer below instead of a generic colored dot — drop the generic version
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
@@ -2345,12 +2361,19 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
       .filter((p) => p.points.length >= 2);
     const flightPath = aircraftTrackLine.length >= 2 ? [{ points: aircraftTrackLine, label: selectedAircraft?.label ?? "Flight track", color: "#ffd23f", width: 3 }] : [];
-    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays, ...flightPath];
+    const byId = new Map((oiRun?.actors ?? []).map((x) => [x.id, x]));
+    const oiLinks = (oiRun?.links ?? []).flatMap((l) => {
+      const p = byId.get(l.from), q = byId.get(l.to);
+      if (!p || !q || p.lat == null || p.lng == null || q.lat == null || q.lng == null) return [];
+      return [{ points: [[p.lat, p.lng], [q.lat, q.lng]] as LatLng[], label: `${p.name} – ${q.name}: ${l.relation}`, color: "#22d3ee", width: 1.5 }];
+    });
+    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays, ...flightPath, ...oiLinks];
   }, [
     enabled["maritime-lines"],
     maritimeLanes,
     aircraftTrackLine,
     selectedAircraft,
+    oiRun,
     enabled["submarine-cables"],
     submarineCables,
     drawMode,
@@ -2702,6 +2725,18 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         {rightTool === "events" && (
           <ToolPanelShell title="Humanitarian & political events">
             <SituationPanel />
+          </ToolPanelShell>
+        )}
+        {rightTool === "oi" && (
+          <ToolPanelShell title="OI · Assist and Forecast">
+            <OiPanel
+              layers={oiLayerCatalog}
+              onFly={(lat, lng, zoom) => setFocus((f) => ({ lat, lng, zoom, seq: (f?.seq ?? 0) + 1 }))}
+              onLayers={(on, off) => setEnabled((prev) => ({ ...prev, ...Object.fromEntries(on.map((k) => [k, true])), ...Object.fromEntries(off.map((k) => [k, false])) }))}
+              onPanel={(panel) => setActiveTool(panel as Exclude<RightTool, null>)}
+              onMarks={setOiMarks}
+              onRun={setOiRun}
+            />
           </ToolPanelShell>
         )}
         {rightTool === "telegram" && (
@@ -4054,6 +4089,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "telegram", icon: Send, label: "Telegram" },
     { key: "events", icon: HeartPulse, label: "Events" },
+    { key: "oi", icon: BrainCircuit, label: "OI" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const alertsPaused = useAlertsPaused();
