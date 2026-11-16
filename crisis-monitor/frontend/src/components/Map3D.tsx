@@ -1,3 +1,4 @@
+import { AIRCRAFT_LAYER_KEYS, planeSvg } from "./planeIcon";
 import { EscalationMap } from "./EscalationMap";
 import type { FeatureCollection } from "geojson";
 import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
@@ -71,6 +72,8 @@ export interface Map3DPoint {
    *  point instead of just the plain colored dot every other layer gets,
    *  colored by level. Undefined on every other layer. */
   escalationLevel?: "watch" | "elevated" | "critical";
+  /** Aircraft only: heading in degrees from north; aircraft are drawn as plane symbols turned to it. */
+  heading?: number;
   /** Conflict Escalation only — fetches the full evidence/source-link list
    *  for this country when its popup opens. Undefined on every other layer. */
   countryCode?: string;
@@ -247,6 +250,7 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
         ...(p.actor ? { actor: p.actor } : {}),
         ...(p.details ? { details: p.details } : {}),
         ...(p.escalationLevel ? { escalationLevel: p.escalationLevel } : {}),
+        ...(AIRCRAFT_LAYER_KEYS.has(p.layerKey) ? { aircraft: 1, heading: p.heading ?? 0 } : {}),
         ...(p.countryCode ? { countryCode: p.countryCode } : {}),
         ...(p.evidenceCount != null ? { evidenceCount: p.evidenceCount } : {}),
       },
@@ -446,7 +450,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         // Conflict Escalation points get the dedicated warning-icon layer
         // below instead — excluded here so a country isn't marked with both
         // a plain dot AND the triangle icon stacked on top of each other.
-        filter: ["all", ["!", ["has", "escalationLevel"]], ["!=", ["get", "layerKey"], "My Incidents"]],
+        filter: ["all", ["!", ["has", "escalationLevel"]], ["!", ["has", "aircraft"]], ["!=", ["get", "layerKey"], "My Incidents"]],
         paint: {
           "circle-color": ["get", "color"],
           "circle-radius": ["+", 3, ["*", ["get", "size"], 14]],
@@ -471,7 +475,34 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
           "icon-ignore-placement": true,
         },
       });
+      // Aircraft: small plane symbols turned to their heading, one image per colour (drawn on demand below).
+      map.addLayer({
+        id: "osiris-aircraft",
+        type: "symbol",
+        source: "osiris-points",
+        filter: ["has", "aircraft"],
+        layout: {
+          "icon-image": ["concat", "plane-", ["get", "color"]],
+          "icon-size": 0.5,
+          "icon-rotate": ["get", "heading"],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+        },
+      });
       map.on("styleimagemissing", (e) => {
+        if (e.id.startsWith("plane-") && !map.hasImage(e.id)) {
+          const img = new Image();
+          img.onload = () => {
+            const c = document.createElement("canvas");
+            c.width = 32;
+            c.height = 32;
+            c.getContext("2d")?.drawImage(img, 0, 0, 32, 32);
+            if (!map.hasImage(e.id)) map.addImage(e.id, c.getContext("2d")!.getImageData(0, 0, 32, 32), { pixelRatio: 1 });
+          };
+          img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(planeSvg(e.id.slice("plane-".length), 32))}`;
+          return;
+        }
         if (!e.id.startsWith("incident-pin-") || map.hasImage(e.id)) return;
         const svg = pinSvg(e.id.slice("incident-pin-".length), 28);
         const img = new Image();
@@ -620,7 +651,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
 
       map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
-      const POINT_LAYERS = ["osiris-points-circle", "osiris-incident-pins", "osiris-points-warning-icon"];
+      const POINT_LAYERS = ["osiris-points-circle", "osiris-incident-pins", "osiris-points-warning-icon", "osiris-aircraft"];
       const TERRITORY_LAYER = "osiris-territory-changes-fill";
 
       map.on("click", (e) => {
