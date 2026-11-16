@@ -461,15 +461,21 @@ export async function africaChannelStatus(db: D1Database, now = Date.now()) {
 }
 
 /**
- * Recent posts from the Africa-focused Telegram channels, for the escalation pipeline. A post has no article behind
- * it, so the pipeline codes it from its own text, as a single-source claim under the one outlet "t.me".
+ * Recent posts from every Telegram channel the Lens follows, for the escalation pipeline. A post has no article
+ * behind it, so the pipeline codes it from its own text, as a single-source claim under the one outlet "t.me".
+ * `regional` is true for the Africa-focused channels; the global channels mostly report on other wars, so the
+ * pipeline keeps only their posts that mention somewhere it covers.
  */
-export async function fetchTelegramPostItems(db: D1Database, now = Date.now()): Promise<{ title: string; text: string; link: string; published: string; channel: string; english: boolean }[]> {
+export async function fetchTelegramPostItems(db: D1Database, now = Date.now()): Promise<{ title: string; text: string; link: string; published: string; channel: string; english: boolean; regional: boolean }[]> {
   const stored = await africaChannelPosts(db, now);
-  return TELEGRAM_CHANNELS.filter((c) => c.africa).flatMap((channel) =>
-    recentPosts(stored.get(channel.handle)?.posts ?? [], now)
+  const global = await Promise.all(
+    TELEGRAM_CHANNELS.filter((c) => !c.africa).map(async (channel) => ({ channel, posts: await cachedFetch(`tg:${channel.handle}`, CHANNEL_TTL_MS, () => fetchChannel(channel)).catch(() => [] as TelegramPost[]) }))
+  );
+  const all = [...TELEGRAM_CHANNELS.filter((c) => c.africa).map((channel) => ({ channel, posts: stored.get(channel.handle)?.posts ?? [] })), ...global];
+  return all.flatMap(({ channel, posts }) =>
+    recentPosts(posts, now)
       .filter((p) => p.text.length >= 60 && /^https?:\/\//i.test(p.url))
-      .map((p) => ({ title: `${p.headline} (Telegram: ${channel.name})`, text: p.text, link: p.url, published: p.publishedAt, channel: channel.name, english: !channel.lang }))
+      .map((p) => ({ title: `${p.headline} (Telegram: ${channel.name})`, text: p.text, link: p.url, published: p.publishedAt, channel: channel.name, english: !channel.lang, regional: !!channel.africa }))
   );
 }
 
