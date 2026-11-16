@@ -2,7 +2,7 @@ import { all, first, run, nowIso } from "./db";
 import { newId } from "./ids";
 import type { Env } from "./bindings";
 import { toGdeltTimestamp } from "./connectors/gdeltBulk";
-import { hashId, fetchWireArticleItems } from "./lib/osintFeed";
+import { hashId, fetchWireArticleItems, fetchTelegramPostItems, TELEGRAM_OUTLET } from "./lib/osintFeed";
 import { candidatePriority, isCandidateText } from "./lib/escalationKeywords";
 import { normalizeForMatch, readArticle } from "./lib/articleReader";
 import { codeArticle, verifyCoding, synthesizeIncident, fallbackSynthesis, headlineSynthesis, type ArticleForCoding, type VerifiedIndicator, type VerifiedReport, type IncidentSynthesis, type SynthesisSource } from "./lib/escalationCoder";
@@ -198,7 +198,7 @@ export interface Candidate {
   id: string;
   url: string;
   domain: string;
-  origin: "africa-wire" | "wire-feed" | "gdelt";
+  origin: "africa-wire" | "wire-feed" | "gdelt" | "telegram";
   title: string | null;
   /** Feed summary — used only if the full page cannot be read. */
   feedText: string | null;
@@ -281,6 +281,35 @@ async function gatherWireFeeds(): Promise<Candidate[]> {
       }));
   } catch (err) {
     console.error("[escalation] wire-feed candidates failed", err);
+    return [];
+  }
+}
+
+/**
+ * Posts from the Africa-focused Telegram channels (lib/osintFeed.ts). A post is its own text: there is no page
+ * behind it to read. English posts pass the same keyword filter as wire feeds; posts in other languages go to the
+ * coder as they are, after the English ones. Every post is filed under the one outlet "t.me", so Telegram channels
+ * never count as corroborating one another, and an incident known only from Telegram stays a single-source claim.
+ */
+async function gatherTelegram(): Promise<Candidate[]> {
+  try {
+    const items = await fetchTelegramPostItems();
+    return items
+      .filter((it) => !it.english || isCandidateText(it.text))
+      .filter((it) => !(Date.now() - Date.parse(it.published ?? "") > CANDIDATE_MAX_AGE_HOURS * 3600_000))
+      .map((it) => ({
+        id: hashId(canonicalUrl(it.link)),
+        url: it.link,
+        domain: TELEGRAM_OUTLET,
+        origin: "telegram" as const,
+        title: it.title,
+        feedText: it.text,
+        publishedAt: it.published,
+        priority: it.english ? candidatePriority(it.text) : 0,
+      }))
+      .sort((a, b) => b.priority - a.priority || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
+  } catch (err) {
+    console.error("[escalation] Telegram candidates failed", err);
     return [];
   }
 }
@@ -589,7 +618,8 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
   };
 
   try {
-    const page = await readArticle(c.url);
+    // A Telegram post has no page behind it: its own text is all there is.
+    const page = c.origin === "telegram" ? null : await readArticle(c.url);
     let article: ArticleForCoding | null = null;
     if (page) {
       // A major event read for location only: the opening two paragraphs, which are
@@ -597,7 +627,8 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
       article = opening
         ? { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "feed_summary", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain }
         : { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
-    } else if (c.feedText && c.feedText.length >= 200) {
+    } else if (c.feedText && c.feedText.length >= (c.origin === "telegram" ? 80 : 200)) {
+      // (A Telegram post is short by nature, so less text is asked of it; it is still coded at reduced confidence.)
       // The page could not be read; the feed's own summary is long enough to
       // code from, at reduced confidence (see verifyCoding).
       article = { url: c.url, title: c.title ?? "(untitled)", text: c.feedText, textBasis: "feed_summary", publishedAt: c.publishedAt, domain: c.domain };
@@ -1337,11 +1368,11 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     if ((env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false") {
       const reading = paceLimit > 0;
       // GDELT rows carry no headline, so they are only fetched when articles can be read in full.
-      const [africaWire, wireFeeds, gdelt] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), reading ? gatherGdelt(env) : Promise.resolve([] as Candidate[])]);
+      const [africaWire, wireFeeds, gdelt, telegram] = await Promise.all([gatherAfricaWire(env), gatherWireFeeds(), reading ? gatherGdelt(env) : Promise.resolve([] as Candidate[]), gatherTelegram()]);
       // Wire feeds are generalist (world news); order them by priority so the
       // Africa-relevant conflict items are read first.
       wireFeeds.sort((a, b) => b.priority - a.priority || (b.publishedAt ?? "").localeCompare(a.publishedAt ?? ""));
-      stats.candidates = africaWire.length + wireFeeds.length + gdelt.length;
+      stats.candidates = africaWire.length + wireFeeds.length + gdelt.length + telegram.length;
 
       // What is already on record. (Candidates are at most
       // CANDIDATE_MAX_AGE_HOURS old, so only recent rows can match.)
@@ -1393,7 +1424,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
         const priorityOpening = new Set(headlineFresh.filter((c) => c.title && isMajorUnlocated({ title: c.title, feedText: c.feedText, publishedAt: c.publishedAt }, new Date())).map((c) => c.id));
         const priorityList = headlineFresh.filter((c) => priorityOpening.has(c.id));
         stats.priority = priorityList.length;
-        const lists = [priorityList, upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt)];
+        const lists = [priorityList, upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt), freshOf(telegram)];
         stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
         const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
