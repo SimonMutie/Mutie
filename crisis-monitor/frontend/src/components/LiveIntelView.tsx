@@ -49,6 +49,7 @@ import {
   Navigation,
   Network,
   Newspaper,
+  Send,
   Plane,
   Radar,
   Radiation,
@@ -120,6 +121,7 @@ import { IncidentPulseLayer, pulsesAsWaves, useIncidentPulses } from "./Incident
 import { ConnectivityLayer, ConnectivityPanel, useConnectivity } from "./Connectivity";
 import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
 import { MapSearchPanel } from "./MapSearch";
+import TelegramPanel from "./TelegramPanel";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -874,7 +876,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -2402,6 +2404,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {rightTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
+        {rightTool === "telegram" && (
+          <ToolPanelShell title="Telegram">
+            <TelegramPanel />
+          </ToolPanelShell>
+        )}
         {rightTool === "incidents" && (
           <IncidentsToolPanel
             filterOptions={incidentFilterOptions}
@@ -3669,6 +3676,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
     { key: "news", icon: Newspaper, label: "Alerts" },
+    { key: "telegram", icon: Send, label: "Telegram" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const alertsPaused = useAlertsPaused();
