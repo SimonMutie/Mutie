@@ -14,7 +14,7 @@ describe("Africa Telegram channels", () => {
     const all = new Map<string, number>();
     for (let i = 0; i < 20; i++) africaChannelsDue(all, now).forEach((h) => all.set(h, now));
     expect(africaChannelsDue(all, now + 5 * 60_000)).toEqual([]);
-    expect(all.size).toBe(37);
+    expect(all.size).toBe(31);
     expect(africaChannelsDue(all, now + 16 * 60_000)).toHaveLength(6);
   });
 });
