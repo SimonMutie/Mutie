@@ -36,6 +36,7 @@ import { refreshStaleLists } from "./lib/dd/sanctionsLists";
 import { dispatchAlertSubscriptions } from "./lib/alertDelivery";
 import { ensureSchema } from "./lib/schemaHeal";
 import { collectFireDetections } from "./lib/firmsHistory";
+import { collectGpsInterference } from "./lib/gpsInterference";
 import { fetchNewsForQuery, ingestFeedMatches, loadActiveCompiledQueries } from "./ingest";
 import { ingestGdeltBulkEvents } from "./connectors/gdeltBulk";
 import { ingestGdeltGkg } from "./connectors/gdeltGkg";
@@ -224,6 +225,9 @@ export default {
     // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
     // newly flagged incident reaches email/Signal in the same tick.
     ctx.waitUntil(stageDailyIfDue(env, controller.scheduledTime).catch((err) => console.error("[staging] daily collection failed", err)));
+
+    // GPS interference from aircraft accuracy reports (see lib/gpsInterference.ts): a few areas per tick, in rotation.
+    ctx.waitUntil(collectGpsInterference(env).catch((err) => console.error("[gps] collection failed", err)));
 
     // Satellite fire history (see lib/firmsHistory.ts). Runs every five minutes but only collects about every three hours.
     ctx.waitUntil(
