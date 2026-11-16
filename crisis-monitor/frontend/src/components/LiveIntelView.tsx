@@ -113,7 +113,9 @@ import {
 import { loadMonitorLayerIds, saveMonitorLayerIds } from "../monitorLayers";
 import ConflictIntensityLegend from "./ConflictIntensityLegend";
 import FireTimeline, { FireMapLayer, fireRangeFrom, unusualFireDays, type FireRangeMode } from "./FireTimeline";
-import { ImageryControl, imageryTemplate, type ImageryKey } from "./ImageryOverlays";
+import { DEFAULT_IMAGERY, IMAGERY_KEYS, ImageryControl, clampImageryDay, compareDay, imageryTemplate, type ImageryKey, type ImageryState } from "./ImageryOverlays";
+import { BeforeAfterLens, FireDownload, SunShadowTool, TerrainProfile, ViewPermalink, readViewParams } from "./MapTools";
+import { ConnectivityLayer, ConnectivityPanel, useConnectivity } from "./Connectivity";
 import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
 import { MapSearchPanel } from "./MapSearch";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
@@ -1007,7 +1009,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "ucdp-conflict-events": false,
     "firms-fires": true,
   });
-  const [mapMode, setMapMode] = useState<MapMode>("3d");
+  const [mapMode, setMapMode] = useState<MapMode>(() => (readViewParams().at ? "sat" : "3d"));
   // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
   const [leftOpen, setLeftOpen] = useState<boolean>(() => { try { return localStorage.getItem("lens.liveIntel.left") === "1"; } catch { return false; } });
   const [rightOpen, setRightOpen] = useState<boolean>(() => { if (initialTool) return true; try { return localStorage.getItem("lens.liveIntel.right") === "1"; } catch { return false; } });
@@ -1393,7 +1395,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   useEffect(() => {
     const days = fireHistory?.days ?? [];
     if (days.length === 0) return;
-    if (!fireDate || !days.some((d) => d.date === fireDate)) selectFireDay(days[days.length - 1].date);
+    if (!fireDate || !days.some((d) => d.date === fireDate)) {
+      // A shared link names its day; open on it when the timeline has it.
+      const linked = fireDate ? null : readViewParams().date;
+      selectFireDay(linked && days.some((d) => d.date === linked) ? linked : days[days.length - 1].date);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fireHistory]);
   // Playing steps the timeline once a second (see FireTimeline).
@@ -2176,6 +2182,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             fireCollection={fireOn && (!fireOnlyUnusual || fireRangeMode !== "day" || (fireDate !== null && fireUnusual.has(fireDate))) ? fireData.collection : null}
             fireCells={fireData.cells}
             fireUnusual={fireUnusual}
+            fireDate={fireOn ? fireDate : null}
             incidentsOn={enabled["my-incidents"]}
             incidentRows={incidentRowsForFlatMap}
             incidentViewMode={incidentViewMode}
@@ -2526,6 +2533,7 @@ function FlatMap({
   fireCollection,
   fireCells,
   fireUnusual,
+  fireDate,
   incidentsOn,
   incidentRows,
   incidentViewMode,
@@ -2571,6 +2579,8 @@ function FlatMap({
   fireCells?: boolean;
   /** Fire days flagged as unusual, with their typical count. */
   fireUnusual?: Map<string, number>;
+  /** The day selected on the fire timeline, which imagery follows unless a day is chosen. */
+  fireDate?: string | null;
   incidentsOn?: boolean;
   incidentRows?: IncidentItem[];
   incidentViewMode?: "markers" | "heatmap";
@@ -2591,7 +2601,14 @@ function FlatMap({
     () => incidentHeatPoints(visibleIncidentRows ?? [], incidentHeatmapStyle ?? DEFAULT_HEATMAP_STYLE),
     [visibleIncidentRows, incidentHeatmapStyle]
   );
-  const [imagery, setImagery] = useState<ImageryKey>("none");
+  const [imagery, setImagery] = useState<ImageryState>(() => {
+    // A shared link can name the imagery layer and its day.
+    const linked = readViewParams();
+    const key = IMAGERY_KEYS.includes(linked.layer as ImageryKey) ? (linked.layer as ImageryKey) : "none";
+    return { ...DEFAULT_IMAGERY, key, day: key !== "none" ? linked.date : null };
+  });
+  const [connectivityOn, setConnectivityOn] = useState(false);
+  const connectivity = useConnectivity(connectivityOn);
   const [regionView, setRegionView] = useState<RegionView | null>(null);
   const [regionSeq, setRegionSeq] = useState(0);
   const [outlines, setOutlines] = useState(false);
@@ -2601,7 +2618,10 @@ function FlatMap({
     [waves, fireCollection, fireCells]
   );
   const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
-  const overlay = imageryTemplate(imagery);
+  const imageryDay = clampImageryDay(imagery.day ?? fireDate);
+  const overlay = imageryTemplate(imagery.key, imageryDay);
+  const lensTemplate = overlay && imagery.lensKm !== null ? imageryTemplate(imagery.key, compareDay(imagery.compare, imageryDay, imagery.compareChosen)) : null;
+  const measuredLine = drawMode === "distance" && drawPoints && drawPoints.length >= 2 ? drawPoints.map((p) => ({ lat: p[0], lng: p[1] })) : null;
   return (
     <>
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump zoomControl={false} style={{ height: "100%", width: "100%", background: "#000308" }}>
@@ -2609,10 +2629,18 @@ function FlatMap({
       <MapCompass />
       <TileLayer url={tile.url} attribution={tile.attribution} />
       <RegionFly region={regionView} seq={regionSeq} />
-      <MapSearchPanel />
+      <ViewPermalink date={imagery.key !== "none" ? imageryDay : fireDate ?? null} layer={imagery.key} />
+      <MapSearchPanel>
+        {measuredLine && <TerrainProfile path={measuredLine} />}
+        <SunShadowTool defaultDay={imageryDay} />
+        {connectivityOn && <ConnectivityPanel data={connectivity.data} error={connectivity.error} />}
+        <FireDownload collection={fireCollection ?? null} label={fireDate ?? "latest"} />
+      </MapSearchPanel>
+      {connectivityOn && connectivity.data && <ConnectivityLayer data={connectivity.data} />}
+      {lensTemplate && imagery.lensKm !== null && <BeforeAfterLens template={lensTemplate} radiusKm={imagery.lensKm} />}
       {outlines && <HornOutlines />}
       {hotCells.length > 0 && <HotspotWaves cells={hotCells} />}
-      {overlay && <TileLayer key={imagery} url={overlay.url} attribution={overlay.attribution} maxNativeZoom={overlay.maxNativeZoom} opacity={0.9} zIndex={5} />}
+      {overlay && <TileLayer key={overlay.url} url={overlay.url} attribution={overlay.attribution} maxNativeZoom={overlay.maxNativeZoom} opacity={0.9} zIndex={5} />}
       {activeConflictMap && (
         <GeoJSON
           key={countryShadingKey(activeConflictMap)}
@@ -2703,7 +2731,8 @@ function FlatMap({
       )}
       {incidentsOn && incidentRows && hiddenIncidents && <HiddenIncidentsControl incidents={incidentRows} hidden={hiddenIncidents} />}
     </MapContainer>
-    <ImageryControl value={imagery} onChange={setImagery} />
+    <div style={{ position: "absolute", top: 10, left: "var(--lens-pad-left, 10px)", zIndex: 500, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start", maxWidth: "62%" }}>
+    <ImageryControl value={imagery} onChange={setImagery} shownDay={imageryDay} />
     <AdulisBar
       region={regionView?.key ?? null}
       onRegion={(r) => { setRegionView(r); setRegionSeq((n) => n + 1); }}
@@ -2711,7 +2740,10 @@ function FlatMap({
       onOutlines={setOutlines}
       waves={waves}
       onWaves={setWaves}
+      connectivity={connectivityOn}
+      onConnectivity={setConnectivityOn}
     />
+    </div>
     </>
   );
 }
