@@ -1457,6 +1457,13 @@ export interface SituationEvent {
   sources: { title: string; url: string; domain: string; date: string }[];
 }
 
+/** One aircraft's stored track; `current` is [hex, callsign, registration, type, military, lat, lon, altitude ft, speed kt, heading]. */
+export interface AircraftTrack {
+  points: { t: string; lat: number; lon: number; alt: number | null; spd: number | null }[];
+  current: [string, string | null, string | null, string | null, 0 | 1, number, number, number | null, number | null, number | null] | null;
+  snapshotAt: string | null;
+}
+
 export interface GpsInterference {
   cells: { lat: number; lon: number; aircraft: number; poor: number; share: number; level: "low" | "medium" | "high" }[];
   areas: { name: string; readAt: string | null; status: string; aircraft: number }[];
@@ -2255,6 +2262,7 @@ export const api = {
   getIncidentPulses: () => req<{ pulses: IncidentPulse[]; basis: string; fetchedAt: string }>("/api/live-layers/incident-pulses"),
   getTelegramChannels: () => req<{ channels: TelegramChannelStatus[]; fetchedAt: string }>("/api/live-layers/telegram-channels"),
   getSituationEvents: (days = 7) => req<{ events: SituationEvent[]; days: number; fetchedAt: string }>(`/api/live-layers/situation-events?days=${days}`),
+  getAircraftTrack: (hex: string, hours = 24) => req<AircraftTrack>(`/api/live-layers/aircraft-track/${hex}?hours=${hours}`),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
