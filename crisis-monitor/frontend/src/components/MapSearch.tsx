@@ -1,6 +1,8 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import { CircleMarker, Popup, useMap, useMapEvents } from "react-leaflet";
-import { parseDecimal, toDecimal, toDms } from "./coords";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Circle, CircleMarker, Popup, useMap, useMapEvents } from "react-leaflet";
+import { DomEvent } from "leaflet";
+import { parsePoint, toDecimal, toDms, toMgrs } from "./coords";
+import { elevationAt } from "./terrain";
 
 interface LatLngPoint { lat: number; lng: number }
 interface PhotonHit { name: string; detail: string; lat: number; lng: number }
@@ -34,15 +36,39 @@ const box: CSSProperties = {
   fontFamily: "inherit",
 };
 
-/** Search box, live cursor readout (decimal and degrees-minutes-seconds), and a pin on right-click. */
-export function MapSearchPanel() {
+/** Rings drawn round a pinned point. 5 and 15 km are the distances at which a fire detection counts as backing a report, or as worth checking. */
+const RING_CHOICES_KM = [5, 15, 60];
+
+/** Search box, live cursor readout (decimal, degrees-minutes-seconds and MGRS), and a pin on right-click with its height and distance rings. Children are extra tools shown in the same box. */
+export function MapSearchPanel({ children }: { children?: ReactNode }) {
   const map = useMap();
   const [cursor, setCursor] = useState<LatLngPoint | null>(null);
   const [pinned, setPinned] = useState<LatLngPoint | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PhotonHit[]>([]);
   const [status, setStatus] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState("");
+  const [height, setHeight] = useState<number | null | undefined>(undefined);
+  const [rings, setRings] = useState<number[]>([]);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  // Clicks and scrolling inside the box stay in the box, and do not pan, zoom or draw on the map under it.
+  useEffect(() => {
+    if (!boxRef.current) return;
+    DomEvent.disableClickPropagation(boxRef.current);
+    DomEvent.disableScrollPropagation(boxRef.current);
+  }, []);
+
+  // Ground height at the pinned point.
+  useEffect(() => {
+    setHeight(undefined);
+    if (!pinned) return;
+    let cancelled = false;
+    elevationAt(pinned.lat, pinned.lng).then((h) => !cancelled && setHeight(h));
+    return () => {
+      cancelled = true;
+    };
+  }, [pinned]);
 
   useMapEvents({
     mousemove: (e) => setCursor({ lat: e.latlng.lat, lng: e.latlng.lng }),
@@ -52,7 +78,7 @@ export function MapSearchPanel() {
   // Debounced place search. Typed coordinates fly straight to the point instead.
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 3 || parseDecimal(q)) {
+    if (q.length < 3 || parsePoint(q)) {
       setResults([]);
       setStatus("");
       return;
@@ -80,16 +106,16 @@ export function MapSearchPanel() {
   };
 
   const submit = () => {
-    const point = parseDecimal(query);
+    const point = parsePoint(query);
     if (point) go(point.lat, point.lng);
     else if (results[0]) go(results[0].lat, results[0].lng);
   };
 
-  const copy = async (text: string) => {
+  const copy = async (text: string, what: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      setCopied(what);
+      setTimeout(() => setCopied(""), 1200);
     } catch {
       setStatus("Copy was blocked by the browser");
     }
@@ -97,12 +123,12 @@ export function MapSearchPanel() {
 
   return (
     <>
-      <div role="search" aria-label="Map search and coordinates" style={box}>
+      <div ref={boxRef} role="search" aria-label="Map search, coordinates and tools" style={{ ...box, maxHeight: "calc(100% - 150px)", overflowY: "auto" }}>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
-          placeholder="Place name, or lat, lng"
+          placeholder="Place, lat, lng or MGRS"
           aria-label="Search places or paste coordinates"
           style={{ width: "100%", boxSizing: "border-box", padding: "5px 7px", borderRadius: 5, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", color: "#e6edf7", fontFamily: "inherit", fontSize: 11 }}
         />
@@ -126,12 +152,22 @@ export function MapSearchPanel() {
             <>
               <div>Cursor {toDecimal(cursor.lat, cursor.lng)}</div>
               <div style={{ opacity: 0.75 }}>{toDms(cursor.lat, cursor.lng)}</div>
+              <div style={{ opacity: 0.75 }}>{toMgrs(cursor.lat, cursor.lng)}</div>
             </>
           ) : (
             <div style={{ opacity: 0.6 }}>Move over the map for coordinates. Right-click to pin a point.</div>
           )}
         </div>
+        <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={() => copy(window.location.href, "link")} style={{ padding: "3px 8px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", color: "#e6edf7", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 5 }} title="The link reopens this place, day and imagery">
+            {copied === "link" ? "Link copied" : "Copy link to this view"}
+          </button>
+        </div>
+        {children}
       </div>
+      {pinned && rings.map((km) => (
+        <Circle key={km} center={[pinned.lat, pinned.lng]} radius={km * 1000} interactive={false} pathOptions={{ color: "#ffffff", weight: 1.2, dashArray: "5 5", fill: false }} />
+      ))}
       {pinned && (
         <CircleMarker center={[pinned.lat, pinned.lng]} radius={5} pathOptions={{ color: "#ffffff", weight: 2, fillColor: "#ff7a1a", fillOpacity: 1 }}>
           <Popup>
@@ -139,9 +175,23 @@ export function MapSearchPanel() {
               <div><b>Pinned point</b></div>
               <div>{toDecimal(pinned.lat, pinned.lng)}</div>
               <div>{toDms(pinned.lat, pinned.lng)}</div>
-              <button onClick={() => copy(toDecimal(pinned.lat, pinned.lng))} style={{ marginTop: 6, padding: "3px 8px", fontFamily: "inherit", fontSize: 11, cursor: "pointer" }}>
-                {copied ? "Copied" : "Copy decimal"}
-              </button>
+              <div>{toMgrs(pinned.lat, pinned.lng)}</div>
+              <div>Height: {height === undefined ? "reading…" : height === null ? "unavailable" : `${Math.round(height)} m above sea level`}</div>
+              <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                <button onClick={() => copy(toDecimal(pinned.lat, pinned.lng), "decimal")} style={{ padding: "3px 8px", fontFamily: "inherit", fontSize: 11, cursor: "pointer" }}>
+                  {copied === "decimal" ? "Copied" : "Copy decimal"}
+                </button>
+                <button onClick={() => copy(toMgrs(pinned.lat, pinned.lng), "mgrs")} style={{ padding: "3px 8px", fontFamily: "inherit", fontSize: 11, cursor: "pointer" }}>
+                  {copied === "mgrs" ? "Copied" : "Copy MGRS"}
+                </button>
+              </div>
+              <div style={{ marginTop: 6 }}>Rings:{" "}
+                {RING_CHOICES_KM.map((km) => (
+                  <label key={km} style={{ marginRight: 8 }}>
+                    <input type="checkbox" checked={rings.includes(km)} onChange={(e) => setRings((r) => (e.target.checked ? [...r, km] : r.filter((x) => x !== km)))} /> {km} km
+                  </label>
+                ))}
+              </div>
             </div>
           </Popup>
         </CircleMarker>
