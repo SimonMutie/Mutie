@@ -1142,6 +1142,8 @@ export interface LiveLayerFeature {
      *  what each value means and how it's derived. Undefined on every
      *  other layer. */
     aviationClass?: "commercial" | "private" | "military";
+    /** Air-traffic only: heading in degrees from north, when the aircraft reports it. */
+    heading?: number;
     /** Space Tracking only — see the backend's SATELLITE_CATEGORY_GROUPS
      *  for exactly which real CelesTrak group(s) each value is sourced
      *  from. Undefined on every other layer. */
