@@ -1417,6 +1417,22 @@ export interface FireHistoryDays {
   lastRun?: { startedAt: string; finishedAt: string | null; status: string | null; fetched: number; inserted: number; truncated: string | null; error: string | null } | null;
 }
 
+export interface ConnectivityResult {
+  countries: {
+    code: string;
+    name: string;
+    numeric: string;
+    level: "normal" | "degraded" | "severe" | "unmeasured";
+    ratio: number | null;
+    signals: { datasource: string; baseline: number | null; current: number | null; ratio: number | null }[];
+    error: string | null;
+  }[];
+  baseline: { from: string; until: string };
+  current: { from: string; until: string };
+  diagnostics: { url: string; status: number | string; series: number; topLevelKeys: string[] }[];
+  fetchedAt: string;
+}
+
 export interface ActiveCountry {
   code: string;
   name: string;
@@ -2171,6 +2187,7 @@ export const api = {
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveFirmsFires: (window: "24h" | "7d" = "24h") => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/firms-fires?window=${window}`),
   /** Per-day fire counts from the stored history (collected every three hours). */
+  getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
   /** Fires over a span of days, one point per ~5 km cell with its count. */
   getFireHistoryRange: (from: string, to: string) => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/fire-history/range?from=${from}&to=${to}`),
