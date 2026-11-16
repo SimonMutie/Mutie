@@ -83,6 +83,8 @@ export async function discoverFeed(homepage: string): Promise<FeedDiscoveryResul
 
   const html = await tryFetch(homepage);
   if (html === null) return { status: "error", message: "homepage unreachable" };
+  // The address given is itself a feed (a source listed by its published RSS address, such as the BBC's).
+  if (looksLikeFeed(html)) return { status: "ok", feedUrl: homepage };
 
   const autodiscovered = extractAutodiscoveredFeed(html, homepage);
   if (autodiscovered) {
