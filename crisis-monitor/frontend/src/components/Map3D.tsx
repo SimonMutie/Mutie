@@ -143,6 +143,8 @@ interface Map3DProps {
   showDayNight: boolean;
   showBuildings: boolean;
   showTerrain: boolean;
+  /** Show the zoom and pan buttons. */
+  showNav?: boolean;
 }
 
 /** Everything the detail panel (Map3DDetailPanel) needs to render a
@@ -360,7 +362,7 @@ function toGeoJsonHeat(points: [number, number, number][] | null | undefined): G
   };
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, activeConflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, activeConflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain, showNav }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -961,11 +963,13 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
           <text x="16" y="3.6" textAnchor="middle" fontSize="5.2" fontWeight="700" fill="#e8e6e0" dominantBaseline="hanging">N</text>
         </svg>
       </button>
-      <MapNavPad
-        onZoomIn={() => mapRef.current?.zoomIn()}
-        onZoomOut={() => mapRef.current?.zoomOut()}
-        onPan={(dx, dy) => mapRef.current?.panBy([dx, dy])}
-      />
+      {showNav && (
+        <MapNavPad
+          onZoomIn={() => mapRef.current?.zoomIn()}
+          onZoomOut={() => mapRef.current?.zoomOut()}
+          onPan={(dx, dy) => mapRef.current?.panBy([dx, dy])}
+        />
+      )}
     </>
   );
 }
