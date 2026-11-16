@@ -1,0 +1,27 @@
+/* Pulses on the flat map: red for one serious incident, amber for a surge of incidents. Dashed means a single-source claim. */
+.incident-pulse-icon { background: none; border: 0; }
+.incident-pulse-ring {
+  position: absolute; left: 0; top: 0; border-radius: 50%;
+  width: var(--pulse-size); height: var(--pulse-size);
+  border: 2px solid var(--pulse-color);
+  opacity: 0; pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.3);
+  animation: incident-pulse 2.6s ease-out infinite;
+}
+.incident-pulse--claim .incident-pulse-ring { border-style: dashed; }
+.incident-pulse-ring--late { animation-delay: 0.87s; }
+.incident-pulse-ring--later { animation-delay: 1.74s; }
+.incident-pulse-core {
+  position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--pulse-color); border: 2px solid #fff; box-shadow: 0 0 10px var(--pulse-color); cursor: pointer;
+}
+.incident-pulse--claim .incident-pulse-core { background: #0b1220; border: 2px dashed var(--pulse-color); }
+@keyframes incident-pulse {
+  0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0.95; }
+  100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .incident-pulse-ring { animation: none; opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
+  .incident-pulse-ring--late, .incident-pulse-ring--later { display: none; }
+}
