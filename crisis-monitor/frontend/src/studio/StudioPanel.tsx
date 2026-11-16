@@ -451,9 +451,9 @@ export function StudioPanel({ shapes, nearby }: { shapes: SavedShape[]; nearby: 
   );
 
   return (
-    <div className="studio-panel" style={{ ...glass(), position: "absolute", top: 12, right: 76, zIndex: 500, width: 318, maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="studio-panel" style={{ ...glass(), position: "absolute", top: 12, right: 76, zIndex: 500, width: "min(400px, calc(100% - 100px))", maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.text, fontWeight: 700 }}>Map Studio</div>
+        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.text, fontWeight: 700 }}>Studio</div>
         <div style={{ fontSize: 10, color: HUD.textMuted }}>{shapes.length} on map</div>
       </div>
       <div style={{ display: "flex", gap: 5 }}>
