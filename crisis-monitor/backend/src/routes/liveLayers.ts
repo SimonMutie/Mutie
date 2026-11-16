@@ -15,7 +15,7 @@ import { conflictCountries, conflictProvinces, escalationWaves, type EscalationC
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
-import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
+import { africaChannelStatus, buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
@@ -633,6 +633,9 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
     120
   );
 });
+
+/** The Africa Telegram channels the Lens follows: who runs each, when it was last read and what came back. */
+liveLayersRouter.get("/telegram-channels", async (c) => c.json({ channels: await africaChannelStatus(c.env.DB), fetchedAt: new Date().toISOString() }));
 
 /** Where the map pulses: squares with a surge of incidents, and single incidents that are serious on their own. */
 liveLayersRouter.get("/incident-pulses", async (c) => {
@@ -2228,7 +2231,7 @@ liveLayersRouter.get("/osint-alerts", async (c) => {
     c.req.raw,
     async () => {
       const [wireFeed, africaSnapshot] = await Promise.all([
-        buildOsintFeed(),
+        buildOsintFeed(c.env.DB),
         c.env.AFRICA_WIRE_ACTOR.get(c.env.AFRICA_WIRE_ACTOR.idFromName("global"))
           .fetch("http://africa-wire-actor/snapshot")
           .then((r) => r.json<AfricaWireSnapshot>())
