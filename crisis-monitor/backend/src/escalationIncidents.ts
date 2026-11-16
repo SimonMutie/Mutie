@@ -286,7 +286,7 @@ async function gatherWireFeeds(): Promise<Candidate[]> {
 }
 
 /**
- * Posts from the Africa-focused Telegram channels (lib/osintFeed.ts). A post is its own text: there is no page
+ * Posts from the Telegram channels the Lens follows (lib/osintFeed.ts). A post is its own text: there is no page
  * behind it to read. English posts pass the same keyword filter as wire feeds; posts in other languages go to the
  * coder as they are, after the English ones. Every post is filed under the one outlet "t.me", so Telegram channels
  * never count as corroborating one another, and an incident known only from Telegram stays a single-source claim.
@@ -296,6 +296,8 @@ async function gatherTelegram(env: Env): Promise<Candidate[]> {
     const items = await fetchTelegramPostItems(env.DB);
     return items
       .filter((it) => !it.english || isCandidateText(it.text))
+      // The global channels mostly cover other wars: only their posts that mention somewhere in Africa are read.
+      .filter((it) => it.regional || mentionsAfrica(it.text))
       .filter((it) => !(Date.now() - Date.parse(it.published ?? "") > CANDIDATE_MAX_AGE_HOURS * 3600_000))
       .map((it) => ({
         id: hashId(canonicalUrl(it.link)),
