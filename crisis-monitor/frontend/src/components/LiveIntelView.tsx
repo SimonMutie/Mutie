@@ -94,6 +94,7 @@ import {
   type MarketsStatus,
   type ActiveCountry,
   type ConflictWave,
+  type IncidentPulse,
   type ActivityIndex,
   type IncidentItem,
   type IncidentFilters as IncidentFilterOptions,
@@ -115,6 +116,7 @@ import ConflictIntensityLegend from "./ConflictIntensityLegend";
 import FireTimeline, { FireMapLayer, fireRangeFrom, unusualFireDays, type FireRangeMode } from "./FireTimeline";
 import { DEFAULT_IMAGERY, IMAGERY_KEYS, ImageryControl, clampImageryDay, compareDay, imageryTemplate, type ImageryKey, type ImageryState } from "./ImageryOverlays";
 import { BeforeAfterLens, FireDownload, SunShadowTool, TerrainProfile, ViewPermalink, readViewParams } from "./MapTools";
+import { IncidentPulseLayer, pulsesAsWaves, useIncidentPulses } from "./IncidentPulses";
 import { ConnectivityLayer, ConnectivityPanel, useConnectivity } from "./Connectivity";
 import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
 import { MapSearchPanel } from "./MapSearch";
@@ -1335,6 +1337,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // whole new layer checkbox for one closely-related signal.
   // Countries with an escalation in the last 48 hours, coded by intensity; worked out on the server.
   const [conflictWaveRows, setConflictWaveRows] = useState<ConflictWave[]>([]);
+  // Places with a surge of incidents or one serious incident; see IncidentPulses.
+  const incidentPulses = useIncidentPulses();
   const [activeRows, setActiveRows] = useState<ActiveCountry[]>([]);
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   /** The conflict key is hidden until asked for, so it doesn't sit over the map. */
@@ -1447,8 +1451,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     [enabled["active-conflicts"], worldOutlines, activeRows]
   );
   const conflictWaveMap = useMemo(
-    () => waveFeatures(conflictWaveRows),
-    [conflictWaveRows]
+    () => waveFeatures([...conflictWaveRows, ...pulsesAsWaves(incidentPulses, conflictWaveRows)]),
+    [conflictWaveRows, incidentPulses]
   );
   const [territoryChangePolygons, setTerritoryChangePolygons] = useState<Map3DTerritoryChange[]>([]);
   useEffect(() => {
@@ -2169,6 +2173,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             points={flatMapPoints}
             activeConflictMap={activeConflictMap}
             conflictWaveRows={conflictWaveRows}
+            incidentPulses={incidentPulses}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2520,6 +2525,7 @@ function FlatMap({
   points,
   activeConflictMap,
   conflictWaveRows,
+  incidentPulses,
   onMapClick,
   drawMode,
   drawPoints,
@@ -2551,6 +2557,8 @@ function FlatMap({
   activeConflictMap?: FeatureCollection | null;
   /** Rings at escalations getting worse. */
   conflictWaveRows?: ConflictWave[];
+  /** Surges of incidents and single serious incidents, drawn as pulsing rings. */
+  incidentPulses?: IncidentPulse[];
   /** Set only while Drawing Tools, Route, or Shapes is the active
    *  right-side tool — its presence is literally what makes a map click do
    *  something. */
@@ -2608,6 +2616,7 @@ function FlatMap({
     return { ...DEFAULT_IMAGERY, key, day: key !== "none" ? linked.date : null };
   });
   const [connectivityOn, setConnectivityOn] = useState(false);
+  const [pulsesOn, setPulsesOn] = useState(true);
   const connectivity = useConnectivity(connectivityOn);
   const [regionView, setRegionView] = useState<RegionView | null>(null);
   const [regionSeq, setRegionSeq] = useState(0);
@@ -2661,6 +2670,7 @@ function FlatMap({
           })}
         />
       ))}
+      {pulsesOn && incidentPulses && incidentPulses.length > 0 && <IncidentPulseLayer pulses={incidentPulses} />}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
         <Polyline positions={drawPoints} pathOptions={{ color: "#ffd23f", weight: 2 }} />
@@ -2742,6 +2752,8 @@ function FlatMap({
       onWaves={setWaves}
       connectivity={connectivityOn}
       onConnectivity={setConnectivityOn}
+      pulses={pulsesOn}
+      onPulses={setPulsesOn}
     />
     </div>
     </>
