@@ -1417,6 +1417,22 @@ export interface FireHistoryDays {
   lastRun?: { startedAt: string; finishedAt: string | null; status: string | null; fetched: number; inserted: number; truncated: string | null; error: string | null } | null;
 }
 
+/** A place the map pulses: a surge of incidents, or one serious incident. */
+export interface IncidentPulse {
+  id: string;
+  kind: "concentration" | "impact";
+  lat: number;
+  lon: number;
+  size: 1 | 2 | 3;
+  /** False for a single-source or headline-only claim, drawn dashed. */
+  confirmed: boolean;
+  label: string;
+  reason: string;
+  incidents: number;
+  outlets: number;
+  fatalities: number | null;
+}
+
 export interface ConnectivityResult {
   countries: {
     code: string;
@@ -2187,6 +2203,7 @@ export const api = {
   getLiveUcdpConflictEvents: () => req<LiveLayerCollection>("/api/live-layers/ucdp-conflict-events"),
   getLiveFirmsFires: (window: "24h" | "7d" = "24h") => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/firms-fires?window=${window}`),
   /** Per-day fire counts from the stored history (collected every three hours). */
+  getIncidentPulses: () => req<{ pulses: IncidentPulse[]; basis: string; fetchedAt: string }>("/api/live-layers/incident-pulses"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
   /** Fires over a span of days, one point per ~5 km cell with its count. */
