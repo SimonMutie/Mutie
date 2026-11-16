@@ -1,22 +1,21 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api, type LiveBroadcast, type LiveLayerFeature, type NewsBloc, type OsintAlertItem, type WatchZone } from "../api";
+import { chip, hairline as line, input, muted, small, tag, text } from "./panelUi";
 
 /**
  * Live Alerts, after OSIRIS's panel (MIT, see THIRD_PARTY_NOTICES.md): one place for the reports coming in, the
  * standing warnings, recent earthquakes and the live news channels.
  *
  *  All       everything below, newest first
- *  News      Telegram and wire reports, with who carries them (Western, Russian-aligned, regional, independent)
+ *  News      wire reports, with who carries them (Western, Russian-aligned, regional, independent)
  *  Warnings  watch zones, each with the reports and escalation incidents that fall in it
  *  Quakes    magnitude 4.5 and above
  *  Feeds     live news channels
  *
+ * Telegram posts are not listed here: they are in the Telegram tool, with who runs each channel.
+ *
  * Grouping reports by zone is keyword matching: it groups reports, it does not verify them.
  */
-const text = "#e6edf7";
-const muted = "#93a1b8";
-const line = "1px solid rgba(124,156,255,0.12)";
-const ACCENT = "#FF4081";
 const BLOC: Record<NewsBloc, { short: string; color: string }> = {
   western: { short: "WEST", color: "#4F9CFF" },
   russian: { short: "RU-ALIGNED", color: "#A78BFA" },
@@ -28,9 +27,6 @@ const SEVERITY: Record<WatchZone["severity"], { label: string; color: string }> 
   high: { label: "HIGH TENSION", color: "#FF9500" },
   elevated: { label: "ELEVATED", color: "#FFD23F" },
 };
-const chip = (on: boolean): CSSProperties => ({ padding: "4px 9px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", color: on ? "#0b1220" : text, background: on ? ACCENT : "transparent", border: `1px solid ${on ? ACCENT : "rgba(124,156,255,0.25)"}`, borderRadius: 6, fontWeight: on ? 700 : 400 });
-const tag = (c: string): CSSProperties => ({ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.05em", color: c, border: `1px solid ${c}66`, borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap" });
-const small: CSSProperties = { padding: "2px 7px", fontSize: 10.5, fontFamily: "inherit", cursor: "pointer", color: "#9db4ff", background: "transparent", border: "1px solid rgba(124,156,255,0.25)", borderRadius: 5 };
 
 export function timeAgo(iso: string | number | null | undefined): string {
   if (iso == null) return "";
@@ -75,7 +71,8 @@ export default function LiveAlertsPanel({ onLocate, pinsOn, onTogglePins, warnin
     setRefreshing(true);
     const errs: string[] = [];
     await Promise.all([
-      api.getOsintAlerts().then((r) => setAlerts(r.alerts)).catch(() => errs.push("reports")),
+      // Telegram posts live in the Telegram tool (and the Telegram Posts layer), so they are not listed twice.
+      api.getOsintAlerts().then((r) => setAlerts(r.alerts.filter((a) => !a.source.startsWith("t.me/")))).catch(() => errs.push("reports")),
       api.getWatchZones().then((r) => setZones(r.zones)).catch(() => errs.push("warnings")),
       api.getLiveEarthquakes().then((r) => setQuakes(r.features)).catch(() => errs.push("earthquakes")),
       api.getLiveBroadcasts().then((r) => setFeeds(r.broadcasts)).catch(() => errs.push("live channels")),
@@ -224,11 +221,11 @@ export default function LiveAlertsPanel({ onLocate, pinsOn, onTogglePins, warnin
         ))}
       </div>
       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search alerts" aria-label="Search alerts" style={{ flex: 1, fontFamily: "inherit", fontSize: 12, padding: "5px 8px", background: "#0b1422", color: text, border: "1px solid rgba(124,156,255,0.25)", borderRadius: 6 }} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search alerts" aria-label="Search alerts" style={{ ...input, flex: 1 }} />
         <button style={small} onClick={load} disabled={refreshing}>{refreshing ? "…" : "Refresh"}</button>
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 11, color: muted }}>
-        <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={pinsOn} onChange={(e) => onTogglePins(e.target.checked)} /> Pin reports on map</label>
+        <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={pinsOn} onChange={(e) => onTogglePins(e.target.checked)} /> Pin these reports on map</label>
         <label style={{ display: "flex", gap: 4, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={warningsOn} onChange={(e) => onToggleWarnings(e.target.checked)} /> Show warnings on map</label>
       </div>
       {tab === "news" && (
@@ -248,7 +245,7 @@ export default function LiveAlertsPanel({ onLocate, pinsOn, onTogglePins, warnin
         {!alerts && !zones && errors.length === 0 && <div style={{ color: muted, fontSize: 11 }}>Loading alerts…</div>}
       </div>
       <div style={{ color: muted, fontSize: 10.5, lineHeight: 1.45 }}>
-        Warnings are standing watch zones: their severity is an Afrilens editorial rating of the situation, not a live measurement. They differ from escalation alerts, which are raised only when a major event has happened in the past two days. Reports are grouped under a zone by the places they name; that groups them, it does not verify them.
+        Warnings are standing watch zones: their severity is an Afrilens editorial rating of the situation, not a live measurement. They differ from escalation alerts, which are raised only when a major event has happened in the past two days. Reports are grouped under a zone by the places they name; that groups them, it does not verify them. Telegram posts are in the Telegram tool.
       </div>
     </div>
   );
