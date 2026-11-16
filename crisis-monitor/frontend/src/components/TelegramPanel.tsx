@@ -31,6 +31,10 @@ function ago(iso: string | null): string {
 
 type Scope = "africa" | "all";
 
+/** A channel that posted within the last month is slow, not dead. */
+const QUIET_DAYS = 30;
+const isQuiet = (latest: string | null) => !!latest && Date.now() - Date.parse(latest) <= QUIET_DAYS * 86_400_000;
+
 export default function TelegramPanel() {
   const [view, setView] = useState<"posts" | "channels">("posts");
   const [scope, setScope] = useState<Scope>("africa");
@@ -69,7 +73,9 @@ export default function TelegramPanel() {
     [posts, scope, africa, channel]
   );
   const live = (channels ?? []).filter((c) => c.posts72h > 0).length;
-  const silent = (channels ?? []).filter((c) => c.fetchedAt && c.posts72h === 0);
+  const silentAll = (channels ?? []).filter((c) => c.fetchedAt && c.posts72h === 0);
+  const quiet = silentAll.filter((c) => isQuiet(c.latest));
+  const silent = silentAll.filter((c) => !isQuiet(c.latest));
   const waiting = (channels ?? []).filter((c) => !c.fetchedAt).length;
 
   return (
@@ -82,7 +88,8 @@ export default function TelegramPanel() {
       {channels && (
         <div style={{ fontSize: 11, color: muted, lineHeight: 1.45 }}>
           {live} of {channels.length} Africa channels have posts from the last 72 hours.
-          {silent.length > 0 && <> {silent.length} returned nothing.</>}
+          {quiet.length > 0 && <> {quiet.length} {quiet.length === 1 ? "is" : "are"} quiet (no post in 72 hours, but one in the last month).</>}
+          {silent.length > 0 && <> {silent.length} look dead or closed.</>}
           {waiting > 0 && <> {waiting} {waiting === 1 ? "has" : "have"} not been read yet; the Lens reads six at a time, so a new list fills in over about half an hour.</>}
         </div>
       )}
@@ -96,7 +103,7 @@ export default function TelegramPanel() {
               <select value={channel} onChange={(e) => setChannel(e.target.value)} aria-label="Channel" style={{ fontFamily: "inherit", fontSize: 11, padding: "4px 6px", background: "#0b1422", color: text, border: "1px solid rgba(124,156,255,0.25)", borderRadius: 6, maxWidth: 190 }}>
                 <option value="">Every channel</option>
                 {channels.filter((c) => c.posts72h > 0).map((c) => (
-                  <option key={c.handle} value={c.handle}>{c.name} ({c.posts72h})</option>
+                  <option key={c.handle} value={c.handle}>{c.name} ({c.posts72h >= 20 ? "20+" : c.posts72h})</option>
                 ))}
               </select>
             )}
@@ -137,14 +144,14 @@ export default function TelegramPanel() {
               .slice()
               .sort((a, b) => b.posts72h - a.posts72h || a.name.localeCompare(b.name))
               .map((c) => {
-                const state = !c.fetchedAt ? "waiting" : c.posts72h > 0 ? "live" : "silent";
+                const state = !c.fetchedAt ? "waiting" : c.posts72h > 0 ? "live" : isQuiet(c.latest) ? "quiet" : "silent";
                 const colour = state === "live" ? "#4dff9e" : state === "silent" ? "#ff8f8f" : "#ffd23f";
                 return (
                   <div key={c.handle} style={{ padding: "8px 0", borderBottom: line }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
                       <a href={`https://t.me/s/${c.handle}`} target="_blank" rel="noreferrer" style={{ color: text, textDecoration: "none", fontWeight: 600 }}>{c.name}</a>
                       <span style={{ color: colour, fontSize: 11, whiteSpace: "nowrap" }}>
-                        {state === "live" ? `${c.posts72h} posts in 72 h` : state === "silent" ? "nothing returned" : "not read yet"}
+                        {state === "live" ? `${c.posts72h >= 20 ? "20+" : c.posts72h} ${c.posts72h === 1 ? "post" : "posts"} in 72 h` : state === "quiet" ? "quiet" : state === "silent" ? "dead or closed" : "not read yet"}
                       </span>
                     </div>
                     <div style={{ color: muted, fontSize: 10.5, lineHeight: 1.45, marginTop: 2 }}>
@@ -156,7 +163,8 @@ export default function TelegramPanel() {
                       {c.latest ? ` · newest post ${ago(c.latest)}` : ""}
                       {!c.seenInSearch ? " · handle not confirmed when added" : ""}
                     </div>
-                    {state === "silent" && <div style={{ color: "#ff8f8f", fontSize: 10.5, lineHeight: 1.45 }}>{c.status === "ok" ? "The channel was read but has no posts from the last 72 hours." : c.status}</div>}
+                    {state === "quiet" && <div style={{ color: "#ffd23f", fontSize: 10.5, lineHeight: 1.45 }}>Read without a problem; it has not posted in the last 72 hours.</div>}
+                    {state === "silent" && <div style={{ color: "#ff8f8f", fontSize: 10.5, lineHeight: 1.45 }}>{c.status === "ok" ? "The channel exists but has not posted for more than a month." : c.status}</div>}
                   </div>
                 );
               })}
