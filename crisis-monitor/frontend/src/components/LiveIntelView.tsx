@@ -738,6 +738,32 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Telescope,
     fetcher: async () => fromGateway("#ffd23f", "Stations / Telescopes", (f) => f.properties.satelliteCategory === "stations-telescopes")(await api.getLiveSatellites()),
   },
+  // Telegram posts that name a place the Lens can put on the map. The point sits at that country's or region's
+  // centre, not at the event: the incident pipeline is what locates events properly, and Telegram posts feed it too.
+  {
+    key: "telegram-posts",
+    label: "Telegram Posts",
+    group: "Threats & Intel",
+    color: "#2aabee",
+    icon: Send,
+    fetcher: async () => {
+      const feed = await api.getOsintAlerts();
+      return feed.alerts
+        .filter((a) => a.coords && a.source.startsWith("t.me/"))
+        .map((a): GlobePoint => ({
+          id: `tg:${a.id}`,
+          layerKey: "Telegram Posts",
+          lat: a.coords![0],
+          lng: a.coords![1],
+          color: "#2aabee",
+          size: a.flag === "BREAKING" ? 0.2 : 0.12,
+          title: `${a.flag === "BREAKING" ? "BREAKING: " : ""}${a.title}`,
+          subtitle: `${a.source_name}${a.lean ? ` (${a.lean})` : ""} · unverified Telegram post, placed at ${a.coords_anchor ?? "the country"}'s centre, not at the event${a.also_reported_by.length ? ` · also on ${a.also_reported_by.length} other channel(s)` : ""}`,
+          time: a.published,
+          url: a.link,
+        }));
+    },
+  },
   // "OSINT Alerts" and "Live Broadcasts" — Media group. Both adapted from
   // OSIRIS (github.com/simplifaisoul/osiris, MIT license); see the backend
   // routes (osint-alerts, live-broadcasts) for the full source roster and
@@ -999,6 +1025,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "satellites-stations-telescopes": false,
     "my-incidents": false,
     "osint-alerts": false,
+    "telegram-posts": true,
     "live-broadcasts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
     // chokepoints) — this toggles the shipping-lane arcs (maritimeLanes,
