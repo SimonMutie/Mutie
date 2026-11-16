@@ -1563,6 +1563,18 @@ export async function getMapIncidents(env: Env): Promise<IncidentView[]> {
   return rows.map(toIncidentView);
 }
 
+/** Where and when every located incident of the last `days` days was, whatever became of it. Used as the baseline for map pulses. */
+export async function getIncidentHistoryPoints(env: Env, days: number): Promise<{ lat: number; lon: number; when: string }[]> {
+  await ensureTables(env);
+  const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  return all<{ lat: number; lon: number; when: string }>(
+    env.DB,
+    `SELECT lat, lon, COALESCE(last_event_date, substr(updated_at, 1, 10)) AS "when" FROM escalation_incidents
+     WHERE headline IS NOT NULL AND geo_precision IN ('place','approximate','region') AND COALESCE(last_event_date, substr(updated_at, 1, 10)) >= ?`,
+    [since]
+  );
+}
+
 export async function getIncident(env: Env, id: string): Promise<IncidentView | null> {
   await ensureTables(env);
   const row = await first<IncidentDbRow>(env.DB, "SELECT * FROM escalation_incidents WHERE id = ?", [id]);
