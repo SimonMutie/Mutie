@@ -15,10 +15,12 @@ import { conflictCountries, conflictProvinces, escalationWaves, type EscalationC
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
 import { INDICATORS, EXCLUSIONS, ACTIVE_WINDOW_HOURS, MASS_CASUALTY_THRESHOLD, NOTABLE_FATALITY_THRESHOLD, MULTI_DOMAIN_POSTURE_COUNT } from "../lib/escalationCodebook";
 import { analyseAddress, detectChain, capabilities as chainCapabilities } from "../lib/chainIntel";
-import { africaChannelStatus, buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
+import { africaChannelStatus, buildOsintFeed, type OsintAlertItem, fetchWireArticleItems, fetchTelegramPostItems } from "../lib/osintFeed";
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
+import { buildZones } from "../lib/watchZones";
+import { readRadar } from "../lib/cloudflareRadar";
 import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCollector";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
 
@@ -62,7 +64,7 @@ export interface NormalizedFeature {
     /** Air-traffic only — see the classifier just above the /air-traffic
      *  route for exactly what each value means and how confident it is.
      *  Every other layer leaves this undefined. */
-    aviationClass?: "commercial" | "private" | "military";
+    aviationClass?: "commercial" | "private" | "jet" | "military";
     /** Air traffic only: heading in degrees from north. */
     heading?: number;
     /** Space Tracking only — see SATELLITE_CATEGORY_GROUPS just above the
@@ -650,6 +652,36 @@ liveLayersRouter.get("/situation-events", async (c) => {
 /** GPS interference squares from aircraft accuracy reports; see lib/gpsInterference.ts. */
 liveLayersRouter.get("/gps-interference", async (c) => cachedJson(c.req.raw, async () => ({ ...(await gpsInterference(c.env.DB)), fetchedAt: new Date().toISOString() }), 300));
 
+/** Watch zones: standing warnings over Africa and Middle East theatres, with the headlines and Telegram posts that name
+ *  them and the escalation incidents inside them (lib/watchZones.ts). */
+liveLayersRouter.get("/watch-zones", async (c) =>
+  cachedJson(
+    c.req.raw,
+    async () => {
+      const [wire, telegram, incidents] = await Promise.all([
+        fetchWireArticleItems().catch(() => []),
+        fetchTelegramPostItems(c.env.DB).catch(() => []),
+        getMapIncidents(c.env).catch(() => []),
+      ]);
+      const items = [
+        ...wire.map((w) => ({ title: w.title, text: w.description, link: w.link, source: w.domain, published: w.published, telegram: false })),
+        ...telegram.map((t) => ({ title: t.title.replace(/ \(Telegram: [^)]*\)$/, ""), text: t.text, link: t.link, source: `${t.channel} (Telegram)`, published: t.published, telegram: true })),
+      ];
+      return {
+        zones: buildZones(items, incidents),
+        basis: "Zones and their severity are an Afrilens editorial rating of the standing situation, not a live measurement. Headlines are matched by the places they name; incidents are the Lens's own escalation incidents inside each zone.",
+        fetchedAt: new Date().toISOString(),
+      };
+    },
+    300
+  )
+);
+
+/** Internet outages confirmed by Cloudflare and the origins of network-layer attacks (lib/cloudflareRadar.ts). */
+liveLayersRouter.get("/cloudflare-radar", async (c) =>
+  cachedJson(c.req.raw, async () => ({ ...(await readRadar((c.env as unknown as { CLOUDFLARE_RADAR_TOKEN?: string }).CLOUDFLARE_RADAR_TOKEN, COUNTRY_CENTROIDS)), fetchedAt: new Date().toISOString() }), 900)
+);
+
 /** Where the map pulses: squares with a surge of incidents, and single incidents that are serious on their own. */
 liveLayersRouter.get("/incident-pulses", async (c) => {
   return cachedJson(
@@ -699,6 +731,19 @@ const US_MILITARY_ICAO24_MIN = 0xadf000;
 const US_MILITARY_ICAO24_MAX = 0xafffff;
 const COMMERCIAL_CALLSIGN_RE = /^[A-Z]{3}\d{1,4}[A-Z]?$/;
 
+/** ICAO type designators of business jets, so private aircraft that are business jets can be shown on their own (as OSIRIS does). */
+const BUSINESS_JET_TYPES = new Set([
+  "GLF4", "GLF5", "GLF6", "GL5T", "GL7T", "GL8T", "GLEX", "G150", "G200", "G280", "GALX", "ASTR",
+  "C25A", "C25B", "C25C", "C25M", "C500", "C501", "C510", "C525", "C550", "C560", "C56X", "C650", "C680", "C68A", "C700", "C750",
+  "CL30", "CL35", "CL60", "CL64", "CRJ2", "F2TH", "F900", "FA10", "FA20", "FA50", "FA6X", "FA7X", "FA8X",
+  "E35L", "E50P", "E55P", "E545", "E550", "LJ31", "LJ35", "LJ40", "LJ45", "LJ55", "LJ60", "LJ70", "LJ75",
+  "H25A", "H25B", "H25C", "HA4T", "PC24", "BE40", "PRM1", "HDJT", "SF50", "EA50", "BCS1", "BBJ1", "BBJ2",
+]);
+/** A private aircraft whose type is a business jet becomes "jet"; anything else is unchanged. */
+function jetOr(cls: "commercial" | "private" | "military", type: string | null): "commercial" | "private" | "jet" | "military" {
+  return cls === "private" && type && BUSINESS_JET_TYPES.has(type.toUpperCase()) ? "jet" : cls;
+}
+
 function classifyAviation(icao24: string, callsign: string | null): "commercial" | "private" | "military" {
   const hex = Number.parseInt(icao24, 16);
   if (!Number.isNaN(hex) && hex >= US_MILITARY_ICAO24_MIN && hex <= US_MILITARY_ICAO24_MAX) return "military";
@@ -745,7 +790,7 @@ liveLayersRouter.get("/air-traffic", async (c) => {
             intensityLabel: [spd != null ? `${spd} kt` : null, alt != null ? `${alt.toLocaleString("en-GB")} ft` : null, trk != null ? `heading ${trk}°` : null].filter(Boolean).join(" · ") || "in flight",
             detail: [type, reg].filter(Boolean).join(" · ") || "adsb.lol",
             url: null,
-            aviationClass: mil ? "military" : classifyAviation(hex, callsign),
+            aviationClass: mil ? "military" : jetOr(classifyAviation(hex, callsign), type),
             ...(trk != null ? { heading: trk } : {}),
           },
         });
@@ -828,7 +873,7 @@ async function fetchOpenSky(): Promise<NormalizedFeature[]> {
  *  than reporting an honest, coarser one. Only the countries actually
  *  likely to show up in a global malware-infrastructure feed are included;
  *  an unlisted code is skipped entirely rather than plotted at (0, 0). */
-const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
+export const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
   US: [39.8, -98.6], CA: [56.1, -106.3], MX: [23.6, -102.5], BR: [-14.2, -51.9], AR: [-38.4, -63.6],
   GB: [55.4, -3.4], IE: [53.4, -8.2], FR: [46.2, 2.2], DE: [51.2, 10.5], NL: [52.1, 5.3],
   BE: [50.5, 4.5], LU: [49.8, 6.1], CH: [46.8, 8.2], AT: [47.5, 14.6], IT: [41.9, 12.6],
