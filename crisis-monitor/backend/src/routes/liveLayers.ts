@@ -63,6 +63,8 @@ export interface NormalizedFeature {
      *  route for exactly what each value means and how confident it is.
      *  Every other layer leaves this undefined. */
     aviationClass?: "commercial" | "private" | "military";
+    /** Air traffic only: heading in degrees from north. */
+    heading?: number;
     /** Space Tracking only — see SATELLITE_CATEGORY_GROUPS just above the
      *  /satellites route for exactly which real CelesTrak group(s) each
      *  value is sourced from. Every other layer leaves this undefined. */
@@ -744,6 +746,7 @@ liveLayersRouter.get("/air-traffic", async (c) => {
             detail: [type, reg].filter(Boolean).join(" · ") || "adsb.lol",
             url: null,
             aviationClass: mil ? "military" : classifyAviation(hex, callsign),
+            ...(trk != null ? { heading: trk } : {}),
           },
         });
       }
@@ -795,7 +798,7 @@ async function fetchOpenSky(): Promise<NormalizedFeature[]> {
   };
   const features: NormalizedFeature[] = [];
   for (const s of raw.states ?? []) {
-    const [icao24, callsign, originCountry, , , lon, lat, , onGround, velocity] = s;
+    const [icao24, callsign, originCountry, , , lon, lat, , onGround, velocity, heading] = s as unknown as [string, string | null, string, number | null, number | null, number | null, number | null, number | null, boolean, number | null, number | null];
     if (lon == null || lat == null || onGround) continue;
     const speedKts = velocity != null ? velocity * 1.94384 : 0;
     features.push({
@@ -810,6 +813,7 @@ async function fetchOpenSky(): Promise<NormalizedFeature[]> {
         detail: originCountry,
         url: null,
         aviationClass: classifyAviation(icao24, callsign),
+        ...(heading != null ? { heading: Math.round(heading) } : {}),
       },
     });
   }
