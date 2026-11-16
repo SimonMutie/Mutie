@@ -1,24 +1,13 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api, type OsintAlertItem, type TelegramChannelStatus } from "../api";
+import { chip, hairline as line, muted, text } from "./panelUi";
 
 /**
  * The Telegram tool: the latest posts from the channels the Lens follows, and a list of those channels showing
  * which are being read and which have returned nothing. Telegram is unvetted, so every post carries a note on who
  * runs the channel, and nothing here counts as confirmation on its own.
  */
-const text = "#e6edf7";
-const muted = "#93a1b8";
-const line = "1px solid rgba(124,156,255,0.12)";
-const tab = (on: boolean): CSSProperties => ({
-  padding: "5px 10px",
-  fontSize: 11,
-  fontFamily: "inherit",
-  cursor: "pointer",
-  color: text,
-  background: on ? "rgba(124,156,255,0.22)" : "transparent",
-  border: "1px solid rgba(124,156,255,0.25)",
-  borderRadius: 6,
-});
+const tab = chip;
 
 function ago(iso: string | null): string {
   if (!iso) return "never";
