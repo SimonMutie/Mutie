@@ -126,7 +126,9 @@ import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type Re
 import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
-import FlightsPanel, { type SelectedAircraft } from "./FlightsPanel";
+import FlightCard, { type SelectedAircraft } from "./FlightCard";
+import { AircraftMarkers } from "./AircraftMarkers";
+import { AIRCRAFT_LAYER_KEYS } from "./planeIcon";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -295,9 +297,6 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    device sweeps).
  */
 
-/** Layer keys whose points are aircraft, which can be clicked to trace. */
-const AIRCRAFT_LAYER_KEYS = new Set(["Commercial Flights", "Private Aircraft", "Military Aircraft"]);
-
 /** Keeps the flat map centred on a moving point. */
 function FollowPoint({ at }: { at: LatLng }) {
   const map = useMap();
@@ -339,6 +338,8 @@ interface GlobePoint {
   /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
    *  Undefined on every other layer. */
   escalationLevel?: "watch" | "elevated" | "critical";
+  /** Aircraft only: heading in degrees from north, to turn the plane symbol. */
+  heading?: number;
   /** Conflict Escalation only — used to fetch the full evidence/source-link
    *  list for this country on click. Undefined on every other layer. */
   countryCode?: string;
@@ -402,6 +403,7 @@ function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeat
         // this. Kept small and in a narrow range on purpose to match that
         // crisp, minimal feel rather than the bigger default scale.
         size: 0.1 + f.properties.intensity * 0.16,
+        ...(typeof f.properties.heading === "number" ? { heading: f.properties.heading } : {}),
         title: f.properties.title,
         subtitle: `${f.properties.intensityLabel}${f.properties.detail ? ` — ${f.properties.detail}` : ""}`,
         time: f.properties.time,
@@ -978,7 +980,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "flights" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -1715,6 +1717,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, []);
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
+  // Following on the 3D map: keep the globe centred on the aircraft's latest position.
+  useEffect(() => {
+    if (!followAircraft || mapMode !== "3d" || !globeMap) return;
+    const last = aircraftTrack?.points[aircraftTrack.points.length - 1];
+    if (last) globeMap.easeTo({ center: [last.lon, last.lat], duration: 800 });
+  }, [followAircraft, aircraftTrack, mapMode, globeMap]);
   const studioState = useStudio();
   // Corners of a measured line or area, and a route's start and end, can be dragged to adjust them.
   const editPoints: EditPoint[] =
@@ -2297,7 +2305,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onMapReady={setGlobeMap}
             heatPoints={globeHeatPoints}
             heatStyle={incidentHeatmapStyle}
-            onFeatureSelect={setMap3DSelectedFeature}
+            onFeatureSelect={(f) => {
+              if (f && f.kind === "point" && AIRCRAFT_LAYER_KEYS.has(f.layerKey)) {
+                setSelectedAircraft({ hex: f.id, label: f.title });
+                setMap3DSelectedFeature(null);
+                return;
+              }
+              setMap3DSelectedFeature(f);
+            }}
             showDayNight={showDayNight}
             showBuildings={showBuildings}
             showTerrain={showTerrain}
@@ -2311,7 +2326,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             incidentPulses={incidentPulses}
             aircraftTrack={aircraftTrackLine}
             followAircraft={followAircraft}
-            onAircraftClick={(hex, label) => { setSelectedAircraft({ hex, label }); setActiveTool("flights"); setRightOpen(true); }}
+            onAircraftClick={(hex, label) => setSelectedAircraft({ hex, label })}
+            selectedAircraftId={selectedAircraft?.hex ?? null}
             onLayersOn={(keys) => setEnabled((prev) => ({ ...prev, ...Object.fromEntries(keys.map((k) => [k, true])) }))}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
@@ -2345,6 +2361,20 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
         {mapMode === "3d" && (
           <Map3DDetailPanel feature={map3DSelectedFeature} onClose={() => setMap3DSelectedFeature(null)} />
+        )}
+
+        {selectedAircraft && (
+          <FlightCard
+            selected={selectedAircraft}
+            onClose={() => { setSelectedAircraft(null); setFollowAircraft(false); }}
+            hours={trackHours}
+            onHours={setTrackHours}
+            follow={followAircraft}
+            onFollow={setFollowAircraft}
+            track={aircraftTrack}
+            trackError={aircraftTrackError}
+            bottom={fireOn && fireHistory && fireHistory.days.length > 0 ? 150 : 16}
+          />
         )}
 
         {fireOn && fireHistory && fireHistory.days.length > 0 && (
@@ -2541,20 +2571,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {rightTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
-        {rightTool === "flights" && (
-          <ToolPanelShell title="Flights">
-            <FlightsPanel
-              selected={selectedAircraft}
-              onSelect={(a) => { setSelectedAircraft(a); if (!a) setFollowAircraft(false); }}
-              hours={trackHours}
-              onHours={setTrackHours}
-              follow={followAircraft}
-              onFollow={setFollowAircraft}
-              track={aircraftTrack}
-              trackError={aircraftTrackError}
-            />
-          </ToolPanelShell>
-        )}
         {rightTool === "events" && (
           <ToolPanelShell title="Humanitarian & political events">
             <SituationPanel />
@@ -2692,6 +2708,7 @@ function FlatMap({
   aircraftTrack,
   followAircraft,
   onAircraftClick,
+  selectedAircraftId,
   onLayersOn,
   onMapClick,
   drawMode,
@@ -2732,6 +2749,8 @@ function FlatMap({
   followAircraft?: boolean;
   /** An aircraft marker was clicked: trace it. */
   onAircraftClick?: (hex: string, label: string) => void;
+  /** The traced aircraft, drawn highlighted. */
+  selectedAircraftId?: string | null;
   /** Switches map layers on, for region presets such as the Red Sea view. */
   onLayersOn?: (keys: string[]) => void;
   /** Set only while Drawing Tools, Route, or Shapes is the active
@@ -2868,7 +2887,8 @@ function FlatMap({
             <LeafletTooltip direction="center">{r.name}</LeafletTooltip>
           </Polyline>
         ))}
-      {points.map((p) =>
+      <AircraftMarkers points={points.filter((p) => AIRCRAFT_LAYER_KEYS.has(p.layerKey))} selectedId={selectedAircraftId ?? null} onSelect={(id, title) => onAircraftClick?.(id, title)} />
+      {points.filter((p) => !AIRCRAFT_LAYER_KEYS.has(p.layerKey)).map((p) =>
         p.escalationLevel && p.incident ? (
           <EscalationFlatMarker key={`${p.layerKey}:${p.id}`} lat={p.lat} lng={p.lng} size={p.size} color={p.color} incident={p.incident} />
         ) : (
@@ -2881,9 +2901,7 @@ function FlatMap({
           eventHandlers={
             p.escalationLevel
               ? { click: () => openLiveuamap(liveuamapLink(p.incident?.countryCode ?? p.countryCode, p.lat, p.lng, p.incident?.geoPrecision)) }
-              : AIRCRAFT_LAYER_KEYS.has(p.layerKey) && onAircraftClick
-                ? { click: () => onAircraftClick(p.id, p.title) }
-                : undefined
+              : undefined
           }
         >
           <LeafletTooltip direction="top">
@@ -3865,7 +3883,6 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "telegram", icon: Send, label: "Telegram" },
     { key: "events", icon: HeartPulse, label: "Events" },
-    { key: "flights", icon: Plane, label: "Flights" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const alertsPaused = useAlertsPaused();
