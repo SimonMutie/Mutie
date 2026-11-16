@@ -98,6 +98,7 @@ import {
   type ConflictWave,
   type IncidentPulse,
   type SituationEvent,
+  type AircraftTrack,
   type ActivityIndex,
   type IncidentItem,
   type IncidentFilters as IncidentFilterOptions,
@@ -125,6 +126,7 @@ import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type Re
 import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
+import FlightsPanel, { type SelectedAircraft } from "./FlightsPanel";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
@@ -292,6 +294,18 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    Toolkit" (port/MAC/IP scanning, self-track) and "Marauder" (Bluetooth
  *    device sweeps).
  */
+
+/** Layer keys whose points are aircraft, which can be clicked to trace. */
+const AIRCRAFT_LAYER_KEYS = new Set(["Commercial Flights", "Private Aircraft", "Military Aircraft"]);
+
+/** Keeps the flat map centred on a moving point. */
+function FollowPoint({ at }: { at: LatLng }) {
+  const map = useMap();
+  useEffect(() => {
+    map.panTo(at, { animate: true });
+  }, [map, at[0], at[1]]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
 
 /** Map points for humanitarian or political events; bigger for higher severity, labelled with their sourcing. */
 function situationPoints(events: SituationEvent[], layerKey: string, color: string): GlobePoint[] {
@@ -964,7 +978,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "flights" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -1433,6 +1447,30 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [conflictWaveRows, setConflictWaveRows] = useState<ConflictWave[]>([]);
   // Places with a surge of incidents or one serious incident; see IncidentPulses.
   const incidentPulses = useIncidentPulses();
+  // A traced aircraft: its stored track, refreshed every minute while it is selected.
+  const [selectedAircraft, setSelectedAircraft] = useState<SelectedAircraft | null>(null);
+  const [trackHours, setTrackHours] = useState(24);
+  const [followAircraft, setFollowAircraft] = useState(false);
+  const [aircraftTrack, setAircraftTrack] = useState<AircraftTrack | null>(null);
+  const [aircraftTrackError, setAircraftTrackError] = useState<string | null>(null);
+  useEffect(() => {
+    setAircraftTrack(null);
+    setAircraftTrackError(null);
+    if (!selectedAircraft) return;
+    let cancelled = false;
+    const load = () =>
+      api
+        .getAircraftTrack(selectedAircraft.hex, trackHours)
+        .then((t) => !cancelled && (setAircraftTrack(t), setAircraftTrackError(null)))
+        .catch((e) => !cancelled && setAircraftTrackError(e instanceof Error ? e.message : "Track unavailable"));
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [selectedAircraft, trackHours]);
+  const aircraftTrackLine = useMemo<LatLng[]>(() => (aircraftTrack?.points ?? []).map((p) => [p.lat, p.lon] as LatLng), [aircraftTrack]);
   const [activeRows, setActiveRows] = useState<ActiveCountry[]>([]);
   const [activeConfigured, setActiveConfigured] = useState<boolean | null>(null);
   /** The conflict key is hidden until asked for, so it doesn't sit over the map. */
@@ -2193,10 +2231,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       .filter((r) => r.visible)
       .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
       .filter((p) => p.points.length >= 2);
-    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays];
+    const flightPath = aircraftTrackLine.length >= 2 ? [{ points: aircraftTrackLine, label: selectedAircraft?.label ?? "Flight track", color: "#ffd23f", width: 3 }] : [];
+    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays, ...flightPath];
   }, [
     enabled["maritime-lines"],
     maritimeLanes,
+    aircraftTrackLine,
+    selectedAircraft,
     enabled["submarine-cables"],
     submarineCables,
     drawMode,
@@ -2268,6 +2309,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             activeConflictMap={activeConflictMap}
             conflictWaveRows={conflictWaveRows}
             incidentPulses={incidentPulses}
+            aircraftTrack={aircraftTrackLine}
+            followAircraft={followAircraft}
+            onAircraftClick={(hex, label) => { setSelectedAircraft({ hex, label }); setActiveTool("flights"); setRightOpen(true); }}
             onLayersOn={(keys) => setEnabled((prev) => ({ ...prev, ...Object.fromEntries(keys.map((k) => [k, true])) }))}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
@@ -2497,6 +2541,20 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {rightTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
+        {rightTool === "flights" && (
+          <ToolPanelShell title="Flights">
+            <FlightsPanel
+              selected={selectedAircraft}
+              onSelect={(a) => { setSelectedAircraft(a); if (!a) setFollowAircraft(false); }}
+              hours={trackHours}
+              onHours={setTrackHours}
+              follow={followAircraft}
+              onFollow={setFollowAircraft}
+              track={aircraftTrack}
+              trackError={aircraftTrackError}
+            />
+          </ToolPanelShell>
+        )}
         {rightTool === "events" && (
           <ToolPanelShell title="Humanitarian & political events">
             <SituationPanel />
@@ -2631,6 +2689,9 @@ function FlatMap({
   activeConflictMap,
   conflictWaveRows,
   incidentPulses,
+  aircraftTrack,
+  followAircraft,
+  onAircraftClick,
   onLayersOn,
   onMapClick,
   drawMode,
@@ -2665,6 +2726,12 @@ function FlatMap({
   conflictWaveRows?: ConflictWave[];
   /** Surges of incidents and single serious incidents, drawn as pulsing rings. */
   incidentPulses?: IncidentPulse[];
+  /** The traced aircraft's positions, oldest first; drawn as a line. */
+  aircraftTrack?: LatLng[];
+  /** Keep the map centred on the traced aircraft's latest position. */
+  followAircraft?: boolean;
+  /** An aircraft marker was clicked: trace it. */
+  onAircraftClick?: (hex: string, label: string) => void;
   /** Switches map layers on, for region presets such as the Red Sea view. */
   onLayersOn?: (keys: string[]) => void;
   /** Set only while Drawing Tools, Route, or Shapes is the active
@@ -2811,7 +2878,13 @@ function FlatMap({
           radius={3 + p.size * 18}
           pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}
           // Escalation markers open Liveuamap's map of that country, as they do on the 3D map.
-          eventHandlers={p.escalationLevel ? { click: () => openLiveuamap(liveuamapLink(p.incident?.countryCode ?? p.countryCode, p.lat, p.lng, p.incident?.geoPrecision)) } : undefined}
+          eventHandlers={
+            p.escalationLevel
+              ? { click: () => openLiveuamap(liveuamapLink(p.incident?.countryCode ?? p.countryCode, p.lat, p.lng, p.incident?.geoPrecision)) }
+              : AIRCRAFT_LAYER_KEYS.has(p.layerKey) && onAircraftClick
+                ? { click: () => onAircraftClick(p.id, p.title) }
+                : undefined
+          }
         >
           <LeafletTooltip direction="top">
             <div style={{ fontFamily: "monospace", fontSize: 12 }}>
@@ -2825,6 +2898,15 @@ function FlatMap({
         </CircleMarker>
         )
       )}
+      {aircraftTrack && aircraftTrack.length >= 2 && (
+        <>
+          <Polyline positions={aircraftTrack} pathOptions={{ color: "#ffd23f", weight: 3, opacity: 0.9 }} />
+          <CircleMarker center={aircraftTrack[0]} radius={5} pathOptions={{ color: "#ffd23f", fillColor: "#0b1220", fillOpacity: 1, weight: 2 }}>
+            <LeafletTooltip direction="top">First stored position</LeafletTooltip>
+          </CircleMarker>
+        </>
+      )}
+      {followAircraft && aircraftTrack && aircraftTrack.length > 0 && <FollowPoint at={aircraftTrack[aircraftTrack.length - 1]} />}
       {fireCollection && <FireMapLayer collection={fireCollection} unusual={fireUnusual ?? new Map()} cells={!!fireCells} />}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (() => {
         const markers = visibleIncidentRows.map((i) => (
@@ -3783,6 +3865,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "telegram", icon: Send, label: "Telegram" },
     { key: "events", icon: HeartPulse, label: "Events" },
+    { key: "flights", icon: Plane, label: "Flights" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const alertsPaused = useAlertsPaused();
