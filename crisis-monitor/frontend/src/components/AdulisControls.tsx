@@ -140,6 +140,8 @@ export function AdulisBar({
   onWaves,
   connectivity,
   onConnectivity,
+  pulses,
+  onPulses,
 }: {
   region: string | null;
   onRegion: (r: RegionView) => void;
@@ -149,6 +151,8 @@ export function AdulisBar({
   onWaves: (on: boolean) => void;
   connectivity?: boolean;
   onConnectivity?: (on: boolean) => void;
+  pulses?: boolean;
+  onPulses?: (on: boolean) => void;
 }) {
   return (
     <div role="group" aria-label="Region and map overlays" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -159,6 +163,7 @@ export function AdulisBar({
       ))}
       <button onClick={() => onOutlines(!outlines)} aria-pressed={outlines} style={chip(outlines)}>Horn outlines</button>
       <button onClick={() => onWaves(!waves)} aria-pressed={waves} style={chip(waves)}>Hotspot waves</button>
+      {onPulses && <button onClick={() => onPulses(!pulses)} aria-pressed={!!pulses} style={chip(!!pulses)} title="Red: one serious incident. Amber: a surge of incidents. Dashed: a single-source claim.">Incident pulses</button>}
       {onConnectivity && <button onClick={() => onConnectivity(!connectivity)} aria-pressed={!!connectivity} style={chip(!!connectivity)}>Internet connectivity</button>}
     </div>
   );
