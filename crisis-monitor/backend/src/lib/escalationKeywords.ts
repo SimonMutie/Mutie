@@ -305,7 +305,34 @@ export function matchEscalationKeywords(text: string): string[] {
 }
 
 /**
- * Broad multilingual conflict lexicon (English, French, Portuguese, Arabic)
+ * Conflict words in the languages most Horn and East African reporting is written in, so that a report in
+ * Amharic, Tigrinya, Afaan Oromoo, Somali or Swahili can pass the gate without being translated first (translation
+ * is off). Before these were added, an Amharic Telegram post or BBC Amharic story about a drone strike in Amhara
+ * could never become a candidate. Ge'ez script has no word boundaries for \b, so those are bare stems.
+ *
+ *  Amharic   ፋኖ Fano · ጦርነት war · ውጊያ fighting · ጥቃት attack · ግጭት clash · ተገደ/ተገድ killed · ግድያ killing ·
+ *            ድሮን drone · ታጣቂ armed men · ሸኔ Shene (OLA) · ህወሓት TPLF · ኦነግ OLF/OLA · ሰራዊት army · ፍንዳታ explosion ·
+ *            እገታ abduction · ተፈናቀ/መፈናቀ displaced · መከላከያ defence force
+ *  Tigrinya  ውግእ war · መጥቃዕቲ attack · ተቐቲሎም killed · ዕጥቀ armed
+ *  Oromo     lola war · waraana army · haleel- attack · ajjeef- killed · WBO (OLA) · Fannoo · loltoota soldiers ·
+ *            buqqa- displaced
+ *  Somali    dagaal fighting · weerar attack · dilay killed · qarax explosion · ciidam- forces · duqeyn bombardment
+ *  Swahili   mapigano fighting · shambuli- attack · -uawa killed · wanajeshi soldiers · waasi rebels · mlipuko blast
+ */
+export const NATIVE_LEXICON = [
+  "(?:ፋኖ|ጦርነት|ውጊያ|ጥቃት|ግጭት|ተገደ|ተገድ|ግድያ|ድሮን|ታጣቂ|ሸኔ|ህወሓት|ሕወሓት|ኦነግ|ሰራዊት|ሠራዊት|ፍንዳታ|እገታ|ተፈናቀ|መፈናቀ|መከላከያ|ውግእ|መጥቃዕቲ|ተቐቲ|ዕጥቀ)",
+  "\\b(?:lola|waraana|haleel|ajjeef|wbo|fannoo|loltoota|buqqa|dagaal|weerar|dilay|qarax|ciidam|duqeyn|mapigano|shambuli|wameuawa|kuuawa|aliuawa|wanajeshi|waasi|mlipuko)",
+].join("|");
+const NATIVE_LEXICON_RX = new RegExp(NATIVE_LEXICON, "i");
+
+/** True when text uses one of the Horn and East African conflict words above. */
+export function matchesNativeLexicon(text: string): boolean {
+  return NATIVE_LEXICON_RX.test(text);
+}
+
+/**
+ * Broad multilingual conflict lexicon (English, French, Portuguese, Arabic, and the Horn and East African
+ * languages below)
  * — word stems, not phrases. Deliberately over-inclusive: it only decides
  * whether an item is worth the cost of fetching and reading. Roughly, any
  * item mentioning violence, armed actors or military activity passes.
@@ -320,6 +347,7 @@ const CANDIDATE_LEXICON_RX = new RegExp(
     "\\b(?:mortos?|ataques?|confrontos?|combates?|ex[ée]rcito|soldados?|militares|mil[íi]cia|rebeldes|insurgentes|bomba|explos[ãa]o|golpe de estado|emboscada|rapto|deslocados|tiroteio)",
     // Arabic (no word boundaries — \\b does not work on Arabic script)
     "(?:قتل|مقتل|قتلى|هجوم|اشتباك|معارك|معركة|الجيش|قوات|ميليشيا|مليشيا|مسلح|قصف|غارة|غارات|مسيرة|مسيّرة|انفجار|حصار|هدنة|انقلاب|مجزرة|نزوح|الدعم السريع|عسكري)",
+    NATIVE_LEXICON,
   ].join("|"),
   "i"
 );
@@ -337,6 +365,8 @@ export function candidatePriority(text: string): number {
     matchStandaloneActionTerms(text).length * 3 +
     matchNonStateArmedGroups(text).length * 2 +
     matchStateMilitaries(text).length * 2 +
-    Math.min(matchAmbiguousActionTerms(text).length, 3)
+    Math.min(matchAmbiguousActionTerms(text).length, 3) +
+    // A report in Amharic, Oromo, Somali... names no English action term, but is no less worth reading.
+    (matchesNativeLexicon(text) ? 3 : 0)
   );
 }
