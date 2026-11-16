@@ -7,7 +7,7 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getFlaggedIncidents, getMapIncidents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
+import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
 import { activeCountries } from "../lib/ucdpActive";
@@ -18,6 +18,7 @@ import { analyseAddress, detectChain, capabilities as chainCapabilities } from "
 import { buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
+import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
 
 /**
  * Live world-events feed gateway — the same idea as OSIRIS's own "no key
@@ -626,6 +627,23 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
         windowHours: ACTIVE_WINDOW_HOURS,
         basis: "Countries with an escalation in the last 48 hours, coded by intensity: how many incidents there are and how severe. Whole countries; this is not a front line or control boundary.",
         borders: "Natural Earth (public domain); geoBoundaries (CC BY 4.0) for the DR Congo",
+        fetchedAt: new Date().toISOString(),
+      };
+    },
+    120
+  );
+});
+
+/** Where the map pulses: squares with a surge of incidents, and single incidents that are serious on their own. */
+liveLayersRouter.get("/incident-pulses", async (c) => {
+  return cachedJson(
+    c.req.raw,
+    async () => {
+      const [incidents, history] = await Promise.all([getMapIncidents(c.env), getIncidentHistoryPoints(c.env, BASELINE_DAYS + 4)]);
+      const located = incidents.filter((i) => i.geoPrecision === "place" || i.geoPrecision === "approximate" || i.geoPrecision === "region");
+      return {
+        pulses: incidentPulses(located, history),
+        basis: `A place pulses when it has three or more incidents in ${RECENT_HOURS} hours and at least twice its normal level over the ${BASELINE_DAYS} days before, or when one incident is serious on its own. Dashed rings are single-source claims.`,
         fetchedAt: new Date().toISOString(),
       };
     },
