@@ -13,6 +13,10 @@ noting exactly what was reused and what was changed:
 - `crisis-monitor/backend/src/lib/telegram.ts` — public Telegram channel-page parser, ported verbatim
 - `crisis-monitor/backend/src/lib/osintFeed.ts` — merged Telegram/wire OSINT feed, adapted (no stealth-fetch identity spoofing, no Nominatim geocoding)
 - The `LIVE_BROADCASTS` list in `crisis-monitor/backend/src/routes/liveLayers.ts` — verified live-YouTube-broadcast roster, reused as-is
+- `crisis-monitor/backend/src/lib/watchZones.ts` — conflict-zone list and whole-word headline matcher, adapted (Africa and Middle East only, zones added, headlines from the Lens's own feeds)
+- `crisis-monitor/backend/src/lib/cloudflareRadar.ts` — Cloudflare Radar outage and attack-origin mapping, adapted
+- `crisis-monitor/frontend/src/components/LiveAlertsPanel.tsx` — Live Alerts panel design (All / News / Warnings / Quakes / Feeds tabs, source-perspective badges), rewritten for the Lens
+- `crisis-monitor/frontend/src/components/WeatherTiles.tsx` — RainViewer rain radar and infrared cloud layers, after OSIRIS's Rain and Live Clouds layers
 
 Deliberately **not** reused from OSIRIS: its "RECON Toolkit" (port
 scanning / DNS / WHOIS / SSL / vulnerability scanning — active
