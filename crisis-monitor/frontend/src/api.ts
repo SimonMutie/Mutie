@@ -1432,6 +1432,40 @@ export interface TelegramChannelStatus {
   latest: string | null;
 }
 
+/** A humanitarian or political event (not armed conflict); see the backend's lib/situationEvents.ts. */
+export interface SituationEvent {
+  id: string;
+  type: string;
+  typeLabel: string;
+  category: "humanitarian" | "political";
+  /** 3 is the most serious. */
+  severity: 1 | 2 | 3;
+  countryCode: string;
+  countryName: string;
+  place: string | null;
+  lat: number;
+  lon: number;
+  precision: string;
+  firstDate: string;
+  lastDate: string;
+  deaths: number | null;
+  affected: number | null;
+  summary: string;
+  quote: string;
+  outlets: number;
+  confidence: "confirmed" | "single source";
+  sources: { title: string; url: string; domain: string; date: string }[];
+}
+
+export interface GpsInterference {
+  cells: { lat: number; lon: number; aircraft: number; poor: number; share: number; level: "low" | "medium" | "high" }[];
+  areas: { name: string; readAt: string | null; status: string; aircraft: number }[];
+  since: string;
+  method: string;
+  attribution: string;
+  fetchedAt: string;
+}
+
 /** A place the map pulses: a surge of incidents, or one serious incident. */
 export interface IncidentPulse {
   id: string;
@@ -2220,6 +2254,8 @@ export const api = {
   /** Per-day fire counts from the stored history (collected every three hours). */
   getIncidentPulses: () => req<{ pulses: IncidentPulse[]; basis: string; fetchedAt: string }>("/api/live-layers/incident-pulses"),
   getTelegramChannels: () => req<{ channels: TelegramChannelStatus[]; fetchedAt: string }>("/api/live-layers/telegram-channels"),
+  getSituationEvents: (days = 7) => req<{ events: SituationEvent[]; days: number; fetchedAt: string }>(`/api/live-layers/situation-events?days=${days}`),
+  getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
   /** Fires over a span of days, one point per ~5 km cell with its count. */
