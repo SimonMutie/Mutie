@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, type OiAssistAction, type OiRun } from "../api";
+import { btn, card, chip, ghost, heading as h, input, line, muted, text } from "./panelUi";
 
 /**
  * OI: the Lens's prediction engine (Forecast) and its talk-to-the-map helper (Assist), after OSIRIS's OI.
@@ -7,16 +8,7 @@ import { api, type OiAssistAction, type OiRun } from "../api";
  * is open, so a run carries on where it left off when the panel is reopened. Forecasts are Afrilens analysis made
  * with a model from the sources shown, not certainties.
  */
-const text = "#e6edf7";
-const muted = "#93a1b8";
 const cyan = "#22d3ee";
-const line = "1px solid rgba(124,156,255,0.25)";
-const chip = (on: boolean): CSSProperties => ({ padding: "4px 10px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", color: text, background: on ? "rgba(34,211,238,0.18)" : "transparent", border: on ? `1px solid ${cyan}88` : line, borderRadius: 6 });
-const btn: CSSProperties = { padding: "6px 12px", fontSize: 12, fontFamily: "inherit", fontWeight: 600, cursor: "pointer", color: "#04121a", background: cyan, border: "none", borderRadius: 6 };
-const ghost: CSSProperties = { padding: "4px 9px", fontSize: 11, fontFamily: "inherit", cursor: "pointer", color: muted, background: "transparent", border: line, borderRadius: 6 };
-const input: CSSProperties = { width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12, padding: "7px 9px", background: "#0b1422", color: text, border: line, borderRadius: 6 };
-const card: CSSProperties = { border: "1px solid rgba(124,156,255,0.18)", borderRadius: 8, padding: "9px 10px", background: "rgba(11,20,34,0.6)" };
-const h: CSSProperties = { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: muted, margin: "2px 0 6px" };
 const OUTCOME_COLOURS = ["#22d3ee", "#f472b6", "#facc15", "#a78bfa", "#4ade80"];
 
 const STAGE_LABEL: Record<OiRun["stage"], string> = {
