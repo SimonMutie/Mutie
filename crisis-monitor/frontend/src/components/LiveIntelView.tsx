@@ -30,6 +30,10 @@ import { useHiddenIncidents, HiddenIncidentsControl, type HiddenIncidents } from
 import {
   Activity,
   AlertTriangle,
+  CloudRain,
+  Cloud,
+  WifiOff,
+  Crosshair,
   Anchor,
   Bell,
   Bug,
@@ -89,7 +93,6 @@ import {
   type FireHistoryDays,
   type LiveLayerFeature,
   type IssPosition,
-  type NewsItem,
   type RouteProfile,
   type RouteResult,
   type SpaceWeather,
@@ -127,6 +130,8 @@ import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type Re
 import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
+import LiveAlertsPanel from "./LiveAlertsPanel";
+import { WeatherTiles, useRainViewer } from "./WeatherTiles";
 import FlightCard, { type SelectedAircraft } from "./FlightCard";
 import { AircraftMarkers } from "./AircraftMarkers";
 import { AIRCRAFT_LAYER_KEYS } from "./planeIcon";
@@ -298,6 +303,15 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    device sweeps).
  */
 
+/** Flies the flat map to a requested place once per request. */
+function FlyToFocus({ focus }: { focus: { lat: number; lng: number; zoom: number; seq: number } }) {
+  const map = useMap();
+  useEffect(() => {
+    map.flyTo([focus.lat, focus.lng], focus.zoom, { duration: 1.2 });
+  }, [map, focus.seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
+
 /** Keeps the flat map centred on a moving point. */
 function FollowPoint({ at }: { at: LatLng }) {
   const map = useMap();
@@ -438,6 +452,9 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Flame,
     fetcher: async () => fromGateway("#ffb020", "Active Fires", (f) => f.properties.naturalHazardCategory === "wildfire")(await api.getLiveNaturalEvents()),
   },
+  // Rain radar and infrared clouds (RainViewer), drawn as map imagery on the flat map; see WeatherTiles.
+  { key: "rain-radar", label: "Rain Radar", group: "Natural Hazards", color: "#60a5fa", icon: CloudRain, fetcher: async () => [] },
+  { key: "live-clouds", label: "Live Clouds (infrared)", group: "Natural Hazards", color: "#cbd5e1", icon: Cloud, fetcher: async () => [] },
   {
     key: "severe-weather",
     label: "Severe Weather",
@@ -672,6 +689,14 @@ const LAYER_DEFS: LayerDef[] = [
     fetcher: async () => fromGateway("#00E676", "Private Aircraft", (f) => f.properties.aviationClass === "private")(await api.getLiveAirTraffic()),
   },
   {
+    key: "air-traffic-jets",
+    label: "Private Jets",
+    group: "Aviation",
+    color: "#FF9F1C",
+    icon: Plane,
+    fetcher: async () => fromGateway("#FF9F1C", "Private Jets", (f) => f.properties.aviationClass === "jet")(await api.getLiveAirTraffic()),
+  },
+  {
     key: "air-traffic-military",
     label: "Military",
     group: "Aviation",
@@ -791,6 +816,80 @@ const LAYER_DEFS: LayerDef[] = [
     color: "#e879f9",
     icon: Landmark,
     fetcher: async () => situationPoints((await api.getSituationEvents()).events.filter((e) => e.category === "political"), "Political Events", "#e879f9"),
+  },
+  // Internet outages Cloudflare has confirmed (shutdowns, power and cable cuts), and where network attacks come from.
+  // Both need a Cloudflare API token on the server (CLOUDFLARE_RADAR_TOKEN); without one the layer says so.
+  {
+    key: "cf-outages",
+    label: "Internet Outages",
+    group: "Network Intel",
+    color: "#F38020",
+    icon: WifiOff,
+    fetcher: async () => {
+      const r = await api.getCloudflareRadar();
+      if (!r.configured) throw new Error(r.errors[0] ?? "Cloudflare Radar is not set up");
+      return r.outages.map((o): GlobePoint => ({
+        id: `cfo:${o.id}`,
+        layerKey: "Internet Outages",
+        lat: o.lat,
+        lng: o.lon,
+        color: o.ongoing ? "#FF3D3D" : "#F38020",
+        size: o.ongoing ? 0.26 : 0.16,
+        title: `${o.ongoing ? "Ongoing" : "Ended"} internet outage: ${o.countryName}`,
+        subtitle: `${[o.scope, o.cause.replace(/_/g, " ").toLowerCase()].filter(Boolean).join(" · ")}${o.description ? `. ${o.description}` : ""}. From ${o.start.slice(0, 10)}${o.end ? ` to ${o.end.slice(0, 10)}` : ""}. Source: Cloudflare Radar.`,
+        time: o.start || null,
+        url: o.url || null,
+      }));
+    },
+  },
+  {
+    key: "cf-attacks",
+    label: "Attack Origins",
+    group: "Network Intel",
+    color: "#E11D48",
+    icon: Crosshair,
+    fetcher: async () => {
+      const r = await api.getCloudflareRadar();
+      if (!r.configured) throw new Error(r.errors[0] ?? "Cloudflare Radar is not set up");
+      return r.attackOrigins.map((a): GlobePoint => ({
+        id: `cfa:${a.country}`,
+        layerKey: "Attack Origins",
+        lat: a.lat,
+        lng: a.lon,
+        color: "#E11D48",
+        size: Math.min(0.4, 0.1 + a.share / 40),
+        title: `${a.countryName}: ${a.share}% of network attacks`,
+        subtitle: "Share of network-layer (DDoS) attack traffic Cloudflare saw coming from this country over the last 7 days. Source: Cloudflare Radar.",
+        time: r.fetchedAt,
+        url: "https://radar.cloudflare.com/security",
+      }));
+    },
+  },
+  // Watch zones: standing warning markers over Africa and Middle East theatres (an Afrilens editorial rating, as
+  // OSIRIS keeps its conflict zones), each listing the reports and escalation incidents that fall in it.
+  {
+    key: "watch-zones",
+    label: "Watch Zones",
+    group: "Threats & Intel",
+    color: "#FF9500",
+    icon: AlertTriangle,
+    fetcher: async () => {
+      const { zones } = await api.getWatchZones();
+      const colour = { war: "#FF3D3D", high: "#FF9500", elevated: "#FFD23F" } as const;
+      const label = { war: "Active war", high: "High tension", elevated: "Elevated" } as const;
+      return zones.map((z): GlobePoint => ({
+        id: `zone:${z.id}`,
+        layerKey: "Watch Zones",
+        lat: z.lat,
+        lng: z.lng,
+        color: colour[z.severity],
+        size: z.severity === "war" ? 0.34 : z.severity === "high" ? 0.28 : 0.22,
+        title: `⚠ ${z.label} · ${label[z.severity]}`,
+        subtitle: `${z.description} ${z.headlineCount} recent report(s), ${z.incidents.length} escalation incident(s) in the zone.${z.headlines[0] ? ` Latest: ${z.headlines[0].title} (${z.headlines[0].source}).` : ""} Severity is an Afrilens editorial rating, not a live measurement.`,
+        time: null,
+        url: z.headlines[0]?.url ?? null,
+      }));
+    },
   },
   // Squares where aircraft report poor satellite-navigation accuracy: a sign of GPS jamming or spoofing.
   {
@@ -1093,6 +1192,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "live-alert-pins": false,
     "air-traffic-commercial": false,
     "air-traffic-private": false,
+    "air-traffic-jets": false,
     "air-traffic-military": false,
     "malware-infrastructure": false,
     "live-malware": false,
@@ -1109,6 +1209,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "humanitarian-events": false,
     "political-events": false,
     "gps-interference": false,
+    "watch-zones": false,
+    "rain-radar": false,
+    "live-clouds": false,
+    "cf-outages": false,
+    "cf-attacks": false,
     "live-broadcasts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
     // chokepoints) — this toggles the shipping-lane arcs (maritimeLanes,
@@ -1298,9 +1403,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [issPos, setIssPos] = useState<IssPosition | null>(null);
   const [issError, setIssError] = useState<string | null>(null);
 
-  const [newsItems, setNewsItems] = useState<NewsItem[] | null>(null);
-  const [newsLoading, setNewsLoading] = useState(false);
-  const [newsError, setNewsError] = useState<string | null>(null);
+  // Where the map should fly to, from a Locate button in Live Alerts; seq makes a repeat request count.
+  const [focus, setFocus] = useState<{ lat: number; lng: number; zoom: number; seq: number } | null>(null);
 
   // --- Economy tool: World Bank indicators (GDP, growth, inflation, trade)
   // across Afrilens's African coverage set — fetched lazily on first open,
@@ -1722,6 +1826,27 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, []);
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
+  // Keyboard shortcuts, as OSIRIS has: F flights, E earthquakes, S satellites, D day/night, Esc closes the side panels.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.ctrlKey || e.metaKey || e.altKey || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) return;
+      const flip = (keys: string[]) => setEnabled((prev) => { const on = !keys.every((k) => prev[k]); return { ...prev, ...Object.fromEntries(keys.map((k) => [k, on])) }; });
+      const k = e.key.toLowerCase();
+      if (k === "f") flip(["air-traffic-commercial", "air-traffic-private", "air-traffic-jets", "air-traffic-military"]);
+      else if (k === "e") flip(["earthquakes"]);
+      else if (k === "s") flip(["satellites-all"]);
+      else if (k === "d") setShowDayNight((v) => !v);
+      else if (e.key === "Escape") { setSelectedAircraft(null); setMap3DSelectedFeature(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // A Locate request from Live Alerts, on the 3D map.
+  useEffect(() => {
+    if (!focus || mapMode !== "3d" || !globeMap) return;
+    globeMap.flyTo({ center: [focus.lng, focus.lat], zoom: focus.zoom, duration: 1200 });
+  }, [focus, mapMode, globeMap]);
   // Following on the 3D map: keep the globe centred on the aircraft's latest position.
   useEffect(() => {
     if (!followAircraft || mapMode !== "3d" || !globeMap) return;
@@ -2042,31 +2167,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, [activeTool]);
 
   useEffect(() => {
-    if (activeTool !== "news") return;
-    let cancelled = false;
-    async function poll() {
-      setNewsLoading(true);
-      try {
-        const feed = await api.getLiveNews();
-        if (!cancelled) {
-          setNewsItems(feed.items);
-          setNewsError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setNewsError(err instanceof Error ? err.message : "News feed unavailable");
-      } finally {
-        if (!cancelled) setNewsLoading(false);
-      }
-    }
-    poll();
-    const interval = setInterval(poll, 300_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [activeTool]);
-
-  useEffect(() => {
     let cancelled = false;
     const pendingTimeouts: ReturnType<typeof setTimeout>[] = [];
     async function loadLayer(def: LayerDef) {
@@ -2331,6 +2431,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             conflictWaveRows={conflictWaveRows}
             incidentPulses={incidentPulses}
             aircraftTrack={aircraftTrackLine}
+            rainOn={!!enabled["rain-radar"]}
+            cloudsOn={!!enabled["live-clouds"]}
+            focus={focus}
             showNav={showNav}
             followAircraft={followAircraft}
             onAircraftClick={(hex, label) => setSelectedAircraft({ hex, label })}
@@ -2585,7 +2688,17 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
-        {rightTool === "news" && <NewsFeedPanel items={newsItems} loading={newsLoading} error={newsError} />}
+        {rightTool === "news" && (
+          <ToolPanelShell title="Live Alerts">
+            <LiveAlertsPanel
+              onLocate={(lat, lng, zoom = 6) => setFocus((f) => ({ lat, lng, zoom, seq: (f?.seq ?? 0) + 1 }))}
+              pinsOn={!!enabled["live-alert-pins"]}
+              onTogglePins={(on) => setEnabled((prev) => ({ ...prev, "live-alert-pins": on }))}
+              warningsOn={!!enabled["watch-zones"]}
+              onToggleWarnings={(on) => setEnabled((prev) => ({ ...prev, "watch-zones": on }))}
+            />
+          </ToolPanelShell>
+        )}
         {rightTool === "events" && (
           <ToolPanelShell title="Humanitarian & political events">
             <SituationPanel />
@@ -2721,6 +2834,9 @@ function FlatMap({
   conflictWaveRows,
   incidentPulses,
   aircraftTrack,
+  rainOn,
+  cloudsOn,
+  focus,
   showNav,
   followAircraft,
   onAircraftClick,
@@ -2761,6 +2877,11 @@ function FlatMap({
   incidentPulses?: IncidentPulse[];
   /** Show the zoom and pan buttons. */
   showNav?: boolean;
+  /** RainViewer rain radar and infrared clouds. */
+  rainOn?: boolean;
+  cloudsOn?: boolean;
+  /** A place to fly to (from Live Alerts); a new seq is a new request. */
+  focus?: { lat: number; lng: number; zoom: number; seq: number } | null;
   /** The traced aircraft's positions, oldest first; drawn as a line. */
   aircraftTrack?: LatLng[];
   /** Keep the map centred on the traced aircraft's latest position. */
@@ -2829,6 +2950,7 @@ function FlatMap({
   });
   const [connectivityOn, setConnectivityOn] = useState(false);
   const [pulsesOn, setPulsesOn] = useState(true);
+  const weather = useRainViewer(!!(rainOn || cloudsOn));
   const connectivity = useConnectivity(connectivityOn);
   const [regionView, setRegionView] = useState<RegionView | null>(null);
   const [regionSeq, setRegionSeq] = useState(0);
@@ -2861,6 +2983,7 @@ function FlatMap({
       {lensTemplate && imagery.lensKm !== null && <BeforeAfterLens template={lensTemplate} radiusKm={imagery.lensKm} />}
       {outlines && <HornOutlines />}
       {hotCells.length > 0 && <HotspotWaves cells={hotCells} />}
+      {weather.frames && (rainOn || cloudsOn) && <WeatherTiles frames={weather.frames} rain={!!rainOn} clouds={!!cloudsOn} />}
       {overlay && <TileLayer key={overlay.url} url={overlay.url} attribution={overlay.attribution} maxNativeZoom={overlay.maxNativeZoom} opacity={0.9} zIndex={5} />}
       {activeConflictMap && (
         <GeoJSON
@@ -2943,6 +3066,7 @@ function FlatMap({
         </>
       )}
       {followAircraft && aircraftTrack && aircraftTrack.length > 0 && <FollowPoint at={aircraftTrack[aircraftTrack.length - 1]} />}
+      {focus && <FlyToFocus focus={focus} />}
       {fireCollection && <FireMapLayer collection={fireCollection} unusual={fireUnusual ?? new Map()} cells={!!fireCells} />}
       {incidentsOn && visibleIncidentRows && visibleIncidentRows.length > 0 && incidentViewMode === "markers" && (() => {
         const markers = visibleIncidentRows.map((i) => (
@@ -4352,32 +4476,6 @@ function LiveSpacePanel({ pos, error }: { pos: IssPosition | null; error: string
   );
 }
 
-function NewsFeedPanel({ items, loading, error }: { items: NewsItem[] | null; loading: boolean; error: string | null }) {
-  return (
-    <ToolPanelShell title="Live Alerts">
-      {loading && !items && <div style={{ fontSize: 11, color: HUD.textMuted }}>Loading headlines…</div>}
-      {error && <div style={{ fontSize: 11, color: HUD.alertRed }}>{error}</div>}
-      {items && items.length === 0 && !error && <div style={{ fontSize: 11, color: HUD.textMuted }}>No headlines available right now.</div>}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {items?.map((item) => (
-          <a
-            key={item.id}
-            href={item.link}
-            target="_blank"
-            rel="noreferrer"
-            style={{ display: "block", textDecoration: "none", padding: "6px 0", borderBottom: "1px solid rgba(124,156,255,0.1)" }}
-          >
-            <div style={{ fontSize: 12, color: HUD.textPrimary, lineHeight: 1.35 }}>{item.title}</div>
-            <div style={{ fontSize: 10, color: HUD.textMuted, marginTop: 2 }}>
-              {item.source}
-              {item.publishedAt ? ` · ${new Date(item.publishedAt).toLocaleString()}` : ""}
-            </div>
-          </a>
-        ))}
-      </div>
-    </ToolPanelShell>
-  );
-}
 
 /** Every categorical field the Incidents tool's search offers, in display
  *  order — label plus the matching key in both IncidentFilterState and
