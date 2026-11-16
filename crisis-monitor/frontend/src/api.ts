@@ -1417,6 +1417,21 @@ export interface FireHistoryDays {
   lastRun?: { startedAt: string; finishedAt: string | null; status: string | null; fetched: number; inserted: number; truncated: string | null; error: string | null } | null;
 }
 
+/** One Africa Telegram channel the Lens follows, with what its last reading returned. */
+export interface TelegramChannelStatus {
+  handle: string;
+  name: string;
+  lean: string;
+  bloc: string;
+  lang: string;
+  /** False when the handle came from a list and was never seen to exist. */
+  seenInSearch: boolean;
+  fetchedAt: string | null;
+  status: string;
+  posts72h: number;
+  latest: string | null;
+}
+
 /** A place the map pulses: a surge of incidents, or one serious incident. */
 export interface IncidentPulse {
   id: string;
@@ -2204,6 +2219,7 @@ export const api = {
   getLiveFirmsFires: (window: "24h" | "7d" = "24h") => req<LiveLayerCollection & { configured?: boolean }>(`/api/live-layers/firms-fires?window=${window}`),
   /** Per-day fire counts from the stored history (collected every three hours). */
   getIncidentPulses: () => req<{ pulses: IncidentPulse[]; basis: string; fetchedAt: string }>("/api/live-layers/incident-pulses"),
+  getTelegramChannels: () => req<{ channels: TelegramChannelStatus[]; fetchedAt: string }>("/api/live-layers/telegram-channels"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
   /** Fires over a span of days, one point per ~5 km cell with its count. */
