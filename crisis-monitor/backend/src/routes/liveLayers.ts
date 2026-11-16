@@ -7,7 +7,7 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
+import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getSituationEvents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { resolveCountryCode } from "../lib/africaGeo";
 import { activeCountries } from "../lib/ucdpActive";
@@ -18,6 +18,7 @@ import { analyseAddress, detectChain, capabilities as chainCapabilities } from "
 import { africaChannelStatus, buildOsintFeed, type OsintAlertItem } from "../lib/osintFeed";
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
+import { gpsInterference } from "../lib/gpsInterference";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
 
 /**
@@ -636,6 +637,15 @@ liveLayersRouter.get("/conflict-zones", async (c) => {
 
 /** The Africa Telegram channels the Lens follows: who runs each, when it was last read and what came back. */
 liveLayersRouter.get("/telegram-channels", async (c) => c.json({ channels: await africaChannelStatus(c.env.DB), fetchedAt: new Date().toISOString() }));
+
+/** Humanitarian and political events (not armed conflict) from the last week; see lib/situationEvents.ts. */
+liveLayersRouter.get("/situation-events", async (c) => {
+  const days = Math.min(30, Math.max(1, Number(c.req.query("days")) || 7));
+  return cachedJson(c.req.raw, async () => ({ events: await getSituationEvents(c.env, days), days, fetchedAt: new Date().toISOString() }), 120);
+});
+
+/** GPS interference squares from aircraft accuracy reports; see lib/gpsInterference.ts. */
+liveLayersRouter.get("/gps-interference", async (c) => cachedJson(c.req.raw, async () => ({ ...(await gpsInterference(c.env.DB)), fetchedAt: new Date().toISOString() }), 300));
 
 /** Where the map pulses: squares with a surge of incidents, and single incidents that are serious on their own. */
 liveLayersRouter.get("/incident-pulses", async (c) => {
