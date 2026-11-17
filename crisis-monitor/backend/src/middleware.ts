@@ -21,11 +21,40 @@ function extractToken(c: AuthedContext): string | null {
 /** What a viewer (read-only) login may still change: only its own credentials. */
 const VIEWER_WRITE_ALLOWED = [/^\/api\/auth\/change-password$/, /^\/api\/auth\/logout-all$/];
 
+export type Section = "live_osint" | "trends" | "afrintel";
+
 interface Gate {
   readOnly: boolean;
   disabled: boolean;
   validAfter: number;
+  /** The login's client organisation is paused: every request except signing in and out is refused. */
+  paused: boolean;
+  /** Parts of the Lens the login's client may not open (empty for the admin and standalone logins). */
+  blocked: Section[];
   at: number;
+}
+
+/**
+ * Which API paths belong to each part of the Lens a client can be given or refused (Admin → client → Resources).
+ * Regional Spotlight and due-diligence screening have their own checks in their routes.
+ */
+export const SECTION_PATHS: [Section, RegExp][] = [
+  ["live_osint", /^\/api\/(live-layers|global-status|social-listening|listening-queries|map-routes|map-shapes|queries|events|query-insights)(\/|$)/],
+  ["trends", /^\/api\/(incidents|incident-staging|custom-dashboards|datasets|analytics)(\/|$)/],
+  ["afrintel", /^\/api\/afrintel(\/|$)/],
+];
+const SECTION_NAMES: Record<Section, string> = { live_osint: "Live OSINT", trends: "Trends & Patterns", afrintel: "AfrIntel" };
+
+/** What a paused client's logins may still reach: their own session (to see the paused notice) and sign-out. */
+const PAUSED_ALLOWED = /^\/api\/auth\//;
+
+/** The answer for a request, given the login's gate: null to let it through, or the refusal. */
+export function gateRefusal(gate: Pick<Gate, "paused" | "blocked">, path: string): { status: 403; error: string; paused?: true } | null {
+  if (gate.paused && !PAUSED_ALLOWED.test(path)) return { status: 403, error: "Your organisation's access to the Lens is paused. Please contact Afrilens.", paused: true };
+  for (const [section, re] of SECTION_PATHS) {
+    if (gate.blocked.includes(section) && re.test(path)) return { status: 403, error: `${SECTION_NAMES[section]} is not part of your organisation's access.` };
+  }
+  return null;
 }
 const gateCache = new Map<string, Gate>();
 const GATE_TTL_MS = 15_000;
@@ -44,12 +73,25 @@ async function loadGate(env: Env, userId: string): Promise<Gate | null | "unknow
   const hit = gateCache.get(userId);
   if (hit && Date.now() - hit.at < GATE_TTL_MS) return hit;
   try {
-    const row = await env.DB.prepare("SELECT read_only, disabled, tokens_valid_after FROM users WHERE id = ?").bind(userId).first<Record<string, unknown>>();
+    const row = await env.DB.prepare(
+      `SELECT u.read_only, u.disabled, u.tokens_valid_after, u.role, c.id AS client_id, c.paused, c.can_live_osint, c.can_trends, c.can_afrintel
+       FROM users u LEFT JOIN clients c ON c.id = u.client_id WHERE u.id = ?`
+    ).bind(userId).first<Record<string, unknown>>();
     if (!row) return null;
+    // The platform admin is never paused or limited; logins outside any client have nothing to limit.
+    const limited = row.role !== "admin" && row.client_id != null;
+    const blocked: Section[] = [];
+    if (limited) {
+      if (Number(row.can_live_osint ?? 1) === 0) blocked.push("live_osint");
+      if (Number(row.can_trends ?? 1) === 0) blocked.push("trends");
+      if (Number(row.can_afrintel ?? 1) === 0) blocked.push("afrintel");
+    }
     const gate: Gate = {
       readOnly: Boolean(row.read_only),
       disabled: Boolean(row.disabled),
       validAfter: Number(row.tokens_valid_after ?? 0),
+      paused: limited && Boolean(row.paused),
+      blocked,
       at: Date.now(),
     };
     gateCache.set(userId, gate);
@@ -80,6 +122,8 @@ export async function requireAuth(c: AuthedContext, next: Next) {
   if (gate !== "unknown") {
     if (gate.disabled) return c.json({ error: "This account has been disabled" }, 403);
     if ((payload.iat ?? 0) < gate.validAfter) return c.json({ error: "Session ended — please sign in again" }, 401);
+    const refusal = gateRefusal(gate, new URL(c.req.url).pathname);
+    if (refusal) return c.json({ error: refusal.error, ...(refusal.paused ? { paused: true } : {}) }, refusal.status);
     if (gate.readOnly) {
       c.set("readOnly", true);
       const method = c.req.method.toUpperCase();
