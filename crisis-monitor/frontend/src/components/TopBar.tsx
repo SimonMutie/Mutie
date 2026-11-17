@@ -83,12 +83,17 @@ export default function TopBar({ connected, user, view, onNavigate, spotlightSco
            *  and Live Monitoring inside Live OSINT (the Monitor tool, plus
            *  each query's dashboard and editor) — so a monitoring query's
            *  pages keep "Live OSINT" highlighted. */}
-          <button onClick={() => onNavigate("live-osint")} style={navBtnStyle(view === "live-osint" || view === "monitoring")}>
-            Live OSINT
-          </button>
-          <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
-            Trends & Patterns
-          </button>
+          {/* A client sees only the parts of the Lens its organisation has (Admin → client → Resources). */}
+          {user.can_live_osint !== false && (
+            <button onClick={() => onNavigate("live-osint")} style={navBtnStyle(view === "live-osint" || view === "monitoring")}>
+              Live OSINT
+            </button>
+          )}
+          {user.can_trends !== false && (
+            <button onClick={() => onNavigate("incidents")} style={navBtnStyle(view === "incidents")}>
+              Trends & Patterns
+            </button>
+          )}
           {/* Commercial and individual due diligence. Hovering shows both; see DueDiligenceMenu. */}
           <DueDiligenceMenu current={view === "due-diligence" ? ddKind : null} onSelect={onOpenDueDiligence} buttonStyle={navBtnStyle(view === "due-diligence")} />
           {/* Publications by region. Hovering shows the regions; see SpotlightMenu. */}
