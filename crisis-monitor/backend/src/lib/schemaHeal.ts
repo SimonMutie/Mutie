@@ -53,6 +53,19 @@ export const MIGRATED_COLUMNS: Record<string, [string, string][]> = {
     ["quota_json", "TEXT"], // per-client allowance overrides (see lib/quota.ts)
     ["can_share_publicly", "INTEGER NOT NULL DEFAULT 0"], // public links are off until the admin allows them
     ["can_view_spotlight", "INTEGER NOT NULL DEFAULT 0"], // Regional Spotlight is shared with a client only when the admin switches it on
+    // Pausing a client stops all of its logins at once without deleting anything (middleware.ts).
+    ["paused", "INTEGER NOT NULL DEFAULT 0"],
+    ["paused_at", "TEXT"],
+    ["pause_reason", "TEXT"],
+    // Contact details and notes, for the admin's own reference.
+    ["contact_name", "TEXT"],
+    ["contact_email", "TEXT"],
+    ["contact_phone", "TEXT"],
+    ["notes", "TEXT"],
+    // Which parts of the Lens this client may open. On by default so no existing client loses anything.
+    ["can_live_osint", "INTEGER NOT NULL DEFAULT 1"],
+    ["can_trends", "INTEGER NOT NULL DEFAULT 1"],
+    ["can_afrintel", "INTEGER NOT NULL DEFAULT 1"],
   ],
   map_routes: [["visible", "INTEGER NOT NULL DEFAULT 1"]], // 019
   map_shapes: [["visible", "INTEGER NOT NULL DEFAULT 1"]],
