@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 
 /**
- * One look for every right-rail panel of the live map (Live Alerts, Telegram, Events, OI and the rest): text
+ * One look for every right-rail panel of the live map (Live Alerts, Telegram, Events, AfrIntel and the rest): text
  * colours, filter chips, buttons, inputs, cards and section headings. The accent is the rail's own gold, so an
  * active chip in any panel reads the same as the active tool on the rail.
  */
