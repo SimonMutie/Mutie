@@ -11,11 +11,11 @@ vi.mock("../src/lib/osintFeed", () => ({
 const replies: unknown[] = [];
 vi.mock("../src/lib/llm", () => ({ callStructured: async () => ({ data: replies.shift(), provider: "anthropic", model: "test" }) }));
 
-import { advance, makePeriods, nextStep, normaliseShares, poolWorlds, questionTerms, type OiRun } from "../src/lib/oi";
+import { advance, makePeriods, nextStep, normaliseShares, poolWorlds, questionTerms, type AfrIntelRun } from "../src/lib/afrIntel";
 
-const blank = (): OiRun => ({ id: "r1", owner: "u", question: "Will Fano capture Bahir Dar before March 2027?", material: "", worldCount: 2, periodCount: 2, stage: "context", createdAt: "", updatedAt: "", context: [], frame: null, actors: [], links: [], periods: [], worlds: [], injects: [], report: null, pooled: null, error: null, model: null, chat: [] });
+const blank = (): AfrIntelRun => ({ id: "r1", owner: "u", question: "Will Fano capture Bahir Dar before March 2027?", material: "", worldCount: 2, periodCount: 2, stage: "context", createdAt: "", updatedAt: "", context: [], frame: null, actors: [], links: [], periods: [], worlds: [], injects: [], report: null, pooled: null, error: null, model: null, chat: [] });
 
-describe("OI helpers", () => {
+describe("AfrIntel helpers", () => {
   it("takes the telling words of a question", () => {
     expect(questionTerms("Will Fano capture Bahir Dar before March 2027?")).toEqual(["fano", "capture", "bahir", "march"]);
   });
@@ -32,7 +32,7 @@ describe("OI helpers", () => {
   });
 });
 
-describe("a whole OI run", () => {
+describe("a whole AfrIntel run", () => {
   it("goes from research to a report, period by period in every world", async () => {
     const now = new Date("2026-11-16T00:00:00Z");
     let r = blank();
