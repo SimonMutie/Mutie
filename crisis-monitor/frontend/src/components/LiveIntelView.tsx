@@ -127,12 +127,12 @@ import { DEFAULT_IMAGERY, IMAGERY_KEYS, ImageryControl, clampImageryDay, compare
 import { BeforeAfterLens, FireDownload, SunShadowTool, TerrainProfile, ViewPermalink, readViewParams } from "./MapTools";
 import { IncidentPulseLayer, pulsesAsWaves, useIncidentPulses } from "./IncidentPulses";
 import { ConnectivityLayer, ConnectivityPanel, useConnectivity } from "./Connectivity";
-import { AdulisBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./AdulisControls";
+import { RegionBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./RegionControls";
 import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
-import OiPanel from "./OiPanel";
-import type { OiRun } from "../api";
+import AfrIntelPanel from "./AfrIntelPanel";
+import type { AfrIntelRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
 import { WeatherTiles, useRainViewer } from "./WeatherTiles";
 import FlightCard, { type SelectedAircraft } from "./FlightCard";
@@ -153,15 +153,15 @@ const IncidentUpload = lazy(() => import("./IncidentUpload"));
 const IncidentReview = lazy(() => import("./IncidentReview"));
 
 /**
- * OSIRIS's real visual language — checked directly against its open-source
- * repo (github.com/enzg/osiris-live, src/app/globals.css): a gold "Eye of
+ * The reference platform's real visual language — checked directly against its open-source
+ * repo (github.com/enzg/lens-live, src/app/globals.css): a gold "Eye of
  * Horus" accent on a near-black glass panel, JetBrains Mono throughout,
  * uppercase/tracked headers, not the blue HUD palette this view launched
  * with. Kept as local constants (not pushed into the app's shared
  * globals.css) so this one view's restyle can't leak into any other part
  * of the app. Map/data-point colors (per-layer dot colors, route/draw
  * colors) are deliberately NOT reassigned to this palette — those encode
- * real data (layer identity, alert severity) and OSIRIS's own layer dots
+ * real data (layer identity, alert severity) and the reference platform's own layer dots
  * are similarly varied per-layer, not all forced to one accent color.
  */
 const HUD = {
@@ -206,7 +206,7 @@ type IncidentFilterState = {
   to?: string;
 };
 
-/** A glass-panel container, OSIRIS's own .glass-panel rule ported to inline
+/** A glass-panel container, the reference platform's own .glass-panel rule ported to inline
  *  styles (blur+saturate backdrop, gold hairline border, layered shadow,
  *  14px corners) — every floating HUD card in this view is built on this. */
 function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
@@ -224,21 +224,21 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
 
 /**
  * "Live OSINT" — a new, separate view rather than a restyle of the
- * existing (light) dashboards/choropleth. Modeled on OSIRIS's own dark HUD
- * aesthetic (osirisai.live): a grouped, toggleable layer panel on the left,
+ * existing (light) dashboards/choropleth. Modeled on the reference platform's own dark HUD
+ * aesthetic: a grouped, toggleable layer panel on the left,
  * a rotating 3D globe (or a flat 2D/Map/Sat projection, switchable) with
  * crisp country-level boundary lines, and monospace status readouts.
  * Nothing here touches IncidentsMap/IncidentSearch or their data.
  *
  * The 3D globe deliberately does NOT use a photographic/satellite Earth
- * texture — that's a "Sat" look, and OSIRIS's own 3D view is a dark
+ * texture — that's a "Sat" look, and the reference platform's own 3D view is a dark
  * data-vis map (flat black sphere, thin white national borders, a subtle
  * lat/lng graticule), not imagery. Country outlines come from the same
  * world-atlas topology already bundled for the choropleth/GlobeWidget
  * elsewhere in this app (world-atlas/countries-110m.json), rendered as
  * three-globe polygons with a transparent fill and a visible stroke only —
  * "Sat" as an actual satellite photo basemap is reserved for the flat 2D
- * mode switcher below, matching what OSIRIS's own 3D/2D/Map/Sat buttons do.
+ * mode switcher below, matching what the reference platform's own 3D/2D/Map/Sat buttons do.
  *
  * Layer sourcing, and why each one either is or isn't here:
  *  - Earthquakes / Active Fires / Severe Weather / GDELT Events / Air
@@ -249,7 +249,7 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    Maritime below — real operating nuclear power stations worldwide
  *    (Wikipedia's list, itself drawn from the IAEA's PRIS registry), not a
  *    live sensor feed, since nothing here changes minute to minute anyway.
- *  - Global Incidents: OSIRIS's real flyout pairs this with GDELT Events,
+ *  - Global Incidents: the reference platform's real flyout pairs this with GDELT Events,
  *    and ACLED would be the obvious real source — but its EULA explicitly
  *    bars a commercial entity from using it in the entity's own dashboard
  *    without a paid corporate license (checked directly against
@@ -264,28 +264,28 @@ function glassPanel(extra?: React.CSSProperties): React.CSSProperties {
  *    itself be a proxy/bulletproof-hosting jurisdiction), not an
  *    "attack in progress" animation — those vendor map visuals are
  *    illustrative, not live telemetry, and this view only shows real data.
- *    Not one of OSIRIS's own Threats & Intel rows, but a legitimate
+ *    Not one of the reference platform's own Threats & Intel rows, but a legitimate
  *    addition of another already-integrated real feed.
  *  - My Incidents / Live Alert Pins: this account's own data, already
  *    scoped by the backend's normal auth (client/country restrictions
  *    apply exactly as they do everywhere else in the app) — reusing the
  *    existing /api/incidents and /api/alerts endpoints rather than a new
- *    route. Live Alert Pins lives under Threats & Intel (matching OSIRIS's
+ *    route. Live Alert Pins lives under Threats & Intel (matching the reference platform's
  *    real grouping), not My Data, even though it's the same per-account
  *    alert data "My Alerts" always was.
- *  - Maritime: checked directly against OSIRIS's own open-source code
- *    (github.com/enzg/osiris-live) rather than assumed to have live AIS —
- *    it turns out OSIRIS's "Maritime" layer is itself a static reference
+ *  - Maritime: checked directly against the reference platform's own open-source code
+ *    (github.com/enzg/lens-live) rather than assumed to have live AIS —
+ *    it turns out the reference platform's "Maritime" layer is itself a static reference
  *    dataset (major ports, naval bases, shipping chokepoints with real
  *    published stats), refreshed once a day, zero external API calls.
  *  - Deliberately NOT included: live CCTV, and the "Recon Toolkit" /
- *    "Marauder" style device-scanning tools OSIRIS's own UI shows — those
+ *    "Marauder" style device-scanning tools the reference platform's own UI shows — those
  *    are active reconnaissance/surveillance capabilities, not data layers,
  *    and this app isn't going to carry them regardless of whether a
  *    backend exists to power them. Submarine cables: a real open dataset
  *    exists but wasn't confirmed reachable in time for this pass.
  *
- * Right-side toolbar — OSIRIS shows several of these as its own icon rail;
+ * Right-side toolbar — the reference platform shows several of these as its own icon rail;
  * the ones built here are the legitimate, non-reconnaissance subset:
  *  - Drawing Tools: click points on the map to measure a line's distance or
  *    a shape's area, then export the shape as GeoJSON. Pure client-side
@@ -374,15 +374,15 @@ type LayerGroup = "Natural Hazards" | "Threats & Intel" | "Network Intel" | "Avi
 /** Icon + accent for a group's own rail button — every group renders
  *  through the same flyout treatment now (see LayerPanel/GroupRailButton),
  *  including a group with only one real layer, confirmed directly against
- *  OSIRIS's own real Maritime flyout. */
+ *  The reference platform's own real Maritime flyout. */
 const GROUP_META: Record<LayerGroup, { icon: LucideIcon; color: string }> = {
-  // CloudLightning matches a direct screenshot of OSIRIS's own rail icon
+  // CloudLightning matches a direct screenshot of the reference platform's own rail icon
   // for this group (a cloud-with-lightning glyph, not a generic pulse icon).
   "Natural Hazards": { icon: CloudLightning, color: HUD.alertOrange },
   // Real label ("Threats & Intel", not "Threats & Infra") confirmed
-  // directly from a screenshot of OSIRIS's own flyout header.
+  // directly from a screenshot of the reference platform's own flyout header.
   "Threats & Intel": { icon: AlertTriangle, color: HUD.alertRed },
-  // Network icon matches a direct screenshot of OSIRIS's own rail icon for
+  // Network icon matches a direct screenshot of the reference platform's own rail icon for
   // this group (a 3-node hierarchy/network glyph, distinct from Threats &
   // Intel's triangle).
   "Network Intel": { icon: Network, color: "#ff4fa3" },
@@ -415,7 +415,7 @@ function fromGateway(color: string, label: string, predicate?: (f: LiveLayerFeat
         lat: f.geometry.coordinates[1],
         lng: f.geometry.coordinates[0],
         color,
-        // OSIRIS's own points render as tiny flat 2D circles (roughly 3-9px,
+        // The reference platform's own points render as tiny flat 2D circles (roughly 3-9px,
         // via MapLibre) — three-globe's pointsData markers are real 3D
         // discs, which read as chunky next to that at any size much above
         // this. Kept small and in a narrow range on purpose to match that
@@ -444,7 +444,7 @@ const LAYER_DEFS: LayerDef[] = [
   { key: "earthquakes", label: "Earthquakes", group: "Natural Hazards", color: "#ff5d5d", icon: Activity, fetcher: async () => fromGateway("#ff5d5d", "Earthquakes")(await api.getLiveEarthquakes()) },
   // Both real rows below share NASA EONET's own event feed, split by the
   // category EONET itself already assigns each event (see the backend's
-  // classifyNaturalEvent()) — matching OSIRIS's real "NATURAL HAZARDS"
+  // classifyNaturalEvent()) — matching the reference platform's real "NATURAL HAZARDS"
   // flyout (EARTHQUAKES / ACTIVE FIRES / SEVERE WEATHER), confirmed
   // directly from a screenshot of its actual flyout rather than assumed.
   {
@@ -466,10 +466,10 @@ const LAYER_DEFS: LayerDef[] = [
     icon: CloudLightning,
     fetcher: async () => fromGateway("#4fd1ff", "Severe Weather", (f) => f.properties.naturalHazardCategory === "severe-weather")(await api.getLiveNaturalEvents()),
   },
-  // Four real rows below match OSIRIS's own "THREATS & INTEL" flyout
+  // Four real rows below match the reference platform's own "THREATS & INTEL" flyout
   // (confirmed directly from a screenshot: NUCLEAR FACILITIES / GLOBAL
   // INCIDENTS / LIVE ALERT PINS / GDELT EVENTS), each backed by genuinely
-  // real, sourced data rather than a guess at what OSIRIS's own numbers
+  // real, sourced data rather than a guess at what the reference platform's own numbers
   // mean:
   {
     key: "nuclear-facilities",
@@ -525,7 +525,7 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Bell,
     fetcher: async () => {
       // Same real per-query alert data "My Alerts" always used (see
-      // below) — regrouped and relabeled here to match OSIRIS's real
+      // below) — regrouped and relabeled here to match the reference platform's real
       // "Live Alert Pins" row living under Threats & Intel rather than a
       // separate "My Data" group. Also pulls in the unscoped (query_id
       // NULL) escalation-incident alerts from escalationIncidents.ts — a
@@ -640,7 +640,7 @@ const LAYER_DEFS: LayerDef[] = [
       return fromGateway("#ff7a1a", "Fire Detections (NASA FIRMS)")(collection);
     },
   },
-  // OSIRIS's own real "NETWORK INTEL" group (confirmed from a screenshot:
+  // The reference platform's own real "NETWORK INTEL" group (confirmed from a screenshot:
   // a dedicated rail icon, separate from Threats & Intel, with rows LIVE
   // MALWARE and BOTNET C2 SERVERS) — Botnet C2 Servers moves here from
   // Threats & Intel to match.
@@ -666,7 +666,7 @@ const LAYER_DEFS: LayerDef[] = [
     icon: Bug,
     fetcher: async () => fromGateway("#ff3d3d", "Live Malware")(await api.getLiveMalware()),
   },
-  // Three real, sourced categories rather than OSIRIS's full four — see
+  // Three real, sourced categories rather than the reference platform's full four — see
   // classifyAviation() on the backend (liveLayers.ts) for exactly what
   // each one can and can't actually tell apart, and why "Private Jets"
   // specifically isn't split out from general aviation (it would need a
@@ -709,7 +709,7 @@ const LAYER_DEFS: LayerDef[] = [
   },
   {
     key: "maritime",
-    // OSIRIS's own real label for this layer (a screenshot of its
+    // The reference platform's own real label for this layer (a screenshot of its
     // MARITIME group flyout shows "MARITIME / NAVAL" as the one row) —
     // this app's data is still the same real static reference set (major
     // ports, naval bases, shipping chokepoints), just named to match.
@@ -869,7 +869,7 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   // Watch zones: standing warning markers over Africa and Middle East theatres (an Afrilens editorial rating, as
-  // OSIRIS keeps its conflict zones), each listing the reports and escalation incidents that fall in it.
+  // The reference platform keeps its conflict zones), each listing the reports and escalation incidents that fall in it.
   {
     key: "watch-zones",
     label: "Watch Zones",
@@ -946,9 +946,9 @@ const LAYER_DEFS: LayerDef[] = [
     },
   },
   // "News Reports" and "Live Broadcasts" — Media group. Both adapted from
-  // OSIRIS (github.com/simplifaisoul/osiris, MIT license); see the backend
+  // The reference platform MIT license); see the backend
   // routes (osint-alerts, live-broadcasts) for the full source roster and
-  // what's deliberately different from OSIRIS's own version.
+  // what's deliberately different from the reference platform's own version.
   {
     key: "osint-alerts",
     label: "News Reports",
@@ -1061,11 +1061,11 @@ const GROUP_ORDER: LayerGroup[] = ["Natural Hazards", "Threats & Intel", "Networ
  *  Gibraltar, Panama, Malacca, Bab-el-Mandeb, the Danish Straits — rather
  *  than a straight chord across land, and gives a genuinely dense web of
  *  ~40 real trunk routes (not a handful of hand-picked ones) to match how
- *  dense real shipping-lane visualizations look. OSIRIS itself has no
+ *  dense real shipping-lane visualizations look. The reference platform itself has no
  *  shipping-lane rendering at all (checked directly against its source —
  *  no lane/route code exists there, and its "ship" layer is wired to a
  *  backend field that's never actually populated), so this isn't matching
- *  something OSIRIS has; it's a legitimate addition of real trade routes,
+ *  something the reference platform has; it's a legitimate addition of real trade routes,
  *  tied to the same Maritime toggle. Only drawn in 3D mode — a flat
  *  equirectangular Polyline through these same raw coordinates would
  *  visibly wrap the wrong way around the antimeridian on the Pacific
@@ -1084,7 +1084,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "oi" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "afrintel" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -1221,7 +1221,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "live-broadcasts": false,
     // Decoupled from the "maritime" points layer above (ports/bases/
     // chokepoints) — this toggles the shipping-lane arcs (maritimeLanes,
-    // fetched from the backend) instead, matching OSIRIS's own real
+    // fetched from the backend) instead, matching the reference platform's own real
     // product having a separate
     // "Maritime Lines" toggle alongside its points-based "Maritime / Naval"
     // layer (confirmed directly from a screenshot of its actual left rail,
@@ -1283,7 +1283,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     };
   }, []);
 
-  // DISPLAY toggles — OSIRIS's own left-panel group of the same name (its
+  // DISPLAY toggles — the reference platform's own left-panel group of the same name (its
   // real source labels them "Day / Night Cycle" and gates buildings/terrain
   // by zoom rather than a manual switch; see LayerPanel/Map3D's own
   // comments for exactly what each does).
@@ -1409,10 +1409,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
   // Where the map should fly to, from a Locate button in Live Alerts; seq makes a repeat request count.
   const [focus, setFocus] = useState<{ lat: number; lng: number; zoom: number; seq: number } | null>(null);
-  // OI: items OI Assist marked (cyan), and the forecast run on screen, whose actors and relations are drawn.
-  const [oiMarks, setOiMarks] = useState<{ lat: number; lng: number; title: string; url: string | null }[]>([]);
-  const [oiRun, setOiRun] = useState<OiRun | null>(null);
-  const oiLayerCatalog = useMemo(() => LAYER_DEFS.map((d) => ({ key: d.key, label: d.label, group: d.group as string })), []);
+  // AfrIntel: items AfrIntel Assist marked (cyan), and the forecast run on screen, whose actors and relations are drawn.
+  const [afrIntelMarks, setAfrIntelMarks] = useState<{ lat: number; lng: number; title: string; url: string | null }[]>([]);
+  const [afrIntelRun, setAfrIntelRun] = useState<AfrIntelRun | null>(null);
+  const afrIntelLayerCatalog = useMemo(() => LAYER_DEFS.map((d) => ({ key: d.key, label: d.label, group: d.group as string })), []);
 
   // --- Economy tool: World Bank indicators (GDP, growth, inflation, trade)
   // across Afrilens's African coverage set — fetched lazily on first open,
@@ -1777,7 +1777,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   );
 
   // --- Crypto Intel tool: on-chain wallet lookup (BTC/ETH/SOL), adapted
-  // from OSIRIS's chainIntel — see api.getCryptoIntel's own comment. Not a
+  // from the reference platform's chainIntel — see api.getCryptoIntel's own comment. Not a
   // map layer: this is a one-off lookup a user runs, not a polled feed. ---
   const [cryptoAddress, setCryptoAddress] = useState("");
   const [cryptoChain, setCryptoChain] = useState<ChainKind | "">("");
@@ -1834,7 +1834,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, []);
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
-  // Keyboard shortcuts, as OSIRIS has: F flights, E earthquakes, S satellites, D day/night, O opens OI, Esc closes the side panels.
+  // Keyboard shortcuts, as the reference platform has: F flights, E earthquakes, S satellites, D day/night, O opens AfrIntel, Esc closes the side panels.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
@@ -1845,7 +1845,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       else if (k === "e") flip(["earthquakes"]);
       else if (k === "s") flip(["satellites-all"]);
       else if (k === "d") setShowDayNight((v) => !v);
-      else if (k === "o") setActiveTool((prev) => (prev === "oi" ? null : "oi"));
+      else if (k === "a") setActiveTool((prev) => (prev === "afrintel" ? null : "afrintel"));
       else if (e.key === "Escape") { setSelectedAircraft(null); setMap3DSelectedFeature(null); }
     };
     window.addEventListener("keydown", onKey);
@@ -2328,15 +2328,15 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     return extra;
   }, [savedListeningQueries, activeListeningIds, listeningLiveData]);
 
-  const oiPoints = useMemo(() => {
-    const out: GlobePoint[] = oiMarks.map((m, i) => ({ id: `oi-mark-${i}`, layerKey: "OI marks", lat: m.lat, lng: m.lng, color: "#22d3ee", size: 0.5, title: m.title, subtitle: "Marked by OI Assist", time: null, url: m.url }));
-    for (const a of oiRun?.actors ?? []) {
+  const afrIntelPoints = useMemo(() => {
+    const out: GlobePoint[] = afrIntelMarks.map((m, i) => ({ id: `afrintel-mark-${i}`, layerKey: "AfrIntel marks", lat: m.lat, lng: m.lng, color: "#22d3ee", size: 0.5, title: m.title, subtitle: "Marked by AfrIntel Assist", time: null, url: m.url }));
+    for (const a of afrIntelRun?.actors ?? []) {
       if (a.lat == null || a.lng == null) continue;
-      out.push({ id: `oi-actor-${a.id}`, layerKey: "OI actors", lat: a.lat, lng: a.lng, color: "#22d3ee", size: 0.42, title: `${a.name} (${a.kind})`, subtitle: `OI forecast actor: ${a.stance}`.slice(0, 220), time: null, url: null, details: a.goal ? `Goal: ${a.goal}` : undefined });
+      out.push({ id: `afrintel-actor-${a.id}`, layerKey: "AfrIntel actors", lat: a.lat, lng: a.lng, color: "#22d3ee", size: 0.42, title: `${a.name} (${a.kind})`, subtitle: `AfrIntel forecast actor: ${a.stance}`.slice(0, 220), time: null, url: null, details: a.goal ? `Goal: ${a.goal}` : undefined });
     }
     return out;
-  }, [oiMarks, oiRun]);
-  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...oiPoints], [points, toolPoints, listeningLayerPoints, monitorLayerPoints, oiPoints]);
+  }, [afrIntelMarks, afrIntelRun]);
+  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...afrIntelPoints], [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints]);
   // Flat map renders "My Incidents" through the rich IncidentMarker/heatmap
   // layer below instead of a generic colored dot — drop the generic version
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
@@ -2362,19 +2362,19 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       .map((r) => ({ points: r.geometry as LatLng[], label: r.name, color: r.color || "#4dff9e" }))
       .filter((p) => p.points.length >= 2);
     const flightPath = aircraftTrackLine.length >= 2 ? [{ points: aircraftTrackLine, label: selectedAircraft?.label ?? "Flight track", color: "#ffd23f", width: 3 }] : [];
-    const byId = new Map((oiRun?.actors ?? []).map((x) => [x.id, x]));
-    const oiLinks = (oiRun?.links ?? []).flatMap((l) => {
+    const byId = new Map((afrIntelRun?.actors ?? []).map((x) => [x.id, x]));
+    const afrIntelLinks = (afrIntelRun?.links ?? []).flatMap((l) => {
       const p = byId.get(l.from), q = byId.get(l.to);
       if (!p || !q || p.lat == null || p.lng == null || q.lat == null || q.lng == null) return [];
       return [{ points: [[p.lat, p.lng], [q.lat, q.lng]] as LatLng[], label: `${p.name} – ${q.name}: ${l.relation}`, color: "#22d3ee", width: 1.5 }];
     });
-    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays, ...flightPath, ...oiLinks];
+    return [...lanes, ...cables, ...drawPath, ...routePath, ...routeOverlays, ...flightPath, ...afrIntelLinks];
   }, [
     enabled["maritime-lines"],
     maritimeLanes,
     aircraftTrackLine,
     selectedAircraft,
-    oiRun,
+    afrIntelRun,
     enabled["submarine-cables"],
     submarineCables,
     drawMode,
@@ -2728,15 +2728,15 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             <SituationPanel />
           </ToolPanelShell>
         )}
-        {rightTool === "oi" && (
-          <ToolPanelShell title="OI">
-            <OiPanel
-              layers={oiLayerCatalog}
+        {rightTool === "afrintel" && (
+          <ToolPanelShell title="AfrIntel">
+            <AfrIntelPanel
+              layers={afrIntelLayerCatalog}
               onFly={(lat, lng, zoom) => setFocus((f) => ({ lat, lng, zoom, seq: (f?.seq ?? 0) + 1 }))}
               onLayers={(on, off) => setEnabled((prev) => ({ ...prev, ...Object.fromEntries(on.map((k) => [k, true])), ...Object.fromEntries(off.map((k) => [k, false])) }))}
               onPanel={(panel) => setActiveTool(panel as Exclude<RightTool, null>)}
-              onMarks={setOiMarks}
-              onRun={setOiRun}
+              onMarks={setAfrIntelMarks}
+              onRun={setAfrIntelRun}
             />
           </ToolPanelShell>
         )}
@@ -2862,7 +2862,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
  *  rather than trying to make three-globe fake a flat view — it's a real
  *  2D map, not a globe photographed from directly above. "2D" and "Map"
  *  both use street-style tiles (2D dark, Map light) — Sat uses satellite
- *  imagery, matching what the three style buttons mean on OSIRIS itself. */
+ *  imagery, matching what the three style buttons mean on the reference platform itself. */
 function FlatMap({
   mode,
   points,
@@ -3129,7 +3129,7 @@ function FlatMap({
     </MapContainer>
     <div style={{ position: "absolute", top: 10, left: "var(--lens-pad-left, 10px)", zIndex: 500, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start", maxWidth: "62%" }}>
     <ImageryControl value={imagery} onChange={setImagery} shownDay={imageryDay} />
-    <AdulisBar
+    <RegionBar
       region={regionView?.key ?? null}
       onRegion={(r) => {
         setRegionView(r);
@@ -3173,7 +3173,7 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 }
 
-/** Left-side layer panel — OSIRIS's own collapsed icon rail (its real left
+/** Left-side layer panel — the reference platform's own collapsed icon rail (its real left
  *  sidebar, seen icon-only) rather than the wide labeled list this view
  *  first shipped: one group per rail icon, vertically stacked in group
  *  order. Every group — even a group with only one real layer, like
@@ -3181,7 +3181,7 @@ function escapeHtml(s: string): string {
  *  on the rail icon itself, and hovering opens a flyout with the group
  *  name, an enable/disable-everything button reading "ALL" or "NONE"
  *  depending on the group's own current state, a close (×), and one
- *  toggle+count row per layer, matching direct screenshots of OSIRIS's own
+ *  toggle+count row per layer, matching direct screenshots of the reference platform's own
  *  AVIATION, MARITIME and NATURAL HAZARDS flyouts down to that
  *  one-row-is-still-a-flyout detail and the state-reflecting button label.
  *  A thin gold hairline separates each group in the rail. */
@@ -3491,10 +3491,10 @@ function ListeningRailButton({
 }
 
 /** A group's rail button — one icon standing in for several layers, exactly
- *  matching direct screenshots of OSIRIS's own AVIATION and NATURAL
+ *  matching direct screenshots of the reference platform's own AVIATION and NATURAL
  *  HAZARDS flyouts: hovering opens a card with the group name, an
  *  enable/disable-everything button (labeled "ALL" when every row is on,
- *  "NONE" otherwise — OSIRIS's own flyout showed "NONE" with all three
+ *  "NONE" otherwise — the reference platform's own flyout showed "NONE" with all three
  *  Natural Hazards rows off), a close (×), and one row per layer (its own
  *  icon, toggle, and live count). The rail icon itself shows the group's
  *  combined live count
@@ -3595,7 +3595,7 @@ function GroupRailButton({
                 style={{ background: "transparent", border: "none", cursor: "pointer", padding: 0, fontSize: 9.5, letterSpacing: "0.1em", fontWeight: 700, color: allActive ? meta.color : HUD.textMuted, fontFamily: "inherit" }}
               >
                 {/* Reflects the group's own current state rather than a
-                    fixed label — matches a direct screenshot of OSIRIS's
+                    fixed label — matches a direct screenshot of the reference platform's
                     real NATURAL HAZARDS flyout showing "NONE" while every
                     row in that group was off. */}
                 {allActive ? "ALL" : "NONE"}
@@ -3644,7 +3644,7 @@ function GroupRailButton({
  *  arcs) that doesn't carry its own per-feature entity count the way a
  *  fetched point layer does, so a bare click-to-toggle icon would give no
  *  feedback about what it even controls. Matches a direct screenshot of
- *  OSIRIS's own top-of-rail "Maritime Lines" control: hovering the icon
+ *  The reference platform's own top-of-rail "Maritime Lines" control: hovering the icon
  *  opens a small flyout to its right with the toggle switch, label and
  *  live count; a close (×) button dismisses it explicitly since the mouse
  *  has to cross into the flyout itself to reach the switch. */
@@ -3857,7 +3857,7 @@ function DisplayRailGroup({
   );
 }
 
-/** OSIRIS's own .layer-toggle: a 28×14 pill, gold-tinted + gold-glowing
+/** The reference platform's own .layer-toggle: a 28×14 pill, gold-tinted + gold-glowing
  *  thumb when active, muted gray otherwise — ported from its exact CSS
  *  rule rather than the generic blue switch this view used before. */
 function LayerToggleSwitch({ on }: { on: boolean }) {
@@ -3970,12 +3970,12 @@ function StatusBar({ totalFeatures, clock }: { totalFeatures: number; clock: Dat
   );
 }
 
-/** Top-center HUD ticker — OSIRIS's own GlobalStatusBar shows an exchange
+/** Top-center HUD ticker — the reference platform's own GlobalStatusBar shows an exchange
  *  open/closed row, a country-risk chip row, and a CVE count fed from
  *  /api/cyber-threats; its MarketsPanel/space-weather readout separately
  *  shows the Kp index. This is the same ticker concept, rebuilt on real,
  *  verified-licensed sources (see globalStatus.ts's file comment for
- *  exactly which OSIRIS pieces were dropped or replaced and why — Markets'
+ *  exactly which the reference platform pieces were dropped or replaced and why — Markets'
  *  Yahoo scrape and Country Risk's hardcoded numbers aren't reproduced
  *  as-is). Polls every 10 minutes; each of the four calls fails
  *  independently so one slow/down upstream doesn't blank the whole ticker. */
@@ -4072,7 +4072,7 @@ function GlobalStatusTicker() {
   );
 }
 
-/** Right-side icon rail — the OSIRIS-style vertical strip of tool buttons,
+/** Right-side icon rail — the dark-HUD-style vertical strip of tool buttons,
  *  mirroring the left LayerPanel's visual language (same dark glass card,
  *  same border color) but icon-only + a short label, since this rail holds
  *  tools rather than a scrollable list of toggles. */
@@ -4090,7 +4090,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "telegram", icon: Send, label: "Telegram" },
     { key: "events", icon: HeartPulse, label: "Events" },
-    { key: "oi", icon: BrainCircuit, label: "OI" },
+    { key: "afrintel", icon: BrainCircuit, label: "AfrIntel" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const alertsPaused = useAlertsPaused();
@@ -4742,7 +4742,7 @@ function IncidentsToolPanel({
 const RISK_COLOR: Record<string, string> = { critical: HUD.alertRed, high: HUD.alertOrange, medium: "#ffd23f", low: HUD.textSecondary, info: HUD.textMuted };
 
 /** Crypto Intel tool — on-chain wallet lookup (BTC/ETH/SOL) via
- *  api.getCryptoIntel, adapted from OSIRIS's chainIntel module. A one-off
+ *  api.getCryptoIntel, adapted from the reference platform's chainIntel module. A one-off
  *  address lookup, not a polled map layer — see that module's own comment
  *  for the full (entirely keyless) source list. */
 function CryptoToolPanel({
@@ -4874,7 +4874,7 @@ const QUERY_BUILDER_TOKENS: { label: string; token: string; title: string }[] = 
   { label: "( )", token: "()", title: "Group terms, e.g. (coup OR mutiny) AND Sahel" },
 ];
 
-/** Social Listening tool — a Sprinklr-style query builder plus a Search tab
+/** Social Listening tool — a boolean query builder plus a Search tab
  *  (one live search) and a Dashboard tab (every saved query at a glance),
  *  covering GDELT (news/blog tone + volume trend, boolean-query aware) and,
  *  if configured, Mastodon (real public posts, plain-text search only). See
@@ -5364,7 +5364,7 @@ function EscalationFlatMarker({ lat, lng, size, color, incident }: { lat: number
         },
       }}
     >
-      <LeafletPopup className="osiris-hover-leaflet" closeButton={false} autoPan={false} offset={[0, -2]}>
+      <LeafletPopup className="lens-hover-leaflet" closeButton={false} autoPan={false} offset={[0, -2]}>
         <div onMouseEnter={stay} onMouseLeave={closeSoon}>
           <EscalationHoverCard incident={incident} clickHint="CLICK THE MARKER TO OPEN LIVEUAMAP THERE" />
         </div>
