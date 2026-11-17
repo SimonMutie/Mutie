@@ -2,7 +2,7 @@
  * Watch zones: standing warning markers over the conflict theatres of Africa and the Middle East, each with the
  * latest headlines and Telegram posts that name it, and the Lens's own escalation incidents inside it.
  *
- * Adapted from OSIRIS's conflict-zone route (MIT, see THIRD_PARTY_NOTICES.md): the idea of a hand-kept list of
+ * Adapted from MIT-licensed open-source code (see THIRD_PARTY_NOTICES.md): the idea of a hand-kept list of
  * zones with an editorial severity, and its whole-word headline matcher. Kept to Africa and the Middle East, with
  * a few Africa zones added, and with headlines drawn from the feeds the Lens already reads.
  *
@@ -44,7 +44,7 @@ export const WATCH_ZONES: WatchZone[] = [
 
 /**
  * The zone a headline is about, or null. Every word of one of a zone's queries has to appear as a whole word:
- * a bare substring test let "war" match "warning". Ported from OSIRIS's matchZone.
+ * a bare substring test let "war" match "warning". Ported from the reference platform's matchZone.
  */
 export function matchZone(text: string): WatchZone | null {
   const words = new Set<string>();
