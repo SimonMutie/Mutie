@@ -30,9 +30,9 @@ declare const __MAPLIBRE_WORKER_URL__: string;
 setWorkerUrl(__MAPLIBRE_WORKER_URL__);
 
 /**
- * The 3D view, rebuilt on the same engine OSIRIS itself actually uses —
- * checked directly against its source (github.com/enzg/osiris-live,
- * src/components/OsirisMap.tsx): plain MapLibre GL JS, styled with CARTO's
+ * The 3D view, rebuilt on the same engine the reference platform itself actually uses —
+ * checked directly against its source (github.com/enzg/lens-live,
+ * its map component): plain MapLibre GL JS, styled with CARTO's
  * free "Dark Matter" vector style (basemaps.cartocdn.com/gl/dark-matter-gl-
  * style/style.json — a different, still-keyless CARTO service from the
  * dark_all *raster* tiles that started requiring a key; confirmed live
@@ -42,7 +42,7 @@ setWorkerUrl(__MAPLIBRE_WORKER_URL__);
  * which could only ever show whatever GeoJSON this app fed it (a ~180-
  * shape country outline layer, at coarsest resolution) — it fundamentally
  * cannot render a real vector-tile basemap. That mismatch was the actual
- * cause of the granularity complaint: OSIRIS's "3D" is a real slippy map
+ * cause of the granularity complaint: the reference platform's "3D" is a real slippy map
  * (streets, place names, water, admin boundaries down to the tile's own
  * detail level) wrapped onto a sphere, not a textured globe with a few
  * overlay shapes — the two look categorically different at any city-level
@@ -50,7 +50,7 @@ setWorkerUrl(__MAPLIBRE_WORKER_URL__);
  *
  * Everything this app's own live-data layers need (points, paths, a
  * draw-area polygon) is added as ordinary MapLibre GeoJSON sources/layers
- * on top of that same style, which is how OsirisMap.tsx itself layers its
+ * on top of that same style, which is how its map component itself layers its
  * own live entities over the same base.
  */
 
@@ -176,7 +176,7 @@ export type Map3DSelectedFeature =
 /** CARTO's free, keyless vector basemap CDN — distinct from the raster
  *  Maps API tiles (cartocdn.com/.../dark_all) that started requiring a key
  *  partway through 2026 (see mapConstants.ts). This is the exact style URL
- *  OSIRIS's own OsirisMap.tsx uses. */
+ *  The reference platform's own its map component uses. */
 const CARTO_DARK_MATTER_STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 
 /** AWS Open Data's public-domain Terrarium-encoded elevation tiles
@@ -442,13 +442,13 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // The points already in hand, not an empty set: data that arrived
       // before the style finished loading would otherwise stay undrawn
       // until the next time it changed.
-      map.addSource("osiris-heat", { type: "geojson", data: toGeoJsonHeat(heatRef.current.points) });
-      map.addLayer({ id: "osiris-heat-layer", type: "heatmap", source: "osiris-heat", paint: heatPaint(heatRef.current.style) as never });
-      map.addSource("osiris-points", { type: "geojson", data: toGeoJsonPoints(pointsRef.current) });
+      map.addSource("lens-heat", { type: "geojson", data: toGeoJsonHeat(heatRef.current.points) });
+      map.addLayer({ id: "lens-heat-layer", type: "heatmap", source: "lens-heat", paint: heatPaint(heatRef.current.style) as never });
+      map.addSource("lens-points", { type: "geojson", data: toGeoJsonPoints(pointsRef.current) });
       map.addLayer({
-        id: "osiris-points-circle",
+        id: "lens-points-circle",
         type: "circle",
-        source: "osiris-points",
+        source: "lens-points",
         // Conflict Escalation points get the dedicated warning-icon layer
         // below instead — excluded here so a country isn't marked with both
         // a plain dot AND the triangle icon stacked on top of each other.
@@ -465,9 +465,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // The user's uploaded incidents: teardrop pins in the actor theme colours. One image per colour,
       // drawn on demand (see the styleimagemissing handler below).
       map.addLayer({
-        id: "osiris-incident-pins",
+        id: "lens-incident-pins",
         type: "symbol",
-        source: "osiris-points",
+        source: "lens-points",
         filter: ["==", ["get", "layerKey"], "My Incidents"],
         layout: {
           "icon-image": ["concat", "incident-pin-", ["get", "color"]],
@@ -479,9 +479,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       });
       // Aircraft: small plane symbols turned to their heading, one image per colour (drawn on demand below).
       map.addLayer({
-        id: "osiris-aircraft",
+        id: "lens-aircraft",
         type: "symbol",
-        source: "osiris-points",
+        source: "lens-points",
         filter: ["has", "aircraft"],
         layout: {
           "icon-image": ["concat", "plane-", ["get", "color"]],
@@ -523,9 +523,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // the country's centroid, sized and colored by severity — distinct
       // from every other layer's plain colored dot.
       map.addLayer({
-        id: "osiris-points-warning-icon",
+        id: "lens-points-warning-icon",
         type: "symbol",
-        source: "osiris-points",
+        source: "lens-points",
         filter: ["has", "escalationLevel"],
         layout: {
           "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-watch"],
@@ -547,97 +547,97 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // place name/country and its detail are still in the click detail
       // panel (Map3DDetailPanel) — this just stops it from being a
       // permanent, space-consuming map fixture. Only the icon
-      // (osiris-points-warning-icon above) stays always-visible now.
+      // (lens-points-warning-icon above) stays always-visible now.
 
       // Approximate territory-change circles ("can this automatically plot a
       // polygon of what changed") — dashed amber outline + light fill so it
       // reads as a reported-area marker, not a crisp/precise boundary.
-      map.addSource("osiris-active-conflicts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addSource("lens-active-conflicts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({
-        id: "osiris-active-conflicts-fill",
+        id: "lens-active-conflicts-fill",
         type: "fill",
-        source: "osiris-active-conflicts",
+        source: "lens-active-conflicts",
         paint: {
           "fill-color": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].fill, 6, ACTIVE_INTENSITY_STYLE[2].fill, 7, ACTIVE_INTENSITY_STYLE[3].fill, 8, ACTIVE_INTENSITY_STYLE[4].fill, NEUTRAL_COUNTRY.fill],
           "fill-opacity": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].opacity, 6, ACTIVE_INTENSITY_STYLE[2].opacity, 7, ACTIVE_INTENSITY_STYLE[3].opacity, 8, ACTIVE_INTENSITY_STYLE[4].opacity, 0],
         },
       });
       map.addLayer({
-        id: "osiris-active-conflicts-line",
+        id: "lens-active-conflicts-line",
         type: "line",
-        source: "osiris-active-conflicts",
+        source: "lens-active-conflicts",
         paint: {
           "line-color": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].line, 6, ACTIVE_INTENSITY_STYLE[2].line, 7, ACTIVE_INTENSITY_STYLE[3].line, 8, ACTIVE_INTENSITY_STYLE[4].line, NEUTRAL_COUNTRY.line],
           "line-width": ["match", ["get", "intensity"], 7, 1.4, 8, 1.6, 1.2],
           "line-opacity": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].lineOpacity, 6, ACTIVE_INTENSITY_STYLE[2].lineOpacity, 7, ACTIVE_INTENSITY_STYLE[3].lineOpacity, 8, ACTIVE_INTENSITY_STYLE[4].lineOpacity, 0],
         },
       });
-      map.addSource("osiris-conflict-waves", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      for (const id of ["osiris-conflict-waves-a", "osiris-conflict-waves-b"]) {
+      map.addSource("lens-conflict-waves", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      for (const id of ["lens-conflict-waves-a", "lens-conflict-waves-b"]) {
         map.addLayer({
           id,
           type: "circle",
-          source: "osiris-conflict-waves",
+          source: "lens-conflict-waves",
           paint: { "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": INTENSITY_STYLE[4].line, "circle-stroke-width": 2, "circle-radius": 8, "circle-stroke-opacity": 0.9 },
         });
       }
-      map.addSource("osiris-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
+      map.addSource("lens-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
-        id: "osiris-territory-changes-fill",
+        id: "lens-territory-changes-fill",
         type: "fill",
-        source: "osiris-territory-changes",
+        source: "lens-territory-changes",
         paint: { "fill-color": "#ff9d4f", "fill-opacity": 0.12 },
       });
       map.addLayer({
-        id: "osiris-territory-changes-line",
+        id: "lens-territory-changes-line",
         type: "line",
-        source: "osiris-territory-changes",
+        source: "lens-territory-changes",
         paint: { "line-color": "#ff9d4f", "line-width": 1.5, "line-opacity": 0.75, "line-dasharray": [2, 2] },
       });
 
-      map.addSource("osiris-paths", { type: "geojson", data: toGeoJsonPaths([]) });
+      map.addSource("lens-paths", { type: "geojson", data: toGeoJsonPaths([]) });
       map.addLayer({
-        id: "osiris-paths-line",
+        id: "lens-paths-line",
         type: "line",
-        source: "osiris-paths",
+        source: "lens-paths",
         paint: { "line-color": ["get", "color"], "line-width": ["coalesce", ["get", "width"], 2], "line-opacity": 0.9 },
       });
 
-      map.addSource("osiris-draw-area", { type: "geojson", data: toGeoJsonRing(null) });
+      map.addSource("lens-draw-area", { type: "geojson", data: toGeoJsonRing(null) });
       map.addLayer({
-        id: "osiris-draw-area-fill",
+        id: "lens-draw-area-fill",
         type: "fill",
-        source: "osiris-draw-area",
+        source: "lens-draw-area",
         paint: { "fill-color": "#ffd23f", "fill-opacity": 0.25 },
       });
       map.addLayer({
-        id: "osiris-draw-area-line",
+        id: "lens-draw-area-line",
         type: "line",
-        source: "osiris-draw-area",
+        source: "lens-draw-area",
         paint: { "line-color": "#ffd23f", "line-width": 2 },
       });
 
-      map.addSource("osiris-daynight", { type: "geojson", data: toGeoJsonRing(nightHemisphereRing(new Date())) });
+      map.addSource("lens-daynight", { type: "geojson", data: toGeoJsonRing(nightHemisphereRing(new Date())) });
       map.addLayer(
         {
-          id: "osiris-daynight-fill",
+          id: "lens-daynight-fill",
           type: "fill",
-          source: "osiris-daynight",
+          source: "lens-daynight",
           paint: { "fill-color": "#000010", "fill-opacity": 0.45 },
           layout: { visibility: "none" },
         },
-        "osiris-points-circle"
+        "lens-points-circle"
       );
 
       // 3D Buildings — OpenMapTiles' `building` layer (this style's own
       // source-layer, confirmed against the style JSON) carries an optional
       // render_height per OpenMapTiles' documented schema; where a tile
       // doesn't populate it, a flat fallback height still gives the same
-      // "city block massing" effect OSIRIS's own "City detail" toggle goes
+      // "city block massing" effect the reference platform's own "City detail" toggle goes
       // for, rather than claiming real per-building heights this free tile
       // source doesn't reliably carry everywhere.
       map.addLayer({
-        id: "osiris-buildings-3d",
+        id: "lens-buildings-3d",
         type: "fill-extrusion",
         source: "carto",
         "source-layer": "building",
@@ -651,10 +651,10 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         layout: { visibility: "none" },
       });
 
-      map.addSource("osiris-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
+      map.addSource("lens-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
-      const POINT_LAYERS = ["osiris-points-circle", "osiris-incident-pins", "osiris-points-warning-icon", "osiris-aircraft"];
-      const TERRITORY_LAYER = "osiris-territory-changes-fill";
+      const POINT_LAYERS = ["lens-points-circle", "lens-incident-pins", "lens-points-warning-icon", "lens-aircraft"];
+      const TERRITORY_LAYER = "lens-territory-changes-fill";
 
       map.on("click", (e) => {
         const hits = map.queryRenderedFeatures(e.point, { layers: [...POINT_LAYERS, TERRITORY_LAYER] });
@@ -683,7 +683,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // the pointer can travel from one to the other to reach a link.
       const hoverNode = document.createElement("div");
       const hoverRoot = createRoot(hoverNode);
-      const hoverPopup = new Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: 30, maxWidth: "none", className: "osiris-hover-popup" }).setDOMContent(hoverNode);
+      const hoverPopup = new Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: 30, maxWidth: "none", className: "lens-hover-popup" }).setDOMContent(hoverNode);
       let hoverId: string | null = null;
       let hoverTimer: number | undefined;
       const hideHover = () => {
@@ -704,9 +704,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       };
 
       // Hovering a pin shows the incident's date, place, type and details.
-      const incidentHover = new Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: [0, -22], maxWidth: "260px", className: "osiris-hover-popup" });
+      const incidentHover = new Popup({ closeButton: false, closeOnClick: false, focusAfterOpen: false, offset: [0, -22], maxWidth: "260px", className: "lens-hover-popup" });
       const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
-      map.on("mousemove", "osiris-incident-pins", (e) => {
+      map.on("mousemove", "lens-incident-pins", (e) => {
         const f = e.features?.[0];
         if (!f || f.geometry.type !== "Point") return;
         const p = f.properties as { title?: string; subtitle?: string; time?: string; actor?: string; details?: string };
@@ -722,7 +722,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
           )
           .addTo(map);
       });
-      map.on("mouseleave", "osiris-incident-pins", () => incidentHover.remove());
+      map.on("mouseleave", "lens-incident-pins", () => incidentHover.remove());
 
       for (const layerId of POINT_LAYERS) {
         map.on("mousemove", layerId, (e) => {
@@ -833,20 +833,20 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    (map.getSource("osiris-heat") as GeoJSONSource | undefined)?.setData(toGeoJsonHeat(heatPoints));
+    (map.getSource("lens-heat") as GeoJSONSource | undefined)?.setData(toGeoJsonHeat(heatPoints));
   }, [heatPoints]);
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !readyRef.current || !map.getLayer("osiris-heat-layer")) return;
+    if (!map || !readyRef.current || !map.getLayer("lens-heat-layer")) return;
     const p = heatPaint(heatStyle) as Record<string, unknown>;
-    for (const [k, v] of Object.entries(p)) map.setPaintProperty("osiris-heat-layer", k as never, v as never);
+    for (const [k, v] of Object.entries(p)) map.setPaintProperty("lens-heat-layer", k as never, v as never);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatKey]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    (map.getSource("osiris-points") as GeoJSONSource | undefined)?.setData(toGeoJsonPoints(points));
+    (map.getSource("lens-points") as GeoJSONSource | undefined)?.setData(toGeoJsonPoints(points));
     fitRef.current();
   }, [points]);
 
@@ -857,13 +857,13 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    (map.getSource("osiris-paths") as GeoJSONSource | undefined)?.setData(toGeoJsonPaths(paths));
+    (map.getSource("lens-paths") as GeoJSONSource | undefined)?.setData(toGeoJsonPaths(paths));
   }, [paths]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    (map.getSource("osiris-territory-changes") as GeoJSONSource | undefined)?.setData(toGeoJsonTerritoryChanges(territoryChanges));
+    (map.getSource("lens-territory-changes") as GeoJSONSource | undefined)?.setData(toGeoJsonTerritoryChanges(territoryChanges));
   }, [territoryChanges]);
 
   // Active conflict (UCDP) shading, drawn above the alert shading so the purple scale sits where no alert is.
@@ -871,8 +871,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     const map = mapRef.current;
     if (!map) return;
     const apply = () =>
-      (map.getSource("osiris-active-conflicts") as GeoJSONSource | undefined)?.setData(activeConflictMap ?? { type: "FeatureCollection", features: [] });
-    if (map.getSource("osiris-active-conflicts")) apply();
+      (map.getSource("lens-active-conflicts") as GeoJSONSource | undefined)?.setData(activeConflictMap ?? { type: "FeatureCollection", features: [] });
+    if (map.getSource("lens-active-conflicts")) apply();
     else map.once("load", apply);
   }, [activeConflictMap]);
 
@@ -881,8 +881,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     const map = mapRef.current;
     if (!map) return;
     const apply = () =>
-      (map.getSource("osiris-conflict-waves") as GeoJSONSource | undefined)?.setData(conflictWaves ?? { type: "FeatureCollection", features: [] });
-    if (map.getSource("osiris-conflict-waves")) apply();
+      (map.getSource("lens-conflict-waves") as GeoJSONSource | undefined)?.setData(conflictWaves ?? { type: "FeatureCollection", features: [] });
+    if (map.getSource("lens-conflict-waves")) apply();
     else map.once("load", apply);
   }, [conflictWaves]);
 
@@ -901,8 +901,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       const map = mapRef.current;
       if (map) {
         const phase = ((now - start) % period) / period;
-        setRing(map, "osiris-conflict-waves-a", phase, !!reduce);
-        setRing(map, "osiris-conflict-waves-b", (phase + 0.5) % 1, !!reduce);
+        setRing(map, "lens-conflict-waves-a", phase, !!reduce);
+        setRing(map, "lens-conflict-waves-b", (phase + 0.5) % 1, !!reduce);
       }
       if (!reduce) raf = requestAnimationFrame(frame);
     };
@@ -913,19 +913,19 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    (map.getSource("osiris-draw-area") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(drawAreaRing));
+    (map.getSource("lens-draw-area") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(drawAreaRing));
   }, [drawAreaRing]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    map.setLayoutProperty("osiris-daynight-fill", "visibility", showDayNight ? "visible" : "none");
+    map.setLayoutProperty("lens-daynight-fill", "visibility", showDayNight ? "visible" : "none");
     if (!showDayNight) return;
-    (map.getSource("osiris-daynight") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(nightHemisphereRing(new Date())));
+    (map.getSource("lens-daynight") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(nightHemisphereRing(new Date())));
     // The terminator moves on the order of minutes, not frames — refreshing
     // every minute keeps it honest without redrawing constantly.
     const interval = setInterval(() => {
-      (map.getSource("osiris-daynight") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(nightHemisphereRing(new Date())));
+      (map.getSource("lens-daynight") as GeoJSONSource | undefined)?.setData(toGeoJsonRing(nightHemisphereRing(new Date())));
     }, 60_000);
     return () => clearInterval(interval);
   }, [showDayNight]);
@@ -933,14 +933,14 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
-    map.setLayoutProperty("osiris-buildings-3d", "visibility", showBuildings ? "visible" : "none");
+    map.setLayoutProperty("lens-buildings-3d", "visibility", showBuildings ? "visible" : "none");
   }, [showBuildings]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !readyRef.current) return;
     if (showTerrain) {
-      map.setTerrain({ source: "osiris-terrain", exaggeration: 1.3 });
+      map.setTerrain({ source: "lens-terrain", exaggeration: 1.3 });
     } else {
       map.setTerrain(null);
     }
@@ -1022,19 +1022,19 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
   const url = feature.url;
 
   return (
-    <div className="osiris-detail-panel">
-      <button className="osiris-detail-panel-close" onClick={onClose} aria-label="Close">
+    <div className="lens-detail-panel">
+      <button className="lens-detail-panel-close" onClick={onClose} aria-label="Close">
         ×
       </button>
 
       {feature.kind === "territory" ? (
-        <div className="osiris-popup-card">
-          <div className="osiris-popup-title osiris-popup-title--elevated">◇ {title}</div>
-          <div className="osiris-popup-layer">TERRITORY CHANGE (APPROXIMATE)</div>
-          <div className="osiris-popup-desc">{feature.detail}</div>
-          {feature.time && <div className="osiris-popup-time">{new Date(feature.time).toLocaleString()}</div>}
+        <div className="lens-popup-card">
+          <div className="lens-popup-title lens-popup-title--elevated">◇ {title}</div>
+          <div className="lens-popup-layer">TERRITORY CHANGE (APPROXIMATE)</div>
+          <div className="lens-popup-desc">{feature.detail}</div>
+          {feature.time && <div className="lens-popup-time">{new Date(feature.time).toLocaleString()}</div>}
           {url && (
-            <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
+            <a className="lens-popup-link" href={url} target="_blank" rel="noopener noreferrer">
               [ OPEN SOURCE ↗ ]
             </a>
           )}
@@ -1042,38 +1042,38 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
       ) : incident ? (
         <EscalationIncidentCard incident={incident} />
       ) : feature.escalationLevel ? (
-        <div className="osiris-popup-card osiris-popup-card--escalation">
-          <div className={`osiris-popup-title osiris-popup-title--${feature.escalationLevel}`}>⚠ {title}</div>
+        <div className="lens-popup-card lens-popup-card--escalation">
+          <div className={`lens-popup-title lens-popup-title--${feature.escalationLevel}`}>⚠ {title}</div>
           {/* Fallback card, shown only against a backend that predates
            *  incidents (no `incident` on the feature). */}
-          <div className="osiris-popup-desc">{feature.subtitle}</div>
-          <div className="osiris-popup-grid">
+          <div className="lens-popup-desc">{feature.subtitle}</div>
+          <div className="lens-popup-grid">
             <div>
-              <div className="osiris-popup-label">SEVERITY</div>
-              <div className={`osiris-popup-value osiris-popup-value--${feature.escalationLevel}`}>{LEVEL_LABEL[feature.escalationLevel]}</div>
+              <div className="lens-popup-label">SEVERITY</div>
+              <div className={`lens-popup-value lens-popup-value--${feature.escalationLevel}`}>{LEVEL_LABEL[feature.escalationLevel]}</div>
             </div>
             <div>
-              <div className="osiris-popup-label">COORDS</div>
-              <div className="osiris-popup-value">
+              <div className="lens-popup-label">COORDS</div>
+              <div className="lens-popup-value">
                 {feature.lat.toFixed(3)}°, {feature.lng.toFixed(3)}°
               </div>
             </div>
           </div>
           {url && (
-            <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
+            <a className="lens-popup-link" href={url} target="_blank" rel="noopener noreferrer">
               [ OPEN SOURCE ↗ ]
             </a>
           )}
           {countryCode && (
             <>
-              <div className="osiris-popup-evidence-header">SOURCES{feature.evidenceCount ? ` (${feature.evidenceCount})` : ""}</div>
-              <div className="osiris-popup-evidence-list">
+              <div className="lens-popup-evidence-header">SOURCES{feature.evidenceCount ? ` (${feature.evidenceCount})` : ""}</div>
+              <div className="lens-popup-evidence-list">
                 {evidenceError ? (
-                  <div className="osiris-popup-evidence-empty">Sources failed to load.</div>
+                  <div className="lens-popup-evidence-empty">Sources failed to load.</div>
                 ) : evidence === null ? (
-                  <div className="osiris-popup-evidence-empty">Loading sources…</div>
+                  <div className="lens-popup-evidence-empty">Loading sources…</div>
                 ) : evidence.length === 0 ? (
-                  <div className="osiris-popup-evidence-empty">No individual source links captured for this window.</div>
+                  <div className="lens-popup-evidence-empty">No individual source links captured for this window.</div>
                 ) : (
                   evidence.map((item, i) => {
                     // Africa Wire and GDELT-article items both carry a real
@@ -1086,12 +1086,12 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
                     const tagText = item.source === "africa-wire" ? "Africa Wire" : item.source === "gdelt-article" ? "GDELT" : "";
                     return (
                       <div key={i}>
-                        <a className="osiris-popup-evidence-link" href={item.sourceUrl} target="_blank" rel="noopener noreferrer">
+                        <a className="lens-popup-evidence-link" href={item.sourceUrl} target="_blank" rel="noopener noreferrer">
                           {i + 1}. {label}
-                          {tagText && <span className="osiris-popup-evidence-tag">{tagText}</span>}
+                          {tagText && <span className="lens-popup-evidence-tag">{tagText}</span>}
                         </a>
                         {item.deepRead && (
-                          <div className="osiris-popup-evidence-rationale">
+                          <div className="lens-popup-evidence-rationale">
                             {item.deepRead.actors.length > 0 && <strong>{item.deepRead.actors.join(", ")}: </strong>}
                             {item.deepRead.rationale}
                           </div>
@@ -1105,9 +1105,9 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
           )}
         </div>
       ) : (
-        <div className="osiris-popup-card">
-          <div className="osiris-popup-title">{title}</div>
-          <div className="osiris-popup-layer">{feature.layerKey}</div>
+        <div className="lens-popup-card">
+          <div className="lens-popup-title">{title}</div>
+          <div className="lens-popup-layer">{feature.layerKey}</div>
           {feature.layerKey === "My Incidents" ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, lineHeight: 1.45 }}>
               <div><span style={{ opacity: 0.6 }}>Date </span>{feature.time ? formatIncidentDate(feature.time) : "Not recorded"}</div>
@@ -1120,12 +1120,12 @@ export function Map3DDetailPanel({ feature, onClose }: { feature: Map3DSelectedF
             </div>
           ) : (
             <>
-              <div className="osiris-popup-desc">{feature.subtitle}</div>
-              {feature.time && <div className="osiris-popup-time">{new Date(feature.time).toLocaleString()}</div>}
+              <div className="lens-popup-desc">{feature.subtitle}</div>
+              {feature.time && <div className="lens-popup-time">{new Date(feature.time).toLocaleString()}</div>}
             </>
           )}
           {url && (
-            <a className="osiris-popup-link" href={url} target="_blank" rel="noopener noreferrer">
+            <a className="lens-popup-link" href={url} target="_blank" rel="noopener noreferrer">
               [ OPEN SOURCE ↗ ]
             </a>
           )}
@@ -1160,7 +1160,7 @@ function CitedText({ text, incident }: { text: string; incident: EscalationIncid
         const src = m ? incident.sources.find((s) => s.n === Number(m[1])) : undefined;
         if (!src) return <span key={i}>{part}</span>;
         return (
-          <a key={i} className="osiris-incident-cite" href={src.url} target="_blank" rel="noopener noreferrer" title={src.title ?? src.domain}>
+          <a key={i} className="lens-incident-cite" href={src.url} target="_blank" rel="noopener noreferrer" title={src.title ?? src.domain}>
             {part}
           </a>
         );
@@ -1184,75 +1184,75 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
     : shortDate(incident.lastEventDate);
   const liveuamap = liveuamapLink(incident.countryCode, incident.lat, incident.lon, incident.geoPrecision);
   return (
-    <div className="osiris-popup-card osiris-popup-card--escalation osiris-incident">
-      <div className={`osiris-popup-title osiris-popup-title--${incident.level}`}>⚠ {incident.headline}</div>
-      <div className="osiris-popup-layer">{where}</div>
-      <div className={`osiris-incident-precision osiris-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
-      {incident.preliminary && <div className="osiris-incident-preliminary">PRELIMINARY · FROM HEADLINES · NOT YET READ IN FULL</div>}
+    <div className="lens-popup-card lens-popup-card--escalation lens-incident">
+      <div className={`lens-popup-title lens-popup-title--${incident.level}`}>⚠ {incident.headline}</div>
+      <div className="lens-popup-layer">{where}</div>
+      <div className={`lens-incident-precision lens-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
+      {incident.preliminary && <div className="lens-incident-preliminary">PRELIMINARY · FROM HEADLINES · NOT YET READ IN FULL</div>}
       <EscalationMap incidentId={incident.id} />
-      <a className="osiris-popup-link" href={liveuamap.url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8 }}>
+      <a className="lens-popup-link" href={liveuamap.url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8 }}>
         [ OPEN {liveuamap.mapName.toUpperCase()} ON LIVEUAMAP ↗ ]
       </a>
 
-      <div className="osiris-popup-grid osiris-incident-grid">
+      <div className="lens-popup-grid lens-incident-grid">
         <div>
-          <div className="osiris-popup-label">SEVERITY</div>
-          <div className={`osiris-popup-value osiris-popup-value--${incident.level}`}>{LEVEL_LABEL[incident.level]}</div>
+          <div className="lens-popup-label">SEVERITY</div>
+          <div className={`lens-popup-value lens-popup-value--${incident.level}`}>{LEVEL_LABEL[incident.level]}</div>
         </div>
         <div>
-          <div className="osiris-popup-label">EVENT DATE · LAST 48 H</div>
-          <div className="osiris-popup-value">{dates}</div>
+          <div className="lens-popup-label">EVENT DATE · LAST 48 H</div>
+          <div className="lens-popup-value">{dates}</div>
         </div>
         <div>
-          <div className="osiris-popup-label">SOURCES</div>
-          <div className="osiris-popup-value">{incident.sources.length}</div>
+          <div className="lens-popup-label">SOURCES</div>
+          <div className="lens-popup-value">{incident.sources.length}</div>
         </div>
         <div>
-          <div className="osiris-popup-label">REPORTED DEATHS</div>
-          <div className="osiris-popup-value">{incident.fatalitiesMax ?? "none stated"}</div>
+          <div className="lens-popup-label">REPORTED DEATHS</div>
+          <div className="lens-popup-value">{incident.fatalitiesMax ?? "none stated"}</div>
         </div>
       </div>
 
-      <div className="osiris-incident-heading">{incident.preliminary ? "WHAT IS BEING REPORTED" : "WHAT HAPPENED"}</div>
-      <div className="osiris-popup-desc">
+      <div className="lens-incident-heading">{incident.preliminary ? "WHAT IS BEING REPORTED" : "WHAT HAPPENED"}</div>
+      <div className="lens-popup-desc">
         <CitedText text={incident.summary} incident={incident} />
       </div>
       {incident.assessment && (
         <>
-          <div className="osiris-incident-heading">{incident.preliminary ? "JUDGEMENT" : "ASSESSMENT"}</div>
-          <div className="osiris-popup-desc">
+          <div className="lens-incident-heading">{incident.preliminary ? "JUDGEMENT" : "ASSESSMENT"}</div>
+          <div className="lens-popup-desc">
             <CitedText text={incident.assessment} incident={incident} />
           </div>
         </>
       )}
       {incident.outlook && (
         <>
-          <div className="osiris-incident-heading">WATCH FOR</div>
-          <div className="osiris-popup-desc">
+          <div className="lens-incident-heading">WATCH FOR</div>
+          <div className="lens-popup-desc">
             <CitedText text={incident.outlook} incident={incident} />
           </div>
         </>
       )}
-      {incident.caveats && <div className="osiris-incident-caveat">{incident.caveats}</div>}
+      {incident.caveats && <div className="lens-incident-caveat">{incident.caveats}</div>}
 
-      <div className="osiris-incident-heading">WHY THIS IS FLAGGED — CRITERIA MET</div>
-      <ul className="osiris-incident-list">
+      <div className="lens-incident-heading">WHY THIS IS FLAGGED — CRITERIA MET</div>
+      <ul className="lens-incident-list">
         {incident.criteriaMet.map((c, i) => (
           <li key={i}>{c}</li>
         ))}
       </ul>
 
-      <div className="osiris-incident-heading">INDICATORS AND THE TEXT BEHIND THEM</div>
+      <div className="lens-incident-heading">INDICATORS AND THE TEXT BEHIND THEM</div>
       {incident.indicators.map((ind) => (
-        <div key={ind.id} className="osiris-incident-indicator">
-          <div className={`osiris-incident-indicator-label osiris-incident-indicator-label--${ind.tier}`}>{ind.label}</div>
+        <div key={ind.id} className="lens-incident-indicator">
+          <div className={`lens-incident-indicator-label lens-incident-indicator-label--${ind.tier}`}>{ind.label}</div>
           {ind.evidence.map((ev, i) => {
             const src = incident.sources.find((s) => s.n === ev.source);
             return (
-              <div key={i} className="osiris-incident-quote">
+              <div key={i} className="lens-incident-quote">
                 “{ev.quote}”{" "}
                 {src && (
-                  <a className="osiris-incident-cite" href={src.url} target="_blank" rel="noopener noreferrer" title={src.title ?? src.domain}>
+                  <a className="lens-incident-cite" href={src.url} target="_blank" rel="noopener noreferrer" title={src.title ?? src.domain}>
                     [{src.n}] {src.domain}
                   </a>
                 )}
@@ -1264,17 +1264,17 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
 
       {incident.actors.length > 0 && (
         <>
-          <div className="osiris-incident-heading">ACTORS NAMED</div>
-          <div className="osiris-popup-desc">{incident.actors.join(" · ")}</div>
+          <div className="lens-incident-heading">ACTORS NAMED</div>
+          <div className="lens-popup-desc">{incident.actors.join(" · ")}</div>
         </>
       )}
 
-      <div className="osiris-incident-heading">SOURCES ({incident.sources.length})</div>
-      <div className="osiris-incident-sources">
+      <div className="lens-incident-heading">SOURCES ({incident.sources.length})</div>
+      <div className="lens-incident-sources">
         {incident.sources.map((s) => (
-          <a key={s.n} className="osiris-incident-source" href={s.url} target="_blank" rel="noopener noreferrer">
+          <a key={s.n} className="lens-incident-source" href={s.url} target="_blank" rel="noopener noreferrer">
             [{s.n}] {s.title || s.domain}
-            <span className="osiris-incident-source-meta">
+            <span className="lens-incident-source-meta">
               {s.domain} · {publishedAt(s.publishedAt)}
               {s.textBasis === "feed_summary" ? " · summary only" : s.textBasis === "headline" ? " · headline only" : ""}
             </span>
