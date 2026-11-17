@@ -1487,8 +1487,8 @@ export interface CloudflareRadarData {
   fetchedAt: string;
 }
 
-/** An OI forecast run; see the backend's lib/oi.ts. */
-export interface OiRun {
+/** An AfrIntel forecast run; see the backend's lib/oi.ts. */
+export interface AfrIntelRun {
   id: string;
   question: string;
   worldCount: number;
@@ -1518,11 +1518,11 @@ export interface OiRun {
   pooled: number[] | null;
   error: string | null;
   model: string | null;
-  chat: { role: "user" | "oi"; target: string; text: string; at: string }[];
+  chat: { role: "user" | "afrintel"; target: string; text: string; at: string }[];
   busy?: boolean;
 }
 
-export interface OiAssistAction {
+export interface AfrIntelAssistAction {
   type: "fly" | "layers" | "panel" | "mark" | "forecast";
   lat?: number;
   lng?: number;
@@ -1675,7 +1675,7 @@ export interface SubmarineCableData {
   fetchedAt: string;
 }
 
-// --- Crypto Intelligence (backend: lib/chainIntel.ts, adapted from OSIRIS) ---
+// --- Crypto Intelligence (backend: lib/chainIntel.ts, adapted from MIT-licensed code) ---
 export type ChainKind = "bitcoin" | "ethereum" | "solana";
 export type RiskSeverity = "info" | "low" | "medium" | "high" | "critical";
 
@@ -1725,7 +1725,7 @@ export interface WalletIntel {
   timestamp: string;
 }
 
-// --- OSINT Alerts (backend: lib/osintFeed.ts, adapted from OSIRIS) ---
+// --- OSINT Alerts (backend: lib/osintFeed.ts, adapted from MIT-licensed code) ---
 export type NewsBloc = "western" | "russian" | "regional" | "independent";
 
 export interface OsintAlertItem {
@@ -1761,7 +1761,7 @@ export interface OsintFeedPayload {
   africaWireHealth?: { total: number; ok: number; no_feed: number; error: number; pending: number } | null;
 }
 
-// --- Live Broadcasts (backend: /api/live-layers/live-broadcasts, adapted from OSIRIS) ---
+// --- Live Broadcasts (backend: /api/live-layers/live-broadcasts, adapted from MIT-licensed code) ---
 export interface LiveBroadcast {
   id: string;
   name: string;
@@ -2336,15 +2336,15 @@ export const api = {
   getAircraftTrack: (hex: string, hours = 24) => req<AircraftTrack>(`/api/live-layers/aircraft-track/${hex}?hours=${hours}`),
   getWatchZones: () => req<{ zones: WatchZone[]; basis: string; fetchedAt: string }>("/api/live-layers/watch-zones"),
   getCloudflareRadar: () => req<CloudflareRadarData>("/api/live-layers/cloudflare-radar"),
-  oiCreateRun: (question: string, material: string, worlds: number, periods: number) => req<OiRun>("/api/oi/runs", { method: "POST", body: JSON.stringify({ question, material, worlds, periods }) }),
-  oiListRuns: () => req<{ runs: { id: string; question: string; stage: string; created_at: string; updated_at: string }[] }>("/api/oi/runs"),
-  oiGetRun: (id: string) => req<OiRun>(`/api/oi/runs/${id}`),
-  oiStep: (id: string) => req<OiRun>(`/api/oi/runs/${id}/step`, { method: "POST" }),
-  oiInject: (id: string, text: string) => req<OiRun>(`/api/oi/runs/${id}/inject`, { method: "POST", body: JSON.stringify({ text }) }),
-  oiAsk: (id: string, target: string, message: string) => req<OiRun>(`/api/oi/runs/${id}/ask`, { method: "POST", body: JSON.stringify({ target, message }) }),
-  oiDeleteRun: (id: string) => req<{ ok: boolean }>(`/api/oi/runs/${id}`, { method: "DELETE" }),
-  oiAssist: (message: string, layers: { key: string; label: string; group: string }[], view: { lat: number; lng: number; zoom: number } | null) =>
-    req<{ reply: string; actions: OiAssistAction[] }>("/api/oi/assist", { method: "POST", body: JSON.stringify({ message, layers, view }) }),
+  afrIntelCreateRun: (question: string, material: string, worlds: number, periods: number) => req<AfrIntelRun>("/api/afrintel/runs", { method: "POST", body: JSON.stringify({ question, material, worlds, periods }) }),
+  afrIntelListRuns: () => req<{ runs: { id: string; question: string; stage: string; created_at: string; updated_at: string }[] }>("/api/afrintel/runs"),
+  afrIntelGetRun: (id: string) => req<AfrIntelRun>(`/api/afrintel/runs/${id}`),
+  afrIntelStep: (id: string) => req<AfrIntelRun>(`/api/afrintel/runs/${id}/step`, { method: "POST" }),
+  afrIntelInject: (id: string, text: string) => req<AfrIntelRun>(`/api/afrintel/runs/${id}/inject`, { method: "POST", body: JSON.stringify({ text }) }),
+  afrIntelAsk: (id: string, target: string, message: string) => req<AfrIntelRun>(`/api/afrintel/runs/${id}/ask`, { method: "POST", body: JSON.stringify({ target, message }) }),
+  afrIntelDeleteRun: (id: string) => req<{ ok: boolean }>(`/api/afrintel/runs/${id}`, { method: "DELETE" }),
+  afrIntelAssist: (message: string, layers: { key: string; label: string; group: string }[], view: { lat: number; lng: number; zoom: number } | null) =>
+    req<{ reply: string; actions: AfrIntelAssistAction[] }>("/api/afrintel/assist", { method: "POST", body: JSON.stringify({ message, layers, view }) }),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
@@ -2386,7 +2386,7 @@ export const api = {
     ),
 
   // Global-status HUD feeds — not map layers, see globalStatus.ts for the
-  // real sources behind each and why OSIRIS's own Markets/Country-Risk
+  // real sources behind each and why the reference platform's own Markets/Country-Risk
   // numbers were rebuilt rather than copied.
   getSpaceWeather: () => req<SpaceWeather>("/api/global-status/space-weather"),
   getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
