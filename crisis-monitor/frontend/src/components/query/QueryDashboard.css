@@ -626,7 +626,7 @@
   border-radius: 0 0 10px 10px;
   overflow: hidden;
 }
-.qd-map .osiris-detail-panel {
+.qd-map .lens-detail-panel {
   left: 12px;
   max-width: calc(100% - 24px);
   width: 320px;
