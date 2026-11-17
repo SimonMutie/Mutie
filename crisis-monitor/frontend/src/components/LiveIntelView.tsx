@@ -70,6 +70,7 @@ import {
   Siren,
   Sun,
   ZoomIn,
+  Layers,
   Telescope,
   TrendingDown,
   TrendingUp,
@@ -1294,6 +1295,23 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [showTerrain, setShowTerrain] = useState(false);
   // Map controls that start hidden and are switched on from the Display group: zoom and pan buttons, and the fire timeline.
   const [showNav, setShowNav] = useState(false);
+  // The 3D / 2D / Map / Sat switcher at the bottom left: shown unless hidden under Display; the choice is remembered.
+  const [showModeSwitcher, setShowModeSwitcher] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("lens.modeSwitcher") !== "off";
+    } catch {
+      return true;
+    }
+  });
+  const toggleModeSwitcher = () =>
+    setShowModeSwitcher((v) => {
+      try {
+        localStorage.setItem("lens.modeSwitcher", v ? "off" : "on");
+      } catch {
+        /* storage unavailable */
+      }
+      return !v;
+    });
   const [showFirePanel, setShowFirePanel] = useState(false);
 
   // --- Right-side tools: at most one open at a time (see RightTool). ---
@@ -2603,6 +2621,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 onToggleTerrain={() => setShowTerrain((v) => !v)}
                 nav={showNav}
                 firePanel={showFirePanel}
+                modeSwitcher={showModeSwitcher}
+                onToggleModeSwitcher={toggleModeSwitcher}
                 onToggleNav={() => setShowNav((v) => !v)}
                 onToggleFirePanel={() => {
                   // The timeline needs the fire layer, so turning the panel on turns the layer on too.
@@ -2610,7 +2630,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                   setShowFirePanel((v) => !v);
                 }}
               />
-              <MapModeSwitcher mode={mapMode} onChange={setMapMode} />
+              {showModeSwitcher && <MapModeSwitcher mode={mapMode} onChange={setMapMode} />}
             </>
           )}
         </div>
@@ -3210,6 +3230,8 @@ function LayerPanel({
   show3DDisplayGroup,
   nav,
   firePanel,
+  modeSwitcher,
+  onToggleModeSwitcher,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3248,6 +3270,8 @@ function LayerPanel({
   show3DDisplayGroup?: boolean;
   nav?: boolean;
   firePanel?: boolean;
+  modeSwitcher?: boolean;
+  onToggleModeSwitcher?: () => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3318,6 +3342,8 @@ function LayerPanel({
             show3D={!!show3DDisplayGroup}
             nav={!!nav}
             firePanel={!!firePanel}
+            modeSwitcher={modeSwitcher !== false}
+            onToggleModeSwitcher={onToggleModeSwitcher ?? (() => {})}
             onToggleNav={onToggleNav!}
             onToggleFirePanel={onToggleFirePanel!}
             dayNight={!!dayNight}
@@ -3762,6 +3788,8 @@ function DisplayRailGroup({
   show3D,
   nav,
   firePanel,
+  modeSwitcher,
+  onToggleModeSwitcher,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3774,6 +3802,8 @@ function DisplayRailGroup({
   show3D: boolean;
   nav: boolean;
   firePanel: boolean;
+  modeSwitcher: boolean;
+  onToggleModeSwitcher: () => void;
   onToggleNav: () => void;
   onToggleFirePanel: () => void;
   dayNight: boolean;
@@ -3786,6 +3816,7 @@ function DisplayRailGroup({
   const [hovered, setHovered] = useState(false);
   const rows: { label: string; hint?: string; icon: LucideIcon; on: boolean; onToggle: () => void }[] = [
     { label: "Zoom & Pan Buttons", icon: ZoomIn, on: nav, onToggle: onToggleNav },
+    { label: "Map View Switcher", hint: "3D / 2D / Map / Sat, bottom left", icon: Layers, on: modeSwitcher, onToggle: onToggleModeSwitcher },
     { label: "Fire Timeline Panel", hint: "Turns the fire layer on too", icon: Flame, on: firePanel, onToggle: onToggleFirePanel },
     ...(show3D
       ? [
