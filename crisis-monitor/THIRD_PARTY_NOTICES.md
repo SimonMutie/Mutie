@@ -1,30 +1,18 @@
 # Third-party notices
 
-## OSIRIS
+## MIT-licensed code
 
-Several backend modules were adapted or ported from
-[OSIRIS](https://github.com/simplifaisoul/osiris) (osirisai.live), an
-open-source project by [simplifaisoul](https://github.com/simplifaisoul),
-under the MIT License below. The affected files carry their own comment
-noting exactly what was reused and what was changed:
+Parts of the following files are adapted from open-source code released under
+the MIT License below. The MIT License requires this notice to be kept with
+that code.
 
-- `crisis-monitor/backend/src/lib/sanctions.ts` — OFAC/OpenSanctions lookup, adapted
-- `crisis-monitor/backend/src/lib/chainIntel.ts` — on-chain wallet intelligence, adapted (optional key-based deepening removed)
-- `crisis-monitor/backend/src/lib/telegram.ts` — public Telegram channel-page parser, ported verbatim
-- `crisis-monitor/backend/src/lib/osintFeed.ts` — merged Telegram/wire OSINT feed, adapted (no stealth-fetch identity spoofing, no Nominatim geocoding)
-- The `LIVE_BROADCASTS` list in `crisis-monitor/backend/src/routes/liveLayers.ts` — verified live-YouTube-broadcast roster, reused as-is
-- `crisis-monitor/backend/src/lib/watchZones.ts` — conflict-zone list and whole-word headline matcher, adapted (Africa and Middle East only, zones added, headlines from the Lens's own feeds)
-- `crisis-monitor/backend/src/lib/cloudflareRadar.ts` — Cloudflare Radar outage and attack-origin mapping, adapted
-- `crisis-monitor/frontend/src/components/LiveAlertsPanel.tsx` — Live Alerts panel design (All / News / Warnings / Quakes / Feeds tabs, source-perspective badges), rewritten for the Lens
-- `crisis-monitor/frontend/src/components/WeatherTiles.tsx` — RainViewer rain radar and infrared cloud layers, after OSIRIS's Rain and Live Clouds layers
-- `crisis-monitor/backend/src/lib/oi.ts`, `routes/oi.ts` and `frontend/src/components/OiPanel.tsx` — OI, the prediction engine (research, framing with a base rate, cast actors, parallel simulated worlds, report) and the talk-to-the-map assistant, after OSIRIS's OI Forecast and OI Assist, which follow the method MiroFish made popular; rewritten for the Lens's own feeds and model, no code copied
-
-Deliberately **not** reused from OSIRIS: its "RECON Toolkit" (port
-scanning / DNS / WHOIS / SSL / vulnerability scanning — active
-reconnaissance tooling, out of scope regardless of license), its CCTV
-aggregation (built on scraping and an identity-spoofing `stealthFetch`
-helper used to evade upstream rate-limiting and bot detection), and that
-same `stealthFetch` pattern generally.
+- `crisis-monitor/backend/src/lib/sanctions.ts`
+- `crisis-monitor/backend/src/lib/chainIntel.ts`
+- `crisis-monitor/backend/src/lib/telegram.ts`
+- `crisis-monitor/backend/src/lib/osintFeed.ts`
+- `crisis-monitor/backend/src/lib/watchZones.ts`
+- `crisis-monitor/backend/src/lib/cloudflareRadar.ts`
+- the `LIVE_BROADCASTS` list in `crisis-monitor/backend/src/routes/liveLayers.ts`
 
 ```
 MIT License
