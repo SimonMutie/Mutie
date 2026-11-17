@@ -4,11 +4,14 @@ import { z } from "zod";
 import { all, first, batchRun, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
+import { incidentReadCache } from "../lib/incidentCache";
 import type { Env } from "../bindings";
 
 export const incidentsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
 
 incidentsRouter.use("*", requireAuth);
+// Dashboard answers are remembered until the incident data changes (lib/incidentCache.ts).
+for (const path of ["/stats", "/breakdown", "/crosstab", "/filters", "/monthly-groups", "/victim-groups", "/grid"]) incidentsRouter.use(path, incidentReadCache);
 
 // Loose on purpose: real-world spreadsheet exports are messy (blank cells, stray
 // whitespace, numbers-as-strings). Everything is optional except that a row with
@@ -345,15 +348,16 @@ incidentsRouter.get("/filters", async (c) => {
   // this handler doesn't run until an actual request comes in, well after
   // the whole module has finished loading top to bottom.
   const fields = PIVOTABLE_FIELDS;
+  // All fifteen lists in one round trip to the database, not fifteen in turn.
+  const answers = await c.env.DB.batch(
+    fields.map((field) =>
+      c.env.DB.prepare(`SELECT DISTINCT ${field} AS value FROM incidents ${whereClause} ${whereClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`).bind(...scopeParams)
+    )
+  );
   const results: Record<string, string[]> = {};
-  for (const field of fields) {
-    const rows = await all<{ value: string }>(
-      c.env.DB,
-      `SELECT DISTINCT ${field} AS value FROM incidents ${whereClause} ${whereClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`,
-      scopeParams
-    );
-    results[field] = rows.map((r) => r.value);
-  }
+  fields.forEach((field, i) => {
+    results[field] = ((answers[i]?.results ?? []) as { value: string }[]).map((r) => r.value);
+  });
   return c.json(results);
 });
 
