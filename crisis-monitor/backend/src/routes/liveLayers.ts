@@ -1855,38 +1855,82 @@ interface OverpassElement {
   lon?: number;
   geometry?: Array<{ lat: number; lon: number }>;
   tags?: Record<string, string>;
+  members?: Array<{ type: string; ref: number; role?: string; geometry?: Array<{ lat: number; lon: number }> }>;
+}
+
+/**
+ * Every way OpenStreetMap mappers tag a submarine telecom cable, not only the nautical-chart one. Until Nov 2026
+ * the layer asked only for seamark:type=cable_submarine (about 200 lines); many cables are mapped instead as
+ * telecom=line or the older communication=line with location=underwater/submarine, as cable=submarine, or as a
+ * relation grouping a system's segments. Power cables are filtered out afterwards (isPowerCable).
+ */
+export const SUBMARINE_CABLE_QUERY = `[out:json][timeout:120];(
+  way["seamark:type"="cable_submarine"];
+  relation["seamark:type"="cable_submarine"];
+  way["telecom"="line"]["location"~"underwater|submarine|underwater;"];
+  relation["telecom"="line"]["location"~"underwater|submarine"];
+  way["communication"="line"]["location"~"underwater|submarine"];
+  way["cable"="submarine"]["power"!~"."];
+  way["submarine"="yes"]["telecom"];
+  way["submarine"="yes"]["communication"];
+  relation["type"="route"]["route"~"^(telecom|submarine_cable|cable)$"];
+  node["telecom"="cable_landing_station"];
+);out geom;`;
+
+/** The public Overpass servers, tried in turn: the main one is often busy with a query this size. */
+const OVERPASS_SERVERS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+
+async function overpassCables(fetcher: typeof fetch = fetch): Promise<{ elements: OverpassElement[] }> {
+  let last: unknown = null;
+  for (const server of OVERPASS_SERVERS) {
+    try {
+      const res = await fetcher(server, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(SUBMARINE_CABLE_QUERY)}`,
+        signal: AbortSignal.timeout(110000),
+      });
+      if (!res.ok) throw new Error(`Overpass API (${new URL(server).host}) returned ${res.status}`);
+      return (await res.json()) as { elements: OverpassElement[] };
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last instanceof Error ? last : new Error("Overpass API unavailable");
+}
+
+/** Power interconnectors share some of the same tags; this layer is telecom only, like submarinecablemap.com. */
+export function isPowerCable(tags: Record<string, string>): boolean {
+  return tags["seamark:cable_submarine:category"] === "power" || tags.power === "cable" || tags.power === "line" || tags.route === "power" || /power|hvdc|interconnector/i.test(tags["cable"] === "submarine" ? tags.name ?? "" : "");
 }
 
 liveLayersRouter.get("/submarine-cables", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const query = `[out:json][timeout:60];(way["seamark:type"="cable_submarine"];node["telecom"="cable_landing_station"];);out geom;`;
-      const res = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: AbortSignal.timeout(55000),
-      });
-      if (!res.ok) throw new Error(`Overpass API returned ${res.status}`);
-      const data = (await res.json()) as { elements: OverpassElement[] };
-
+      const data = await overpassCables();
       const cables: Array<{ points: [number, number][]; label: string; color: string }> = [];
       const landingPoints: NormalizedFeature[] = [];
 
+      const seenWays = new Set<number>();
+      const addLine = (geometry: Array<{ lat: number; lon: number }> | undefined, tags: Record<string, string>, id: number, wayId: number | null) => {
+        if (!geometry || geometry.length < 2) return;
+        if (wayId !== null) {
+          if (seenWays.has(wayId)) return;
+          seenWays.add(wayId);
+        }
+        if (isPowerCable(tags)) return;
+        const name = tags.name || tags["seamark:cable_submarine:category"] || `Cable ${id}`;
+        cables.push({ points: geometry.map((g) => [g.lat, g.lon] as [number, number]), label: name, color: stableHashColor(tags.name || String(id)) });
+      };
+
       for (const el of data.elements ?? []) {
         const tags = el.tags ?? {};
-        if (el.type === "way" && el.geometry && el.geometry.length >= 2) {
-          // Power-only submarine cables occasionally share the same seamark
-          // tag with a "power" category — excluded so this stays a telecom
-          // layer, matching what submarinecablemap.com itself shows.
-          if (tags["seamark:cable_submarine:category"] === "power") continue;
-          const name = tags.name || tags["seamark:cable_submarine:category"] || `Cable ${el.id}`;
-          cables.push({
-            points: el.geometry.map((g) => [g.lat, g.lon] as [number, number]),
-            label: name,
-            color: stableHashColor(tags.name || String(el.id)),
-          });
+        if (el.type === "way") {
+          addLine(el.geometry, tags, el.id, el.id);
+        } else if (el.type === "relation") {
+          // A cable system mapped as a relation: draw each of its member ways under the system's name.
+          for (const m of el.members ?? []) if (m.type === "way") addLine(m.geometry, tags, el.id, m.ref);
         } else if (el.type === "node" && typeof el.lat === "number" && typeof el.lon === "number") {
           landingPoints.push({
             type: "Feature",
@@ -1906,6 +1950,8 @@ liveLayersRouter.get("/submarine-cables", async (c) => {
 
       return {
         cables,
+        // How many separate lines the map draws (OSM splits a cable system into segments).
+        lineCount: cables.length,
         landingPoints: { type: "FeatureCollection", features: landingPoints, fetchedAt: new Date().toISOString() },
         fetchedAt: new Date().toISOString(),
       };
