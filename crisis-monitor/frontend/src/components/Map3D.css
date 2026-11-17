@@ -9,7 +9,7 @@
  * rail (LiveIntelView's LayerPanel, a 52px-wide column at left:12) so the
  * two never overlap; same dark-glass visual language the rest of the HUD's
  * floating panels already use (LiveIntelView's own glassPanel() helper). */
-.osiris-detail-panel {
+.lens-detail-panel {
   position: absolute;
   top: 12px;
   left: 66px;
@@ -27,7 +27,7 @@
   color: #e8ecf4;
 }
 
-.osiris-detail-panel-close {
+.lens-detail-panel-close {
   position: absolute;
   top: 6px;
   right: 8px;
@@ -39,38 +39,38 @@
   cursor: pointer;
   padding: 4px 6px;
 }
-.osiris-detail-panel-close:hover {
+.lens-detail-panel-close:hover {
   color: #e8ecf4;
 }
 
 /* Below this point: the card-content classes Map3DDetailPanel renders
- * inside .osiris-detail-panel above (title/desc/grid/evidence list etc.) —
+ * inside .lens-detail-panel above (title/desc/grid/evidence list etc.) —
  * these used to also be wrapped in a MapLibre Popup's own chrome (a
- * `.osiris-popup` class passed to `new Popup({ className })`), which no
+ * `.lens-popup` class passed to `new Popup({ className })`), which no
  * longer exists now that the detail lives in a plain docked panel instead
  * of an on-map popup; none of the selectors below ever depended on that
  * wrapper, so they carried over unchanged. */
 
-.osiris-popup-card {
+.lens-popup-card {
   min-width: 200px;
   max-width: 280px;
 }
 
-.osiris-popup-title {
+.lens-popup-title {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.03em;
   color: #ffd23f;
   margin-bottom: 4px;
 }
-.osiris-popup-title--elevated {
+.lens-popup-title--elevated {
   color: #ff9d4f;
 }
-.osiris-popup-title--critical {
+.lens-popup-title--critical {
   color: #ff5d5d;
 }
 
-.osiris-popup-layer {
+.lens-popup-layer {
   font-size: 10px;
   color: #8892a6;
   text-transform: uppercase;
@@ -78,20 +78,20 @@
   margin-bottom: 6px;
 }
 
-.osiris-popup-desc {
+.lens-popup-desc {
   font-size: 11.5px;
   line-height: 1.5;
   color: #c3cad9;
   margin-bottom: 8px;
 }
 
-.osiris-popup-time {
+.lens-popup-time {
   font-size: 10px;
   color: #8892a6;
   margin-bottom: 8px;
 }
 
-.osiris-popup-grid {
+.lens-popup-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
@@ -100,7 +100,7 @@
   border-top: 1px solid rgba(212, 175, 55, 0.2);
 }
 
-.osiris-popup-label {
+.lens-popup-label {
   font-size: 9px;
   color: #6b7385;
   text-transform: uppercase;
@@ -108,19 +108,19 @@
   margin-bottom: 2px;
 }
 
-.osiris-popup-value {
+.lens-popup-value {
   font-size: 12px;
   font-weight: 700;
   color: #e8ecf4;
 }
-.osiris-popup-value--elevated {
+.lens-popup-value--elevated {
   color: #ff9d4f;
 }
-.osiris-popup-value--critical {
+.lens-popup-value--critical {
   color: #ff5d5d;
 }
 
-.osiris-popup-link {
+.lens-popup-link {
   display: block;
   text-align: center;
   margin-top: 10px;
@@ -134,18 +134,18 @@
   text-decoration: none;
   transition: background 0.15s ease;
 }
-.osiris-popup-link:hover {
+.lens-popup-link:hover {
   background: rgba(212, 175, 55, 0.12);
 }
 
 /* Conflict Escalation gets a wider card (the SOURCES list below needs the
  * room) than the default 280px every other layer's popup uses. */
-.osiris-popup-card--escalation {
+.lens-popup-card--escalation {
   min-width: 260px;
   max-width: 340px;
 }
 
-.osiris-popup-evidence-header {
+.lens-popup-evidence-header {
   font-size: 9px;
   color: #6b7385;
   text-transform: uppercase;
@@ -158,7 +158,7 @@
 /* Scrolls rather than growing unbounded — a country's window can carry
  * well over a hundred contributing reports ("can you give all links to
  * them"), and a popup that tall would run off the map. */
-.osiris-popup-evidence-list {
+.lens-popup-evidence-list {
   max-height: 160px;
   overflow-y: auto;
   margin-top: 6px;
@@ -169,7 +169,7 @@
   color: #8892a6;
 }
 
-.osiris-popup-evidence-link {
+.lens-popup-evidence-link {
   display: block;
   color: #9db4ff;
   text-decoration: none;
@@ -177,12 +177,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.osiris-popup-evidence-link:hover {
+.lens-popup-evidence-link:hover {
   text-decoration: underline;
   color: #c3cfff;
 }
 
-.osiris-popup-evidence-tag {
+.lens-popup-evidence-tag {
   display: inline-block;
   margin-left: 6px;
   padding: 0 4px;
@@ -200,19 +200,19 @@
  * shown under that item's link so the reasoning behind a confirmed
  * escalation is visible right where the evidence itself is, not only in
  * the API response. Absent for items that haven't been deep-read yet. */
-.osiris-popup-evidence-rationale {
+.lens-popup-evidence-rationale {
   font-size: 9.5px;
   line-height: 1.4;
   color: #9aa3b5;
   margin: 2px 0 6px 14px;
   font-style: italic;
 }
-.osiris-popup-evidence-rationale strong {
+.lens-popup-evidence-rationale strong {
   color: #c3cad9;
   font-style: normal;
 }
 
-.osiris-popup-evidence-empty {
+.lens-popup-evidence-empty {
   font-size: 10px;
   color: #6b7385;
   font-style: italic;
@@ -221,11 +221,11 @@
 
 /* ── Escalation incident card (EscalationIncidentCard in Map3D.tsx) ── */
 
-.osiris-incident {
+.lens-incident {
   max-width: none;
 }
 
-.osiris-incident-precision {
+.lens-incident-precision {
   font-size: 10px;
   line-height: 1.4;
   color: #8892a6;
@@ -233,17 +233,17 @@
 }
 /* A marker that is NOT on a named place says so in a warmer colour, so a
  * regional or country-centre pin is never mistaken for an exact location. */
-.osiris-incident-precision--region,
-.osiris-incident-precision--country,
-.osiris-incident-precision--approximate {
+.lens-incident-precision--region,
+.lens-incident-precision--country,
+.lens-incident-precision--approximate {
   color: #ffb55c;
 }
 
-.osiris-incident-grid {
+.lens-incident-grid {
   row-gap: 8px;
 }
 
-.osiris-incident-heading {
+.lens-incident-heading {
   font-size: 9px;
   color: #6b7385;
   text-transform: uppercase;
@@ -254,14 +254,14 @@
   border-top: 1px solid rgba(212, 175, 55, 0.2);
 }
 
-.osiris-incident .osiris-popup-desc {
+.lens-incident .lens-popup-desc {
   font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
   font-size: 12px;
   line-height: 1.55;
   margin-bottom: 0;
 }
 
-.osiris-incident-preliminary {
+.lens-incident-preliminary {
   display: inline-block;
   margin-top: 6px;
   padding: 2px 6px;
@@ -272,7 +272,7 @@
   border-radius: 3px;
 }
 
-.osiris-incident-caveat {
+.lens-incident-caveat {
   font-size: 10.5px;
   line-height: 1.45;
   color: #ffb55c;
@@ -280,7 +280,7 @@
   margin-top: 8px;
 }
 
-.osiris-incident-list {
+.lens-incident-list {
   margin: 0;
   padding-left: 16px;
   font-size: 11px;
@@ -288,23 +288,23 @@
   color: #c3cad9;
 }
 
-.osiris-incident-indicator {
+.lens-incident-indicator {
   margin-bottom: 8px;
 }
 
-.osiris-incident-indicator-label {
+.lens-incident-indicator-label {
   font-size: 11px;
   font-weight: 700;
   color: #ff9d4f;
 }
-.osiris-incident-indicator-label--critical {
+.lens-incident-indicator-label--critical {
   color: #ff5d5d;
 }
-.osiris-incident-indicator-label--contextual {
+.lens-incident-indicator-label--contextual {
   color: #ffd23f;
 }
 
-.osiris-incident-quote {
+.lens-incident-quote {
   font-family: var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif);
   font-size: 11px;
   line-height: 1.5;
@@ -314,35 +314,35 @@
   border-left: 2px solid rgba(212, 175, 55, 0.25);
 }
 
-.osiris-incident-cite {
+.lens-incident-cite {
   color: #9db4ff;
   text-decoration: none;
   white-space: nowrap;
 }
-.osiris-incident-cite:hover {
+.lens-incident-cite:hover {
   text-decoration: underline;
   color: #c3cfff;
 }
 
-.osiris-incident-sources {
+.lens-incident-sources {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.osiris-incident-source {
+.lens-incident-source {
   display: block;
   font-size: 11px;
   line-height: 1.4;
   color: #9db4ff;
   text-decoration: none;
 }
-.osiris-incident-source:hover {
+.lens-incident-source:hover {
   color: #c3cfff;
   text-decoration: underline;
 }
 
-.osiris-incident-source-meta {
+.lens-incident-source-meta {
   display: block;
   font-size: 9.5px;
   color: #6b7385;
