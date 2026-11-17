@@ -5,6 +5,7 @@ import { all, first, batchRun, nowIso } from "../db";
 import { newId } from "../ids";
 import { requireAuth, type AuthedVariables } from "../middleware";
 import { incidentReadCache } from "../lib/incidentCache";
+import { incidentTable } from "../lib/incidentFacts";
 import type { Env } from "../bindings";
 
 export const incidentsRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -338,6 +339,7 @@ incidentsRouter.get("/one/:id", async (c) => {
 /** Distinct values for each filterable field, so the frontend can populate filter
  *  dropdowns from real data rather than a hardcoded guess at what values exist. */
 incidentsRouter.get("/filters", async (c) => {
+  const T = await incidentTable(c.env.DB);
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
   const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, undefined, undefined, scopeCountries);
 
@@ -351,7 +353,7 @@ incidentsRouter.get("/filters", async (c) => {
   // All fifteen lists in one round trip to the database, not fifteen in turn.
   const answers = await c.env.DB.batch(
     fields.map((field) =>
-      c.env.DB.prepare(`SELECT DISTINCT ${field} AS value FROM incidents ${whereClause} ${whereClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`).bind(...scopeParams)
+      c.env.DB.prepare(`SELECT DISTINCT ${field} AS value FROM ${T} ${whereClause} ${whereClause ? "AND" : "WHERE"} ${field} IS NOT NULL AND ${field} != '' ORDER BY ${field}`).bind(...scopeParams)
     )
   );
   const results: Record<string, string[]> = {};
@@ -540,11 +542,12 @@ export async function fetchIncidentsBreakdown(
   countries?: string[] | null,
   fieldFilters?: Partial<Record<PivotableField, string>>
 ): Promise<{ value: string; count: number }[]> {
+  const T = await incidentTable(db);
   if (!isPivotable(field)) return [];
   const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   return all<{ value: string; count: number }>(
     db,
-    `SELECT ${field} AS value, COUNT(*) AS count FROM incidents WHERE ${field} IS NOT NULL AND ${field} != '' ${andClause} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
+    `SELECT ${field} AS value, COUNT(*) AS count FROM ${T} WHERE ${field} IS NOT NULL AND ${field} != '' ${andClause} GROUP BY ${field} ORDER BY count DESC LIMIT 30`,
     params
   );
 }
@@ -559,12 +562,13 @@ export async function fetchIncidentsCrosstab(
   countries?: string[] | null,
   fieldFilters?: Partial<Record<PivotableField, string>>
 ): Promise<{ primary_value: string; secondary_value: string; count: number }[]> {
+  const T = await incidentTable(db);
   if (!isPivotable(primary) || !isPivotable(secondary)) return [];
   const { andClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   return all<{ primary_value: string; secondary_value: string; count: number }>(
     db,
     `SELECT ${primary} AS primary_value, ${secondary} AS secondary_value, COUNT(*) AS count
-     FROM incidents
+     FROM ${T}
      WHERE ${primary} IS NOT NULL AND ${primary} != '' AND ${secondary} IS NOT NULL AND ${secondary} != '' ${andClause}
      GROUP BY ${primary}, ${secondary}
      ORDER BY count DESC
@@ -584,13 +588,14 @@ export async function fetchVictimGroups(
   countries?: string[] | null,
   fieldFilters?: Partial<Record<PivotableField, string>>
 ): Promise<{ actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number; women: number; men: number; children: number; unknown: number }[]> {
+  const T = await incidentTable(db);
   const { whereClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   return all(
     db,
     `SELECT actor, interest_group, sector, operation, target, tactic, COUNT(*) AS incidents,
             COALESCE(SUM(civilian_death_female), 0) AS women, COALESCE(SUM(civilian_death_male), 0) AS men,
             COALESCE(SUM(civilian_death_child), 0) AS children, COALESCE(SUM(civilian_death_unknown), 0) AS unknown
-     FROM incidents ${whereClause}
+     FROM ${T} ${whereClause}
      GROUP BY actor, interest_group, sector, operation, target, tactic
      ORDER BY incidents DESC
      LIMIT 3000`,
@@ -608,12 +613,13 @@ export async function fetchMonthlyGroups(
   countries?: string[] | null,
   fieldFilters?: Partial<Record<PivotableField, string>>
 ): Promise<{ month: string; actor: string | null; interest_group: string | null; sector: string | null; operation: string | null; target: string | null; tactic: string | null; incidents: number }[]> {
+  const T = await incidentTable(db);
   const { whereClause, params } = buildScopeClause(ownerIds, dateFrom, dateTo, countries, fieldFilters);
   const lead = whereClause ? `${whereClause} AND` : "WHERE";
   return all(
     db,
     `SELECT substr(occurred_at, 1, 7) AS month, actor, interest_group, sector, operation, target, tactic, COUNT(*) AS incidents
-     FROM incidents ${lead} occurred_at IS NOT NULL
+     FROM ${T} ${lead} occurred_at IS NOT NULL
      GROUP BY month, actor, interest_group, sector, operation, target, tactic
      ORDER BY month DESC
      LIMIT 60000`,
@@ -658,46 +664,47 @@ incidentsRouter.get("/crosstab", async (c) => {
 });
 
 incidentsRouter.get("/stats", async (c) => {
+  const T = await incidentTable(c.env.DB);
   const dateFrom = c.req.query("from");
   const dateTo = c.req.query("to");
   const { ownerIds: scopeOwnerId, countries: scopeCountries } = await effectiveScope(c.env.DB, c.get("role"), c.get("userId"));
   const { whereClause, andClause, params: scopeParams } = buildScopeClause(scopeOwnerId, dateFrom, dateTo, scopeCountries, parsePivotableFilters(c));
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
-    first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
+    first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM ${T} ${whereClause}`, scopeParams),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andClause} GROUP BY sector ORDER BY count DESC LIMIT 12`,
+      `SELECT sector AS value, COUNT(*) AS count FROM ${T} WHERE sector IS NOT NULL AND sector != '' ${andClause} GROUP BY sector ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andClause} GROUP BY actor ORDER BY count DESC LIMIT 12`,
+      `SELECT actor AS value, COUNT(*) AS count FROM ${T} WHERE actor IS NOT NULL AND actor != '' ${andClause} GROUP BY actor ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
+      `SELECT tactic AS value, COUNT(*) AS count FROM ${T} WHERE tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andClause} GROUP BY severity ORDER BY count DESC LIMIT 12`,
+      `SELECT severity AS value, COUNT(*) AS count FROM ${T} WHERE severity IS NOT NULL AND severity != '' ${andClause} GROUP BY severity ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andClause} GROUP BY province ORDER BY count DESC LIMIT 20`,
+      `SELECT province AS value, COUNT(*) AS count FROM ${T} WHERE province IS NOT NULL AND province != '' ${andClause} GROUP BY province ORDER BY count DESC LIMIT 20`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       c.env.DB,
-      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andClause} GROUP BY country ORDER BY count DESC LIMIT 20`,
+      `SELECT country AS value, COUNT(*) AS count FROM ${T} WHERE country IS NOT NULL AND country != '' ${andClause} GROUP BY country ORDER BY count DESC LIMIT 20`,
       scopeParams
     ),
     all<{ bucket: string; count: number }>(
       c.env.DB,
-      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY bucket ORDER BY bucket ASC`,
+      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM ${T} WHERE occurred_at IS NOT NULL ${andClause} GROUP BY bucket ORDER BY bucket ASC`,
       scopeParams
     ),
     // Day-level granularity. When a dashboard-wide date range is set, that
@@ -708,12 +715,12 @@ incidentsRouter.get("/stats", async (c) => {
     dateFrom || dateTo
       ? all<{ date: string; count: number }>(
           c.env.DB,
-          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY date ORDER BY date ASC`,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM ${T} WHERE occurred_at IS NOT NULL ${andClause} GROUP BY date ORDER BY date ASC`,
           scopeParams
         )
       : all<{ date: string; count: number }>(
           c.env.DB,
-          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date((SELECT MAX(occurred_at) FROM incidents WHERE occurred_at IS NOT NULL ${andClause}), '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM ${T} WHERE occurred_at IS NOT NULL AND occurred_at >= date((SELECT MAX(occurred_at) FROM ${T} WHERE occurred_at IS NOT NULL ${andClause}), '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
           [...scopeParams, ...scopeParams]
         ),
     // Genuine joint counts (not independent marginals like the by_X fields
@@ -722,7 +729,7 @@ incidentsRouter.get("/stats", async (c) => {
     // real data, not an invented "who's connected to whom" narrative.
     all<{ actor: string; tactic: string; count: number }>(
       c.env.DB,
-      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
+      `SELECT actor, tactic, COUNT(*) AS count FROM ${T} WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
       scopeParams
     ),
     first<Record<string, number>>(
@@ -736,7 +743,7 @@ incidentsRouter.get("/stats", async (c) => {
          COALESCE(SUM(civilian_injury_male), 0) AS injuries_male,
          COALESCE(SUM(civilian_injury_unknown), 0) AS injuries_unknown,
          COALESCE(SUM(kidnappings_ngo), 0) AS kidnappings_ngo
-       FROM incidents ${whereClause}`,
+       FROM ${T} ${whereClause}`,
       scopeParams
     ),
   ]);
