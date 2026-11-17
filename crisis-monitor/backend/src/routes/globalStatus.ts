@@ -5,23 +5,23 @@ import { queryBulkEvents } from "../connectors/gdeltBulk";
 
 /**
  * Real-data HUD status feeds — not map layers, but the same status-ticker
- * concept OSIRIS's own GlobalStatusBar + MarketsPanel + space-weather HUD
+ * concept the reference platform's own GlobalStatusBar + MarketsPanel + space-weather HUD
  * readout show (exchange open/closed dots, a CVE count, Kp index, a handful
  * of commodity/crypto quotes). Split out of liveLayers.ts because the
  * response shapes here aren't GeoJSON FeatureCollections.
  *
- * Two things OSIRIS's own source has routes for were deliberately left out
+ * Two things the reference platform's own source has routes for were deliberately left out
  * after checking its actual frontend (not just its API folder):
  *  - /api/air-quality and /api/frontlines exist as backend routes in
- *    OSIRIS's repo but nothing in its own UI ever fetches either one
+ *    The reference platform's repo but nothing in its own UI ever fetches either one
  *    (confirmed via a full grep of its page/components) — they're dead
  *    routes, not a real shipped feature, so there's nothing to "match"
  *    here by building them.
  *  - Even if Frontlines were wired up, DeepState Map's own license
  *    requires prior approval for any commercial use of its API — the same
  *    kind of blocker ACLED was earlier this session.
- *  - OSIRIS's Markets panel scrapes Yahoo Finance's undocumented endpoints,
- *    which violates Yahoo's ToS for a commercial product, and OSIRIS's
+ *  - the reference platform's Markets panel scrapes Yahoo Finance's undocumented endpoints,
+ *    which violates Yahoo's ToS for a commercial product, and the reference platform's
  *    Country Risk numbers are a hardcoded editorial table, not live data.
  *    Both are rebuilt below from sources actually licensed for this: WTI
  *    crude oil and Henry Hub natural gas are U.S. government (EIA) series
@@ -37,7 +37,7 @@ import { queryBulkEvents } from "../connectors/gdeltBulk";
  *    explicitly restrict their free tier to personal/internal use) was
  *    found. The "risk" ticker below is a real computed index (live GDELT
  *    incident counts + live USGS earthquake activity per country, both
- *    already-built Lens feeds), not a re-hosting of OSIRIS's invented
+ *    already-built Lens feeds), not a re-hosting of the reference platform's invented
  *    numbers.
  */
 export const globalStatusRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -349,7 +349,7 @@ const RISK_COUNTRY_HINTS: Record<string, string> = {
 };
 
 /** A real composite, computed live from two feeds this app already builds
- *  honestly (USGS earthquakes, GDELT global incidents) — not OSIRIS's
+ *  honestly (USGS earthquakes, GDELT global incidents) — not the reference platform's
  *  hardcoded per-country numbers. This is a coarse text-match against each
  *  event's place/location string, not a geocoded count, so treat it as a
  *  rough activity signal, not a precision index. */
