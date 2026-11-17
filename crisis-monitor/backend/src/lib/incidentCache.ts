@@ -29,6 +29,11 @@ export async function ensureIncidentVersion(db: D1Database): Promise<void> {
   schemaReady = true;
 }
 
+/** Test hook. */
+export function resetIncidentVersionState(): void {
+  schemaReady = false;
+}
+
 export async function incidentVersion(db: D1Database): Promise<number> {
   await ensureIncidentVersion(db);
   const row = await db.prepare(`SELECT v FROM incidents_meta WHERE k = 'version'`).first<{ v: number }>();
