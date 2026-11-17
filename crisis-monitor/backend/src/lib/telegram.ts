@@ -3,8 +3,8 @@
  * page, not the Bot API, since it's the one Telegram itself serves with no
  * login and no rate-limit wall for anyone to view a public channel's posts.
  *
- * Ported verbatim (MIT license permits reuse) from OSIRIS
- * (github.com/simplifaisoul/osiris, src/lib/telegram.ts) — pure string
+ * Ported verbatim from MIT-licensed open-source code (see THIRD_PARTY_NOTICES.md)
+ * — pure string
  * parsing, no framework dependency, so it needed no adaptation.
  *
  * The page is server-rendered HTML with no API behind it, so this reads the
