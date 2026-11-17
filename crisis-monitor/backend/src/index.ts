@@ -1,3 +1,4 @@
+import { advanceFactsBackfill } from "./lib/incidentFacts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env } from "./bindings";
@@ -70,7 +71,13 @@ app.use("*", async (c, next) => {
 // failed: 500" — and logged, so it is findable in the Worker's logs.
 app.onError((err, c) => {
   console.error(`[api] ${c.req.method} ${new URL(c.req.url).pathname} failed:`, err);
-  return c.json({ error: err instanceof Error ? err.message : "Internal error" }, 500);
+  const message = err instanceof Error ? err.message : "Internal error";
+  // The database refusing work because too much arrived at once is temporary: say so plainly, and tell the page
+  // to try again shortly (api.ts retries these) instead of showing the raw database error.
+  if (/overloaded|too many resources|queue.*full/i.test(message)) {
+    return c.json({ error: "The database is busy for a moment; trying again.", busy: true }, 503, { "Retry-After": "2" });
+  }
+  return c.json({ error: message }, 500);
 });
 
 /**
@@ -191,6 +198,14 @@ export default {
     await ensureSchema(env);
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
+
+    // Copy existing incidents into the slim counting table, a chunk per tick, until it is complete
+    // (lib/incidentFacts.ts); new and edited incidents reach it by trigger.
+    ctx.waitUntil(
+      advanceFactsBackfill(env.DB)
+        .then((r) => r.copied && console.log(`[incident-facts] copied ${r.copied} incidents`))
+        .catch((err) => console.error("[incident-facts] copy failed", err))
+    );
 
     // Bulk event-export ingestion (see connectors/gdeltBulk.ts) — a plain
     // file download against GDELT's own 15-minute export, not its shared
