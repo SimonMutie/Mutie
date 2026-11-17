@@ -173,6 +173,13 @@ export interface AuthUser {
   can_share_publicly?: boolean;
   /** Whether this login may open Regional Spotlight (admins always; clients only when shared with them). */
   can_view_spotlight?: boolean;
+  /** Parts of the Lens this login's client may open (always true for the admin and standalone logins). */
+  can_live_osint?: boolean;
+  can_trends?: boolean;
+  can_afrintel?: boolean;
+  /** This login's client organisation is paused: the Lens shows only the paused notice. */
+  client_paused?: boolean;
+  pause_reason?: string;
   /** This login's client organization's logo, if any and if set — a base64
    *  data URL, ready to use directly as an <img src>. */
   client_logo: string | null;
@@ -226,6 +233,18 @@ export interface ClientOrg {
   can_screen_people?: boolean;
   /** Whether Regional Spotlight is shared with this client (off by default). */
   can_view_spotlight?: boolean;
+  /** Parts of the Lens this client may open (on by default). */
+  can_live_osint?: boolean;
+  can_trends?: boolean;
+  can_afrintel?: boolean;
+  /** Paused: every login of this client is stopped until resumed; nothing is deleted. */
+  paused?: boolean;
+  paused_at?: string | null;
+  pause_reason?: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  notes?: string;
   /** Email domains this client's alerts may be sent to (space/comma separated). */
   alert_email_domains?: string;
   /** Signal numbers approved for this client's alerts. */
@@ -1909,6 +1928,8 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     // failure showed the same generic "Upstream feed unavailable" with no
     // way to tell a timeout from a real HTTP error from a bad query. Both
     // are now included, so the visible message is actually diagnostic.
+    // The admin paused this login's organisation mid-session: tell the app, which switches to the paused notice.
+    if (res.status === 403 && body.paused && typeof window !== "undefined") window.dispatchEvent(new CustomEvent("lens-paused", { detail: body.error }));
     const label = typeof body.error === "string" ? body.error : body.error ? JSON.stringify(body.error) : `Request failed: ${res.status}`;
     const message = typeof body.detail === "string" && body.detail ? `${label}: ${body.detail}` : label;
     throw new ApiError(message, res.status);
@@ -2020,8 +2041,28 @@ export const api = {
   getClient: (id: string) => req<ClientOrg>(`/api/clients/${id}`),
   createClient: (data: { name: string; max_accounts: number; username: string; password: string; display_name?: string; access_request_id?: string }) =>
     req<ClientOrg & { first_account: AuthUser }>("/api/clients", { method: "POST", body: JSON.stringify(data) }),
-  updateClient: (id: string, data: { name?: string; max_accounts?: number; can_view_all_incidents?: boolean; can_share_publicly?: boolean; can_screen_people?: boolean; can_view_spotlight?: boolean; alert_email_domains?: string; alert_signal_numbers?: string }) =>
-    req<{ id: string; name: string; max_accounts: number; can_view_all_incidents: boolean }>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  updateClient: (
+    id: string,
+    data: {
+      name?: string;
+      max_accounts?: number;
+      can_view_all_incidents?: boolean;
+      can_share_publicly?: boolean;
+      can_screen_people?: boolean;
+      can_view_spotlight?: boolean;
+      can_live_osint?: boolean;
+      can_trends?: boolean;
+      can_afrintel?: boolean;
+      contact_name?: string;
+      contact_email?: string;
+      contact_phone?: string;
+      notes?: string;
+      alert_email_domains?: string;
+      alert_signal_numbers?: string;
+    }
+  ) => req<ClientOrg>(`/api/clients/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  /** Pause a client (all its logins stop at once, nothing deleted) or resume it. */
+  pauseClient: (id: string, paused: boolean, reason?: string) => req<ClientOrg>(`/api/clients/${id}/pause`, { method: "POST", body: JSON.stringify({ paused, reason }) }),
   deleteClient: (id: string) => req<void>(`/api/clients/${id}`, { method: "DELETE" }),
   updateClientLogo: (clientId: string, logoData: string | null) =>
     req<{ ok: boolean }>(`/api/clients/${clientId}/logo`, { method: "PATCH", body: JSON.stringify({ logo_data: logoData }) }),
