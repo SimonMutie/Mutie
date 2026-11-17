@@ -25,15 +25,15 @@ import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCol
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
 
 /**
- * Live world-events feed gateway — the same idea as OSIRIS's own "no key
- * required" API layer (osirisai.live/docs): each route absorbs one public
+ * Live world-events feed gateway — the same idea as the reference platform's own "no key
+ * required" API layer: each route absorbs one public
  * upstream source's own quirks (format, rate limits, occasional 500s) and
  * hands the frontend one consistent GeoJSON FeatureCollection, so the map
  * renderer never has to know which feed a point came from.
  *
  * Gated behind requireAuth like every other route in this app (the whole
  * Lens is a logged-in tool, not a public site) — this isn't the same
- * "public no-key" posture OSIRIS advertises for itself, just this app's
+ * "public no-key" posture the reference platform advertises for itself, just this app's
  * normal access model applied to a new set of routes.
  */
 export const liveLayersRouter = new Hono<{ Bindings: Env; Variables: AuthedVariables }>();
@@ -76,7 +76,7 @@ export interface NormalizedFeature {
      *  /natural-events), not a guess: EONET already tells us whether an
      *  event is a wildfire or a severe storm. Every other EONET category
      *  (volcanoes, floods, drought, etc.) is left undefined here since
-     *  OSIRIS's real Natural Hazards flyout only exposes these two plus
+     *  The reference platform's real Natural Hazards flyout only exposes these two plus
      *  Earthquakes (which comes from a separate feed entirely). */
     naturalHazardCategory?: "wildfire" | "severe-weather";
     /** Country Escalation only — see /conflict-escalation below. Every
@@ -186,10 +186,10 @@ liveLayersRouter.get("/earthquakes", async (c) => {
   });
 });
 
-/** EONET's own category titles map directly onto two of OSIRIS's three real
+/** EONET's own category titles map directly onto two of the reference platform's three real
  *  Natural Hazards rows — no invented classification, just reading the
  *  field EONET already provides. The third row (Earthquakes) is a
- *  completely separate feed (USGS, above), matching how OSIRIS's own count
+ *  completely separate feed (USGS, above), matching how the reference platform's own count
  *  for that row doesn't come from EONET either. */
 function classifyNaturalEvent(categoryTitle: string): "wildfire" | "severe-weather" | undefined {
   if (categoryTitle === "Wildfires") return "wildfire";
@@ -408,7 +408,7 @@ liveLayersRouter.get("/conflict-events", async (c) => {
   );
 });
 
-/** OSIRIS's real THREATS & INTEL flyout has a "Global Incidents" row
+/** The reference platform's real THREATS & INTEL flyout has a "Global Incidents" row
  *  alongside its (narrower) "GDELT Events" row. ACLED would be the more
  *  obvious real source for a broad global-incidents feed, but its EULA
  *  explicitly bars a commercial entity from using it in the entity's own
@@ -418,8 +418,8 @@ liveLayersRouter.get("/conflict-events", async (c) => {
  *  still keyless, still no license restriction, just a wider net (unrest,
  *  disasters, crime, explosions — not only armed-conflict terms) than
  *  /conflict-events casts. The two counts will legitimately differ from
- *  whatever OSIRIS's own two rows show, same as every other layer in this
- *  app that reproduces OSIRIS's UI structure with this app's own real,
+ *  whatever the reference platform's own two rows show, same as every other layer in this
+ *  app that reproduces the reference platform's UI structure with this app's own real,
  *  independently-sourced data rather than its exact numbers.
  *
  *  Also now served from D1 (see /conflict-events above) — this row is the
@@ -740,7 +740,7 @@ const US_MILITARY_ICAO24_MIN = 0xadf000;
 const US_MILITARY_ICAO24_MAX = 0xafffff;
 const COMMERCIAL_CALLSIGN_RE = /^[A-Z]{3}\d{1,4}[A-Z]?$/;
 
-/** ICAO type designators of business jets, so private aircraft that are business jets can be shown on their own (as OSIRIS does). */
+/** ICAO type designators of business jets, so private aircraft that are business jets can be shown on their own (as the reference platform does). */
 const BUSINESS_JET_TYPES = new Set([
   "GLF4", "GLF5", "GLF6", "GL5T", "GL7T", "GL8T", "GLEX", "G150", "G200", "G280", "GALX", "ASTR",
   "C25A", "C25B", "C25C", "C25M", "C500", "C501", "C510", "C525", "C550", "C560", "C56X", "C650", "C680", "C68A", "C700", "C750",
@@ -1081,7 +1081,7 @@ async function fetchThreatFoxIps(authKey: string): Promise<ThreatFoxIoc[]> {
   return (raw.data ?? []).filter((d) => d.ioc_type === "ip:port");
 }
 
-/** "Live Malware" — matches OSIRIS's real NETWORK INTEL flyout (screenshot:
+/** "Live Malware" — matches the reference platform's real NETWORK INTEL flyout (screenshot:
  *  a dedicated rail group with LIVE MALWARE and BOTNET C2 SERVERS rows).
  *  Real ThreatFox IOC data, geolocated to a country centroid via GeoLite2
  *  — both credentials genuinely required, so this 502s with a specific,
@@ -1139,8 +1139,7 @@ liveLayersRouter.get("/live-malware", async (c) => {
 
 /** Major ports, naval bases, and shipping chokepoints — a static reference
  *  dataset, not a live feed. This is deliberate, not a placeholder: checked
- *  directly against OSIRIS's own open-source code (github.com/enzg/
- *  osiris-live) rather than assumed, its own "Maritime" layer turns out to
+ *  directly against the reference platform's own open-source code rather than assumed, its own "Maritime" layer turns out to
  *  be exactly this — the same fixed list of ports/chokepoints/bases,
  *  refreshed once a day, zero external API calls. There is no free global
  *  live-AIS source to match (see the /air-traffic comment above for the
@@ -1240,7 +1239,7 @@ liveLayersRouter.get("/maritime", async (c) => {
  *  Wikipedia's "List of nuclear power stations" (in turn drawn from the
  *  IAEA's Power Reactor Information System), restricted to sites currently
  *  listed as operating — under-construction and permanently-shut-down
- *  sites are left out since OSIRIS's own "Nuclear Facilities" row reads as
+ *  sites are left out since the reference platform's own "Nuclear Facilities" row reads as
  *  current facilities, not a historical registry. Not an exhaustive IAEA
  *  export, but a substantial, real, individually-verifiable list (173
  *  sites) rather than a placeholder handful. */
@@ -1888,7 +1887,7 @@ liveLayersRouter.get("/maritime-lines", async (c) => {
 
 /** Submarine telecom cables — worth documenting exactly why this is
  *  OpenStreetMap rather than TeleGeography's actual submarinecablemap.com
- *  data, which is what OSIRIS itself visually resembles and what was
+ *  data, which is what the reference platform itself visually resembles and what was
  *  originally asked for. Checked directly against TeleGeography's own
  *  licensing page (telegeography.com/license-geocoded-map-data): that
  *  dataset is an annual, sales-negotiated commercial license delivered
@@ -2109,7 +2108,7 @@ interface NewsFeed {
 }
 
 /** A handful of real broadcaster/wire-service RSS feeds — the same category
- *  OSIRIS itself uses (it lists 25+; this starts with a representative
+ *  The reference platform itself uses (it lists 25+; this starts with a representative
  *  handful of major, freely-syndicated world-news feeds rather than trying
  *  to match that count in one pass). Fetched and parsed here rather than
  *  client-side because these feeds don't set CORS headers for arbitrary
@@ -2238,11 +2237,11 @@ async function fetchCelestrakGroup(group: string): Promise<TleRecord[]> {
   return parseTleText(await res.text());
 }
 
-/** Maps each of OSIRIS's real Space Tracking sub-categories onto the real
+/** Maps each of the reference platform's real Space Tracking sub-categories onto the real
  *  CelesTrak group slug(s) that actually correspond to it (verified against
  *  CelesTrak's own group index, not guessed) — several categories are a
  *  union of more than one CelesTrak group because CelesTrak splits by
- *  operator/constellation, not by the coarser role-based buckets OSIRIS's
+ *  operator/constellation, not by the coarser role-based buckets the reference platform's
  *  UI uses. There's deliberately no separate massive fetch for an "all
  *  active satellites" catalog here: CelesTrak's own `active` group runs
  *  well into five figures, and propagating that many TLEs through SGP4 on
@@ -2284,7 +2283,7 @@ function propagateTle(rec: TleRecord, now: Date): { lat: number; lng: number } |
 
 const SATELLITE_TTL_SECONDS = 120; // real orbital positions drift several km/s, but this cache is shared across every viewer of this Lens instance — 2 min balances "not visibly stale on the globe" against not hammering CelesTrak's free service or this Worker's own CPU budget on every request.
 
-/** Real satellite positions for OSIRIS's "Space Tracking" layer group,
+/** Real satellite positions for the reference platform's "Space Tracking" layer group,
  *  computed from CelesTrak's own orbital elements rather than a static or
  *  fabricated point set — see SATELLITE_CATEGORY_GROUPS above for exactly
  *  which real CelesTrak groups back each sub-category. */
@@ -2406,7 +2405,7 @@ liveLayersRouter.get("/route", async (c) => {
 
 /**
  * On-chain wallet intelligence — see backend/src/lib/chainIntel.ts for the
- * full source list and reasoning (adapted from OSIRIS, MIT-licensed,
+ * full source list and reasoning (adapted from MIT-licensed code, see THIRD_PARTY_NOTICES.md,
  * keyless). Not cached like the other routes here: every lookup is a
  * different address, so there's nothing shared to cache, and a stale wallet
  * balance would be actively misleading.
@@ -2445,7 +2444,7 @@ interface AfricaWireSnapshot {
 
 /**
  * Merged public Telegram OSINT channels + wire-service RSS (see
- * backend/src/lib/osintFeed.ts, adapted from OSIRIS, MIT-licensed) +
+ * backend/src/lib/osintFeed.ts, adapted from MIT-licensed code, see THIRD_PARTY_NOTICES.md) +
  * Simon's own ~260-source African country/pan-African/institutional list
  * (data/africaSources.ts, crawled in the background by
  * durableObjects/africaWireActor.ts — see that file for why this can't
@@ -2518,9 +2517,8 @@ liveLayersRouter.get("/osint-alerts", async (c) => {
  * embed restrictions) — those still get a real link, just opened
  * externally instead of embedded in the map's popup.
  *
- * List and per-channel embeddability adapted (MIT license permits reuse)
- * from OSIRIS (github.com/simplifaisoul/osiris, src/app/api/live-news/
- * route.ts) — this is a list of public YouTube channel IDs and cities, not
+ * List and per-channel embeddability adapted from MIT-licensed open-source
+ * code (see THIRD_PARTY_NOTICES.md) — this is a list of public YouTube channel IDs and cities, not
  * creative content, but the license notice is kept regardless.
  */
 const LIVE_BROADCASTS: Array<{ id: string; name: string; city: string; country: string; lat: number; lng: number; url: string; embedAllowed: boolean; category: string }> = [
@@ -2540,7 +2538,7 @@ const LIVE_BROADCASTS: Array<{ id: string; name: string; city: string; country: 
   { id: "cgtn", name: "CGTN", city: "Beijing", country: "CN", lat: 39.904, lng: 116.407, url: "https://www.youtube.com/channel/UCgrNz-aDmcr2uuto8_DL2jg/live", embedAllowed: false, category: "state" },
   { id: "rt", name: "RT News", city: "Moscow", country: "RU", lat: 55.755, lng: 37.617, url: "https://rumble.com/c/RTNewsEN", embedAllowed: false, category: "state" },
 ];
-// Note: this list is exactly OSIRIS's own verified roster — no entries added
+// Note: this list is exactly the reference platform's own verified roster — no entries added
 // or channel IDs guessed. Africanews' RSS text feed is already in the OSINT
 // Alerts roster above; it has no live-stream channel here because its
 // YouTube live channel ID wasn't independently verified as embeddable.
