@@ -1,8 +1,8 @@
 import { AFRICA_CENTROIDS } from "./africaGeo";
 
 /**
- * Internet outages and the origins of network-layer attacks, from Cloudflare Radar. Adapted from OSIRIS's
- * cloudflare-radar route (MIT, see THIRD_PARTY_NOTICES.md).
+ * Internet outages and the origins of network-layer attacks, from Cloudflare Radar. Adapted from MIT-licensed
+ * open-source code (see THIRD_PARTY_NOTICES.md).
  *
  * Outages are Cloudflare's own annotations: shutdowns, power cuts and cable cuts it has confirmed, with their cause,
  * which complements the measured drops IODA gives. Attack origins are the countries most network-layer attacks
