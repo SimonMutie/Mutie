@@ -3,7 +3,7 @@ import { api, type LiveBroadcast, type LiveLayerFeature, type NewsBloc, type Osi
 import { chip, hairline as line, input, muted, small, tag, text } from "./panelUi";
 
 /**
- * Live Alerts, after OSIRIS's panel (MIT, see THIRD_PARTY_NOTICES.md): one place for the reports coming in, the
+ * Live Alerts: one place for the reports coming in, the
  * standing warnings, recent earthquakes and the live news channels.
  *
  *  All       everything below, newest first
