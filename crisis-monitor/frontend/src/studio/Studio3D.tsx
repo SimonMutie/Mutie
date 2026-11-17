@@ -73,7 +73,7 @@ export function Studio3D({ map, shapes, active }: { map: MapLibreMap | null; sha
   // ── Sources and layers ───────────────────────────────────────────────
   useEffect(() => {
     if (!map) return;
-    const before = map.getLayer("osiris-points-circle") ? "osiris-points-circle" : undefined;
+    const before = map.getLayer("lens-points-circle") ? "lens-points-circle" : undefined;
     const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
     if (!map.getSource(SRC)) map.addSource(SRC, { type: "geojson", data: empty });
     if (!map.getSource(DRAFT)) map.addSource(DRAFT, { type: "geojson", data: empty });
