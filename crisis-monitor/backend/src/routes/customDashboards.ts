@@ -1,3 +1,4 @@
+import { incidentTable } from "../lib/incidentFacts";
 import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, nowIso } from "../db";
@@ -483,58 +484,59 @@ customDashboardsRouter.delete("/:id", async (c) => {
  *  the two can't quietly drift into different date-filtering behavior. */
 async function computeStatsForOwner(db: D1Database, ownerIds: string[] | null, dateFrom?: string | null, dateTo?: string | null, countries?: string[] | null) {
   const { whereClause, andClause, params: scopeParams } = buildScopeClause(ownerIds, dateFrom ?? undefined, dateTo ?? undefined, countries);
+  const T = await incidentTable(db);
 
   const [total, bySector, byActor, byTactic, bySeverity, byProvince, byCountry, timeSeries, daily, actorTactic, casualties] = await Promise.all([
-    first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM incidents ${whereClause}`, scopeParams),
+    first<{ count: number }>(db, `SELECT COUNT(*) AS count FROM ${T} ${whereClause}`, scopeParams),
     all<{ value: string; count: number }>(
       db,
-      `SELECT sector AS value, COUNT(*) AS count FROM incidents WHERE sector IS NOT NULL AND sector != '' ${andClause} GROUP BY sector ORDER BY count DESC LIMIT 12`,
+      `SELECT sector AS value, COUNT(*) AS count FROM ${T} WHERE sector IS NOT NULL AND sector != '' ${andClause} GROUP BY sector ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT actor AS value, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' ${andClause} GROUP BY actor ORDER BY count DESC LIMIT 12`,
+      `SELECT actor AS value, COUNT(*) AS count FROM ${T} WHERE actor IS NOT NULL AND actor != '' ${andClause} GROUP BY actor ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT tactic AS value, COUNT(*) AS count FROM incidents WHERE tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
+      `SELECT tactic AS value, COUNT(*) AS count FROM ${T} WHERE tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY tactic ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT severity AS value, COUNT(*) AS count FROM incidents WHERE severity IS NOT NULL AND severity != '' ${andClause} GROUP BY severity ORDER BY count DESC LIMIT 12`,
+      `SELECT severity AS value, COUNT(*) AS count FROM ${T} WHERE severity IS NOT NULL AND severity != '' ${andClause} GROUP BY severity ORDER BY count DESC LIMIT 12`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT province AS value, COUNT(*) AS count FROM incidents WHERE province IS NOT NULL AND province != '' ${andClause} GROUP BY province ORDER BY count DESC LIMIT 20`,
+      `SELECT province AS value, COUNT(*) AS count FROM ${T} WHERE province IS NOT NULL AND province != '' ${andClause} GROUP BY province ORDER BY count DESC LIMIT 20`,
       scopeParams
     ),
     all<{ value: string; count: number }>(
       db,
-      `SELECT country AS value, COUNT(*) AS count FROM incidents WHERE country IS NOT NULL AND country != '' ${andClause} GROUP BY country ORDER BY count DESC LIMIT 20`,
+      `SELECT country AS value, COUNT(*) AS count FROM ${T} WHERE country IS NOT NULL AND country != '' ${andClause} GROUP BY country ORDER BY count DESC LIMIT 20`,
       scopeParams
     ),
     all<{ bucket: string; count: number }>(
       db,
-      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY bucket ORDER BY bucket ASC`,
+      `SELECT substr(occurred_at, 1, 7) AS bucket, COUNT(*) AS count FROM ${T} WHERE occurred_at IS NOT NULL ${andClause} GROUP BY bucket ORDER BY bucket ASC`,
       scopeParams
     ),
     dateFrom || dateTo
       ? all<{ date: string; count: number }>(
           db,
-          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL ${andClause} GROUP BY date ORDER BY date ASC`,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM ${T} WHERE occurred_at IS NOT NULL ${andClause} GROUP BY date ORDER BY date ASC`,
           scopeParams
         )
       : all<{ date: string; count: number }>(
           db,
-          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM incidents WHERE occurred_at IS NOT NULL AND occurred_at >= date((SELECT MAX(occurred_at) FROM incidents WHERE occurred_at IS NOT NULL ${andClause}), '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
+          `SELECT substr(occurred_at, 1, 10) AS date, COUNT(*) AS count FROM ${T} WHERE occurred_at IS NOT NULL AND occurred_at >= date((SELECT MAX(occurred_at) FROM ${T} WHERE occurred_at IS NOT NULL ${andClause}), '-400 days') ${andClause} GROUP BY date ORDER BY date ASC`,
           [...scopeParams, ...scopeParams]
         ),
     all<{ actor: string; tactic: string; count: number }>(
       db,
-      `SELECT actor, tactic, COUNT(*) AS count FROM incidents WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
+      `SELECT actor, tactic, COUNT(*) AS count FROM ${T} WHERE actor IS NOT NULL AND actor != '' AND tactic IS NOT NULL AND tactic != '' ${andClause} GROUP BY actor, tactic ORDER BY count DESC LIMIT 30`,
       scopeParams
     ),
     first<Record<string, number>>(
@@ -543,7 +545,7 @@ async function computeStatsForOwner(db: D1Database, ownerIds: string[] | null, d
          COALESCE(SUM(civilian_death_child), 0) + COALESCE(SUM(civilian_death_female), 0) + COALESCE(SUM(civilian_death_male), 0) + COALESCE(SUM(civilian_death_unknown), 0) AS deaths,
          COALESCE(SUM(civilian_injury_female), 0) + COALESCE(SUM(civilian_injury_male), 0) + COALESCE(SUM(civilian_injury_unknown), 0) AS injuries,
          COALESCE(SUM(kidnappings_ngo), 0) AS kidnappings_ngo
-       FROM incidents ${whereClause}`,
+       FROM ${T} ${whereClause}`,
       scopeParams
     ),
   ]);
