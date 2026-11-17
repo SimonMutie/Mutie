@@ -4,7 +4,7 @@ import { divIcon, type LatLngBoundsExpression } from "leaflet";
 import { loadWorldCountries } from "./worldCountries";
 import "./FireWaves.css";
 
-/** Region views, as Adulis's region tabs. Bounds are approximate, south-west and north-east corners. */
+/** Region views for the quick region tabs. Bounds are approximate, south-west and north-east corners. */
 export interface RegionView {
   key: string;
   label: string;
@@ -12,7 +12,7 @@ export interface RegionView {
   /** Map layers the view switches on when chosen. */
   layers?: string[];
 }
-export const ADULIS_REGIONS: RegionView[] = [
+export const REGION_VIEWS: RegionView[] = [
   { key: "tigray", label: "Tigray", bounds: [[12.2, 36.4], [14.95, 39.9]] },
   { key: "ethiopia", label: "Ethiopia", bounds: [[3.3, 32.9], [15.0, 48.1]] },
   { key: "sudan", label: "Sudan", bounds: [[8.6, 21.8], [23.2, 38.6]] },
@@ -135,7 +135,7 @@ const chip = (on: boolean): CSSProperties => ({
 });
 
 /** Region tabs, plus the outline and wave toggles, under the imagery control. */
-export function AdulisBar({
+export function RegionBar({
   region,
   onRegion,
   outlines,
@@ -160,7 +160,7 @@ export function AdulisBar({
 }) {
   return (
     <div role="group" aria-label="Region and map overlays" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-      {ADULIS_REGIONS.map((r) => (
+      {REGION_VIEWS.map((r) => (
         <button key={r.key} onClick={() => onRegion(r)} aria-pressed={region === r.key} style={chip(region === r.key)}>
           {r.label}
         </button>
