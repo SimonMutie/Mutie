@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { TileLayer } from "react-leaflet";
 
 /**
- * Rain radar and infrared cloud imagery from RainViewer's free public API (as OSIRIS's Rain and Live Clouds layers),
+ * Rain radar and infrared cloud imagery from RainViewer's free public API (as the reference platform's Rain and Live Clouds layers),
  * on the flat map. Radar is where ground radars exist, which in Africa is little beyond South Africa and the
  * Mediterranean coast; the infrared clouds cover everywhere. Both refresh every ten minutes.
  */
