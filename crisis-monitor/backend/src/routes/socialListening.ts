@@ -4,12 +4,9 @@ import type { Env } from "../bindings";
 import { fetchGdeltPoints } from "./liveLayers";
 
 /**
- * Keyword-driven "social listening" — the one piece of Sprinklr's product
- * category (real-time social/media monitoring, sentiment, and volume
- * tracking around a topic) that's a genuine fit for a crisis-intelligence
- * tool. Built after the rest of Sprinklr's suite (unified inbox,
- * publishing/content calendar) was scoped out — the user chose to skip
- * publishing for now and pointed at Postiz for that if it's revisited.
+ * Keyword-driven "social listening": real-time monitoring of online coverage around a topic, with sentiment and
+ * volume tracking, the part of commercial social-listening suites that fits a crisis-intelligence tool. Their
+ * publishing and unified-inbox features were scoped out.
  *
  * Full social-platform firehoses are paid-enterprise-only or scraping-ToS
  * violations for a commercial product — checked directly before building
@@ -31,7 +28,7 @@ import { fetchGdeltPoints } from "./liveLayers";
  *    source already in production use. GDELT's `query` parameter natively
  *    supports boolean search — implicit AND between bare terms, uppercase
  *    OR, "quoted phrases", -negation, and (parenthetical grouping) — so a
- *    Sprinklr-style advanced query is passed straight through with no
+ *    advanced boolean query is passed straight through with no
  *    translation layer; see buildBooleanQuery below for the one bit of
  *    normalization applied (stripping characters GDELT's query parser
  *    rejects outright).
@@ -151,7 +148,7 @@ function parseGdeltDate(raw: string): string {
   return `${y}-${mo}-${d}T${h}:${mi}:${s}Z`;
 }
 
-/** Passes a Sprinklr-style boolean query straight through to GDELT, which
+/** Passes a boolean query straight through to GDELT, which
  *  understands the same shape natively (bare terms = AND, OR, "phrase",
  *  -negate, (grouping)) — the only normalization needed is trimming
  *  whitespace and collapsing curly/smart quotes a browser autocorrect
