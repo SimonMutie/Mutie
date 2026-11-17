@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { api, type OiAssistAction, type OiRun } from "../api";
+import { api, type AfrIntelAssistAction, type AfrIntelRun } from "../api";
 import { btn, card, chip, ghost, heading as h, input, line, muted, text } from "./panelUi";
 
 /**
- * OI: the Lens's prediction engine (Forecast) and its talk-to-the-map helper (Assist), after OSIRIS's OI.
+ * AfrIntel: the Lens's prediction engine (Forecast) and its talk-to-the-map helper (Assist), by Afrilens.
  * Forecast runs live on the server and advance one model call at a time; this panel keeps calling "step" while it
  * is open, so a run carries on where it left off when the panel is reopened. Forecasts are Afrilens analysis made
  * with a model from the sources shown, not certainties.
@@ -11,7 +11,7 @@ import { btn, card, chip, ghost, heading as h, input, line, muted, text } from "
 const cyan = "#22d3ee";
 const OUTCOME_COLOURS = ["#22d3ee", "#f472b6", "#facc15", "#a78bfa", "#4ade80"];
 
-const STAGE_LABEL: Record<OiRun["stage"], string> = {
+const STAGE_LABEL: Record<AfrIntelRun["stage"], string> = {
   context: "Researching the Lens's feeds and the news",
   graph: "Framing the question and placing the actors",
   agents: "Casting the actors",
@@ -22,26 +22,26 @@ const STAGE_LABEL: Record<OiRun["stage"], string> = {
 };
 
 export const pct = (x: number) => `${Math.round(x * 100)}%`;
-export const outcomeLabels = (r: OiRun) => (r.frame ? (r.frame.kind === "binary" ? ["YES", "NO"] : r.frame.outcomes) : []);
+export const outcomeLabels = (r: AfrIntelRun) => (r.frame ? (r.frame.kind === "binary" ? ["YES", "NO"] : r.frame.outcomes) : []);
 
-export interface OiMapHooks {
+export interface AfrIntelMapHooks {
   layers: { key: string; label: string; group: string }[];
   onFly: (lat: number, lng: number, zoom: number) => void;
   onLayers: (on: string[], off: string[]) => void;
   onPanel: (panel: string) => void;
   onMarks: (marks: { lat: number; lng: number; title: string; url: string | null }[]) => void;
   /** The run shown, so its actors and their relations are drawn on the map. */
-  onRun: (run: OiRun | null) => void;
+  onRun: (run: AfrIntelRun | null) => void;
 }
 
 type Tab = "assist" | "forecast" | "runs";
 
-export default function OiPanel(props: OiMapHooks) {
+export default function AfrIntelPanel(props: AfrIntelMapHooks) {
   const [tab, setTab] = useState<Tab>("assist");
   const [pending, setPending] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(() => {
     try {
-      return localStorage.getItem("lens.oi.run");
+      return localStorage.getItem("lens.afrintel.run");
     } catch {
       return null;
     }
@@ -49,8 +49,8 @@ export default function OiPanel(props: OiMapHooks) {
   const openRun = (id: string | null) => {
     setRunId(id);
     try {
-      if (id) localStorage.setItem("lens.oi.run", id);
-      else localStorage.removeItem("lens.oi.run");
+      if (id) localStorage.setItem("lens.afrintel.run", id);
+      else localStorage.removeItem("lens.afrintel.run");
     } catch {
       /* storage unavailable */
     }
@@ -86,7 +86,7 @@ export default function OiPanel(props: OiMapHooks) {
         />
       )}
       <div style={{ fontSize: 10, color: muted, lineHeight: 1.45 }}>
-        OI is Afrilens analysis made with a model from the sources it shows; it can be wrong. Telegram items are unverified claims. Method after OSIRIS's OI and MiroFish.
+        AfrIntel is Afrilens analysis made with a model from the sources it shows; it can be wrong. Telegram items are unverified claims.
       </div>
     </div>
   );
@@ -101,8 +101,8 @@ function speechCtor(): (new () => SpeechRec) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
-  const [msgs, setMsgs] = useState<{ who: "you" | "oi"; text: string; did?: string[]; forecast?: string }[]>([]);
+function Assist(props: AfrIntelMapHooks & { onForecast: (q: string) => void }) {
+  const [msgs, setMsgs] = useState<{ who: "you" | "afrintel"; text: string; did?: string[]; forecast?: string }[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -112,7 +112,7 @@ function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
     end.current?.scrollIntoView({ block: "nearest" });
   }, [msgs]);
 
-  const run = (actions: OiAssistAction[]): { did: string[]; forecast?: string } => {
+  const run = (actions: AfrIntelAssistAction[]): { did: string[]; forecast?: string } => {
     const did: string[] = [];
     let forecast: string | undefined;
     const label = (k: string) => props.layers.find((l) => l.key === k)?.label ?? k;
@@ -124,7 +124,7 @@ function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
         props.onLayers(a.on ?? [], a.off ?? []);
         if (a.on?.length) did.push(`switched on ${a.on.map(label).join(", ")}`);
         if (a.off?.length) did.push(`switched off ${a.off.map(label).join(", ")}`);
-      } else if (a.type === "panel" && a.panel && a.panel !== "oi") {
+      } else if (a.type === "panel" && a.panel && a.panel !== "afrintel") {
         did.push(`can open ${a.panel === "news" ? "Live Alerts" : a.panel}`);
       } else if (a.type === "mark" && a.marks?.length) {
         props.onMarks(a.marks);
@@ -141,13 +141,13 @@ function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
     setMsgs((x) => [...x, { who: "you", text: m }]);
     setBusy(true);
     try {
-      const res = await api.oiAssist(m, props.layers, null);
+      const res = await api.afrIntelAssist(m, props.layers, null);
       const { did, forecast } = run(res.actions);
-      const panel = res.actions.find((a) => a.type === "panel" && a.panel && a.panel !== "oi")?.panel;
-      setMsgs((x) => [...x, { who: "oi", text: res.reply || "Done.", did, forecast }]);
+      const panel = res.actions.find((a) => a.type === "panel" && a.panel && a.panel !== "afrintel")?.panel;
+      setMsgs((x) => [...x, { who: "afrintel", text: res.reply || "Done.", did, forecast }]);
       if (panel) props.onPanel(panel);
     } catch (e) {
-      setMsgs((x) => [...x, { who: "oi", text: e instanceof Error ? e.message : "OI Assist is unavailable." }]);
+      setMsgs((x) => [...x, { who: "afrintel", text: e instanceof Error ? e.message : "AfrIntel Assist is unavailable." }]);
     } finally {
       setBusy(false);
     }
@@ -189,7 +189,7 @@ function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
         {msgs.map((m, i) => (
           <div key={i} style={{ ...card, alignSelf: m.who === "you" ? "flex-end" : "stretch", maxWidth: m.who === "you" ? "85%" : undefined, background: m.who === "you" ? "rgba(34,211,238,0.1)" : card.background }}>
             <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{m.text}</div>
-            {m.did && m.did.length > 0 && <div style={{ marginTop: 5, fontSize: 11, color: cyan }}>OI {m.did.join("; ")}.</div>}
+            {m.did && m.did.length > 0 && <div style={{ marginTop: 5, fontSize: 11, color: cyan }}>AfrIntel {m.did.join("; ")}.</div>}
             {m.forecast && (
               <button style={{ ...ghost, marginTop: 6, color: cyan, borderColor: `${cyan}66` }} onClick={() => props.onForecast(m.forecast!)}>
                 Forecast: {m.forecast}
@@ -197,13 +197,13 @@ function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
             )}
           </div>
         ))}
-        {busy && <div style={{ color: muted }}>OI is looking…</div>}
+        {busy && <div style={{ color: muted }}>AfrIntel is looking…</div>}
         <div ref={end} />
       </div>
       <div style={{ display: "flex", gap: 6 }}>
-        <input style={input} value={draft} placeholder="Ask OI…" onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void send(draft)} aria-label="Ask OI" />
+        <input style={input} value={draft} placeholder="Ask AfrIntel…" onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void send(draft)} aria-label="Ask AfrIntel" />
         {Ctor && (
-          <button style={{ ...ghost, color: listening ? "#ff6b6b" : text, minWidth: 54 }} onClick={mic} aria-pressed={listening} title="Speak to OI">
+          <button style={{ ...ghost, color: listening ? "#ff6b6b" : text, minWidth: 54 }} onClick={mic} aria-pressed={listening} title="Speak to AfrIntel">
             {listening ? "Stop" : "Speak"}
           </button>
         )}
@@ -222,8 +222,8 @@ function Assist(props: OiMapHooks & { onForecast: (q: string) => void }) {
 
 /* ── Forecast ───────────────────────────────────────────────────── */
 
-function Forecast(props: OiMapHooks & { runId: string | null; onOpen: (id: string | null) => void; draft: string | null; onDraftUsed: () => void }) {
-  const [run, setRun] = useState<OiRun | null>(null);
+function Forecast(props: AfrIntelMapHooks & { runId: string | null; onOpen: (id: string | null) => void; draft: string | null; onDraftUsed: () => void }) {
+  const [run, setRun] = useState<AfrIntelRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { onRun } = props;
   useEffect(() => {
@@ -240,7 +240,7 @@ function Forecast(props: OiMapHooks & { runId: string | null; onOpen: (id: strin
     }
     let cancelled = false;
     api
-      .oiGetRun(props.runId)
+      .afrIntelGetRun(props.runId)
       .then((r) => !cancelled && setRun(r))
       .catch(() => !cancelled && props.onOpen(null));
     return () => {
@@ -255,9 +255,9 @@ function Forecast(props: OiMapHooks & { runId: string | null; onOpen: (id: strin
     let cancelled = false;
     const t = setTimeout(() => {
       api
-        .oiStep(run.id)
+        .afrIntelStep(run.id)
         .then((r) => !cancelled && (setRun(r), setError(null)))
-        .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "OI step failed"));
+        .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "AfrIntel step failed"));
     }, run.busy ? 4000 : 0);
     return () => {
       cancelled = true;
@@ -278,7 +278,7 @@ function Forecast(props: OiMapHooks & { runId: string | null; onOpen: (id: strin
   );
 }
 
-function NewRun({ draft, onDraftUsed, onCreated }: { draft: string | null; onDraftUsed: () => void; onCreated: (r: OiRun) => void }) {
+function NewRun({ draft, onDraftUsed, onCreated }: { draft: string | null; onDraftUsed: () => void; onCreated: (r: AfrIntelRun) => void }) {
   const [question, setQuestion] = useState(draft ?? "");
   const [material, setMaterial] = useState("");
   const [worlds, setWorlds] = useState(3);
@@ -295,7 +295,7 @@ function NewRun({ draft, onDraftUsed, onCreated }: { draft: string | null; onDra
     setBusy(true);
     setError(null);
     try {
-      onCreated(await api.oiCreateRun(question.trim(), material, worlds, periods));
+      onCreated(await api.afrIntelCreateRun(question.trim(), material, worlds, periods));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start the forecast");
     } finally {
@@ -305,12 +305,12 @@ function NewRun({ draft, onDraftUsed, onCreated }: { draft: string | null; onDra
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ color: muted, lineHeight: 1.45 }}>
-        Ask a question about the future. OI researches what the Lens and the news hold on it, casts the actors who decide it, plays it out in parallel worlds to the horizon, then weighs the worlds against the base rate.
+        Ask a question about the future. AfrIntel researches what the Lens and the news hold on it, casts the actors who decide it, plays it out in parallel worlds to the horizon, then weighs the worlds against the base rate.
       </div>
       <textarea style={{ ...input, minHeight: 64, resize: "vertical" }} value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="e.g. Will the RSF take El Obeid before 1 March 2027?" aria-label="Forecast question" />
       <details>
         <summary style={{ cursor: "pointer", color: muted, fontSize: 11 }}>Add your own material (reports, notes, transcripts)</summary>
-        <textarea style={{ ...input, minHeight: 90, marginTop: 6, resize: "vertical" }} value={material} onChange={(e) => setMaterial(e.target.value.slice(0, 100_000))} placeholder="Paste text OI should weigh alongside the feeds." aria-label="Material" />
+        <textarea style={{ ...input, minHeight: 90, marginTop: 6, resize: "vertical" }} value={material} onChange={(e) => setMaterial(e.target.value.slice(0, 100_000))} placeholder="Paste text AfrIntel should weigh alongside the feeds." aria-label="Material" />
         <div style={{ fontSize: 10, color: muted, marginTop: 3 }}>{material.length.toLocaleString("en-GB")} / 100,000 characters</div>
       </details>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -358,7 +358,7 @@ function Bar({ labels, shares, base }: { labels: string[]; shares: number[]; bas
   );
 }
 
-function RunView({ run, error, onRetry, onChange, onNew, onFly }: { run: OiRun; error: string | null; onRetry: () => void; onChange: (r: OiRun) => void; onNew: () => void; onFly: (lat: number, lng: number, zoom: number) => void }) {
+function RunView({ run, error, onRetry, onChange, onNew, onFly }: { run: AfrIntelRun; error: string | null; onRetry: () => void; onChange: (r: AfrIntelRun) => void; onNew: () => void; onFly: (lat: number, lng: number, zoom: number) => void }) {
   const labels = outcomeLabels(run);
   const [inject, setInject] = useState("");
   const [askText, setAskText] = useState("");
@@ -372,12 +372,12 @@ function RunView({ run, error, onRetry, onChange, onNew, onFly }: { run: OiRun; 
   const stageIdx = ["context", "graph", "agents", "simulate", "report", "done"].indexOf(run.stage);
   const progress = run.stage === "done" ? 1 : (Math.min(stageIdx, 3) + (run.stage === "simulate" || run.stage === "report" ? played / Math.max(1, total) : 0) + (run.stage === "report" ? 0.5 : 0)) / 4.5;
 
-  const act = async (fn: () => Promise<OiRun>) => {
+  const act = async (fn: () => Promise<AfrIntelRun>) => {
     setBusy(true);
     try {
       onChange(await fn());
     } catch (e) {
-      alert(e instanceof Error ? e.message : "OI could not do that");
+      alert(e instanceof Error ? e.message : "AfrIntel could not do that");
     } finally {
       setBusy(false);
     }
@@ -483,7 +483,7 @@ function RunView({ run, error, onRetry, onChange, onNew, onFly }: { run: OiRun; 
           <div style={h}>What if…</div>
           <div style={{ display: "flex", gap: 6 }}>
             <input style={input} value={inject} onChange={(e) => setInject(e.target.value)} placeholder="Inject an event into every world" aria-label="Inject event" />
-            <button style={btn} disabled={busy || !inject.trim()} onClick={() => void act(() => api.oiInject(run.id, inject)).then(() => setInject(""))}>
+            <button style={btn} disabled={busy || !inject.trim()} onClick={() => void act(() => api.afrIntelInject(run.id, inject)).then(() => setInject(""))}>
               Inject
             </button>
           </div>
@@ -566,8 +566,8 @@ function RunView({ run, error, onRetry, onChange, onNew, onFly }: { run: OiRun; 
                   </option>
                 ))}
               </select>
-              <input style={input} value={askText} onChange={(e) => setAskText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && askText.trim() && void act(() => api.oiAsk(run.id, target, askText)).then(() => setAskText(""))} placeholder="Why? What would change your mind?" aria-label="Question" />
-              <button style={btn} disabled={busy || !askText.trim()} onClick={() => void act(() => api.oiAsk(run.id, target, askText)).then(() => setAskText(""))}>
+              <input style={input} value={askText} onChange={(e) => setAskText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && askText.trim() && void act(() => api.afrIntelAsk(run.id, target, askText)).then(() => setAskText(""))} placeholder="Why? What would change your mind?" aria-label="Question" />
+              <button style={btn} disabled={busy || !askText.trim()} onClick={() => void act(() => api.afrIntelAsk(run.id, target, askText)).then(() => setAskText(""))}>
                 Ask
               </button>
             </div>
@@ -606,7 +606,7 @@ function leading(shares: number[]): number {
   return shares.reduce((best, x, i) => (x > shares[best] ? i : best), 0);
 }
 
-function WorldRow({ w, run, labels, open, onToggle }: { w: OiRun["worlds"][number]; run: OiRun; labels: string[]; open: boolean; onToggle: () => void }) {
+function WorldRow({ w, run, labels, open, onToggle }: { w: AfrIntelRun["worlds"][number]; run: AfrIntelRun; labels: string[]; open: boolean; onToggle: () => void }) {
   return (
     <>
       <button onClick={onToggle} style={{ ...ghost, padding: "2px 4px", fontSize: 10, color: open ? cyan : text }} title={w.temper}>
@@ -626,7 +626,7 @@ function WorldRow({ w, run, labels, open, onToggle }: { w: OiRun["worlds"][numbe
   );
 }
 
-function WorldDetail({ w, run, labels }: { w: OiRun["worlds"][number]; run: OiRun; labels: string[] }) {
+function WorldDetail({ w, run, labels }: { w: AfrIntelRun["worlds"][number]; run: AfrIntelRun; labels: string[] }) {
   const name = (id: string) => run.actors.find((a) => a.id === id)?.name ?? id;
   return (
     <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
@@ -654,7 +654,7 @@ function Runs({ onOpen, current, onDeleted }: { onOpen: (id: string) => void; cu
   const [error, setError] = useState<string | null>(null);
   const load = () =>
     api
-      .oiListRuns()
+      .afrIntelListRuns()
       .then((r) => (setRuns(r.runs), setError(null)))
       .catch((e) => setError(e instanceof Error ? e.message : "Runs unavailable"));
   useEffect(() => {
@@ -677,7 +677,7 @@ function Runs({ onOpen, current, onDeleted }: { onOpen: (id: string) => void; cu
             style={ghost}
             onClick={() =>
               api
-                .oiDeleteRun(r.id)
+                .afrIntelDeleteRun(r.id)
                 .then(() => (onDeleted(r.id), load()))
                 .catch(() => {})
             }
