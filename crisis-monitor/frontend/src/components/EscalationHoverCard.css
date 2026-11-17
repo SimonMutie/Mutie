@@ -93,45 +93,45 @@
 }
 
 /* MapLibre (3D map) */
-.osiris-hover-popup {
+.lens-hover-popup {
   z-index: 560;
 }
-.osiris-hover-popup .maplibregl-popup-content {
+.lens-hover-popup .maplibregl-popup-content {
   background: rgba(8, 10, 20, 0.95);
   border: 1px solid rgba(212, 175, 55, 0.4);
   border-radius: 8px;
   padding: 11px 13px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
-.osiris-hover-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
-.osiris-hover-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
-.osiris-hover-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+.lens-hover-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.lens-hover-popup.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.lens-hover-popup.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
   border-top-color: rgba(8, 10, 20, 0.95);
 }
-.osiris-hover-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
-.osiris-hover-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
-.osiris-hover-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+.lens-hover-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.lens-hover-popup.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.lens-hover-popup.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
   border-bottom-color: rgba(8, 10, 20, 0.95);
 }
-.osiris-hover-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+.lens-hover-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
   border-right-color: rgba(8, 10, 20, 0.95);
 }
-.osiris-hover-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+.lens-hover-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
   border-left-color: rgba(8, 10, 20, 0.95);
 }
 
 /* Leaflet (flat map) */
-.osiris-hover-leaflet .leaflet-popup-content-wrapper {
+.lens-hover-leaflet .leaflet-popup-content-wrapper {
   background: rgba(8, 10, 20, 0.95);
   border: 1px solid rgba(212, 175, 55, 0.4);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
 }
-.osiris-hover-leaflet .leaflet-popup-content {
+.lens-hover-leaflet .leaflet-popup-content {
   margin: 11px 13px;
   width: auto !important;
 }
-.osiris-hover-leaflet .leaflet-popup-tip {
+.lens-hover-leaflet .leaflet-popup-tip {
   background: rgba(8, 10, 20, 0.95);
   border: 1px solid rgba(212, 175, 55, 0.4);
 }
