@@ -2316,7 +2316,8 @@ export const api = {
   // seamark:type=cable_submarine / telecom=cable_landing_station) — see
   // the backend route's own comment for why this is OSM rather than
   // TeleGeography's submarinecablemap.com data, and what that trades off.
-  getSubmarineCables: () => req<SubmarineCableData>("/api/live-layers/submarine-cables"),
+  // v=2: the wider OpenStreetMap query (Nov 2026); a new address skips the day-old cached result.
+  getSubmarineCables: () => req<SubmarineCableData>("/api/live-layers/submarine-cables?v=2"),
   // On-chain wallet lookup — BTC/ETH/SOL balance, activity, counterparties
   // and OFAC screening. Not cached client-side; every address is a fresh lookup.
   getCryptoIntel: (address: string, chain?: ChainKind) =>
