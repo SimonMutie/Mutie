@@ -150,6 +150,19 @@ export default function App() {
     return () => disconnect();
   }, [shareToken, bootState]);
 
+  useEffect(() => {
+    const onPaused = () => setUserState((u) => (u ? { ...u, client_paused: true } : u));
+    window.addEventListener("lens-paused", onPaused);
+    return () => window.removeEventListener("lens-paused", onPaused);
+  }, []);
+
+  // A client without Live OSINT (or Trends & Patterns) never lands on it: open the first part of the Lens it may use.
+  useEffect(() => {
+    if (!user) return;
+    if (view === "live-osint" && user.can_live_osint === false) setView(user.can_trends === false ? "settings" : "incidents");
+    else if (view === "incidents" && user.can_trends === false) setView(user.can_live_osint === false ? "settings" : "live-osint");
+  }, [user, view]);
+
   function handleAuthenticated(authedUser: AuthUser) {
     // Signing in is something the visitor did, so the browser now allows
     // sound: if the spoken welcome was refused when the site opened, say it.
@@ -219,6 +232,21 @@ export default function App() {
   }
 
   if (!user) return null; // unreachable once authed, keeps TS happy
+
+  // The admin has paused this client: show why, and nothing else (the server refuses every other request anyway).
+  if (user.client_paused) {
+    return (
+      <div style={{ height: "100vh", display: "grid", placeItems: "center", color: "#e8e6e0", font: "14px system-ui, sans-serif", padding: 24, textAlign: "center", background: "#0b1220" }}>
+        <div style={{ maxWidth: 440 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>Access paused</div>
+          <div style={{ opacity: 0.75, marginBottom: 6, lineHeight: 1.5 }}>Your organisation's access to the Lens is paused for now. Nothing has been deleted: everything will be here when access resumes.</div>
+          {user.pause_reason && <div style={{ opacity: 0.75, marginBottom: 6 }}>Reason: {user.pause_reason}</div>}
+          <div style={{ opacity: 0.75, marginBottom: 16 }}>Please contact Afrilens Consulting at info@afrilensconsulting.com.</div>
+          <button onClick={handleLogout} style={{ padding: "8px 18px", cursor: "pointer" }}>Sign out</button>
+        </div>
+      </div>
+    );
+  }
 
   const openQuery = typeof view === "object" && "queryId" in view ? queries.find((q) => q.id === view.queryId) : undefined;
   const editingQuery = typeof view === "object" && "editQueryId" in view ? queries.find((q) => q.id === view.editQueryId) : undefined;
@@ -294,6 +322,7 @@ export default function App() {
 
         {view === "live-osint" && (
           <LiveIntelView
+            canAfrIntel={user.can_afrintel !== false}
             queries={queries}
             onQueriesChanged={loadQueries}
             onOpenQuery={(queryId) => setView({ queryId })}
