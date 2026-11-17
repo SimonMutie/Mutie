@@ -1098,6 +1098,8 @@ export interface LiveIntelViewProps {
   /** Tool to show open on arrival — "monitor" when returning from a
    *  monitoring query's dashboard or editor. */
   initialTool?: "monitor" | null;
+  /** False when the login's client has not been given AfrIntel (Admin → client → Resources). */
+  canAfrIntel?: boolean;
 }
 
 /** One state per monitoring query switched on as a map layer. */
@@ -1182,7 +1184,7 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
   URL.revokeObjectURL(url);
 }
 
-export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, onNewQuery, onEditQuery, initialTool = null }: LiveIntelViewProps) {
+export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, onNewQuery, onEditQuery, initialTool = null, canAfrIntel = true }: LiveIntelViewProps) {
   // Every layer starts off at login except the escalation icons; the hotspot pulses and waves are on too (see FlatMap).
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     earthquakes: false,
@@ -1845,7 +1847,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
       else if (k === "e") flip(["earthquakes"]);
       else if (k === "s") flip(["satellites-all"]);
       else if (k === "d") setShowDayNight((v) => !v);
-      else if (k === "a") setActiveTool((prev) => (prev === "afrintel" ? null : "afrintel"));
+      else if (k === "a" && canAfrIntel) setActiveTool((prev) => (prev === "afrintel" ? null : "afrintel"));
       else if (e.key === "Escape") { setSelectedAircraft(null); setMap3DSelectedFeature(null); }
     };
     window.addEventListener("keydown", onKey);
@@ -2618,7 +2620,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <div style={{ position: "absolute", top: 12, right: 12, zIndex: 500, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
           <PanelToggle side="right" open={rightOpen} onClick={() => togglePanel("right")} />
           {rightOpen && (
-            <RightToolRail
+            <RightToolRail hide={canAfrIntel ? [] : ["afrintel"]}
               active={activeTool}
               onSelect={(tool) =>
                 setActiveTool((prev) => {
@@ -2728,7 +2730,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             <SituationPanel />
           </ToolPanelShell>
         )}
-        {rightTool === "afrintel" && (
+        {rightTool === "afrintel" && canAfrIntel && (
           <ToolPanelShell title="AfrIntel">
             <AfrIntelPanel
               layers={afrIntelLayerCatalog}
@@ -4076,8 +4078,8 @@ function GlobalStatusTicker() {
  *  mirroring the left LayerPanel's visual language (same dark glass card,
  *  same border color) but icon-only + a short label, since this rail holds
  *  tools rather than a scrollable list of toggles. */
-function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void }) {
-  const tools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
+function RightToolRail({ active, onSelect, hide = [] }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void; hide?: Exclude<RightTool, null>[] }) {
+  const allTools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
     { key: "monitor", icon: Radar, label: "Monitor" },
     { key: "listen", icon: Megaphone, label: "Listen" },
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
@@ -4093,6 +4095,7 @@ function RightToolRail({ active, onSelect }: { active: RightTool; onSelect: (too
     { key: "afrintel", icon: BrainCircuit, label: "AfrIntel" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
+  const tools = allTools.filter((t) => !hide.includes(t.key));
   const alertsPaused = useAlertsPaused();
   const alertsSwitch = (
     <button
