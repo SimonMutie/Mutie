@@ -39,6 +39,35 @@ function requireAdmin(c: ClientsContext): boolean {
 }
 
 /** Platform-admin only: list every client org with its current account count. */
+/** A client as the admin screens see it. One shape for the list, the detail and the edit reply. */
+export function clientJson(row: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  const text = (v: unknown) => (v != null ? String(v) : "");
+  const on = (v: unknown, dflt: boolean) => (v == null ? dflt : Number(v) !== 0);
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    max_accounts: Number(row.max_accounts),
+    can_view_all_incidents: !!row.can_view_all_incidents,
+    can_share_publicly: !!row.can_share_publicly,
+    can_screen_people: !!row.can_screen_people,
+    can_view_spotlight: !!row.can_view_spotlight,
+    can_live_osint: on(row.can_live_osint, true),
+    can_trends: on(row.can_trends, true),
+    can_afrintel: on(row.can_afrintel, true),
+    paused: !!row.paused,
+    paused_at: row.paused_at != null ? String(row.paused_at) : null,
+    pause_reason: text(row.pause_reason),
+    contact_name: text(row.contact_name),
+    contact_email: text(row.contact_email),
+    contact_phone: text(row.contact_phone),
+    notes: text(row.notes),
+    alert_email_domains: text(row.alert_email_domains),
+    alert_signal_numbers: text(row.alert_signal_numbers),
+    created_at: row.created_at != null ? String(row.created_at) : undefined,
+    ...extra,
+  };
+}
+
 clientsRouter.get("/", async (c) => {
   if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
   const clients = await all<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients ORDER BY created_at DESC`);
@@ -48,17 +77,7 @@ clientsRouter.get("/", async (c) => {
   );
   const countByClient = new Map(counts.map((r) => [r.client_id, r.count]));
   return c.json(
-    clients.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      max_accounts: Number(row.max_accounts),
-      can_view_all_incidents: !!row.can_view_all_incidents,
-      can_share_publicly: !!row.can_share_publicly,
-      can_screen_people: !!row.can_screen_people,
-      can_view_spotlight: !!row.can_view_spotlight,
-      account_count: countByClient.get(String(row.id)) ?? 0,
-      created_at: String(row.created_at),
-    }))
+    clients.map((row) => clientJson(row, { account_count: countByClient.get(String(row.id)) ?? 0 }))
   );
 });
 
@@ -144,6 +163,13 @@ const updateClientSchema = z.object({
   can_share_publicly: z.boolean().optional(),
   can_screen_people: z.boolean().optional(),
   can_view_spotlight: z.boolean().optional(),
+  can_live_osint: z.boolean().optional(),
+  can_trends: z.boolean().optional(),
+  can_afrintel: z.boolean().optional(),
+  contact_name: z.string().max(200).optional(),
+  contact_email: z.string().max(200).optional(),
+  contact_phone: z.string().max(60).optional(),
+  notes: z.string().max(4000).optional(),
   /** Space/comma separated: the email domains this client's alerts may go to. */
   alert_email_domains: z.string().max(500).optional(),
   /** Space/comma separated: Signal numbers approved for this client's alerts. */
@@ -193,6 +219,18 @@ clientsRouter.patch("/:id", async (c) => {
     updates.push("can_view_spotlight = ?");
     params.push(parsed.data.can_view_spotlight ? 1 : 0);
   }
+  for (const key of ["can_live_osint", "can_trends", "can_afrintel"] as const) {
+    if (parsed.data[key] !== undefined) {
+      updates.push(`${key} = ?`);
+      params.push(parsed.data[key] ? 1 : 0);
+    }
+  }
+  for (const key of ["contact_name", "contact_email", "contact_phone", "notes"] as const) {
+    if (parsed.data[key] !== undefined) {
+      updates.push(`${key} = ?`);
+      params.push(parsed.data[key]!.trim() || null);
+    }
+  }
   if (parsed.data.alert_email_domains !== undefined) {
     updates.push("alert_email_domains = ?");
     params.push(splitList(parsed.data.alert_email_domains).join(", ") || null);
@@ -205,20 +243,32 @@ clientsRouter.patch("/:id", async (c) => {
   params.push(id);
   await run(c.env.DB, `UPDATE clients SET ${updates.join(", ")} WHERE id = ?`, params);
 
+  // Section access is checked on every request: drop the remembered account states so it applies now.
+  forgetGate();
   await audit(c.env, { userId: c.get("userId"), action: "client.updated", detail: `${id}: ${JSON.stringify(parsed.data)}`, ip: clientIp(c.req) });
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [id]);
-  return c.json({
-    id: String(row!.id),
-    name: String(row!.name),
-    max_accounts: Number(row!.max_accounts),
-    can_view_all_incidents: !!row!.can_view_all_incidents,
-    can_share_publicly: !!row!.can_share_publicly,
-    can_screen_people: !!row!.can_screen_people,
-    can_view_spotlight: !!row!.can_view_spotlight,
-    alert_email_domains: row!.alert_email_domains != null ? String(row!.alert_email_domains) : "",
-    alert_signal_numbers: row!.alert_signal_numbers != null ? String(row!.alert_signal_numbers) : "",
-    logo_data: row!.logo_data != null ? String(row!.logo_data) : null,
-  });
+  return c.json(clientJson(row!, { logo_data: row!.logo_data != null ? String(row!.logo_data) : null }));
+});
+
+const pauseSchema = z.object({ paused: z.boolean(), reason: z.string().max(500).optional() });
+
+/** Platform-admin only: pause a client (all of its logins stop working at once, nothing is deleted) or resume it. */
+clientsRouter.post("/:id/pause", async (c) => {
+  if (!requireAdmin(c)) return c.json({ error: "Admin access required" }, 403);
+  const id = c.req.param("id");
+  const parsed = pauseSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const existing = await first<{ id: string }>(c.env.DB, `SELECT id FROM clients WHERE id = ?`, [id]);
+  if (!existing) return c.json({ error: "Not found" }, 404);
+  if (parsed.data.paused) {
+    await run(c.env.DB, `UPDATE clients SET paused = 1, paused_at = ?, pause_reason = ? WHERE id = ?`, [nowIso(), parsed.data.reason?.trim() || null, id]);
+  } else {
+    await run(c.env.DB, `UPDATE clients SET paused = 0, paused_at = NULL, pause_reason = NULL WHERE id = ?`, [id]);
+  }
+  forgetGate();
+  await audit(c.env, { userId: c.get("userId"), action: parsed.data.paused ? "client.paused" : "client.resumed", detail: `${id}${parsed.data.reason ? `: ${parsed.data.reason}` : ""}`, ip: clientIp(c.req) });
+  const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [id]);
+  return c.json(clientJson(row!, { logo_data: row!.logo_data != null ? String(row!.logo_data) : null }));
 });
 
 /** Platform-admin only: delete a client org — removes its logins too, since
@@ -231,6 +281,8 @@ clientsRouter.delete("/:id", async (c) => {
   if (!existing) return c.json({ error: "Not found" }, 404);
   await run(c.env.DB, `DELETE FROM users WHERE client_id = ?`, [id]);
   await run(c.env.DB, `DELETE FROM clients WHERE id = ?`, [id]);
+  forgetGate();
+  await audit(c.env, { userId: c.get("userId"), action: "client.deleted", detail: id, ip: clientIp(c.req) });
   return c.json({ ok: true });
 });
 
@@ -243,20 +295,7 @@ clientsRouter.get("/:id", async (c) => {
   const row = await first<Record<string, unknown>>(c.env.DB, `SELECT * FROM clients WHERE id = ?`, [clientId]);
   if (!row) return c.json({ error: "Not found" }, 404);
   const countRow = await first<{ count: number }>(c.env.DB, `SELECT COUNT(*) AS count FROM users WHERE client_id = ?`, [clientId]);
-  return c.json({
-    id: String(row.id),
-    name: String(row.name),
-    max_accounts: Number(row.max_accounts),
-    can_view_all_incidents: !!row.can_view_all_incidents,
-    can_share_publicly: !!row.can_share_publicly,
-    can_screen_people: !!row.can_screen_people,
-    can_view_spotlight: !!row.can_view_spotlight,
-    alert_email_domains: row.alert_email_domains != null ? String(row.alert_email_domains) : "",
-    alert_signal_numbers: row.alert_signal_numbers != null ? String(row.alert_signal_numbers) : "",
-    logo_data: row.logo_data != null ? String(row.logo_data) : null,
-    account_count: countRow?.count ?? 0,
-    created_at: String(row.created_at),
-  });
+  return c.json(clientJson(row, { logo_data: row.logo_data != null ? String(row.logo_data) : null, account_count: countRow?.count ?? 0 }));
 });
 
 /** Platform-admin only: this month's use against each allowance, and the
