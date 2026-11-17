@@ -1861,14 +1861,46 @@ export interface DdResult {
 export interface DdCaseRow { id: string; name: string; subject_type: string; country: string | null; reference: string | null; outcome: DdOutcome; summary: string | null; created_at: string }
 export interface DdCase { id: string; name: string; subject_type: "person" | "entity"; reference: string | null; created_at: string; result: DdResult }
 
+/**
+ * Dashboard counts are the heaviest requests the database gets. Opening a dashboard used to send every widget's
+ * request at once, enough to make the database refuse work for a few seconds ("D1 DB is overloaded"); at most
+ * HEAVY_LIMIT of them now run at a time, the rest wait their turn.
+ */
+const HEAVY_LIMIT = 4;
+const HEAVY_PATH = /^\/api\/(incidents\/(stats|breakdown|crosstab|filters|monthly-groups|victim-groups|grid)|datasets\/|analytics|custom-dashboards\/[^/]+\/(stats|data))/;
+let heavyRunning = 0;
+const heavyQueue: (() => void)[] = [];
+async function heavySlot<T>(run: () => Promise<T>): Promise<T> {
+  if (heavyRunning >= HEAVY_LIMIT) await new Promise<void>((resolve) => heavyQueue.push(resolve));
+  heavyRunning++;
+  try {
+    return await run();
+  } finally {
+    heavyRunning--;
+    heavyQueue.shift()?.();
+  }
+}
+
+/** Requests that can safely be sent again when the server says the database is busy (503): the busy reply means it was not done. */
+const RETRYABLE = new Set(["GET", "PUT", "DELETE", "PATCH"]);
+const BUSY_RETRIES = 4;
+
+async function send(path: string, init: RequestInit | undefined, headers: Record<string, string>): Promise<Response> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${API_URL}${path}`, { headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) }, ...init });
+    if (res.status !== 503 || !RETRYABLE.has(method) || attempt >= BUSY_RETRIES) return res;
+    const after = Number(res.headers.get("Retry-After"));
+    const wait = (Number.isFinite(after) && after > 0 ? after * 1000 : 1500) * 2 ** attempt + Math.random() * 400;
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) },
-    ...init,
-  });
+  const res = await (HEAVY_PATH.test(path) && (init?.method ?? "GET").toUpperCase() === "GET" ? heavySlot(() => send(path, init, headers)) : send(path, init, headers));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     // Routes that wrap upstream calls (liveLayers.ts, socialListening.ts,
