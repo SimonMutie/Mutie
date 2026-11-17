@@ -1,8 +1,8 @@
 /**
  * OFAC SDN sanctioned-entity lookup.
  *
- * Adapted (MIT license permits reuse) from OSIRIS
- * (github.com/simplifaisoul/osiris, src/lib/sanctions.ts) — same source,
+ * Adapted from MIT-licensed open-source code (see THIRD_PARTY_NOTICES.md)
+ * — same source,
  * same approach, ported onto this Worker's fetch/in-memory-cache pattern
  * instead of Next.js.
  *
