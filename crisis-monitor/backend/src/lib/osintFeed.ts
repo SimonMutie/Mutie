@@ -5,11 +5,10 @@ import { fingerprint, htmlToText, parseChannelPage, splitHeadline, type Telegram
  * one feed, cross-post-deduplicated, keyword risk-scored, and coarse-
  * geocoded to a country/region centroid.
  *
- * Adapted (MIT license permits reuse) from OSIRIS
- * (github.com/simplifaisoul/osiris, src/app/api/news/route.ts). Two
- * deliberate simplifications versus OSIRIS's own version:
+ * Adapted from MIT-licensed open-source code (see THIRD_PARTY_NOTICES.md). Two
+ * deliberate simplifications versus the reference platform's own version:
  *
- *   - No Nominatim per-report geocoding. OSIRIS throttles this hard (its
+ *   - No Nominatim per-report geocoding. The reference platform throttles this hard (its
  *     own comment: "this app came to be running at ten times the rate its
  *     operators allow") and still only resolves a report to a place name a
  *     free-text search happens to find. This module places every report on
@@ -18,7 +17,7 @@ import { fingerprint, htmlToText, parseChannelPage, splitHeadline, type Telegram
  *     rate-limited, keyless upstream dependency purely for a marginally
  *     tighter pin. A report an operator needs pinned precisely should be
  *     read from its actual text and placed by hand, not auto-geocoded.
- *   - Both fetches use a plain declared User-Agent, not OSIRIS's evasive
+ *   - Both fetches use a plain declared User-Agent, not the reference platform's evasive
  *     "stealthFetch" (randomised User-Agent + forged X-Forwarded-For from
  *     real residential ISP ranges, used across nearly every one of its
  *     integrations, not just this one) — that's identity-spoofing to evade
@@ -44,7 +43,7 @@ interface Feed {
 
 /**
  * Public Telegram OSINT channels, picked for what they report rather than
- * what they argue — same roster OSIRIS measured and settled on (see its
+ * what they argue — same roster the reference platform measured and settled on (see its
  * comment history for the channels it dropped and why). The roster spans
  * the spectrum so no single narrative owns the feed; `lean`/`bloc` travel
  * with every item so a partisan source is always labelled as one.
@@ -296,7 +295,7 @@ function wirePost(item: RssItem, feed: Feed): TelegramPost {
   };
 }
 
-/** Deterministic short id — a stand-in for OSIRIS's Node crypto.createHash('md5'), which Workers don't have. Not security-sensitive, just needs to be stable. */
+/** Deterministic short id — a stand-in for the reference platform's Node crypto.createHash('md5'), which Workers don't have. Not security-sensitive, just needs to be stable. */
 function hashId(s: string): string {
   let h1 = 0xdeadbeef ^ s.length;
   let h2 = 0x41c6ce57 ^ s.length;
