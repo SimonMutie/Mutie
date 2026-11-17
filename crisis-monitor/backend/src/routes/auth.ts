@@ -65,13 +65,22 @@ async function userWithClientLogo(db: D1Database, row: Record<string, unknown>) 
   let clientLogo: string | null = null;
   let canShare = user.role === "admin";
   let canSpotlight = user.role === "admin";
+  // Parts of the Lens this login may open, and whether its organisation is paused (Admin → client).
+  const access = { client_paused: false, pause_reason: "", can_live_osint: true, can_trends: true, can_afrintel: true };
   if (user.client_id) {
-    const client = await first<{ logo_data: string | null; can_share_publicly: number | null; can_view_spotlight: number | null }>(db, "SELECT logo_data, can_share_publicly, can_view_spotlight FROM clients WHERE id = ?", [user.client_id]);
-    clientLogo = client?.logo_data ?? null;
-    if (user.role !== "admin") canSpotlight = !!client?.can_view_spotlight;
-    if (user.role !== "admin") canShare = !!client?.can_share_publicly && !user.read_only;
+    const client = await first<Record<string, unknown>>(db, "SELECT * FROM clients WHERE id = ?", [user.client_id]);
+    clientLogo = client?.logo_data != null ? String(client.logo_data) : null;
+    if (user.role !== "admin" && client) {
+      canSpotlight = !!client.can_view_spotlight;
+      canShare = !!client.can_share_publicly && !user.read_only;
+      access.client_paused = !!client.paused;
+      access.pause_reason = client.pause_reason != null ? String(client.pause_reason) : "";
+      access.can_live_osint = Number(client.can_live_osint ?? 1) !== 0;
+      access.can_trends = Number(client.can_trends ?? 1) !== 0;
+      access.can_afrintel = Number(client.can_afrintel ?? 1) !== 0;
+    }
   }
-  return { ...user, client_logo: clientLogo, can_share_publicly: canShare, can_view_spotlight: canSpotlight };
+  return { ...user, client_logo: clientLogo, can_share_publicly: canShare, can_view_spotlight: canSpotlight, ...access };
 }
 
 /** Five wrong passwords in a row lock a login for 15 minutes. A right password resets the count. */
