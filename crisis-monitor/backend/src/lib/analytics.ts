@@ -1,3 +1,4 @@
+import { incidentTable } from "./incidentFacts";
 import { all } from "../db";
 import { buildScopeClause } from "../routes/incidents";
 import { jsonPathFor } from "../routes/datasets";
@@ -274,7 +275,8 @@ export async function runQuery(db: D1Database, source: Source, spec: QuerySpec, 
     scopeParams = [source.datasetId];
   } else {
     const scope = buildScopeClause(source.ownerIds, source.dateFrom ?? undefined, source.dateTo ?? undefined, source.countries);
-    from = `FROM incidents ${scope.whereClause}`;
+    // Counts read the slim copy of the incident table once it is complete (lib/incidentFacts.ts).
+    from = `FROM ${await incidentTable(db)} ${scope.whereClause}`;
     scopeParams = scope.params;
   }
   const limit = Math.min(Math.max(Math.floor(spec.limit ?? DEFAULT_ROWS), 1), MAX_ROWS);
