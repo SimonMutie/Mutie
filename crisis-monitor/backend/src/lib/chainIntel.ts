@@ -3,10 +3,10 @@ import { matchExact, type SanctionEntry } from "./sanctions";
 /**
  * On-chain wallet intelligence (BTC / ETH / SOL).
  *
- * Adapted (MIT license permits reuse) from OSIRIS
- * (github.com/simplifaisoul/osiris, src/lib/chainIntel.ts) — ported onto
+ * Adapted from MIT-licensed open-source code (see THIRD_PARTY_NOTICES.md)
+ * — ported onto
  * this Worker's fetch/env pattern. The optional Etherscan/Helius deepening
- * OSIRIS supports is left out here to keep this a clean, fully-keyless
+ * The reference platform supports is left out here to keep this a clean, fully-keyless
  * baseline (every source below needs no account, no key, no quota):
  *
  *   BTC  mempool.space REST
@@ -379,7 +379,7 @@ function buildFactors(raw: RawWallet, meta: { symbol: string }, activity: Wallet
 }
 
 export function capabilities() {
-  // OSIRIS's optional ETHERSCAN_API_KEY/HELIUS_API_KEY deepening isn't
+  // The reference platform's optional ETHERSCAN_API_KEY/HELIUS_API_KEY deepening isn't
   // wired up here — this stays a clean keyless baseline. Both report off.
   return { etherscan: false, helius: false };
 }
