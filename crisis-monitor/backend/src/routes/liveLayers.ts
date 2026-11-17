@@ -1553,6 +1553,96 @@ const FIRMS_SATELLITES = { noaa20: "NOAA-20 (VIIRS)", snpp: "Suomi NPP (VIIRS)",
 /** Pixels within about 1 km (0.01 degrees) of each other in the same satellite pass count as touching. */
 const FIRMS_TOUCH_DEG = 0.01;
 
+type FireRaw = { lat: number; lon: number; source: string; date: string | null; time: string; frp: number; confidence: string; daynight: string | null };
+
+/** Point features for the map from raw detections, each with how many detections touch it in the same pass. */
+/**
+ * One point per fire spot per day: the three satellites pass over each fire several times a day, and drawing every
+ * pass stacks two to six identical dots on each spot (a full November day over Africa is well over 60,000 raw
+ * detections). Detections within about 400 m on the same day become one point, the strongest pass, which notes how
+ * many passes saw it. The busiest spots come first if a cap is ever reached.
+ */
+export const FIRE_SPOT_DEG = 0.004;
+export const FIRE_MAX_POINTS = 60000;
+export function mergePasses(raw: FireRaw[]): { raw: FireRaw[]; passes: Map<FireRaw, number>; total: number } {
+  const best = new Map<string, { r: FireRaw; n: number }>();
+  for (const r of raw) {
+    const k = `${r.date}|${Math.round(r.lat / FIRE_SPOT_DEG)}|${Math.round(r.lon / FIRE_SPOT_DEG)}`;
+    const cur = best.get(k);
+    if (!cur) best.set(k, { r, n: 1 });
+    else {
+      cur.n++;
+      if (r.frp > cur.r.frp) cur.r = r;
+    }
+  }
+  const kept = [...best.values()].sort((a, b) => b.r.frp - a.r.frp).slice(0, FIRE_MAX_POINTS);
+  return { raw: kept.map((x) => x.r), passes: new Map(kept.map((x) => [x.r, x.n])), total: best.size };
+}
+
+export function fireFeatures(input: FireRaw[]): NormalizedFeature[] {
+  const { raw, passes } = mergePasses(input);
+  // Count touching detections: same satellite, same pass (date and time), within about 1 km.
+  const cell = (v: number) => Math.floor(v / FIRMS_TOUCH_DEG);
+  const buckets = new Map<string, FireRaw[]>();
+  for (const r of raw) {
+    const k = `${r.source}|${r.date}|${r.time}|${cell(r.lat)}|${cell(r.lon)}`;
+    const arr = buckets.get(k);
+    if (arr) arr.push(r); else buckets.set(k, [r]);
+  }
+  const touching = (r: FireRaw) => {
+    let n = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const arr = buckets.get(`${r.source}|${r.date}|${r.time}|${cell(r.lat) + dy}|${cell(r.lon) + dx}`);
+      if (arr) for (const o of arr) if (o !== r && Math.abs(o.lat - r.lat) <= FIRMS_TOUCH_DEG && Math.abs(o.lon - r.lon) <= FIRMS_TOUCH_DEG) n++;
+    }
+    return n;
+  };
+  const seen = new Set<string>();
+  const features: NormalizedFeature[] = [];
+  for (const r of raw) {
+    const id = `firms:${r.lat.toFixed(4)}:${r.lon.toFixed(4)}:${r.date ?? ""}:${r.time}:${r.source}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const satName = Object.entries(FIRMS_SATELLITES).find(([k]) => r.source === k || r.source.includes(`_${k}_`))?.[1] ?? "VIIRS";
+    const iso = r.date ? `${r.date}T${r.time.slice(0, 2)}:${r.time.slice(2, 4)}:00Z` : null;
+    const near = touching(r);
+    features.push({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [r.lon, r.lat] },
+      properties: {
+        id,
+        title: "Satellite fire detection",
+        time: iso,
+        intensity: Math.min(r.frp / 50, 1),
+        intensityLabel: r.frp ? `${r.frp.toFixed(1)} MW` : "fire detected",
+        detail: [
+          `${satName}, ${r.daynight === "N" ? "night" : "day"} pass`,
+          r.confidence ? `${r.confidence} confidence` : null,
+          near > 0 ? `${near + 1} touching detections in the same pass` : "single detection",
+          (passes.get(r) ?? 1) > 1 ? `seen on ${passes.get(r)} satellite passes that day (strongest shown)` : null,
+          "375 m pixel. Source: NASA FIRMS.",
+        ].filter(Boolean).join(". "),
+        url: null,
+      },
+    });
+  }
+  return features;
+}
+
+/** How many 5,000-detection pages the live fallback reads per region and satellite (20,000 detections). */
+const FIRMS_LIVE_PAGES = 4;
+/** The stored collection is used for the live layer while its last run is this recent. */
+const FIRMS_STORED_FRESH_MS = 6 * 3600_000;
+
+/**
+ * Fire detections for the last 24 hours (or 7 days).
+ *
+ * Until Nov 2026 this asked FIRMS for the first 5,000 detections of each region and satellite and stopped there.
+ * In the northern dry season (November to March) Northern and Central Africa alone has many times that, so the north
+ * was cut short while Southern Africa, winding down, came through whole: the map showed most fire in the south when
+ * most was in the north. It now reads the stored collection (lib/firmsHistory.ts), which pages through everything,
+ * and only falls back to FIRMS directly, paging up to FIRMS_LIVE_PAGES, when the collection is not fresh.
+ */
 liveLayersRouter.get("/firms-fires", async (c) => {
   const key = c.env.FIRMS_MAP_KEY;
   const window = c.req.query("window") === "7d" ? "7days" : "24hrs";
@@ -1563,87 +1653,73 @@ liveLayersRouter.get("/firms-fires", async (c) => {
   return cachedJson(
     c.req.raw,
     async () => {
-      const seen = new Set<string>();
-      const features: NormalizedFeature[] = [];
+      if (window === "24hrs") {
+        const stored = await storedFires(c.env.DB, new Date()).catch(() => null);
+        if (stored) return { configured: true, type: "FeatureCollection", features: fireFeatures(stored.raw), source: "stored collection", collectedAt: stored.collectedAt, fetchedAt: new Date().toISOString() };
+      }
       const jobs = FIRMS_REGIONS.flatMap((region) => sources.map((source) => ({ region, source })));
       const results = await Promise.all(
         jobs.map(async ({ region, source }) => {
-          const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/${region}/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=0&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
-          const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
-          if (!res.ok) throw new Error(`FIRMS returned ${res.status}`);
-          return { region, source, data: (await res.json()) as { features?: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] } };
+          const features: { geometry?: { coordinates?: number[] }; properties?: Record<string, unknown> }[] = [];
+          let truncated = true;
+          for (let page = 0; page < FIRMS_LIVE_PAGES; page++) {
+            const url = `https://firms.modaps.eosdis.nasa.gov/mapserver/wfs/${region}/${encodeURIComponent(key)}/?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAME=ms:${source}&STARTINDEX=${page * 5000}&COUNT=5000&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${FIRMS_BBOX},urn:ogc:def:crs:EPSG::4326&outputformat=geojson`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(45000) });
+            if (!res.ok) throw new Error(`FIRMS returned ${res.status}`);
+            const batch = ((await res.json()) as { features?: typeof features }).features ?? [];
+            features.push(...batch);
+            if (batch.length < 5000) {
+              truncated = false;
+              break;
+            }
+          }
+          return { region, source, features, truncated };
         })
       );
-      // Raw detections first, so each one can be checked against its neighbours in the same pass.
-      type Raw = { lat: number; lon: number; source: string; date: string | null; time: string; frp: number; confidence: string; daynight: string | null };
-      const raw: Raw[] = [];
-      for (const { source, data } of results) {
-        for (const f of data.features ?? []) {
+      const raw: FireRaw[] = [];
+      for (const { source, features } of results) {
+        for (const f of features) {
           const [lon, lat] = f.geometry?.coordinates ?? [];
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
           const p = f.properties ?? {};
-          const date = typeof p.acq_date === "string" ? p.acq_date : null;
-          const time = typeof p.acq_time === "string" || typeof p.acq_time === "number" ? String(p.acq_time).padStart(4, "0") : "";
-          const frp = typeof p.frp === "number" ? p.frp : Number(p.frp) || 0;
-          const confidence = p.confidence != null ? String(p.confidence) : "";
-          const daynight = typeof p.daynight === "string" ? p.daynight : null;
-          raw.push({ lat, lon, source, date, time, frp, confidence, daynight });
+          raw.push({
+            lat,
+            lon,
+            source,
+            date: typeof p.acq_date === "string" ? p.acq_date : null,
+            time: typeof p.acq_time === "string" || typeof p.acq_time === "number" ? String(p.acq_time).padStart(4, "0") : "",
+            frp: typeof p.frp === "number" ? p.frp : Number(p.frp) || 0,
+            confidence: p.confidence != null ? String(p.confidence) : "",
+            daynight: typeof p.daynight === "string" ? p.daynight : null,
+          });
         }
       }
-      // Count touching detections: same satellite, same pass (date and time), within about 1 km.
-      const cell = (v: number) => Math.floor(v / FIRMS_TOUCH_DEG);
-      const buckets = new Map<string, Raw[]>();
-      for (const r of raw) {
-        const k = `${r.source}|${r.date}|${r.time}|${cell(r.lat)}|${cell(r.lon)}`;
-        const arr = buckets.get(k);
-        if (arr) arr.push(r); else buckets.set(k, [r]);
-      }
-      const touching = (r: Raw) => {
-        let n = 0;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const arr = buckets.get(`${r.source}|${r.date}|${r.time}|${cell(r.lat) + dy}|${cell(r.lon) + dx}`);
-          if (arr) for (const o of arr) if (o !== r && Math.abs(o.lat - r.lat) <= FIRMS_TOUCH_DEG && Math.abs(o.lon - r.lon) <= FIRMS_TOUCH_DEG) n++;
-        }
-        return n;
-      };
-      for (const r of raw) {
-        const id = `firms:${r.lat.toFixed(4)}:${r.lon.toFixed(4)}:${r.date ?? ""}:${r.time}:${r.source}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const satName = Object.entries(FIRMS_SATELLITES).find(([k]) => r.source.includes(`_${k}_`))?.[1] ?? "VIIRS";
-        const iso = r.date ? `${r.date}T${r.time.slice(0, 2)}:${r.time.slice(2, 4)}:00Z` : null;
-        const near = touching(r);
-        features.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [r.lon, r.lat] },
-          properties: {
-            id,
-            title: "Satellite fire detection",
-            time: iso,
-            intensity: Math.min(r.frp / 50, 1),
-            intensityLabel: r.frp ? `${r.frp.toFixed(1)} MW` : "fire detected",
-            detail: [
-              `${satName}, ${r.daynight === "N" ? "night" : "day"} pass`,
-              r.confidence ? `${r.confidence} confidence` : null,
-              near > 0 ? `${near + 1} touching detections in the same pass` : "single detection",
-              "375 m pixel. Source: NASA FIRMS.",
-            ].filter(Boolean).join(". "),
-            url: null,
-          },
-        });
-      }
-      const diagnostics = results.map(({ region, source, data }) => ({
-        region,
-        source,
-        rawFeatures: data.features?.length ?? 0,
-        firstFeatureKeys: data.features?.[0]?.properties ? Object.keys(data.features[0].properties) : [],
-        firstGeometry: (data.features?.[0]?.geometry as { type?: string } | undefined)?.type ?? null,
-      }));
-      return { configured: true, type: "FeatureCollection", features, diagnostics, fetchedAt: new Date().toISOString() };
+      const diagnostics = results.map(({ region, source, features, truncated }) => ({ region, source, rawFeatures: features.length, truncated }));
+      return { configured: true, type: "FeatureCollection", features: fireFeatures(raw), source: "FIRMS live", diagnostics, fetchedAt: new Date().toISOString() };
     },
     3600
   );
 });
+
+/** The last 24 hours from the stored collection, if the collector has finished a run recently. */
+export async function storedFires(db: D1Database, now: Date): Promise<{ raw: FireRaw[]; collectedAt: string } | null> {
+  await ensureFireHistorySchema(db);
+  const run = await db.prepare(`SELECT finished_at, status FROM fire_collector_runs WHERE run_key = 'firms'`).first<{ finished_at: string | null; status: string | null }>();
+  if (!run?.finished_at || now.getTime() - Date.parse(run.finished_at) > FIRMS_STORED_FRESH_MS) return null;
+  const cutoff = new Date(now.getTime() - 24 * 3600_000);
+  const day = cutoff.toISOString().slice(0, 10);
+  const hhmm = cutoff.toISOString().slice(11, 16).replace(":", "");
+  const rows = await db
+    .prepare(`SELECT acq_date, acq_time, lat, lon, satellite, frp, confidence, daynight FROM fire_detections WHERE acq_date > ? OR (acq_date = ? AND acq_time >= ?) LIMIT 100000`)
+    .bind(day, day, hhmm)
+    .all<{ acq_date: string; acq_time: string; lat: number; lon: number; satellite: string; frp: number | null; confidence: string | null; daynight: string | null }>();
+  const list = rows.results ?? [];
+  if (list.length === 0) return null;
+  return {
+    collectedAt: run.finished_at,
+    raw: list.map((r) => ({ lat: r.lat, lon: r.lon, source: r.satellite, date: r.acq_date, time: r.acq_time, frp: r.frp ?? 0, confidence: r.confidence ?? "", daynight: r.daynight })),
+  };
+}
 
 /** Internet connectivity by country against a quiet baseline week, from IODA. Cached for 15 minutes. */
 liveLayersRouter.get("/connectivity", (c) => cachedJson(c.req.raw, () => readConnectivity(), 900));
