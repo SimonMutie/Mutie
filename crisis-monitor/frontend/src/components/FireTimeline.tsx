@@ -10,7 +10,7 @@ export const FIRE_SATELLITE_COLORS = {
   snpp: "#ffd23f",
   noaa21: "#ff3b30",
 } as const;
-/** Start of the range the "since" view covers: the date Adulis's own fire filter starts from. */
+/** Start of the range the "since" view covers: the date the conflict-period fire view starts from. */
 export const FIRE_RANGE_FROM = "2026-09-22";
 /** The map's time view: one day, every fire since FIRE_RANGE_FROM, or the seven days up to the selected day. */
 export type FireRangeMode = "day" | "since" | "week";
