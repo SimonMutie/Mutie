@@ -96,6 +96,7 @@ function PlatformAdminView({ onBack }: { onBack: () => void }) {
                   {c.account_count} of {c.max_accounts} account{c.max_accounts === 1 ? "" : "s"} used
                 </div>
               </div>
+              {c.paused && <span style={pausedBadgeStyle}>Paused</span>}
               {c.account_count >= c.max_accounts && (
                 <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-faint)", textTransform: "uppercase" }}>At limit</span>
               )}
@@ -401,7 +402,7 @@ function ClientDetail({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddAccount, setShowAddAccount] = useState(false);
-  const [editingLimits, setEditingLimits] = useState(false);
+  const [tab, setTab] = useState<ClientTab>(isPlatformAdmin ? "details" : "team");
 
   async function load() {
     setLoading(true);
@@ -450,8 +451,12 @@ function ClientDetail({
 
   async function handleDeleteClient() {
     if (!client) return;
-    if (!window.confirm(`Delete "${client.name}" entirely? This removes all ${client.account_count} of its accounts too — can't be undone.`)) return;
-    await api.deleteClient(clientId);
+    try {
+      await api.deleteClient(clientId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't delete this client.");
+      return;
+    }
     onClientChanged();
     onBack();
   }
@@ -468,6 +473,32 @@ function ClientDetail({
   }
 
   const atLimit = accounts.length >= client.max_accounts;
+  // The platform admin sees every tab; a client's own team manager sees their team and their logo.
+  const tabs: { key: ClientTab; label: string }[] = isPlatformAdmin
+    ? [
+        { key: "details", label: "Details" },
+        { key: "access", label: client.paused ? "Access (paused)" : "Access" },
+        { key: "countries", label: "Countries" },
+        { key: "resources", label: "Resources" },
+        { key: "team", label: "Team" },
+        { key: "delete", label: "Delete" },
+      ]
+    : [
+        { key: "team", label: "Team" },
+        { key: "details", label: "Logo" },
+      ];
+  const current = tabs.some((t) => t.key === tab) ? tab : tabs[0].key;
+
+  async function setFlag(patch: Parameters<typeof api.updateClient>[1]) {
+    setError(null);
+    try {
+      await api.updateClient(clientId, patch);
+      await load();
+      onClientChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't update that setting.");
+    }
+  }
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
@@ -475,31 +506,28 @@ function ClientDetail({
         {isPlatformAdmin ? "← All clients" : "← Back"}
       </button>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "16px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {client.logo_data && (
-            <img src={client.logo_data} alt={`${client.name} logo`} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "contain", background: "var(--panel-raised)" }} />
-          )}
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>{client.name}</div>
-            <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
-              {accounts.length} of {client.max_accounts} account{client.max_accounts === 1 ? "" : "s"} used
-            </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0 12px" }}>
+        {client.logo_data && (
+          <img src={client.logo_data} alt={`${client.name} logo`} style={{ width: 40, height: 40, borderRadius: 6, objectFit: "contain", background: "var(--panel-raised)" }} />
+        )}
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+            {client.name}
+            {client.paused && <span style={pausedBadgeStyle}>Paused</span>}
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>
+            {accounts.length} of {client.max_accounts} account{client.max_accounts === 1 ? "" : "s"} used
           </div>
         </div>
-        {isPlatformAdmin && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setEditingLimits((v) => !v)} style={backBtnStyle}>
-              {editingLimits ? "Done" : "Edit"}
-            </button>
-            <button onClick={handleDeleteClient} style={dangerBtnStyle}>
-              Delete client
-            </button>
-          </div>
-        )}
       </div>
 
-      {isPlatformAdmin && editingLimits && <EditClientLimits client={client} onSaved={load} onClose={() => setEditingLimits(false)} />}
+      <div role="tablist" style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", marginBottom: 18, flexWrap: "wrap" }}>
+        {tabs.map((t) => (
+          <button key={t.key} role="tab" aria-selected={current === t.key} onClick={() => setTab(t.key)} style={tabStyle(current === t.key, t.key === "delete")}>
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       {error && (
         <div style={{ fontSize: 13, color: "var(--critical)", background: "color-mix(in srgb, var(--critical) 8%, transparent)", padding: "10px 12px", borderRadius: 8, marginBottom: 12 }}>
@@ -507,167 +535,39 @@ function ClientDetail({
         </div>
       )}
 
-      <ClientLogoSection client={client} onSaved={load} />
-
-      <div className="eyebrow" style={{ marginBottom: 10 }}>
-        TEAM
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {accounts.map((u) => (
-          <div key={u.id} className="panel" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.display_name || u.username}</div>
-              <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                {u.username}
-              </div>
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }}>
-              <input type="checkbox" checked={u.is_client_admin} disabled={!!u.read_only} onChange={() => handleToggleAdmin(u.id, u.is_client_admin)} />
-              Can manage team
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }} title="A viewer can look at everything they're allowed to see, but can't change, upload, share or export anything.">
-              <input type="checkbox" checked={!!u.read_only} onChange={() => handleToggle(u.id, { read_only: !u.read_only })} />
-              Viewer only
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: u.disabled ? "var(--critical)" : "var(--text-muted)", cursor: "pointer" }} title="Switches the login off and signs it out, without deleting anything.">
-              <input type="checkbox" checked={!!u.disabled} onChange={() => handleToggle(u.id, { disabled: !u.disabled })} />
-              Disabled
-            </label>
-            <button onClick={() => handleRemoveAccount(u.id, u.display_name || u.username)} style={dangerBtnStyle}>
-              Remove
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ marginTop: 16 }}>
-        {showAddAccount ? (
-          <NewAccountForm
-            clientId={clientId}
-            onCreated={async () => {
-              setShowAddAccount(false);
-              await load();
-              onClientChanged();
-            }}
-            onCancel={() => setShowAddAccount(false)}
-          />
-        ) : (
-          <button onClick={() => setShowAddAccount(true)} disabled={atLimit} title={atLimit ? "This client is at its account limit — raise it with Edit, above, to add more." : undefined} style={primaryBtnStyle}>
-            + Add account{atLimit ? " (at limit)" : ""}
-          </button>
-        )}
-      </div>
-
-      {isPlatformAdmin && (
+      {current === "details" && (
         <>
-          <div className="eyebrow" style={{ marginTop: 28, marginBottom: 10 }}>
-            DATA ACCESS
+          {isPlatformAdmin && <ClientDetailsForm client={client} onSaved={async () => (await load(), onClientChanged())} />}
+          <ClientLogoSection client={client} onSaved={load} />
+          {isPlatformAdmin && <AlertDestinationsSection client={client} onSaved={load} />}
+        </>
+      )}
+
+      {current === "access" && isPlatformAdmin && <PauseSection client={client} onChanged={async () => (await load(), onClientChanged())} />}
+
+      {current === "countries" && isPlatformAdmin && <CountryAccessSection clientId={clientId} />}
+
+      {current === "resources" && isPlatformAdmin && (
+        <>
+          <div className="eyebrow" style={{ marginBottom: 10 }}>
+            PARTS OF THE LENS
           </div>
-          <label
-            className="panel"
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
-          >
-            <input
-              type="checkbox"
-              checked={client.can_view_all_incidents}
-              onChange={async () => {
-                setError(null);
-                try {
-                  await api.updateClient(clientId, { can_view_all_incidents: !client.can_view_all_incidents });
-                  await load();
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
-                }
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>See the full shared incidents pool</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                View-only — this client's accounts still can't edit or delete anyone else's incidents, only their own.
-              </div>
-            </div>
-          </label>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 10 }}>
+            What this client's logins can open. A part that is switched off disappears from their menus and its data is refused by the server.
+          </div>
+          <AccessToggle checked={client.can_live_osint !== false} title="Live OSINT" desc="The live map, escalation alerts, layers, Alerts, Telegram, Events and live monitoring queries." onChange={() => setFlag({ can_live_osint: client.can_live_osint === false })} />
+          <AccessToggle checked={client.can_trends !== false} title="Trends & Patterns" desc="Incidents, dashboards, the incident map, uploads and datasets." onChange={() => setFlag({ can_trends: client.can_trends === false })} />
+          <AccessToggle checked={client.can_afrintel !== false} title="AfrIntel" desc="The forecasting engine and talk-to-the-map assistant on Live OSINT. Uses the Lens's AI allowance." onChange={() => setFlag({ can_afrintel: client.can_afrintel === false })} />
+          <AccessToggle checked={!!client.can_view_spotlight} title="Regional Spotlight" desc="Published publications, the country pages and the Kenya Election Watch. Off by default." onChange={() => setFlag({ can_view_spotlight: !client.can_view_spotlight })} />
+          <AccessToggle checked={!!client.can_screen_people} title="Due-diligence screening" desc="Looks up named people and companies, which is personal data. Each run is logged, and saved cases are deleted after 90 days. Off by default." onChange={() => setFlag({ can_screen_people: !client.can_screen_people })} />
 
-          <label
-            className="panel"
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
-          >
-            <input
-              type="checkbox"
-              checked={!!client.can_share_publicly}
-              onChange={async () => {
-                setError(null);
-                try {
-                  await api.updateClient(clientId, { can_share_publicly: !client.can_share_publicly });
-                  await load();
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
-                }
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Allow public share links</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                Off by default. When on, this client's logins can create dashboard links that work without signing in; links stay live until the user switches sharing off.
-              </div>
-            </div>
-          </label>
-
-          <label
-            className="panel"
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
-          >
-            <input
-              type="checkbox"
-              checked={!!client.can_screen_people}
-              onChange={async () => {
-                setError(null);
-                try {
-                  await api.updateClient(clientId, { can_screen_people: !client.can_screen_people });
-                  await load();
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
-                }
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Allow due-diligence screening</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                Off by default. It looks up named people and companies, which is personal data. Each run is logged, and this client's saved cases are deleted after 90 days.
-              </div>
-            </div>
-          </label>
-
-          <label
-            className="panel"
-            style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 12 }}
-          >
-            <input
-              type="checkbox"
-              checked={!!client.can_view_spotlight}
-              onChange={async () => {
-                setError(null);
-                try {
-                  await api.updateClient(clientId, { can_view_spotlight: !client.can_view_spotlight });
-                  await load();
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : "Couldn't update that setting.");
-                }
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Share Regional Spotlight</div>
-              <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>
-                Off by default. When on, this client's logins can open Regional Spotlight: the published publications, the country pages and the Kenya Election Watch.
-              </div>
-            </div>
-          </label>
-
-          <AlertDestinationsSection client={client} onSaved={load} />
+          <div className="eyebrow" style={{ marginTop: 22, marginBottom: 10 }}>
+            DATA PERMISSIONS
+          </div>
+          <AccessToggle checked={client.can_view_all_incidents} title="See the full shared incidents pool" desc="View-only: this client's logins still can't edit or delete anyone else's incidents, only their own." onChange={() => setFlag({ can_view_all_incidents: !client.can_view_all_incidents })} />
+          <AccessToggle checked={!!client.can_share_publicly} title="Allow public share links" desc="Off by default. When on, this client's logins can create dashboard links that work without signing in." onChange={() => setFlag({ can_share_publicly: !client.can_share_publicly })} />
 
           <AllowancesSection clientId={clientId} />
-
-          <CountryAccessSection clientId={clientId} />
 
           <SharedItemsSection
             title="SHARED DASHBOARDS"
@@ -694,6 +594,165 @@ function ClientDetail({
           />
         </>
       )}
+
+      {current === "team" && (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {accounts.length === 0 && <div style={{ fontSize: 13, color: "var(--text-muted)" }}>No logins yet.</div>}
+            {accounts.map((u) => (
+              <div key={u.id} className="panel" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.display_name || u.username}</div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--text-faint)" }}>
+                    {u.username}
+                  </div>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={u.is_client_admin} disabled={!!u.read_only} onChange={() => handleToggleAdmin(u.id, u.is_client_admin)} />
+                  Can manage team
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer" }} title="A viewer can look at everything they're allowed to see, but can't change, upload, share or export anything.">
+                  <input type="checkbox" checked={!!u.read_only} onChange={() => handleToggle(u.id, { read_only: !u.read_only })} />
+                  Viewer only
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: u.disabled ? "var(--critical)" : "var(--text-muted)", cursor: "pointer" }} title="Switches this one login off and signs it out, without deleting anything.">
+                  <input type="checkbox" checked={!!u.disabled} onChange={() => handleToggle(u.id, { disabled: !u.disabled })} />
+                  Disabled
+                </label>
+                <button onClick={() => handleRemoveAccount(u.id, u.display_name || u.username)} style={dangerBtnStyle}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 16 }}>
+            {showAddAccount ? (
+              <NewAccountForm
+                clientId={clientId}
+                onCreated={async () => {
+                  setShowAddAccount(false);
+                  await load();
+                  onClientChanged();
+                }}
+                onCancel={() => setShowAddAccount(false)}
+              />
+            ) : (
+              <button onClick={() => setShowAddAccount(true)} disabled={atLimit} title={atLimit ? "This client is at its account limit: raise it under Details to add more." : undefined} style={primaryBtnStyle}>
+                + Add account{atLimit ? " (at limit)" : ""}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {current === "delete" && isPlatformAdmin && <DeleteClientSection client={client} onDelete={handleDeleteClient} onPauseInstead={() => setTab("access")} />}
+    </div>
+  );
+}
+
+type ClientTab = "details" | "access" | "countries" | "resources" | "team" | "delete";
+
+const tabStyle = (on: boolean, danger = false): React.CSSProperties => ({
+  padding: "8px 14px",
+  fontSize: 13,
+  fontWeight: on ? 700 : 500,
+  fontFamily: "inherit",
+  cursor: "pointer",
+  background: "transparent",
+  border: "none",
+  borderBottom: `2px solid ${on ? (danger ? "var(--critical)" : "var(--accent, #D4AF37)") : "transparent"}`,
+  color: danger ? "var(--critical)" : on ? "var(--text-primary)" : "var(--text-muted)",
+  marginBottom: -1,
+});
+
+const pausedBadgeStyle: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--critical)", border: "1px solid var(--critical)", borderRadius: 4, padding: "1px 6px" };
+
+/** One on/off permission, with what it means underneath. */
+function AccessToggle({ checked, title, desc, onChange }: { checked: boolean; title: string; desc: string; onChange: () => void }) {
+  return (
+    <label className="panel" style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 8 }}>
+      <input type="checkbox" checked={checked} onChange={onChange} />
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
+        <div style={{ fontSize: 11.5, color: "var(--text-muted)" }}>{desc}</div>
+      </div>
+    </label>
+  );
+}
+
+/** Pause or resume the whole client: every login stops at once, nothing is deleted. */
+function PauseSection({ client, onChanged }: { client: ClientOrg; onChanged: () => void }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function act(paused: boolean) {
+    if (paused && !window.confirm(`Pause "${client.name}"? All ${client.account_count} of its logins will stop working straight away. Nothing is deleted.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.pauseClient(client.id, paused, paused ? reason : undefined);
+      setReason("");
+      await onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't change that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="panel" style={{ padding: "16px 18px", maxWidth: 620 }}>
+      {client.paused ? (
+        <>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--critical)", marginBottom: 6 }}>Access is paused</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 4 }}>
+            Since {client.paused_at ? new Date(client.paused_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}
+            {client.pause_reason ? `. Reason: ${client.pause_reason}` : ""}
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 14 }}>Its logins see a notice that access is paused and can do nothing else. Their data, dashboards and settings are kept.</div>
+          <button onClick={() => void act(false)} disabled={busy} style={primaryBtnStyle}>
+            {busy ? "Resuming…" : "Resume access"}
+          </button>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>Access is active</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 12 }}>
+            Pausing stops every login of this client at once (for example while an invoice is overdue or a contract is being renewed). Nothing is deleted, and resuming restores everything as it was. To switch off one person only, use Disabled on the Team tab.
+          </div>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "var(--text-muted)", marginBottom: 12 }}>
+            Reason (shown to the client's logins)
+            <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="e.g. Subscription renewal pending" style={inputStyle} />
+          </label>
+          <button onClick={() => void act(true)} disabled={busy} style={dangerBtnStyle}>
+            {busy ? "Pausing…" : "Pause access"}
+          </button>
+        </>
+      )}
+      {error && <div style={{ color: "var(--critical)", fontSize: 12, marginTop: 8 }}>{error}</div>}
+    </div>
+  );
+}
+
+/** Deleting a client, with its consequences spelled out and its name typed to confirm. */
+function DeleteClientSection({ client, onDelete, onPauseInstead }: { client: ClientOrg; onDelete: () => void; onPauseInstead: () => void }) {
+  const [typed, setTyped] = useState("");
+  return (
+    <div className="panel" style={{ padding: "16px 18px", maxWidth: 620, borderColor: "var(--critical)" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--critical)", marginBottom: 6 }}>Delete this client</div>
+      <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+        This permanently removes {client.name} and all {client.account_count} of its logins, along with its country restrictions and sharing. It can't be undone. If you only need to stop access for a while,{" "}
+        <button onClick={onPauseInstead} style={{ background: "none", border: "none", padding: 0, color: "var(--accent, #D4AF37)", cursor: "pointer", font: "inherit", textDecoration: "underline" }}>
+          pause it instead
+        </button>
+        .
+      </div>
+      <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "var(--text-muted)", marginBottom: 12 }}>
+        Type the client's name to confirm
+        <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={client.name} style={inputStyle} />
+      </label>
+      <button onClick={onDelete} disabled={typed.trim() !== client.name.trim()} style={{ ...dangerBtnStyle, opacity: typed.trim() === client.name.trim() ? 1 : 0.5 }}>
+        Delete {client.name}
+      </button>
     </div>
   );
 }
@@ -796,19 +855,31 @@ function ClientLogoSection({ client, onSaved }: { client: ClientOrg; onSaved: ()
   );
 }
 
-function EditClientLimits({ client, onSaved, onClose }: { client: ClientOrg; onSaved: () => void; onClose: () => void }) {
-  const [name, setName] = useState(client.name);
-  const [maxAccounts, setMaxAccounts] = useState(client.max_accounts);
+/** The client's name, account limit, contact details and notes. */
+function ClientDetailsForm({ client, onSaved }: { client: ClientOrg; onSaved: () => void }) {
+  const [form, setForm] = useState({
+    name: client.name,
+    max_accounts: client.max_accounts,
+    contact_name: client.contact_name ?? "",
+    contact_email: client.contact_email ?? "",
+    contact_phone: client.contact_phone ?? "",
+    notes: client.notes ?? "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setSaved(false);
+    setForm((f) => ({ ...f, [k]: k === "max_accounts" ? Math.max(1, Number(e.target.value) || 1) : e.target.value }));
+  };
 
   async function handleSave() {
     setError(null);
     setSaving(true);
     try {
-      await api.updateClient(client.id, { name: name.trim() || client.name, max_accounts: maxAccounts });
+      await api.updateClient(client.id, { ...form, name: form.name.trim() || client.name });
       await onSaved();
-      onClose();
+      setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save those changes.");
     } finally {
@@ -816,20 +887,27 @@ function EditClientLimits({ client, onSaved, onClose }: { client: ClientOrg; onS
     }
   }
 
+  const field = (label: string, el: React.ReactNode) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "var(--text-muted)" }}>
+      {label}
+      {el}
+    </label>
+  );
   return (
-    <div className="panel" style={{ padding: "14px 16px", marginBottom: 16, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-      <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "var(--text-muted)" }}>
-        Name
-        <input value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
-      </label>
-      <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: "var(--text-muted)" }}>
-        Max accounts
-        <input type="number" min={1} max={50} value={maxAccounts} onChange={(e) => setMaxAccounts(Math.max(1, Number(e.target.value) || 1))} style={{ ...inputStyle, width: 70 }} />
-      </label>
-      <button onClick={handleSave} disabled={saving} style={primaryBtnStyle}>
-        {saving ? "Saving…" : "Save"}
-      </button>
-      {error && <div style={{ color: "var(--critical)", fontSize: 12 }}>{error}</div>}
+    <div className="panel" style={{ padding: "14px 16px", marginBottom: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, maxWidth: 760 }}>
+      {field("Organisation name", <input value={form.name} onChange={set("name")} style={inputStyle} />)}
+      {field("Max accounts", <input type="number" min={1} max={50} value={form.max_accounts} onChange={set("max_accounts")} style={{ ...inputStyle, width: 90 }} />)}
+      {field("Contact person", <input value={form.contact_name} onChange={set("contact_name")} style={inputStyle} />)}
+      {field("Contact email", <input type="email" value={form.contact_email} onChange={set("contact_email")} style={inputStyle} />)}
+      {field("Contact phone", <input value={form.contact_phone} onChange={set("contact_phone")} style={inputStyle} />)}
+      <div style={{ gridColumn: "1 / -1" }}>{field("Notes (only you see these)", <textarea value={form.notes} onChange={set("notes")} rows={3} style={{ ...inputStyle, resize: "vertical", width: "100%", boxSizing: "border-box" }} />)}</div>
+      <div style={{ gridColumn: "1 / -1", display: "flex", gap: 10, alignItems: "center" }}>
+        <button onClick={handleSave} disabled={saving} style={primaryBtnStyle}>
+          {saving ? "Saving…" : "Save details"}
+        </button>
+        {saved && <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Saved.</span>}
+        {error && <span style={{ color: "var(--critical)", fontSize: 12 }}>{error}</span>}
+      </div>
     </div>
   );
 }
