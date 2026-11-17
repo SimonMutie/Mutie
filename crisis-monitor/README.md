@@ -1,6 +1,6 @@
 # Sentinel — Crisis Monitoring Platform (prototype)
 
-A working starting point for a Sprinklr-style social/media listening tool
+A working starting point for a social/media listening tool
 focused on crisis monitoring: Boolean-query-driven proactive monitoring,
 an auto-updating dashboard (live map, escalation charts, alert feed), and
 an architecture designed so real data connectors can be dropped in later.
