@@ -44,7 +44,7 @@ function chg(r: MarketBoardRow): { text: string; up: boolean | null } {
   return { text: `${r.changePercent >= 0 ? "+" : ""}${r.changePercent.toFixed(2)}%`, up: r.changePercent >= 0 };
 }
 
-/** Markets tool for Live Intel, laid out like OSIRIS's: tabs, search, headline tiles, a breadth bar, and a table
+/** Markets tool for Live Intel, laid out like the reference platform's: tabs, search, headline tiles, a breadth bar, and a table
  *  with 1-month sparklines. Only data this platform is licensed to show: ECB rates, CoinGecko, EIA and the Federal
  *  Reserve (through FRED). Share indices, metals and stock quotes are not here (no licensed free source). */
 export function MarketsPanel() {
@@ -67,7 +67,7 @@ export function MarketsPanel() {
     if (!data) return [];
     const needle = q.trim().toLowerCase();
     const base = tab === "watch" ? all.filter((r) => watch.includes(r.k)) : tab === "hours" ? [] : all.filter((r) => r.k.startsWith(`${tab}:`));
-    // A search looks across every tab, as OSIRIS's does.
+    // A search looks across every tab, as the reference platform's does.
     const pool = needle ? all.filter((r) => r.label.toLowerCase().includes(needle) || r.key.toLowerCase().includes(needle)) : base;
     return pool;
   }, [data, all, tab, q, watch]);
