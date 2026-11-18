@@ -327,6 +327,21 @@ describe("collecting and alerting", () => {
     expect(classify({ ...base, title: "Aid cuts leave Somali NGOs without funding", summary: "", source: sc, strict: true }).map((x) => x.domain)).toEqual(["humanitarian"]);
   });
 
+  it("drops events, courses, calls and recruitment wherever the words sit in the title", () => {
+    const u = "https://www.humanitarianleadershipacademy.org/resources/x-y-z/";
+    for (const title of ["NetHope Connected: HLA applicant information session - November 2026", "Localisation in practice: a free online course for national NGOs", "Webinar recording: the future of aid financing", "Join us for a panel discussion on the humanitarian reset", "Fellowship programme for African humanitarian leaders now open", "Monthly newsletter: aid cuts and localisation"]) {
+      expect(isNotAnalysis({ title, summary: "", url: u }), title).toBe(true);
+    }
+    for (const title of ["What the AU summit means for humanitarian access in Sudan", "Who carries the burden of aid suspension?", "Training local responders is not localisation: why power must shift", "Asylum applicants in Libya face new risks", "The reset agenda one year on", "Recording atrocities in El Fasher"]) {
+      expect(isNotAnalysis({ title, summary: "", url: "https://x.org/a-b-c" }), title).toBe(false);
+    }
+    // Event-heavy sources pass the keyword test instead of being kept wholesale.
+    const hla = SOURCES.find((x) => x.name === "Humanitarian Leadership Academy")!;
+    expect(hla.strictIntake).toBe(true);
+    expect(classify({ ...base, title: "Meet the new members of our global community", summary: "", source: hla })).toEqual([]);
+    expect(classify({ ...base, title: "Localisation and the funding cuts: what local leaders told us", summary: "", source: hla }).map((x) => x.domain)).toEqual(["humanitarian"]);
+  });
+
   it("reads publication dates from addresses", () => {
     expect(dateInUrl("https://x.org/2020/04/15/whatever-it-takes")).toBe("2020-04-15T00:00:00.000Z");
     expect(dateInUrl("https://x.org/blog/2025-11-a-piece")).toBe("2025-11-01T00:00:00.000Z");
