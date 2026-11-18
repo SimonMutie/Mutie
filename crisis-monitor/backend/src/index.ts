@@ -1,4 +1,7 @@
 import { collectStrategicAnalyses } from "./lib/strategicAnalysis";
+
+/** The schedule (wrangler.toml) that runs Strategic Analyses on its own. */
+const STRATEGIC_ANALYSES_CRON = "2-59/5 * * * *";
 import { advanceFactsBackfill } from "./lib/incidentFacts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -196,16 +199,17 @@ export default {
   queue: processAfricaWireQueueBatch,
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    // Strategic Analyses runs on its own schedule (wrangler.toml), alone, with the whole per-run request budget.
+    if (controller.cron === STRATEGIC_ANALYSES_CRON) {
+      await collectStrategicAnalyses(env)
+        .then((r) => r.ran && console.log(`[analyses] ${r.added} new pieces from ${r.sources} sources`))
+        .catch((err) => console.error("[analyses] collection failed", err));
+      return;
+    }
     await ensureSchema(env);
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
 
-    // Strategic Analyses from think tanks: a batch of the sources due a read each tick (lib/strategicAnalysis.ts).
-    ctx.waitUntil(
-      collectStrategicAnalyses(env)
-        .then((r) => r.ran && console.log(`[analyses] ${r.added} new pieces from ${r.sources} sources`))
-        .catch((err) => console.error("[analyses] collection failed", err))
-    );
     // Copy existing incidents into the slim counting table, a chunk per tick, until it is complete
     // (lib/incidentFacts.ts); new and edited incidents reach it by trigger.
     ctx.waitUntil(
