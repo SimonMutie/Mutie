@@ -1506,9 +1506,12 @@ export interface CloudflareRadarData {
   fetchedAt: string;
 }
 
-/** A strategic humanitarian analysis from a think tank or research centre (backend lib/humanitarianAnalysis.ts). */
-export interface HumanitarianAnalysis {
+/** A Strategic Analyses domain (tab); see the backend's lib/strategicAnalysis.ts. */
+export type AnalysisDomain = "humanitarian" | "geopolitics" | "elections" | "economy" | "trade" | "cyber" | "conflict";
+/** An analysis from a think tank or research centre, in one domain. */
+export interface StrategicAnalysis {
   id: string;
+  domain: AnalysisDomain;
   url: string;
   title: string;
   summary: string;
@@ -1523,8 +1526,10 @@ export interface HumanitarianAnalysis {
   lat: number | null;
   lng: number | null;
 }
-export interface HumanitarianAnalysisData {
-  items: HumanitarianAnalysis[];
+export interface StrategicAnalysesData {
+  domain: AnalysisDomain;
+  domains: { id: AnalysisDomain; label: string; blurb: string; recent: number; latest: string | null }[];
+  items: StrategicAnalysis[];
   themes: { id: string; label: string; systemic: boolean; terms: string[] }[];
   sources: { name: string; url: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
   fetchedAt: string;
@@ -2190,9 +2195,11 @@ export const api = {
   dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
 
   getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
-  listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "humanitarian" } | { scope: "query"; queryId: string }) =>
-    req<AlertSubscriptionList>(`/api/alert-subscriptions?scope=${target.scope}${target.scope === "query" ? `&query_id=${encodeURIComponent(target.queryId)}` : ""}`),
-  createAlertSubscription: (body: { scope: "query" | "escalations" | "humanitarian"; query_id?: string; channel: AlertChannel; destination: string; min_level?: string; frequency_minutes?: number }) =>
+  listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "analyses"; domain: AnalysisDomain } | { scope: "query"; queryId: string }) =>
+    req<AlertSubscriptionList>(
+      `/api/alert-subscriptions?scope=${target.scope}${target.scope === "query" ? `&query_id=${encodeURIComponent(target.queryId)}` : target.scope === "analyses" ? `&query_id=${target.domain}` : ""}`
+    ),
+  createAlertSubscription: (body: { scope: "query" | "escalations" | "analyses"; query_id?: string; channel: AlertChannel; destination: string; min_level?: string; frequency_minutes?: number }) =>
     req<AlertSubscription>("/api/alert-subscriptions", { method: "POST", body: JSON.stringify(body) }),
   updateAlertSubscription: (id: string, patch: { destination?: string; min_level?: string; frequency_minutes?: number; enabled?: boolean }) =>
     req<AlertSubscription>(`/api/alert-subscriptions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -2442,8 +2449,8 @@ export const api = {
   afrIntelDeleteRun: (id: string) => req<{ ok: boolean }>(`/api/afrintel/runs/${id}`, { method: "DELETE" }),
   afrIntelAssist: (message: string, layers: { key: string; label: string; group: string }[], view: { lat: number; lng: number; zoom: number } | null) =>
     req<{ reply: string; actions: AfrIntelAssistAction[] }>("/api/afrintel/assist", { method: "POST", body: JSON.stringify({ message, layers, view }) }),
-  getHumanitarianAnalysis: (days = 60, all = false) => req<HumanitarianAnalysisData>(`/api/live-layers/humanitarian-analysis?days=${days}${all ? "&all=1" : ""}`),
-  refreshHumanitarianAnalysis: () => req<{ ran: boolean; added: number; sources: number }>("/api/live-layers/humanitarian-analysis/refresh", { method: "POST" }),
+  getStrategicAnalyses: (domain: AnalysisDomain, days = 60, all = false) => req<StrategicAnalysesData>(`/api/live-layers/strategic-analyses?domain=${domain}&days=${days}${all ? "&all=1" : ""}`),
+  refreshStrategicAnalyses: () => req<{ ran: boolean; added: number; sources: number }>("/api/live-layers/strategic-analyses/refresh", { method: "POST" }),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
