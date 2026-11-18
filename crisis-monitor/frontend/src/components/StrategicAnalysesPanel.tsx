@@ -423,7 +423,7 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                 </div>
                 <div style={{ ...footnote, marginTop: 10 }}>
                   Terms are matched in English, French and Portuguese, ignoring accents and hyphens. A piece is kept when it is about this domain and matches its themes (two matches from a source that covers many domains), and it is about Africa or comes from an Africa-focused source. Places are recognised down to towns and provinces, and every piece is tagged with its African countries, regions and regional blocs.
-                  {domain === "humanitarian" && " For New Humanitarianism, system-level reflections that shape Africa are kept even when they name no African country."} Each source's past year is fetched once (older feed pages, newsletter archives and a Google News search of the site), and every source is also searched on Google News daily, so sites with no feed (marked red) are still covered. Hover over a source to see what its backfill found.
+                  {domain === "humanitarian" && " For New Humanitarianism, system-level reflections that shape Africa are kept even when they name no African country."} Each source's past year is fetched once (its sitemap, which lists every publication, plus older feed pages, newsletter archives and a Google News search of the site), and every source is also searched on Google News daily, so sites with no feed (marked red) are still covered. Hover over a source to see what its backfill found.
                 </div>
               </div>
             </div>
