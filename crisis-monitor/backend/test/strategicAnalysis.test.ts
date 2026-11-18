@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { africaOf, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
+import { africaOf, analysisDiagnostics, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
 import { buildAnalysesNotification } from "../src/lib/alertDelivery";
 import { fakeD1 } from "./fakeD1";
 
@@ -229,6 +229,10 @@ describe("collecting and alerting", () => {
     expect(await newAnalysesSince(DB as never, "humanitarian", "2026-11-17T08:00:00Z")).toHaveLength(0);
     const [status] = (await sourceStatus(DB as never, "humanitarian")).filter((x) => x.name === "ALNAP");
     expect(status.backfill).toContain("30 publications from the past year");
+    const diag = (await analysisDiagnostics(DB as never)) as { lastRun: { finishedAt: string | null; lanes: Record<string, number> }; pages: Record<string, number>; stored: Record<string, { inScope: number }> };
+    expect(diag.lastRun.finishedAt).not.toBeNull();
+    expect(diag.pages.done).toBe(30);
+    expect(diag.stored.humanitarian.inScope).toBe(30);
   });
 
   it("moves the first version's humanitarian pieces into New Humanitarianism", async () => {
