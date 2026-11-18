@@ -72,8 +72,10 @@ new_sqlite_classes = ["AfricaWireActor"]
 
 # Polls GDELT every 5 minutes when GDELT_ENABLED=true, and re-kicks the
 # ingestion/alerting Durable Object alarms as a safety net (see src/index.ts).
+# The second schedule runs Strategic Analyses alone (two minutes after the main one), so its many page and feed
+# requests have their own per-run request budget instead of sharing the main collectors'.
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "2-59/5 * * * *"]
 
 [vars]
 MOCK_MODE = "false"
