@@ -1,4 +1,4 @@
-import { collectStrategicAnalyses, domainOf, DOMAINS, domainSummary, listAnalyses, REGIONS, sourceStatus } from "../lib/strategicAnalysis";
+import { analysisDiagnostics, collectStrategicAnalyses, domainOf, DOMAINS, domainSummary, listAnalyses, REGIONS, sourceStatus } from "../lib/strategicAnalysis";
 import { Hono } from "hono";
 import { twoline2satrec, propagate, gstime, eciToGeodetic, degreesLong, degreesLat } from "satellite.js";
 import { Reader as MmdbReader, type CountryResponse } from "mmdb-lib";
@@ -2563,7 +2563,12 @@ liveLayersRouter.get("/strategic-analyses", async (c) => {
   if (!domain) return c.json({ error: "Unknown domain" }, 400);
   const days = Math.min(400, Math.max(1, Number(c.req.query("days")) || 365));
   const all = c.req.query("all") === "1";
-  const [items, sources, summary] = await Promise.all([listAnalyses(c.env.DB, domain.id, { days, all }), sourceStatus(c.env.DB, domain.id), domainSummary(c.env.DB)]);
+  const [items, sources, summary, diagnostics] = await Promise.all([
+    listAnalyses(c.env.DB, domain.id, { days, all }),
+    sourceStatus(c.env.DB, domain.id),
+    domainSummary(c.env.DB),
+    c.get("role") === "admin" ? analysisDiagnostics(c.env.DB).catch((e) => ({ error: String(e) })) : Promise.resolve(null),
+  ]);
   return c.json({
     domain: domain.id,
     domains: DOMAINS.map((d) => ({ id: d.id, label: d.label, blurb: d.blurb, recent: summary[d.id]?.recent ?? 0, latest: summary[d.id]?.latest ?? null })),
@@ -2572,6 +2577,7 @@ liveLayersRouter.get("/strategic-analyses", async (c) => {
     regions: REGIONS,
     countryNames: Object.fromEntries([...new Set(items.flatMap((i) => i.countries))].map((c) => [c, countryName(c)])),
     sources,
+    diagnostics,
     fetchedAt: new Date().toISOString(),
   });
 });
