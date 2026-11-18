@@ -65,6 +65,9 @@ import {
   Rss,
   Ruler,
   Satellite,
+  Globe,
+  Square,
+  Map as MapIcon,
   Search as SearchGlyph,
   Shield,
   Ship,
@@ -1326,23 +1329,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [showTerrain, setShowTerrain] = useState(false);
   // Map controls that start hidden and are switched on from the Display group: zoom and pan buttons, and the fire timeline.
   const [showNav, setShowNav] = useState(false);
-  // The 3D / 2D / Map / Sat switcher at the bottom left: shown unless hidden under Display; the choice is remembered.
-  const [showModeSwitcher, setShowModeSwitcher] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("lens.modeSwitcher") !== "off";
-    } catch {
-      return true;
-    }
-  });
-  const toggleModeSwitcher = () =>
-    setShowModeSwitcher((v) => {
-      try {
-        localStorage.setItem("lens.modeSwitcher", v ? "off" : "on");
-      } catch {
-        /* storage unavailable */
-      }
-      return !v;
-    });
   const [showFirePanel, setShowFirePanel] = useState(false);
 
   // --- Right-side tools: at most one open at a time (see RightTool). ---
@@ -2658,8 +2644,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 onToggleTerrain={() => setShowTerrain((v) => !v)}
                 nav={showNav}
                 firePanel={showFirePanel}
-                modeSwitcher={showModeSwitcher}
-                onToggleModeSwitcher={toggleModeSwitcher}
+                mapMode={mapMode}
+                onMapMode={setMapMode}
                 onToggleNav={() => setShowNav((v) => !v)}
                 onToggleFirePanel={() => {
                   // The timeline needs the fire layer, so turning the panel on turns the layer on too.
@@ -2667,7 +2653,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                   setShowFirePanel((v) => !v);
                 }}
               />
-              {showModeSwitcher && <MapModeSwitcher mode={mapMode} onChange={setMapMode} />}
             </>
           )}
         </div>
@@ -3272,8 +3257,8 @@ function LayerPanel({
   show3DDisplayGroup,
   nav,
   firePanel,
-  modeSwitcher,
-  onToggleModeSwitcher,
+  mapMode,
+  onMapMode,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3312,8 +3297,9 @@ function LayerPanel({
   show3DDisplayGroup?: boolean;
   nav?: boolean;
   firePanel?: boolean;
-  modeSwitcher?: boolean;
-  onToggleModeSwitcher?: () => void;
+  /** The map type (3D globe, 2D, street map, satellite), chosen from its own rail button under Display. */
+  mapMode?: MapMode;
+  onMapMode?: (m: MapMode) => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3384,8 +3370,6 @@ function LayerPanel({
             show3D={!!show3DDisplayGroup}
             nav={!!nav}
             firePanel={!!firePanel}
-            modeSwitcher={modeSwitcher !== false}
-            onToggleModeSwitcher={onToggleModeSwitcher ?? (() => {})}
             onToggleNav={onToggleNav!}
             onToggleFirePanel={onToggleFirePanel!}
             dayNight={!!dayNight}
@@ -3395,6 +3379,7 @@ function LayerPanel({
             onToggleBuildings={onToggleBuildings!}
             onToggleTerrain={onToggleTerrain!}
           />
+          {mapMode && onMapMode && <MapTypeRailButton mode={mapMode} onChange={onMapMode} />}
         </div>
       )}
     </div>
@@ -3830,8 +3815,6 @@ function DisplayRailGroup({
   show3D,
   nav,
   firePanel,
-  modeSwitcher,
-  onToggleModeSwitcher,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3844,8 +3827,6 @@ function DisplayRailGroup({
   show3D: boolean;
   nav: boolean;
   firePanel: boolean;
-  modeSwitcher: boolean;
-  onToggleModeSwitcher: () => void;
   onToggleNav: () => void;
   onToggleFirePanel: () => void;
   dayNight: boolean;
@@ -3858,7 +3839,6 @@ function DisplayRailGroup({
   const [hovered, setHovered] = useState(false);
   const rows: { label: string; hint?: string; icon: LucideIcon; on: boolean; onToggle: () => void }[] = [
     { label: "Zoom & Pan Buttons", icon: ZoomIn, on: nav, onToggle: onToggleNav },
-    { label: "Map View Switcher", hint: "3D / 2D / Map / Sat, bottom left", icon: Layers, on: modeSwitcher, onToggle: onToggleModeSwitcher },
     { label: "Fire Timeline Panel", hint: "Turns the fire layer on too", icon: Flame, on: firePanel, onToggle: onToggleFirePanel },
     ...(show3D
       ? [
@@ -3983,37 +3963,88 @@ function PanelToggle({ side, open, onClick }: { side: "left" | "right"; open: bo
   );
 }
 
-function MapModeSwitcher({ mode, onChange }: { mode: MapMode; onChange: (m: MapMode) => void }) {
-  const options: { key: MapMode; label: string }[] = [
-    { key: "3d", label: "3D" },
-    { key: "2d", label: "2D" },
-    { key: "map", label: "Map" },
-    { key: "sat", label: "Sat" },
-  ];
+/** Left-rail button under Display for the map type. Clicking opens a small picker beside the rail (3D globe, 2D,
+ *  street map, satellite); picking one, clicking the button again or clicking elsewhere closes it. The icon shows
+ *  the current type. */
+const MAP_TYPES: { key: MapMode; label: string; hint: string; icon: LucideIcon }[] = [
+  { key: "3d", label: "3D Globe", hint: "Day/night, buildings and terrain", icon: Globe },
+  { key: "2d", label: "2D", hint: "Flat dark map", icon: Square },
+  { key: "map", label: "Map", hint: "Streets and place names", icon: MapIcon },
+  { key: "sat", label: "Satellite", hint: "Imagery", icon: Satellite },
+];
+function MapTypeRailButton({ mode, onChange }: { mode: MapMode; onChange: (m: MapMode) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const current = MAP_TYPES.find((t) => t.key === mode) ?? MAP_TYPES[0];
   return (
-    <div style={{ ...glassPanel(), position: "relative", display: "flex", gap: 2, padding: 3 }}>
-      {options.map((opt) => (
-        <button
-          key={opt.key}
-          onClick={() => onChange(opt.key)}
-          style={{
-            fontSize: 10.5,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            fontWeight: 700,
-            padding: "5px 11px",
-            borderRadius: 8,
-            border: "none",
-            background: mode === opt.key ? "rgba(212,175,55,0.18)" : "transparent",
-            color: mode === opt.key ? HUD.gold : HUD.textMuted,
-            cursor: "pointer",
-            fontFamily: "inherit",
-            transition: "all 0.15s",
-          }}
-        >
-          {opt.label}
-        </button>
-      ))}
+    <div ref={ref} style={{ position: "relative", marginTop: 2 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`Map type: ${current.label}`}
+        aria-expanded={open}
+        style={{
+          position: "relative",
+          width: 42,
+          height: 38,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: open ? "rgba(212,175,55,0.14)" : "transparent",
+          border: "none",
+          borderRadius: 8,
+          cursor: "pointer",
+          transition: "background 0.15s",
+        }}
+      >
+        <current.icon size={17} color={open ? HUD.gold : HUD.textSecondary} strokeWidth={open ? 2.25 : 1.75} />
+        <span style={{ position: "absolute", bottom: 2, right: 3, fontSize: 7.5, fontWeight: 800, letterSpacing: "0.04em", color: HUD.gold }}>{mode === "sat" ? "SAT" : mode.toUpperCase()}</span>
+      </button>
+      {open && (
+        <div style={{ ...glassPanel(), position: "absolute", left: "100%", bottom: 0, width: 210, padding: "10px 10px 10px 18px", zIndex: 600 }}>
+          <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700, marginBottom: 8 }}>Map type</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {MAP_TYPES.map((t) => {
+              const on = t.key === mode;
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => {
+                    onChange(t.key);
+                    setOpen(false);
+                  }}
+                  aria-pressed={on}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: on ? "rgba(212,175,55,0.14)" : "transparent",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                    padding: "5px 6px",
+                  }}
+                >
+                  <t.icon size={14} color={on ? HUD.gold : HUD.textMuted} />
+                  <span style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+                    <span style={{ fontSize: 11, color: on ? HUD.gold : HUD.textPrimary, fontWeight: on ? 700 : 500 }}>{t.label}</span>
+                    <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{t.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
