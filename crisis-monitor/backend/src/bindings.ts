@@ -1,6 +1,8 @@
 /** Cloudflare Worker bindings, wired up in wrangler.toml. */
 export interface Env {
   DB: D1Database;
+  /** Optional: the MapTiler key for the paid basemaps (otherwise set by the admin in Settings; see map-settings.ts). */
+  MAPTILER_KEY?: string;
   LIVE_FEED: DurableObjectNamespace;
   INGESTION_ACTOR: DurableObjectNamespace;
   ALERTING_ACTOR: DurableObjectNamespace;
