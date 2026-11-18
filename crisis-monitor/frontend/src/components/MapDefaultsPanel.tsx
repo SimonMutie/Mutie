@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type IncidentFilters, type MapDefaultSettings } from "../api";
-import { BASEMAPS, type BasemapKey } from "./mapConstants";
+import { BASEMAPS, basemapKeys, type BasemapKey } from "./mapConstants";
+import { useMapTilerKey } from "../mapProvider";
 
 const LOCATION_FIELDS = ["country", "province", "county", "district", "city", "suburb"] as const;
 const CATEGORY_FIELDS = [
@@ -21,6 +22,7 @@ const CATEGORY_FIELDS = [
  *  is what every client's own Mapping view also starts with, until they
  *  change something within their own session. */
 export default function MapDefaultsPanel({ compact }: { compact?: boolean } = {}) {
+  useMapTilerKey();
   const [settings, setSettings] = useState<MapDefaultSettings | null>(null);
   const [filterOptions, setFilterOptions] = useState<IncidentFilters | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,7 +146,7 @@ export default function MapDefaultsPanel({ compact }: { compact?: boolean } = {}
         <div>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Default basemap</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
+            {basemapKeys().map((k) => (
               <button key={k} onClick={() => save({ default_basemap: k })} disabled={saving} style={chipStyle(settings.default_basemap === k)}>
                 {BASEMAPS[k].label}
               </button>
