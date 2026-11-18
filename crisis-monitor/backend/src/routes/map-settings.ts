@@ -148,3 +148,41 @@ mapSettingsRouter.patch("/", requireAdmin, async (c) => {
   const row = await first<MapDefaultSettingsRow>(c.env.DB, `SELECT * FROM map_default_settings WHERE id = 'default'`);
   return c.json(rowToSettings(row!));
 });
+
+/* ── Map provider keys (MapTiler) ───────────────────────────────────────── */
+
+/**
+ * The key for the paid basemaps (MapTiler). Set by the platform admin in Settings and kept in the database, not in
+ * the code (the repository is public). Every signed-in user can read it: browsers fetch the tiles with it directly,
+ * so it must be restricted to the Lens's own web addresses in MapTiler's key settings. MAPTILER_KEY, if set as a
+ * Worker variable, takes precedence.
+ */
+let providerTableReady = false;
+async function ensureProviderTable(db: D1Database) {
+  if (providerTableReady) return;
+  await db.prepare(`CREATE TABLE IF NOT EXISTS map_provider_keys (provider TEXT PRIMARY KEY, api_key TEXT, updated_at TEXT)`).run();
+  providerTableReady = true;
+}
+
+mapSettingsRouter.get("/provider", async (c) => {
+  try {
+    await ensureProviderTable(c.env.DB);
+    const row = await first<{ api_key: string | null; updated_at: string | null }>(c.env.DB, `SELECT api_key, updated_at FROM map_provider_keys WHERE provider = 'maptiler'`);
+    return c.json({ maptiler: c.env.MAPTILER_KEY || row?.api_key || null, fromEnv: !!c.env.MAPTILER_KEY, updatedAt: row?.updated_at ?? null });
+  } catch {
+    return c.json({ maptiler: c.env.MAPTILER_KEY || null, fromEnv: !!c.env.MAPTILER_KEY, updatedAt: null });
+  }
+});
+
+mapSettingsRouter.put("/provider", requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = z.object({ maptiler: z.string().trim().regex(/^[A-Za-z0-9_-]{10,80}$/, "That does not look like a MapTiler key.").nullable() }).safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "Invalid key" }, 400);
+  await ensureProviderTable(c.env.DB);
+  await run(
+    c.env.DB,
+    `INSERT INTO map_provider_keys (provider, api_key, updated_at) VALUES ('maptiler', ?, ?) ON CONFLICT(provider) DO UPDATE SET api_key = excluded.api_key, updated_at = excluded.updated_at`,
+    [parsed.data.maptiler, nowIso()]
+  );
+  return c.json({ ok: true });
+});
