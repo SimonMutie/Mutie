@@ -138,6 +138,7 @@ import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
 import AfrIntelPanel from "./AfrIntelPanel";
 import StrategicAnalysesPanel from "./StrategicAnalysesPanel";
+import { useMapTilerKey } from "../mapProvider";
 import type { AfrIntelRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
 import { WeatherTiles, useRainViewer } from "./WeatherTiles";
@@ -3008,7 +3009,9 @@ function FlatMap({
     () => (waves && fireCollection ? hotCellsFrom(fireCollection.features, !!fireCells, 5, 40) : []),
     [waves, fireCollection, fireCells]
   );
-  const tile = mode === "sat" ? BASEMAPS.esriImagery : mode === "map" ? BASEMAPS.osm : BASEMAPS.dark;
+  // MapTiler (sharper, richer) once the admin has set its key; the free maps otherwise.
+  const { key: mtKey } = useMapTilerKey();
+  const tile = mode === "sat" ? (mtKey ? BASEMAPS.mtHybrid : BASEMAPS.esriImagery) : mode === "map" ? (mtKey ? BASEMAPS.mtStreets : BASEMAPS.osm) : mtKey ? BASEMAPS.mtDark : BASEMAPS.dark;
   const imageryDay = clampImageryDay(imagery.day ?? fireDate);
   const overlay = imageryTemplate(imagery.key, imageryDay);
   const lensTemplate = overlay && imagery.lensKm !== null ? imageryTemplate(imagery.key, compareDay(imagery.compare, imageryDay, imagery.compareChosen)) : null;
