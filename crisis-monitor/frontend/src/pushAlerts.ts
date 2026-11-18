@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, type AnalysisDomain } from "./api";
 
 /** Device notifications for escalation alerts (Web Push). Each device turns them on once; they then arrive even when
  *  The Lens is closed and the device was asleep. */
@@ -29,8 +29,9 @@ export async function thisDeviceEndpoint(): Promise<string | null> {
 }
 
 /** Asks permission (when not yet given), subscribes this device, and tells the server. Returns an error message, or null. */
-export async function enablePushAlerts(opts: { askPermission: boolean; scope?: "escalations" | "humanitarian" }): Promise<string | null> {
-  const scope = opts.scope ?? "escalations";
+/** `domain` makes it a Strategic Analyses subscription for that domain; otherwise escalation alerts. */
+export async function enablePushAlerts(opts: { askPermission: boolean; domain?: AnalysisDomain }): Promise<string | null> {
+  const scope = opts.domain ? "analyses" : "escalations";
   if (!pushSupported()) return "This browser cannot show alerts when The Lens is closed. On an iPhone or iPad, add The Lens to the Home Screen first.";
   if (Notification.permission === "denied") return "Notifications are blocked for this site. Allow them in the browser's site settings, then try again.";
   if (Notification.permission !== "granted") {
@@ -46,7 +47,7 @@ export async function enablePushAlerts(opts: { askPermission: boolean; scope?: "
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: toKey(publicKey) });
     }
     try {
-      await api.createAlertSubscription({ scope, channel: "push", destination: JSON.stringify(sub.toJSON()), min_level: scope === "escalations" ? "elevated" : "any", frequency_minutes: 5 });
+      await api.createAlertSubscription({ scope, query_id: opts.domain, channel: "push", destination: JSON.stringify(sub.toJSON()), min_level: scope === "escalations" ? "elevated" : "any", frequency_minutes: 5 });
     } catch (e) {
       // Already registered for this person: that is the state we want.
       if (!(e instanceof Error && /already get these alerts/i.test(e.message))) throw e;
