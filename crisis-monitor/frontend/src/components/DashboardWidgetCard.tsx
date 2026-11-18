@@ -32,7 +32,8 @@ import { MapContainer, TileLayer, CircleMarker, Marker as LeafletMarker, Tooltip
 import { HeatmapLayer } from "./HeatmapLayer";
 import { FastMarkers, type FastPoint } from "./FastMarkers";
 import LeafletMapControls from "./LeafletMapControls";
-import { BASEMAPS, type BasemapKey } from "./mapConstants";
+import { BASEMAPS, basemapKeys, resolveBasemap, type BasemapKey } from "./mapConstants";
+import { useMapTilerKey } from "../mapProvider";
 import VictimsWidget, { groupOfVictimRow } from "./VictimsWidget";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
@@ -4621,7 +4622,9 @@ function MapViewLockButton({
  *  standalone incidents map, now available per dashboard widget too. */
 /** The dashboard's incident map: a choice of open base maps, thousands of dots on one canvas, and a heatmap view. */
 function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: DashboardWidget; incidents: Props["incidents"]; onUpdate?: Props["onUpdate"]; showFullControls: boolean }) {
-  const key = (widget.mapBasemap && widget.mapBasemap in BASEMAPS ? widget.mapBasemap : "osm") as BasemapKey;
+  useMapTilerKey();
+  // No choice saved: the best available map (MapTiler Streets with the key).
+  const key = resolveBasemap(widget.mapBasemap);
   const base = BASEMAPS[key];
   const mode = widget.mapViewMode ?? "markers";
   const list = incidents ?? [];
@@ -4665,7 +4668,7 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
               title="Base map"
               style={{ position: "absolute", top: 62, right: 6, zIndex: 1000, padding: "2px 4px", fontSize: 10.5, borderRadius: 4, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(0,0,0,0.55)", color: "#fff", maxWidth: 130 }}
             >
-              {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
+              {basemapKeys().map((k) => (
                 <option key={k} value={k}>{BASEMAPS[k].label}</option>
               ))}
             </select>
