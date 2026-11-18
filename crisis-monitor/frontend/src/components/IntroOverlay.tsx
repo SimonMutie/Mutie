@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Volume2, VolumeX } from "lucide-react";
 import { REPLAY_EVENT, WELCOME_HEADING, WELCOME_LINE, introAlreadyShown, introAppliesHere, introSoundEnabled, markIntroShown, playOpeningTone, preloadWelcome, setIntroSoundEnabled, speakWelcome, stopWelcome } from "../intro";
-import RealisticEye from "./RealisticEye";
+import IntroGlobe, { GLOBE_Y } from "./IntroGlobe";
 import "./IntroOverlay.css";
 
 /**
- * The opening sequence shown when the site is opened: the eye of the mark
- * opens, the welcome appears (and is spoken, where the browser allows
- * sound), then the view passes through the pupil into the site.
+ * The opening sequence shown when the site is opened: the Earth spins in from far away and comes to rest on Africa,
+ * with pulses rippling from its cities and rings turning round it (IntroGlobe); the welcome appears (and is spoken,
+ * where the browser allows sound); then the globe rushes in and the screen opens from it onto the site.
  *
  * It sits on top of the app, which loads underneath in the meantime, so it
  * adds no waiting of its own. It plays once per browser tab, can be skipped
@@ -20,7 +20,7 @@ type Phase = "playing" | "leaving" | "skipped" | "gone";
 // waits long enough after that for it to be read at an unhurried pace
 // (roughly five seconds); anyone who has seen it can click to skip.
 const HOLD_MS = 6500;
-const LEAVE_MS = 2300; // the zoom through the pupil, then the fade (see IntroOverlay.css)
+const LEAVE_MS = 2300; // the rush in towards the globe as the screen opens from it (see IntroOverlay.css)
 const SKIP_MS = 240;
 const REDUCED_HOLD_MS = 6000;
 
@@ -32,7 +32,8 @@ export default function IntroOverlay() {
   const [run, setRun] = useState(0); // bumped to replay
   const [soundOn, setSoundOn] = useState(introSoundEnabled);
   const [soundBlocked, setSoundBlocked] = useState(false);
-  const eyeRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const reduced = typeof window !== "undefined" && (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const clearTimers = () => {
@@ -81,19 +82,15 @@ export default function IntroOverlay() {
     timers.current.push(
       setTimeout(
         () => {
-          // How far the pupil-sized disc must grow to cover the whole screen from where the eye sits.
-          const eye = eyeRef.current;
-          if (eye) {
-            const r = eye.getBoundingClientRect();
-            const cx = r.left + r.width / 2;
-            const cy = r.top + r.height / 2;
-            const farthest = Math.max(Math.hypot(cx, cy), Math.hypot(window.innerWidth - cx, cy), Math.hypot(cx, window.innerHeight - cy), Math.hypot(window.innerWidth - cx, window.innerHeight - cy));
-            eye.style.setProperty("--intro-flood-scale", String(Math.ceil((farthest / (r.width * 0.085)) * 1.05)));
-            // The opening in the screen starts at the pupil and grows to cover the farthest corner.
-            const root = eye.closest(".intro") as HTMLElement | null;
-            root?.style.setProperty("--intro-cx", `${cx}px`);
-            root?.style.setProperty("--intro-cy", `${cy}px`);
-            root?.style.setProperty("--intro-hole-max", `${Math.ceil(farthest * 1.05)}px`);
+          // The screen opens from the globe's centre until it uncovers the farthest corner.
+          const root = rootRef.current;
+          if (root) {
+            const cx = window.innerWidth / 2;
+            const cy = window.innerHeight * GLOBE_Y;
+            const farthest = Math.max(Math.hypot(cx, cy), Math.hypot(cx, window.innerHeight - cy));
+            root.style.setProperty("--intro-cx", `${cx}px`);
+            root.style.setProperty("--intro-cy", `${cy}px`);
+            root.style.setProperty("--intro-hole-max", `${Math.ceil(farthest * 1.05)}px`);
           }
           // The 3D map listens for this and zooms in from far out while the screen opens.
           window.dispatchEvent(new Event("lens:intro-reveal"));
@@ -143,11 +140,11 @@ export default function IntroOverlay() {
   }
 
   return (
-    <div className={`intro${phase === "leaving" ? " intro--leaving" : ""}${phase === "skipped" ? " intro--skipped" : ""}`} key={run} role="dialog" aria-label={WELCOME_HEADING} onClick={skip}>
+    <div ref={rootRef} className={`intro${phase === "leaving" ? " intro--leaving" : ""}${phase === "skipped" ? " intro--skipped" : ""}`} key={run} role="dialog" aria-label={WELCOME_HEADING} onClick={skip}>
+      <div className="intro__globe" aria-hidden="true">
+        <IntroGlobe leaving={phase === "leaving"} reduced={reduced} />
+      </div>
       <div className="intro__stage">
-        <div className="intro__eye" ref={eyeRef} aria-hidden="true">
-          <RealisticEye id="intro-eye" />
-        </div>
         <div className="intro__words">
           <h1>
             Welcome to The <span>Lens</span>
