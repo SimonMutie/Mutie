@@ -1,3 +1,4 @@
+import { domainOf } from "../lib/strategicAnalysis";
 import { Hono } from "hono";
 import { z } from "zod";
 import { all, first, run, nowIso } from "../db";
@@ -27,7 +28,7 @@ const MAX_DEVICES = 15;
 const frequency = z.number().int().refine((n) => (FREQUENCIES as readonly number[]).includes(n), "frequency_minutes must be 5, 15, 60, 360 or 1440");
 
 const createSchema = z.object({
-  scope: z.enum(["query", "escalations", "humanitarian"]),
+  scope: z.enum(["query", "escalations", "analyses"]),
   query_id: z.string().min(1).optional(),
   channel: z.enum(["email", "signal", "push"]),
   destination: z.string().min(1).max(2000),
@@ -43,7 +44,7 @@ const patchSchema = z.object({
 });
 
 /** Escalation alerts are for Elevated/Critical incidents; a query's are either every development or only once an alert has opened. */
-const levelFits = (scope: string, level: string) => (scope === "escalations" ? level === "elevated" || level === "critical" : scope === "humanitarian" ? level === "any" : level === "any" || level === "alert");
+const levelFits = (scope: string, level: string) => (scope === "escalations" ? level === "elevated" || level === "critical" : scope === "analyses" ? level === "any" : level === "any" || level === "alert");
 const LEVEL_ERROR = "That alert level does not apply here.";
 
 const present = (s: Subscription) => ({
@@ -68,19 +69,20 @@ async function ownSubscription(c: { env: Env; get: (k: "userId") => string }, id
 /** The key a browser needs to subscribe this server to push messages. */
 alertSubscriptionsRouter.get("/push-key", async (c) => c.json({ publicKey: (await getVapid(c.env)).publicKey }));
 
-/** ?scope=escalations, or ?scope=query&query_id=… */
+/** ?scope=escalations, ?scope=query&query_id=…, or ?scope=analyses&query_id=<domain> */
 alertSubscriptionsRouter.get("/", async (c) => {
   await ensureAlertTables(c.env);
   const scope = c.req.query("scope");
   const queryId = c.req.query("query_id");
-  if (scope !== "query" && scope !== "escalations" && scope !== "humanitarian") return c.json({ error: "scope must be 'query', 'escalations' or 'humanitarian'" }, 400);
+  if (scope !== "query" && scope !== "escalations" && scope !== "analyses") return c.json({ error: "scope must be 'query', 'escalations' or 'analyses'" }, 400);
+  if (scope === "analyses" && !domainOf(queryId ?? "")) return c.json({ error: "query_id must be an analysis domain" }, 400);
   if (scope === "query") {
     if (!queryId) return c.json({ error: "query_id is required" }, 400);
     if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role"), queryId))) return c.json({ error: "Not found" }, 404);
   }
   const rows =
-    scope === "query"
-      ? await all<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE owner_id = ? AND scope = 'query' AND query_id = ? ORDER BY created_at", [c.get("userId"), queryId])
+    scope === "query" || scope === "analyses"
+      ? await all<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE owner_id = ? AND scope = ? AND query_id = ? ORDER BY created_at", [c.get("userId"), scope, queryId])
       : await all<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE owner_id = ? AND scope = ? ORDER BY created_at", [c.get("userId"), scope]);
   return c.json({ channels: channelsAvailable(c.env), subscriptions: rows.map(present) });
 });
@@ -104,7 +106,8 @@ alertSubscriptionsRouter.post("/", async (c) => {
     if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role"), d.query_id))) return c.json({ error: "Not found" }, 404);
   }
 
-  const queryId = d.scope === "query" ? d.query_id! : null;
+  if (d.scope === "analyses" && !domainOf(d.query_id ?? "")) return c.json({ error: "query_id must be an analysis domain" }, 400);
+  const queryId = d.scope === "query" || d.scope === "analyses" ? d.query_id! : null;
   const existing = await first<{ n: number; dup: number }>(
     c.env.DB,
     `SELECT COUNT(*) AS n, SUM(CASE WHEN channel = ? AND destination = ? THEN 1 ELSE 0 END) AS dup
