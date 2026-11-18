@@ -62,7 +62,8 @@ interface Props {
 // every existing `import { BASEMAPS } from "./IncidentsMap"` elsewhere in
 // the app keeps working unchanged — a plain re-export alone wouldn't give
 // this file itself a usable local binding.
-import { BASEMAPS, type BasemapKey } from "./mapConstants";
+import { adminDefaultChoice, BASEMAPS, basemapKeys, resolveBasemap, type BasemapKey } from "./mapConstants";
+import { useMapTilerKey } from "../mapProvider";
 import { Tooltip as LeafletTooltip } from "react-leaflet";
 import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, classifyIncident, pinSvg as basePinSvg, type ActorCategory, type ActorShape } from "./actorTheme";
 export { classifyActor, ACTOR_THEME, type ActorCategory, type ActorShape };
@@ -1013,7 +1014,10 @@ function shapeGeometryToPositions(geometry: GeoJSON.Feature | GeoJSON.FeatureCol
 }
 
 export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onNavigate }: Props) {
-  const [basemap, setBasemap] = useState<BasemapKey>("osm");
+  // null until someone picks: the best available map (MapTiler Streets with the key, else OpenStreetMap).
+  const [basemapChoice, setBasemap] = useState<BasemapKey | null>(null);
+  useMapTilerKey();
+  const basemap = resolveBasemap(basemapChoice);
   const [showLegend, setShowLegend] = useState(false);
   const [showMapTypes, setShowMapTypes] = useState(false);
   const [showRoutesOverlays, setShowRoutesOverlays] = useState(false);
@@ -1061,7 +1065,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
     api
       .getMapSettings()
       .then((settings) => {
-        setBasemap((settings.default_basemap as BasemapKey) in BASEMAPS ? (settings.default_basemap as BasemapKey) : "osm");
+        setBasemap(adminDefaultChoice(settings.default_basemap));
         setViewMode(settings.default_view_mode);
         setIncidentsVisible(settings.show_incidents_by_default);
         if (Object.keys(settings.default_filters).length > 0) {
@@ -1648,7 +1652,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
           <>
             {/* basemap */}
             <div style={{ display: "flex", gap: 4 }}>
-              {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
+              {basemapKeys().map((k) => (
                 <button key={k} onClick={() => setBasemap(k)} style={chipStyle(basemap === k)}>
                   {BASEMAPS[k].label}
                 </button>
