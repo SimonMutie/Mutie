@@ -1506,7 +1506,31 @@ export interface CloudflareRadarData {
   fetchedAt: string;
 }
 
-/** An AfrIntel forecast run; see the backend's lib/oi.ts. */
+/** A strategic humanitarian analysis from a think tank or research centre (backend lib/humanitarianAnalysis.ts). */
+export interface HumanitarianAnalysis {
+  id: string;
+  url: string;
+  title: string;
+  summary: string;
+  source: string;
+  published: string;
+  themes: string[];
+  countries: string[];
+  africa: boolean;
+  inScope: boolean;
+  score: number;
+  firstSeen: string;
+  lat: number | null;
+  lng: number | null;
+}
+export interface HumanitarianAnalysisData {
+  items: HumanitarianAnalysis[];
+  themes: { id: string; label: string; systemic: boolean; terms: string[] }[];
+  sources: { name: string; url: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
+  fetchedAt: string;
+}
+
+/** An AfrIntel forecast run; see the backend's lib/afrIntel.ts. */
 export interface AfrIntelRun {
   id: string;
   question: string;
@@ -2166,9 +2190,9 @@ export const api = {
   dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
 
   getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
-  listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "query"; queryId: string }) =>
+  listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "humanitarian" } | { scope: "query"; queryId: string }) =>
     req<AlertSubscriptionList>(`/api/alert-subscriptions?scope=${target.scope}${target.scope === "query" ? `&query_id=${encodeURIComponent(target.queryId)}` : ""}`),
-  createAlertSubscription: (body: { scope: "query" | "escalations"; query_id?: string; channel: AlertChannel; destination: string; min_level?: string; frequency_minutes?: number }) =>
+  createAlertSubscription: (body: { scope: "query" | "escalations" | "humanitarian"; query_id?: string; channel: AlertChannel; destination: string; min_level?: string; frequency_minutes?: number }) =>
     req<AlertSubscription>("/api/alert-subscriptions", { method: "POST", body: JSON.stringify(body) }),
   updateAlertSubscription: (id: string, patch: { destination?: string; min_level?: string; frequency_minutes?: number; enabled?: boolean }) =>
     req<AlertSubscription>(`/api/alert-subscriptions/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -2418,6 +2442,8 @@ export const api = {
   afrIntelDeleteRun: (id: string) => req<{ ok: boolean }>(`/api/afrintel/runs/${id}`, { method: "DELETE" }),
   afrIntelAssist: (message: string, layers: { key: string; label: string; group: string }[], view: { lat: number; lng: number; zoom: number } | null) =>
     req<{ reply: string; actions: AfrIntelAssistAction[] }>("/api/afrintel/assist", { method: "POST", body: JSON.stringify({ message, layers, view }) }),
+  getHumanitarianAnalysis: (days = 60, all = false) => req<HumanitarianAnalysisData>(`/api/live-layers/humanitarian-analysis?days=${days}${all ? "&all=1" : ""}`),
+  refreshHumanitarianAnalysis: () => req<{ ran: boolean; added: number; sources: number }>("/api/live-layers/humanitarian-analysis/refresh", { method: "POST" }),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
   getFireHistoryDays: (days = 30) => req<FireHistoryDays>(`/api/live-layers/fire-history/days?days=${days}`),
