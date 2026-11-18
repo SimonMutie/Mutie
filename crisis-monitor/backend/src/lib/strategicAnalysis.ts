@@ -2,6 +2,7 @@ import type { Env } from "../bindings";
 import { AFRICA_CENTROIDS, MIDDLE_EAST_CODES, namedLocations } from "./africaGeo";
 import { discoverFeed } from "./feedDiscovery";
 import { SOURCE_KIND_LABEL, SOURCES, type DomainId, type Source, type SourceKind } from "./strategicSources";
+import { HUMANITARIAN_RULES } from "./humanitarianBoolean";
 
 export { SOURCES, type DomainId, type Source };
 
@@ -32,6 +33,9 @@ export interface Theme {
   systemic?: boolean;
   /** Tags a piece (where, which crisis) but never qualifies it on its own. */
   context?: boolean;
+  /** Boolean rules: each rule is groups combined with AND, the terms in a group combined with OR. The theme matches
+   *  when any plain term matches OR any rule is satisfied. */
+  rules?: string[][][];
 }
 
 export interface Domain {
@@ -110,6 +114,21 @@ const HUMANITARIAN_THEMES: Theme[] = [
     id: "cash-digital",
     label: "Cash, data & technology",
     terms: ["cash assistance", "cash transfer*", "cash and voucher*", "multipurpose cash", "transferts monetaires", "digital humanitarian*", "artificial intelligence", "data protection", "biometric*", "digital identity", "humanitarian data", "mobile money", "starlink", "ai in humanitarian*", "humanitarian innovation", "innovation", "data responsibility", "anticipatory finance", "forecast based financing", "insurance", "risk financing"],
+  },
+  {
+    id: "displacement",
+    label: "Displacement, refugees & migration policy",
+    terms: ["refugee policy", "refugee response", "refugee protection", "durable solutions", "global compact on refugees", "global refugee forum", "kampala convention", "comprehensive refugee response framework", "crrf", "refugee self reliance", "refugee inclusion", "encampment policy", "mixed migration", "forced displacement", "internal displacement", "displacement crisis", "displacement crises", "politique d asile", "deplacement force"],
+  },
+  {
+    id: "hunger-health",
+    label: "Famine, hunger & health emergencies",
+    terms: ["famine", "famine declared", "famine warning", "ipc phase 5", "ipc 5", "catastrophic hunger", "hunger crisis", "food crisis", "crise alimentaire", "cadre harmonise", "fews net", "acute malnutrition", "cholera outbreak", "mpox response", "health emergency"],
+  },
+  {
+    id: "protection",
+    label: "Protection, gender & inclusion",
+    terms: ["protection crisis", "protection of civilians", "gender based violence", "gbv", "sexual violence in conflict", "child protection", "women and girls in crisis", "disability inclusion", "mhpss", "mental health and psychosocial", "violences basees sur le genre"],
   },
   {
     id: "crises",
@@ -193,12 +212,14 @@ const CONFLICT_THEMES: Theme[] = [
   { id: "theatres", label: "Conflict theatres", terms: ["darfur", "el fasher", "el fashir", "kordofan", "khartoum", "omdurman", "blue nile", "gezira", "eastern drc", "est de la rdc", "north kivu", "nord kivu", "south kivu", "sud kivu", "ituri", "goma", "bukavu", "central sahel", "sahel central", "liptako gourma", "menaka", "tillaberi", "djibo", "kidal", "lake chad", "lac tchad", "borno", "diffa", "far north", "extreme nord", "cabo delgado", "jubaland", "puntland", "lower shabelle", "middle shabelle", "galmudug", "tigray", "amhara", "oromia", "northwest region", "southwest region", "nord ouest", "sud ouest", "tripoli", "fezzan", "central african republic", "centrafrique", "zamfara", "katsina", "sokoto", "plateau state", "benue", "upper nile", "jonglei", "northern benin", "nord benin", "northern togo", "savanes", "coastal states", "pays cotiers"] },
 ];
 
+for (const th of HUMANITARIAN_THEMES) if (HUMANITARIAN_RULES[th.id]) th.rules = HUMANITARIAN_RULES[th.id];
+
 export const DOMAINS: Domain[] = [
   {
     id: "humanitarian",
     label: "New Humanitarianism",
     blurb: "How humanitarianism is changing: funding cuts, the reset, localisation, Global South actors, access, principles and the future of aid, with Africa's major crises.",
-    signal: /\b(humanitar\w*|aid|aide|ajuda|relief|ngos?|ong|donors?|bailleurs?|refugee\w*|refugie\w*|displace\w*|deplace\w*|idps?|famine|food insecurity|insecurite alimentaire|emergency response|development assistance|civil society|societe civile)\b/,
+    signal: /\b(humanitar\w*|aids?|aide|ajuda|ayuda|relief|secours|assistance|ngos?|ongs?|ingos?|donors?|bailleurs?|doador\w*|refugee\w*|refugie\w*|refugiad\w*|displace\w*|deplace\w*|desplazad\w*|idps?|asylum|asile|famine|hunger|faim|fome|malnutrition|food insecurity|insecurite alimentaire|cholera|outbreak|emergency response|emergencies|development assistance|development cooperation|civil society|societe civile|ocha|unhcr|wfp|unicef|iom|icrc|cicr|msf|red cross|croix rouge|localis\w*|localiz\w*|grand bargain|philanthrop\w*|protection|gbv|resilience|anticipatory)\b/,
     themes: HUMANITARIAN_THEMES,
     minHits: 1,
   },
@@ -269,7 +290,8 @@ const THEME_RX = new Map(
     d.id,
     d.themes.map((th) => {
       const rx = th.terms.map(termRegex);
-      return { id: th.id, systemic: !!th.systemic, any: new RegExp(rx.map((r) => `(?:${r.source})`).join("|")), rx };
+      const group = (terms: string[]) => new RegExp(terms.map((t) => `(?:${termRegex(t).source})`).join("|"));
+      return { id: th.id, systemic: !!th.systemic, any: new RegExp(rx.map((r) => `(?:${r.source})`).join("|")), rx, rules: (th.rules ?? []).map((rule) => rule.map(group)) };
     }),
   ])
 );
@@ -278,7 +300,7 @@ const THEME_RX = new Map(
 export function themesOf(domain: DomainId, text: string): { id: string; hits: number }[] {
   const t = fold(text);
   return (THEME_RX.get(domain) ?? [])
-    .map((th) => ({ id: th.id, hits: th.any.test(t) ? th.rx.filter((r) => r.test(t)).length : 0 }))
+    .map((th) => ({ id: th.id, hits: (th.any.test(t) ? th.rx.filter((r) => r.test(t)).length : 0) + th.rules.filter((rule) => rule.every((g) => g.test(t))).length }))
     .filter((x) => x.hits > 0)
     .sort((a, b) => b.hits - a.hits);
 }
@@ -407,6 +429,49 @@ export interface AnalysisItem {
   score: number;
 }
 
+/* ── Analytical publications only ───────────────────────────────────────── */
+
+/** Whole titles of site pages, not publications ("About", "Our team", "Publications"). */
+const PAGE_TITLES = new RegExp(
+  "^(" +
+    [
+      "home", "homepage", "accueil", "about", "about us", "a propos", "qui sommes nous", "who we are", "what we do", "our work", "our mission",
+      "our story", "our history", "our team", "our people", "our staff", "our partners", "our donors", "our funders", "our board", "team", "staff",
+      "people", "experts", "board", "governance", "partners", "donors", "funders", "contact", "contact us", "contactez nous", "privacy",
+      "privacy policy", "terms", "terms of use", "terms and conditions", "cookies?", "cookie policy", "accessibility", "disclaimer", "legal",
+      "copyright", "donate", "support us", "faire un don", "subscribe", "newsletter", "sign up", "login", "log in", "register", "search",
+      "careers?", "jobs?", "vacanc(y|ies)", "work with us", "join us", "join our team", "events?", "upcoming events", "calendar", "faqs?",
+      "frequently asked questions", "sitemap", "archives?", "publications", "resources", "library", "news", "latest news", "blog", "media",
+      "press", "press releases?", "newsroom", "reports", "research", "data", "databases?", "tools?", "maps?", "dashboard", "projects?",
+      "programmes?", "programs?", "countries", "regions", "topics", "themes", "issues", "annual reports?( \\d{4})?", "financial statements?",
+      "page not found", "not found", "404", "access denied", "error", "untitled", "home page", "multimedia", "videos?", "podcasts?", "photos?",
+      "gallery", "galerie", "nous contacter", "equipe", "partenaires", "actualites", "evenements", "emplois", "recrutement",
+    ].join("|") +
+    ")$"
+);
+/** Title openings of site pages, notices and calls rather than analysis. */
+const PAGE_OPENINGS =
+  /^(about( the| our| us)?\b|a propos\b|welcome to\b|bienvenue\b|join (us|our)\b|apply\b|call for (applications|proposals|papers|expressions|submissions|nominations)\b|appel (a|aux) (candidatures|propositions|manifestation)\b|vacancy\b|job( opening| offer)?\b|offre d emploi\b|internship\b|tender\b|appel d offres\b|request for (proposals|quotations|expressions)\b|rfp\b|rfq\b|consultan(cy|t) (opportunity|wanted|position)\b|terms of reference\b|tor\b|webinar\b|webinaire\b|event\b|register (now|here)\b|save the date\b|press release\b|communique de presse\b|media advisory\b|statement by the (board|director)\b|meet (the|our)\b|subscribe\b|donate\b|privacy\b|cookie\b|404\b|page not found\b|annual report\b|financial statement|audited accounts|board of (directors|trustees)\b|job description\b)/;
+const PAGE_PATHS = /\/(about|about-us|a-propos|who-we-are|contact|contact-us|team|our-team|staff|people|experts?|board|partners|donors|funders|careers?|jobs?|vacanc\w*|recrutement|events?|evenements|donate|support-us|privacy|terms|cookies?|search|tag|tags|category|categories|author|authors|user|users|taxonomy|page\/\d+|newsletter|subscribe|login|register|faq)(\/|$)/i;
+
+/**
+ * NOT clause of every domain's query: a site page, notice, vacancy, event, call or press release, not an analytical
+ * publication. Also drops comment pages ("Anonymous (not verified)") and titles too short to be a publication.
+ */
+export function isNotAnalysis(raw: { title: string; summary: string; url: string }): boolean {
+  const t = fold(raw.title).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t) return true;
+  if (PAGE_TITLES.test(t) || PAGE_OPENINGS.test(t)) return true;
+  if (t.split(" ").length < 3) return true;
+  if (/anonymous \(not verified\)|\(not verified\)/i.test(raw.summary) || /^submitted by /i.test(raw.summary.trim())) return true;
+  try {
+    if (PAGE_PATHS.test(new URL(raw.url).pathname)) return true;
+  } catch {
+    /* not a URL: judged by its title */
+  }
+  return false;
+}
+
 /**
  * A source whose work is mainly humanitarian (it writes on New Humanitarianism and at most one other domain, with
  * New Humanitarianism first): everything it publishes is humanitarian reflection, so its pieces need no keyword to
@@ -416,6 +481,7 @@ export const isHumanitarianSpecialist = (s: Source) => s.domains[0] === "humanit
 
 /** The domains a piece belongs to, among those its source writes on. */
 export function classify(raw: { url: string; title: string; summary: string; source: Source; published: string }): AnalysisItem[] {
+  if (isNotAnalysis(raw)) return [];
   const text = `${raw.title}. ${raw.summary}`;
   const folded = fold(text);
   const where = africaOf(text);
@@ -546,6 +612,13 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_analyses_url ON strategic_analyses(url)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
   ]);
+  // Drop stored pieces that are not analytical publications ("About the GDHO"), whenever the filter changes.
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v1'`).first())) {
+    const rows = (await db.prepare(`SELECT domain, id, title, summary, url FROM strategic_analyses`).all<{ domain: string; id: string; title: string; summary: string | null; url: string }>()).results ?? [];
+    const junk = rows.filter((r) => isNotAnalysis({ title: r.title, summary: r.summary ?? "", url: r.url }));
+    for (let i = 0; i < junk.length; i += 50) await db.batch(junk.slice(i, i + 50).map((r) => db.prepare(`DELETE FROM strategic_analyses WHERE domain = ? AND id = ?`).bind(r.domain, r.id)));
+    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v1', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
+  }
   // One-time: the first catch-ups shared the main schedule's request budget and many found nothing because their
   // requests were refused, so every source's past year is fetched again on Strategic Analyses' own schedule.
   if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'catchup_reset_v1'`).first())) {
@@ -631,6 +704,22 @@ export function gnewsQueries(src: Source, window: string): string[] {
   const qs = src.domains.length <= 2 ? [`site:${host} when:${window}`] : src.domains.map((d) => `site:${host} ${GNEWS_WORDS[d]}${d === "humanitarian" ? "" : africa} when:${window}`);
   return qs.map((q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`);
 }
+
+/** The Bing News RSS search equivalent to a Google News one (Bing has no "when:", so it is dropped). */
+export function bingQuery(googleUrl: string): string {
+  const q = (new URL(googleUrl).searchParams.get("q") ?? "").replace(/\s*when:\S+/g, "").trim();
+  return `https://www.bing.com/news/search?q=${encodeURIComponent(q)}&format=rss&setlang=en`;
+}
+/** Bing links go through a redirect that carries the article's address in its "url" parameter. */
+const cleanBing = (e: Entry): Entry => {
+  try {
+    const u = new URL(e.url);
+    const real = u.hostname.endsWith("bing.com") ? u.searchParams.get("url") : null;
+    return real ? { ...e, url: real } : e;
+  } catch {
+    return e;
+  }
+};
 
 /** Google News titles end with " - Source"; drop it. */
 const cleanGnews = (e: Entry): Entry => ({ ...e, title: e.title.replace(/\s+[-–—|]\s+[^-–—|]{2,80}$/, "").trim() });
@@ -816,7 +905,14 @@ export async function collectStrategicAnalyses(
     const out: Entry[] = [];
     for (const q of gnewsQueries(src, window)) {
       const xml = await getText(q);
-      if (xml) out.push(...parseFeed(xml).map(cleanGnews));
+      const found = xml ? parseFeed(xml).map(cleanGnews) : [];
+      if (found.length) {
+        out.push(...found);
+        continue;
+      }
+      // Google returned nothing (or refused): ask Bing News the same question.
+      const bing = await getText(bingQuery(q));
+      if (bing) out.push(...parseFeed(bing).map(cleanBing));
     }
     return out;
   };
@@ -879,7 +975,16 @@ export async function collectStrategicAnalyses(
           if (found.status !== "ok") throw new Error(found.status === "no_feed" ? "No feed found on this site" : found.message);
           feedUrl = found.feedUrl;
         }
-        const res = await fetcher(feedUrl);
+        let res = await fetcher(feedUrl);
+        // A feed that refuses (or moved): try the source's other known feed addresses before giving up.
+        for (const alt of src.altFeeds ?? []) {
+          if (res.ok) break;
+          const r = await fetcher(alt).catch(() => null);
+          if (r?.ok) {
+            res = r;
+            feedUrl = alt;
+          }
+        }
         if (!res.ok) throw new Error(`Feed returned ${res.status}`);
         firstPage = await res.text();
         const entries = parseFeed(firstPage);
