@@ -454,6 +454,10 @@ const PAGE_OPENINGS =
   /^(about( the| our| us)?\b|a propos\b|welcome to\b|bienvenue\b|join (us|our)\b|apply\b|call for (applications|proposals|papers|expressions|submissions|nominations)\b|appel (a|aux) (candidatures|propositions|manifestation)\b|vacancy\b|job( opening| offer)?\b|offre d emploi\b|internship\b|tender\b|appel d offres\b|request for (proposals|quotations|expressions)\b|rfp\b|rfq\b|consultan(cy|t) (opportunity|wanted|position)\b|terms of reference\b|tor\b|webinar\b|webinaire\b|event\b|register (now|here)\b|save the date\b|press release\b|communique de presse\b|media advisory\b|statement by the (board|director)\b|meet (the|our)\b|subscribe\b|donate\b|privacy\b|cookie\b|404\b|page not found\b|annual report\b|financial statement|audited accounts|board of (directors|trustees)\b|job description\b)/;
 const PAGE_PATHS = /\/(about|about-us|a-propos|who-we-are|contact|contact-us|team|our-team|staff|people|experts?|board|partners|donors|funders|careers?|jobs?|vacanc\w*|recrutement|events?|evenements|donate|support-us|privacy|terms|cookies?|search|tag|tags|category|categories|author|authors|user|users|taxonomy|page\/\d+|newsletter|subscribe|login|register|faq)(\/|$)/i;
 
+/** Spam injected into hacked sites (casinos, betting, loans, essays, pills…): never analysis, whoever "published" it. */
+const SPAM =
+  /\b(casinos?|casino\w+|bett?ing|bet365|1xbet|melbet|mostbet|betway|sportsbook\w*|bookmakers?|bookie\w*|slots?|slot machines?|jackpots?|poker|roulette|blackjack|baccarat|gambl\w*|free spins|bonus(es)? codes?|promo codes?|no deposit|welcome bonus|wager\w*|lotter(y|ies)|aviator game|crash game|plinko|crypto casino|forex (brokers?|signals|robots?)|binary options|trading bot|payday loans?|quick loans?|loan apps?|essay (writing|writers?|services?)|write my (essay|paper)|dissertation (help|writing)|homework help|viagra|cialis|kamagra|weight loss pills|keto (pills|gummies)|cbd (oil|gummies)|escorts?|dating (sites?|apps?)|hookups?|porn\w*|xxx|onlyfans|seo services|backlinks?|buy (followers|likes|views)|replica (watches|bags)|mod apk|apk download|cheat codes?|hack(ed)? (account|instagram)|follower generator)\b/;
+
 /**
  * NOT clause of every domain's query: a site page, notice, vacancy, event, call or press release, not an analytical
  * publication. Also drops comment pages ("Anonymous (not verified)") and titles too short to be a publication.
@@ -461,6 +465,7 @@ const PAGE_PATHS = /\/(about|about-us|a-propos|who-we-are|contact|contact-us|tea
 export function isNotAnalysis(raw: { title: string; summary: string; url: string }): boolean {
   const t = fold(raw.title).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return true;
+  if (SPAM.test(t) || SPAM.test(fold(raw.summary)) || SPAM.test(fold(raw.url))) return true;
   if (PAGE_TITLES.test(t) || PAGE_OPENINGS.test(t)) return true;
   if (t.split(" ").length < 3) return true;
   if (/anonymous \(not verified\)|\(not verified\)/i.test(raw.summary) || /^submitted by /i.test(raw.summary.trim())) return true;
@@ -490,7 +495,9 @@ export function classify(raw: { url: string; title: string; summary: string; sou
   const out: AnalysisItem[] = [];
   for (const id of raw.source.domains) {
     const d = domainOf(id)!;
-    const takeAll = id === "humanitarian" && isHumanitarianSpecialist(raw.source);
+    // A humanitarian specialist skips the keyword thresholds, but a piece still has to show some humanitarian content
+    // (the signal or any theme): a hacked or off-topic page from such a site is not kept.
+    const takeAll = id === "humanitarian" && isHumanitarianSpecialist(raw.source) && (d.signal.test(folded) || themesOf(id, text).some((t) => t.id !== "general"));
     if (!takeAll && !d.signal.test(folded)) continue;
     let themes = themesOf(id, text);
     // "General" only tags a piece nothing more specific describes.
@@ -613,11 +620,11 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
   ]);
   // Drop stored pieces that are not analytical publications ("About the GDHO"), whenever the filter changes.
-  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v1'`).first())) {
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v2'`).first())) {
     const rows = (await db.prepare(`SELECT domain, id, title, summary, url FROM strategic_analyses`).all<{ domain: string; id: string; title: string; summary: string | null; url: string }>()).results ?? [];
     const junk = rows.filter((r) => isNotAnalysis({ title: r.title, summary: r.summary ?? "", url: r.url }));
     for (let i = 0; i < junk.length; i += 50) await db.batch(junk.slice(i, i + 50).map((r) => db.prepare(`DELETE FROM strategic_analyses WHERE domain = ? AND id = ?`).bind(r.domain, r.id)));
-    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v1', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
+    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v2', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
   }
   // One-time: the first catch-ups shared the main schedule's request budget and many found nothing because their
   // requests were refused, so every source's past year is fetched again on Strategic Analyses' own schedule.
