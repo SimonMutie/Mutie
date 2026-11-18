@@ -1,4 +1,4 @@
-import { collectStrategicAnalyses, domainOf, DOMAINS, domainSummary, listAnalyses, sourceStatus } from "../lib/strategicAnalysis";
+import { collectStrategicAnalyses, domainOf, DOMAINS, domainSummary, listAnalyses, REGIONS, sourceStatus } from "../lib/strategicAnalysis";
 import { Hono } from "hono";
 import { twoline2satrec, propagate, gstime, eciToGeodetic, degreesLong, degreesLat } from "satellite.js";
 import { Reader as MmdbReader, type CountryResponse } from "mmdb-lib";
@@ -10,7 +10,7 @@ import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connecto
 import { queryBulkEvents, TONE_OVERRIDE_THRESHOLD, type BulkEventPoint } from "../connectors/gdeltBulk";
 import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getSituationEvents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
-import { resolveCountryCode } from "../lib/africaGeo";
+import { countryName, resolveCountryCode } from "../lib/africaGeo";
 import { activeCountries } from "../lib/ucdpActive";
 import { conflictCountries, conflictProvinces, escalationWaves, type EscalationCountryPoint, type EscalationPoint } from "../lib/conflictZones";
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
@@ -2568,7 +2568,9 @@ liveLayersRouter.get("/strategic-analyses", async (c) => {
     domain: domain.id,
     domains: DOMAINS.map((d) => ({ id: d.id, label: d.label, blurb: d.blurb, recent: summary[d.id]?.recent ?? 0, latest: summary[d.id]?.latest ?? null })),
     items,
-    themes: domain.themes.map((t) => ({ id: t.id, label: t.label, systemic: !!t.systemic, terms: t.terms })),
+    themes: domain.themes.map((t) => ({ id: t.id, label: t.label, systemic: !!t.systemic, context: !!t.context, terms: t.terms })),
+    regions: REGIONS,
+    countryNames: Object.fromEntries([...new Set(items.flatMap((i) => i.countries))].map((c) => [c, countryName(c)])),
     sources,
     fetchedAt: new Date().toISOString(),
   });
