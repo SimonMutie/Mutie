@@ -1539,7 +1539,7 @@ export interface StrategicAnalysesData {
   themes: { id: string; label: string; systemic: boolean; context: boolean; terms: string[] }[];
   regions: string[];
   countryNames: Record<string, string>;
-  sources: { name: string; url: string; kind: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
+  sources: { name: string; url: string; kind: string; backfill: string | null; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
   fetchedAt: string;
 }
 
@@ -2457,7 +2457,7 @@ export const api = {
   afrIntelDeleteRun: (id: string) => req<{ ok: boolean }>(`/api/afrintel/runs/${id}`, { method: "DELETE" }),
   afrIntelAssist: (message: string, layers: { key: string; label: string; group: string }[], view: { lat: number; lng: number; zoom: number } | null) =>
     req<{ reply: string; actions: AfrIntelAssistAction[] }>("/api/afrintel/assist", { method: "POST", body: JSON.stringify({ message, layers, view }) }),
-  getStrategicAnalyses: (domain: AnalysisDomain, days = 60, all = false) => req<StrategicAnalysesData>(`/api/live-layers/strategic-analyses?domain=${domain}&days=${days}${all ? "&all=1" : ""}`),
+  getStrategicAnalyses: (domain: AnalysisDomain, days = 365, all = false) => req<StrategicAnalysesData>(`/api/live-layers/strategic-analyses?domain=${domain}&days=${days}${all ? "&all=1" : ""}`),
   refreshStrategicAnalyses: () => req<{ ran: boolean; added: number; sources: number }>("/api/live-layers/strategic-analyses/refresh", { method: "POST" }),
   getGpsInterference: () => req<GpsInterference>("/api/live-layers/gps-interference"),
   getConnectivity: () => req<ConnectivityResult>("/api/live-layers/connectivity"),
