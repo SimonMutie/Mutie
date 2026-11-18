@@ -460,6 +460,19 @@ const PAGE_PATHS = /\/(about|about-us|a-propos|who-we-are|contact|contact-us|tea
 const SPAM =
   /\b(casinos?|casino\w+|bett?ing|bet365|1xbet|melbet|mostbet|betway|sportsbook\w*|bookmakers?|bookie\w*|slots?|slot machines?|jackpots?|poker|roulette|blackjack|baccarat|gambl\w*|free spins|bonus(es)? codes?|promo codes?|no deposit|welcome bonus|wager\w*|lotter(y|ies)|aviator game|crash game|plinko|crypto casino|forex (brokers?|signals|robots?)|binary options|trading bot|payday loans?|quick loans?|loan apps?|essay (writing|writers?|services?)|write my (essay|paper)|dissertation (help|writing)|homework help|viagra|cialis|kamagra|weight loss pills|keto (pills|gummies)|cbd (oil|gummies)|escorts?|dating (sites?|apps?)|hookups?|porn\w*|xxx|onlyfans|seo services|backlinks?|buy (followers|likes|views)|replica (watches|bags)|mod apk|apk download|cheat codes?|hack(ed)? (account|instagram)|follower generator)\b/;
 
+/** Gambling and promotion vocabulary: spam pages vary their wording, but three or more of these together give them away. */
+const GAMBLE_WORDS = [
+  /\bbonus(es)?\b/, /\bwithdraw(al|als|ing|s)?\b/, /\bdeposits?\b/, /\bpayments?\b/, /\bpayouts?\b/, /\bmobile (experience|app|apps|version|site)\b/,
+  /\b(login|log in|sign up|signup|registration|register) (guide|process|steps|page|bonus)\b/, /\bapp download\b/, /\bodds\b/, /\bcashback\b/,
+  /\bpromo\w*\b/, /\bfree bets?\b/, /\bspins?\b/, /\bvip (program|programme|club)\b/, /\breview\b/, /\bonline (overview|platform|games?|gaming|play)\b/,
+  /\bplayers?\b/, /\bbangladesh\w*\b/, /\b(bdt|inr|pkr)\b/, /\bcricket bett?ing\b/, /\bgames? (lobby|library|selection)\b/, /\bpayment (methods|options)\b/,
+  /\b(features|options) (and|&) (bonuses|payments)\b/, /\bwelcome offer\b/, /\blive dealer\b/, /\bsports? (bets?|bett?ing)\b/,
+];
+export function looksLikeSpam(text: string): boolean {
+  const t = fold(text);
+  return SPAM.test(t) || GAMBLE_WORDS.filter((r) => r.test(t)).length >= 3;
+}
+
 /**
  * NOT clause of every domain's query: a site page, notice, vacancy, event, call or press release, not an analytical
  * publication. Also drops comment pages ("Anonymous (not verified)") and titles too short to be a publication.
@@ -467,7 +480,7 @@ const SPAM =
 export function isNotAnalysis(raw: { title: string; summary: string; url: string }): boolean {
   const t = fold(raw.title).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return true;
-  if (SPAM.test(t) || SPAM.test(fold(raw.summary)) || SPAM.test(fold(raw.url))) return true;
+  if (looksLikeSpam(`${raw.title} ${raw.summary} ${raw.url.replace(/[-_/]+/g, " ")}`)) return true;
   if (PAGE_TITLES.test(t) || PAGE_OPENINGS.test(t)) return true;
   if (t.split(" ").length < 3) return true;
   if (/anonymous \(not verified\)|\(not verified\)/i.test(raw.summary) || /^submitted by /i.test(raw.summary.trim())) return true;
@@ -487,7 +500,7 @@ export function isNotAnalysis(raw: { title: string; summary: string; url: string
 export const isHumanitarianSpecialist = (s: Source) => s.domains[0] === "humanitarian" && s.domains.length <= 2;
 
 /** The domains a piece belongs to, among those its source writes on. */
-export function classify(raw: { url: string; title: string; summary: string; source: Source; published: string }): AnalysisItem[] {
+export function classify(raw: { url: string; title: string; summary: string; source: Source; published: string; strict?: boolean }): AnalysisItem[] {
   if (isNotAnalysis(raw)) return [];
   // A page titled with the site's own name ("Humanitarian Practice Network", "Home - ODI") is not a publication.
   const ft = fold(raw.title).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -503,7 +516,8 @@ export function classify(raw: { url: string; title: string; summary: string; sou
     const d = domainOf(id)!;
     // A humanitarian specialist skips the keyword thresholds, but a piece still has to show some humanitarian content
     // (the signal or any theme): a hacked or off-topic page from such a site is not kept.
-    const takeAll = id === "humanitarian" && isHumanitarianSpecialist(raw.source) && (d.signal.test(folded) || themesOf(id, text).some((t) => t.id !== "general"));
+    // A source caught serving spam (`strict`) loses this: its pieces must pass the full keyword test like anyone's.
+    const takeAll = !raw.strict && id === "humanitarian" && isHumanitarianSpecialist(raw.source) && (d.signal.test(folded) || themesOf(id, text).some((t) => t.id !== "general"));
     if (!takeAll && !d.signal.test(folded)) continue;
     let themes = themesOf(id, text);
     // "General" only tags a piece nothing more specific describes.
@@ -618,19 +632,36 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
   const cols = new Set(((await db.prepare(`PRAGMA table_info(strategic_analyses)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
   for (const c of ["places", "regions", "blocs"]) if (!cols.has(c)) await db.prepare(`ALTER TABLE strategic_analyses ADD COLUMN ${c} TEXT`).run();
   const scols = new Set(((await db.prepare(`PRAGMA table_info(strategic_sources)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
-  for (const c of ["backfilled_at", "gnews_at", "backfill_note", "sitemap_at", "sitemap_note", "sections_at", "extra_feeds"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
+  for (const c of ["backfilled_at", "gnews_at", "backfill_note", "sitemap_at", "sitemap_note", "sections_at", "extra_feeds", "spam_seen"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_candidates (url TEXT PRIMARY KEY, source_url TEXT NOT NULL, lastmod TEXT, priority INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_candidates_pending ON strategic_candidates(status, priority, lastmod)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_analyses_url ON strategic_analyses(url)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
   ]);
-  // Drop stored pieces that are not analytical publications ("About the GDHO"), whenever the filter changes.
-  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v3'`).first())) {
-    const rows = (await db.prepare(`SELECT domain, id, title, summary, url FROM strategic_analyses`).all<{ domain: string; id: string; title: string; summary: string | null; url: string }>()).results ?? [];
-    const junk = rows.filter((r) => isNotAnalysis({ title: r.title, summary: r.summary ?? "", url: r.url }));
+  // Pieces found through sitemaps were dated by "last modified" when a page gave no date: drop them and read their
+  // pages again under the strict rule (the page's own date or none).
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'sitemap_dates_v1'`).first())) {
+    await db.batch([
+      db.prepare(`DELETE FROM strategic_analyses WHERE url IN (SELECT url FROM strategic_candidates WHERE status = 'done')`),
+      db.prepare(`UPDATE strategic_candidates SET status = 'pending' WHERE status = 'done'`),
+      db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('sitemap_dates_v1', ?)`).bind(JSON.stringify(new Date().toISOString())),
+    ]);
+  }
+  // Drop stored pieces that are not analytical publications ("About the GDHO", casino spam), whenever the filter changes.
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v4'`).first())) {
+    const rows = (await db.prepare(`SELECT domain, id, title, summary, url, source FROM strategic_analyses`).all<{ domain: string; id: string; title: string; summary: string | null; url: string; source: string }>()).results ?? [];
+    // Hosts that served spam: everything from them is checked again with the full keyword test.
+    const spamHosts = new Set(rows.filter((r) => looksLikeSpam(`${r.title} ${r.summary ?? ""} ${r.url.replace(/[-_/]+/g, " ")}`)).map((r) => hostOf(r.url)));
+    const bySourceName = new Map(SOURCES.map((x) => [x.name, x]));
+    const junk = rows.filter((r) => {
+      if (isNotAnalysis({ title: r.title, summary: r.summary ?? "", url: r.url })) return true;
+      if (!spamHosts.has(hostOf(r.url))) return false;
+      const src = bySourceName.get((r as { source?: string }).source ?? "");
+      return !src || classify({ title: r.title, summary: r.summary ?? "", url: r.url, published: new Date().toISOString(), source: src, strict: true }).every((x) => x.domain !== r.domain);
+    });
     for (let i = 0; i < junk.length; i += 50) await db.batch(junk.slice(i, i + 50).map((r) => db.prepare(`DELETE FROM strategic_analyses WHERE domain = ? AND id = ?`).bind(r.domain, r.id)));
-    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v3', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
+    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v4', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
   }
   // One-time: the first catch-ups shared the main schedule's request budget and many found nothing because their
   // requests were refused, so every source's past year is fetched again on Strategic Analyses' own schedule.
@@ -798,10 +829,19 @@ export function worthOpening(src: Source, loc: string): boolean {
   if (NOT_CONTENT.test(u.pathname) || u.search) return false;
   const words = slugWords(loc);
   if (words.replace(/\s/g, "").length < 12 || words.split(" ").length < 3) return false;
+  if (looksLikeSpam(words)) return false;
   if (src.africa || isHumanitarianSpecialist(src)) return true;
   const w = fold(words);
   const where = africaOf(words);
   return src.domains.some((d) => domainOf(d)!.signal.test(w) && (where.africa || (d === "humanitarian" && !where.elsewhere)));
+}
+
+/** A publication date written into an address (/2020/04/15/…, /2020-04-…), if any. */
+export function dateInUrl(u: string): string | null {
+  const m = u.match(/\/((?:19|20)\d{2})[/-](0[1-9]|1[0-2])(?:[/-](0[1-9]|[12]\d|3[01]))?(?:[/-]|$)/);
+  if (!m) return null;
+  const t = Date.parse(`${m[1]}-${m[2]}-${m[3] ?? "01"}T00:00:00Z`);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
 
 /** Title, summary and publication date from a page's head. */
@@ -822,8 +862,9 @@ export function pageMeta(html: string): { title: string; summary: string; publis
   title = title.replace(/\s+[|–—]\s+[^|–—]{2,60}$/, "").trim();
   const summary = unescape(meta(["og:description", "description", "twitter:description"]));
   const dateRaw =
-    meta(["article:published_time", "datePublished", "date", "dc.date", "DC.date.issued", "citation_publication_date", "pubdate"]) ||
+    meta(["article:published_time", "datePublished", "date", "dc.date", "DC.date.issued", "dcterms.issued", "dcterms.created", "DC.date.created", "citation_publication_date", "citation_date", "citation_online_date", "pubdate", "publish-date", "publication_date", "sailthru.date", "parsely-pub-date"]) ||
     head.match(/"datePublished"\s*:\s*"([^"]+)"/)?.[1] ||
+    head.match(/"dateCreated"\s*:\s*"([^"]+)"/)?.[1] ||
     head.match(/<time[^>]+datetime=["']([^"']+)["']/i)?.[1] ||
     "";
   const t = Date.parse(dateRaw);
@@ -850,8 +891,8 @@ export async function collectStrategicAnalyses(
   const discover = opts.discover ?? discoverFeed;
   await ensureAnalysisTables(db);
 
-  type State = { url: string; feed_url: string | null; checked_at: string | null; status: string | null; backfilled_at: string | null; gnews_at: string | null; sections_at: string | null; extra_feeds: string | null };
-  const states = new Map((await db.prepare(`SELECT url, feed_url, checked_at, status, backfilled_at, gnews_at, sections_at, extra_feeds FROM strategic_sources`).all<State>()).results?.map((r) => [r.url, r]) ?? []);
+  type State = { url: string; feed_url: string | null; checked_at: string | null; status: string | null; backfilled_at: string | null; gnews_at: string | null; sections_at: string | null; extra_feeds: string | null; spam_seen: string | null };
+  const states = new Map((await db.prepare(`SELECT url, feed_url, checked_at, status, backfilled_at, gnews_at, sections_at, extra_feeds, spam_seen FROM strategic_sources`).all<State>()).results?.map((r) => [r.url, r]) ?? []);
   const extraFeedsOf = (s: Source): string[] => {
     let found: string[] = [];
     try {
@@ -898,8 +939,16 @@ export async function collectStrategicAnalyses(
   // are dated by publication.
   const recentIso = new Date(now.getTime() - 3 * 86_400_000).toISOString();
   /** Classifies and stores entries; returns how many distinct pieces were kept. `old` dates older ones by publication. */
+  // A source that has served spam twice is treated as compromised: no "keep everything" for its pieces any more.
+  const spamCount = new Map(SOURCES.map((s) => [s.url, Number(states.get(s.url)?.spam_seen ?? 0)]));
   const store = async (src: Source, entries: Entry[], old: boolean): Promise<number> => {
-    const kept = entries.filter((e) => e.published >= cutoff && e.published <= new Date(now.getTime() + 86_400_000).toISOString()).flatMap((e) => classify({ ...e, source: src }));
+    const spam = entries.filter((e) => looksLikeSpam(`${e.title} ${e.summary} ${e.url.replace(/[-_/]+/g, " ")}`)).length;
+    if (spam) {
+      spamCount.set(src.url, (spamCount.get(src.url) ?? 0) + spam);
+      await db.prepare(`UPDATE strategic_sources SET spam_seen = ? WHERE url = ?`).bind(String(spamCount.get(src.url)), src.url).run();
+    }
+    const strict = (spamCount.get(src.url) ?? 0) >= 2;
+    const kept = entries.filter((e) => e.published >= cutoff && e.published <= new Date(now.getTime() + 86_400_000).toISOString()).flatMap((e) => classify({ ...e, source: src, strict }));
     for (let i = 0; i < kept.length; i += 40) {
       const write = () => db.batch(
         kept.slice(i, i + 40).map((it) =>
@@ -1169,11 +1218,13 @@ export async function collectStrategicAnalyses(
         const html = await getText(c.url);
         if (html) {
           const m = pageMeta(html);
-          const published = m.published ?? c.lastmod;
+          // Only the page's own publication date (or one in its address): a sitemap's "last modified" changes whenever
+          // a site touches a page, so a 2020 paper would pass for new. Undated pages are left out.
+          const published = m.published ?? dateInUrl(c.url);
           if (m.title && published) {
             await store(src, [{ title: m.title, url: c.url, published, summary: m.summary }], true);
             status = "done";
-          }
+          } else status = "undated";
         }
       }
     } finally {
