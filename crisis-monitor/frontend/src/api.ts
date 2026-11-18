@@ -1536,7 +1536,7 @@ export interface StrategicAnalysesData {
   domain: AnalysisDomain;
   domains: { id: AnalysisDomain; label: string; blurb: string; recent: number; latest: string | null }[];
   items: StrategicAnalysis[];
-  themes: { id: string; label: string; systemic: boolean; context: boolean; terms: string[] }[];
+  themes: { id: string; label: string; systemic: boolean; context: boolean; terms: string[]; rules: string[][][] }[];
   regions: string[];
   countryNames: Record<string, string>;
   /** Admins only: what the collector is doing. */
