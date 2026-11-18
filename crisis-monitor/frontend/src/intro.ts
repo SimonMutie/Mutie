@@ -195,7 +195,7 @@ export function stopWelcome(): void {
 
 /* ── tone ──────────────────────────────────────────────────────────── */
 
-/** A quiet two-note swell as the eye opens. Silently does nothing if the
+/** A quiet two-note swell as the globe comes into view. Silently does nothing if the
  *  browser will not start audio yet. */
 export function playOpeningTone(): void {
   if (!introSoundEnabled()) return;
