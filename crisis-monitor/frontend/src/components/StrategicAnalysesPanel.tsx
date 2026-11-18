@@ -496,7 +496,7 @@ function Diagnostics({ d }: { d: NonNullable<StrategicAnalysesData["diagnostics"
       {row("Sources", `${s.ok ?? 0} feeds working · ${s.failing ?? 0} without a readable feed · ${s.listed ?? 0} listed`)}
       {row("Past-year catch-up", `${s.backfilled ?? 0} of ${s.listed ?? 0} done${s.backfill_cut ? ` (${s.backfill_cut} cut short)` : ""}`)}
       {row("Sitemaps", `${s.sitemaps_read ?? 0} read · ${s.sitemaps_found ?? 0} listed publications`)}
-      {row("Pages from sitemaps", `${p.pending ?? 0} waiting · ${p.done ?? 0} read · ${p.failed ?? 0} unreadable`)}
+      {row("Pages from sitemaps", `${p.pending ?? 0} waiting · ${p.done ?? 0} read · ${p.undated ?? 0} skipped (no publication date) · ${p.failed ?? 0} unreadable`)}
       {row("Stored", Object.entries(d.stored ?? {}).map(([k, v]) => `${k} ${v.inScope}`).join(" · ") || "nothing yet")}
       {r?.fetchFails && Object.keys(r.fetchFails).length > 0 &&
         row(
