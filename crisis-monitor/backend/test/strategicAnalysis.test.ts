@@ -3,7 +3,7 @@ import { africaOf, classify, collectStrategicAnalyses, DOMAINS, domainSummary, e
 import { buildAnalysesNotification } from "../src/lib/alertDelivery";
 import { fakeD1 } from "./fakeD1";
 
-const src = (domains: DomainId[], africa = false): Source => ({ name: "Think tank", url: "https://t.example/feed", africa, domains });
+const src = (domains: DomainId[], africa = false): Source => ({ name: "Think tank", url: "https://t.example/feed", africa, kind: "international", domains });
 const ALL = DOMAINS.map((d) => d.id);
 const at = "2026-11-17T08:00:00.000Z";
 const base = { url: "https://x/1", published: at, summary: "" };
@@ -14,7 +14,9 @@ describe("the domains and their taxonomies", () => {
     expect(ALL).toEqual(["humanitarian", "geopolitics", "elections", "economy", "trade", "cyber", "conflict"]);
     expect(SOURCES.every((s) => s.domains.length > 0)).toBe(true);
     expect(new Set(SOURCES.map((s) => s.url)).size).toBe(SOURCES.length);
-    for (const d of DOMAINS) expect(SOURCES.filter((s) => s.domains.includes(d.id)).length).toBeGreaterThanOrEqual(8);
+    for (const d of DOMAINS) expect(SOURCES.filter((s) => s.domains.includes(d.id)).length).toBeGreaterThanOrEqual(20);
+    expect(SOURCES.filter((s) => s.kind === "african").length).toBeGreaterThanOrEqual(90);
+    expect(SOURCES.filter((s) => s.kind === "analyst").length).toBeGreaterThanOrEqual(15);
   });
 
   it("finds the themes a piece touches within a domain", () => {
@@ -39,9 +41,26 @@ describe("the domains and their taxonomies", () => {
     expect(domainsOf("Al-Shabaab offensive and the ceasefire talks in Somalia", src(["trade"], true))).toEqual([]);
   });
 
-  it("tells which African countries a piece discusses, and keeps the Middle East out", () => {
-    expect(africaOf("Aid cuts in South Sudan and Sudan, with Sudanese refugees in Chad")).toEqual({ africa: true, countries: expect.arrayContaining(["SS", "SD", "TD"]) });
-    expect(africaOf("Funding cuts hit Syria and Yemen")).toEqual({ africa: false, countries: [] });
+  it("tells which African countries, places, regions and blocs a piece discusses, and keeps the Middle East out", () => {
+    expect(africaOf("Aid cuts in South Sudan and Sudan, with Sudanese refugees in Chad")).toMatchObject({ africa: true, countries: expect.arrayContaining(["SS", "SD", "TD"]) });
+    expect(africaOf("Funding cuts hit Syria and Yemen")).toMatchObject({ africa: false, countries: [] });
+    const w = africaOf("RSF drones strike El Fasher as the African Union and IGAD push for talks");
+    expect(w).toMatchObject({ africa: true, countries: ["SD"], places: expect.arrayContaining(["El Fasher"]), regions: ["Horn of Africa"], blocs: expect.arrayContaining(["AU", "IGAD"]) });
+    expect(africaOf("La CEDEAO face aux juntes du Sahel").regions).toEqual(expect.arrayContaining(["Sahel"]));
+    expect(africaOf("L'Alliance des États du Sahel quitte la CEDEAO").blocs).toEqual(expect.arrayContaining(["AES", "ECOWAS"]));
+  });
+
+  it("reads French and Portuguese, and ignores accents and hyphens", () => {
+    expect(domainsOf("Présidentielle en Côte d'Ivoire : la CENI et la fraude électorale au cœur du scrutin", src(ALL))).toContain("elections");
+    expect(domainsOf("Sahel : le JNIM étend ses attaques djihadistes vers les pays côtiers", src(ALL))).toContain("conflict");
+    expect(domainsOf("Dette souveraine : le Sénégal face au FMI et à l'inflation", src(ALL))).toContain("economy");
+    expect(domainsOf("Moçambique: insurgência em Cabo Delgado e a guerra", src(ALL))).toContain("conflict");
+    expect(themesOf("conflict", "Farmer-herder clashes in Benue")).toEqual(expect.arrayContaining([expect.objectContaining({ id: "communal" })]));
+  });
+
+  it("does not count a crisis mention alone as new-humanitarianism analysis", () => {
+    expect(domainsOf("Aid convoys reach Darfur", src(["humanitarian"]))).toEqual([]);
+    expect(domainsOf("Aid cuts leave local NGOs in Darfur without funding", src(["humanitarian"]))).toEqual(["humanitarian"]);
   });
 });
 
