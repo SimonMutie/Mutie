@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { africaOf, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, listAnalyses, newAnalysesSince, parseFeed, resetAnalysisTables, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
+import { africaOf, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, newAnalysesSince, parseFeed, resetAnalysisTables, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
 import { buildAnalysesNotification } from "../src/lib/alertDelivery";
 import { fakeD1 } from "./fakeD1";
 
@@ -58,9 +58,23 @@ describe("the domains and their taxonomies", () => {
     expect(themesOf("conflict", "Farmer-herder clashes in Benue")).toEqual(expect.arrayContaining([expect.objectContaining({ id: "communal" })]));
   });
 
-  it("does not count a crisis mention alone as new-humanitarianism analysis", () => {
-    expect(domainsOf("Aid convoys reach Darfur", src(["humanitarian"]))).toEqual([]);
-    expect(domainsOf("Aid cuts leave local NGOs in Darfur without funding", src(["humanitarian"]))).toEqual(["humanitarian"]);
+  it("does not count a crisis mention alone as new-humanitarianism analysis from a broad source", () => {
+    expect(domainsOf("Aid convoys reach Darfur", src(ALL))).toEqual([]);
+    expect(domainsOf("Aid cuts leave local NGOs in Darfur without funding", src(ALL))).toEqual(["humanitarian"]);
+  });
+
+  it("takes everything a humanitarian specialist publishes, and keeps general reflections in scope", () => {
+    const hs = src(["humanitarian"]);
+    // No humanitarian keyword in the title: kept, tagged with the general theme.
+    const [piece] = classify({ ...base, title: "The reset is dead, long live the reset?", summary: "", source: hs });
+    expect(piece).toMatchObject({ domain: "humanitarian", inScope: true });
+    const [general] = classify({ ...base, title: "Notes from the field", summary: "", source: hs });
+    expect(general.themes).toEqual(["general"]);
+    // A general reflection tied to no place, from a broad source: in scope.
+    expect(classify({ ...base, title: "Rethinking risk sharing between aid donors and local partners", summary: "", source: src(ALL) })[0]).toMatchObject({ inScope: true });
+    // About a crisis elsewhere only: stored, but out of scope (shown under "Everything").
+    expect(classify({ ...base, title: "Humanitarian access in Gaza under siege", summary: "", source: hs })[0]).toMatchObject({ inScope: false });
+    expect(classify({ ...base, title: "Humanitarian access in Gaza and Sudan", summary: "", source: hs })[0]).toMatchObject({ inScope: true });
   });
 });
 
@@ -88,11 +102,12 @@ describe("collecting and alerting", () => {
     const discover = async (u: string) => (u === ok ? { status: "ok" as const, feedUrl: "https://feed/ok" } : { status: "no_feed" as const });
     const fetcher = async () => new Response(feed);
     const now = new Date("2026-11-17T09:00:00Z");
-    const r1 = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 5 });
+    const lanes = { backfill: 0, gnews: 0 };
+    const r1 = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 5, ...lanes });
     expect(r1.sources).toBe(5);
     expect(r1.added).toBeGreaterThanOrEqual(3);
     // The next run reads the next batch, not the same sources again.
-    const r2 = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 5 });
+    const r2 = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 5, ...lanes });
     expect(r2).toMatchObject({ ran: true, added: 0, sources: 5 });
 
     expect((await listAnalyses(DB as never, "humanitarian", { days: 3650 })).map((i) => i.url)).toEqual(["https://t/1"]);
@@ -106,6 +121,59 @@ describe("collecting and alerting", () => {
     const msg = buildAnalysesNotification("elections", [election]);
     expect(msg.subject).toContain("New Elections analysis");
     expect(msg.sections[0].links[0].url).toBe("https://t/3");
+  });
+
+  it("backfills a year from older feed pages, a Substack archive and Google News, without alerting on old pieces", async () => {
+    const { DB } = fakeD1();
+    const env = { DB } as never;
+    const now = new Date("2026-11-17T09:00:00Z");
+    const item = (t: string, u: string, d: string) => `<item><title>${t}</title><link>${u}</link><pubDate>${new Date(d).toUTCString()}</pubDate><description>Humanitarian aid analysis.</description></item>`;
+    const rss = (...items: string[]) => `<rss><channel>${items.join("")}</channel></rss>`;
+    const tnh = SOURCES.find((s) => s.name === "The New Humanitarian")!;
+    const sub = SOURCES.find((s) => s.url.includes("kenopalo.substack.com"))!;
+    const calls: string[] = [];
+    const fetcher = async (u: string) => {
+      calls.push(u);
+      if (u.startsWith("https://news.google.com/")) return new Response(rss(item("Localisation in Somalia after the cuts - The New Humanitarian", "https://news.google.com/rss/articles/x", "2026-03-01")));
+      if (u === tnh.url) return new Response(rss(item("Aid cuts bite in Sudan", "https://tnh/1", "2026-11-16")));
+      if (u === `${tnh.url}?paged=2`) return new Response(rss(item("The humanitarian reset, six months on", "https://tnh/2", "2026-05-01")));
+      if (u === `${tnh.url}?paged=3`) return new Response("", { status: 404 });
+      if (u.startsWith("https://kenopalo.substack.com/api/v1/archive")) {
+        return new Response(u.includes("offset=0") ? JSON.stringify([{ title: "Why Africa needs to rethink aid dependency", canonical_url: "https://kenopalo.substack.com/p/aid", post_date: "2026-02-10T00:00:00Z", subtitle: "Aid cuts, sovereign debt and the IMF programme in Kenya" }]) : "[]");
+      }
+      if (u === sub.url) return new Response(rss(item("Kenya's debt and the IMF", "https://kenopalo.substack.com/p/debt", "2026-11-15")));
+      return new Response("", { status: 404 });
+    };
+    const discover = async (u: string) => ({ status: "ok" as const, feedUrl: u });
+    // Backfill exactly these two sources.
+    await DB.prepare(`SELECT 1`).run();
+    resetAnalysisTables();
+    await ensureAnalysisTables(DB as never);
+    for (const s of SOURCES) if (s !== tnh && s !== sub) await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at) VALUES (?,?,?,?,?)`).bind(s.url, s.name, now.toISOString(), now.toISOString(), now.toISOString()).run();
+    const r = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0 });
+    expect(r.backfilled).toBe(2);
+    const hum = await listAnalyses(DB as never, "humanitarian", { days: 400 });
+    expect(hum.map((i) => i.title).sort()).toEqual(["Aid cuts bite in Sudan", "Localisation in Somalia after the cuts", "The humanitarian reset, six months on"].sort());
+    expect((await listAnalyses(DB as never, "economy", { days: 400 })).map((i) => i.title)).toContain("Why Africa needs to rethink aid dependency");
+    // Backfilled pieces are dated by publication, so only a genuinely recent one could alert.
+    const old = hum.find((i) => i.title.startsWith("The humanitarian reset"))!;
+    expect(old.firstSeen).toBe(old.published);
+    expect((await newAnalysesSince(DB as never, "humanitarian", "2026-11-17T08:00:00Z")).map((i) => i.title)).toEqual(["Aid cuts bite in Sudan"]);
+    // Google News: searched once per domain for broad sources, once for the whole site for specialists.
+    expect(calls.filter((u) => u.startsWith("https://news.google.com/") && u.includes("thenewhumanitarian.org")).length).toBe(1);
+    // Not backfilled twice.
+    const again = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0 });
+    expect(again.backfilled).toBe(0);
+  });
+
+  it("builds Google News searches per domain for broad sources", () => {
+    const iss = SOURCES.find((s) => s.name.startsWith("Institute for Security Studies"))!;
+    expect(gnewsQueries(iss, "1y")).toHaveLength(iss.domains.length);
+    expect(decodeURIComponent(gnewsQueries(iss, "1y")[0])).toContain("site:issafrica.org");
+    const chatham = SOURCES.find((s) => s.name === "Chatham House")!;
+    const q = gnewsQueries(chatham, "3d").map(decodeURIComponent);
+    expect(q.find((x) => x.includes("humanitarian"))).not.toContain("(Africa OR African OR Afrique)");
+    expect(q.find((x) => x.includes("election"))).toContain("(Africa OR African OR Afrique)");
   });
 
   it("moves the first version's humanitarian pieces into New Humanitarianism", async () => {
