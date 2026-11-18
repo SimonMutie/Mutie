@@ -27,7 +27,7 @@ const MAX_DEVICES = 15;
 const frequency = z.number().int().refine((n) => (FREQUENCIES as readonly number[]).includes(n), "frequency_minutes must be 5, 15, 60, 360 or 1440");
 
 const createSchema = z.object({
-  scope: z.enum(["query", "escalations"]),
+  scope: z.enum(["query", "escalations", "humanitarian"]),
   query_id: z.string().min(1).optional(),
   channel: z.enum(["email", "signal", "push"]),
   destination: z.string().min(1).max(2000),
@@ -43,7 +43,7 @@ const patchSchema = z.object({
 });
 
 /** Escalation alerts are for Elevated/Critical incidents; a query's are either every development or only once an alert has opened. */
-const levelFits = (scope: string, level: string) => (scope === "escalations" ? level === "elevated" || level === "critical" : level === "any" || level === "alert");
+const levelFits = (scope: string, level: string) => (scope === "escalations" ? level === "elevated" || level === "critical" : scope === "humanitarian" ? level === "any" : level === "any" || level === "alert");
 const LEVEL_ERROR = "That alert level does not apply here.";
 
 const present = (s: Subscription) => ({
@@ -73,7 +73,7 @@ alertSubscriptionsRouter.get("/", async (c) => {
   await ensureAlertTables(c.env);
   const scope = c.req.query("scope");
   const queryId = c.req.query("query_id");
-  if (scope !== "query" && scope !== "escalations") return c.json({ error: "scope must be 'query' or 'escalations'" }, 400);
+  if (scope !== "query" && scope !== "escalations" && scope !== "humanitarian") return c.json({ error: "scope must be 'query', 'escalations' or 'humanitarian'" }, 400);
   if (scope === "query") {
     if (!queryId) return c.json({ error: "query_id is required" }, 400);
     if (!(await canAccessQuery(c.env, c.get("userId"), c.get("role"), queryId))) return c.json({ error: "Not found" }, 404);
@@ -81,7 +81,7 @@ alertSubscriptionsRouter.get("/", async (c) => {
   const rows =
     scope === "query"
       ? await all<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE owner_id = ? AND scope = 'query' AND query_id = ? ORDER BY created_at", [c.get("userId"), queryId])
-      : await all<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE owner_id = ? AND scope = 'escalations' ORDER BY created_at", [c.get("userId")]);
+      : await all<Subscription>(c.env.DB, "SELECT * FROM alert_subscriptions WHERE owner_id = ? AND scope = ? ORDER BY created_at", [c.get("userId"), scope]);
   return c.json({ channels: channelsAvailable(c.env), subscriptions: rows.map(present) });
 });
 
