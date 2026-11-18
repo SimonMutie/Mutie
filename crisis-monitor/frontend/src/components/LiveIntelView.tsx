@@ -137,7 +137,7 @@ import { MapSearchPanel } from "./MapSearch";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
 import AfrIntelPanel from "./AfrIntelPanel";
-import HumanitarianPanel from "./HumanitarianPanel";
+import StrategicAnalysesPanel from "./StrategicAnalysesPanel";
 import type { AfrIntelRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
 import { WeatherTiles, useRainViewer } from "./WeatherTiles";
@@ -495,33 +495,6 @@ const LAYER_DEFS: LayerDef[] = [
   // licensing conflict.
   // Not live data: a curated list of long-running flashpoints (see standingHotspots.ts), so the map shows where to
   // look on a quiet day. Live, verified escalations are the alert layers; nothing here is an alert.
-  // Strategic humanitarian analyses from think tanks (lib/humanitarianAnalysis.ts on the server): pinned at the
-  // African country each discusses most; switching the layer on also opens the reading panel on the right.
-  {
-    key: "humanitarian-analysis",
-    label: "Humanitarian Analyses",
-    group: "Threats & Intel",
-    color: "#2dd4bf",
-    icon: HeartHandshake,
-    fetcher: async () => {
-      const d = await api.getHumanitarianAnalysis(60);
-      return d.items
-        .filter((i) => i.lat != null && i.lng != null)
-        .map((i) => ({
-          id: `hum-${i.id}`,
-          layerKey: "Humanitarian Analyses",
-          lat: i.lat!,
-          lng: i.lng!,
-          color: "#2dd4bf",
-          size: 0.26,
-          title: i.title,
-          subtitle: `${i.source} · humanitarian analysis`,
-          time: i.published,
-          url: i.url,
-          details: i.summary ? i.summary.slice(0, 280) : undefined,
-        }));
-    },
-  },
   {
     key: "standing-hotspots",
     label: "Standing Hotspots",
@@ -1117,7 +1090,7 @@ type MapMode = "3d" | "2d" | "map" | "sat";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "afrintel" | "humanitarian" | null;
+type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "afrintel" | "analyses" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -1446,12 +1419,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
   // Where the map should fly to, from a Locate button in Live Alerts; seq makes a repeat request count.
   const [focus, setFocus] = useState<{ lat: number; lng: number; zoom: number; seq: number } | null>(null);
-  // Switching Humanitarian Analyses on opens its reading panel too (the pins are only the African-country part of it).
-  const humOn = !!enabled["humanitarian-analysis"];
-  useEffect(() => {
-    if (humOn) setActiveTool("humanitarian");
-  }, [humOn]);
-
   // AfrIntel: items AfrIntel Assist marked (cyan), and the forecast run on screen, whose actors and relations are drawn.
   const [afrIntelMarks, setAfrIntelMarks] = useState<{ lat: number; lng: number; title: string; url: string | null }[]>([]);
   const [afrIntelRun, setAfrIntelRun] = useState<AfrIntelRun | null>(null);
@@ -2463,7 +2430,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     >
       <div
         // The zoom pad keeps clear of the tool rail, and of a tool's own panel when one is open beside it.
-        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool === "economy" ? "min(648px, 55%)" : rightTool ? "min(488px, 45%)" : "84px") : "12px" }}
+        style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool === "economy" ? "min(648px, 55%)" : rightTool && rightTool !== "analyses" ? "min(488px, 45%)" : "84px") : "12px" }}
       >
         {mapMode === "3d" ? (
           <Map3D
@@ -2772,11 +2739,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             <SituationPanel />
           </ToolPanelShell>
         )}
-        {rightTool === "humanitarian" && (
-          <ToolPanelShell title="Analyses">
-            <HumanitarianPanel isAdmin={isAdmin} onLocate={(lat, lng) => setFocus((f) => ({ lat, lng, zoom: 5, seq: (f?.seq ?? 0) + 1 }))} />
-          </ToolPanelShell>
-        )}
+        {rightTool === "analyses" && <StrategicAnalysesPanel isAdmin={isAdmin} onClose={() => setActiveTool((prev) => (prev === "analyses" ? null : prev))} />}
         {rightTool === "afrintel" && canAfrIntel && (
           <ToolPanelShell title="AfrIntel">
             <AfrIntelPanel
@@ -4197,7 +4160,7 @@ function RightToolRail({ active, onSelect, hide = [] }: { active: RightTool; onS
     { key: "telegram", icon: Send, label: "Telegram" },
     { key: "events", icon: HeartPulse, label: "Events" },
     { key: "afrintel", icon: BrainCircuit, label: "AfrIntel" },
-    { key: "humanitarian", icon: HeartHandshake, label: "Analyses" },
+    { key: "analyses", icon: HeartHandshake, label: "Analyses" },
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const tools = allTools.filter((t) => !hide.includes(t.key));
