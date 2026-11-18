@@ -485,7 +485,7 @@ function Diagnostics({ d }: { d: NonNullable<StrategicAnalysesData["diagnostics"
         row(
           "Last run",
           r.finishedAt ? (
-            `${when(r.startedAt)}, ${r.seconds ?? "?"}s, ${r.added ?? 0} new · read ${r.lanes?.read ?? 0}, catch-up ${r.lanes?.backfill ?? 0}, sitemaps ${r.lanes?.sitemaps ?? 0}, pages ${r.lanes?.pages ?? 0}, searches ${r.lanes?.gnews ?? 0}${r.lanes?.skipped ? `, ${r.lanes.skipped} left for next run` : ""}`
+            `${when(r.startedAt)}, ${r.seconds ?? "?"}s, ${r.added ?? 0} new · read ${r.lanes?.read ?? 0}, catch-up ${r.lanes?.backfill ?? 0}, section feeds ${r.lanes?.sections ?? 0}, sitemaps ${r.lanes?.sitemaps ?? 0}, pages ${r.lanes?.pages ?? 0}, searches ${r.lanes?.gnews ?? 0}${r.lanes?.skipped ? `, ${r.lanes.skipped} left for next run` : ""}`
           ) : (
             <span style={{ color: "#f87171" }}>started {when(r.startedAt)} and did not finish</span>
           )
