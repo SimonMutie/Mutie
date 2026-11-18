@@ -17,6 +17,8 @@ export interface Source {
   africa: boolean;
   kind: SourceKind;
   domains: DomainId[];
+  /** Other feed addresses to try when the main one refuses or has moved. */
+  altFeeds?: string[];
 }
 
 export const SOURCE_KIND_LABEL: Record<SourceKind, string> = {
@@ -229,7 +231,10 @@ export const SOURCES: Source[] = [
   intl("Centre for Humanitarian Dialogue", "https://hdcentre.org/", [K, H]),
   intl("World Peace Foundation", "https://worldpeacefoundation.org/", [K, H]),
   /* New Humanitarianism */
-  outlet("The New Humanitarian", "https://www.thenewhumanitarian.org/rss/all.xml", [H, K], false),
+  {
+    ...outlet("The New Humanitarian", "https://www.thenewhumanitarian.org/rss/all.xml", [H, K], false),
+    altFeeds: ["https://www.thenewhumanitarian.org/rss.xml", "https://www.thenewhumanitarian.org/feed", "https://www.thenewhumanitarian.org/rss/news.xml", "https://www.thenewhumanitarian.org/rss/analysis.xml"],
+  },
   intl("Humanitarian Practice Network", "https://odihpn.org/feed/", [H]),
   intl("ALNAP", "https://www.alnap.org/", [H]),
   intl("ICRC Humanitarian Law & Policy blog", "https://blogs.icrc.org/law-and-policy/feed/", [H, K]),
