@@ -61,55 +61,55 @@ const HUMANITARIAN_THEMES: Theme[] = [
     id: "funding",
     label: "Funding cuts & aid financing",
     systemic: true,
-    terms: ["funding cut*", "aid cut*", "budget cut*", "cuts to aid", "foreign aid", "official development assistance", "oda", "usaid", "dismantl*", "aid freeze", "funding freeze", "stop work order*", "funding gap*", "underfund*", "humanitarian financing", "humanitarian funding", "pooled fund*", "country based pooled fund*", "cerf", "global humanitarian overview", "humanitarian response plan*", "appeal* funded", "donor fatigue", "donor government*", "shrinking aid", "aid budget*", "aid architecture", "financing gap", "hyper prioriti*", "prioritisation", "prioritization", "baisse de l aide", "coupes budgetaires", "financement humanitaire", "aide publique au developpement", "cortes na ajuda"],
+    terms: ["funding cut*", "aid cut*", "budget cut*", "cuts to aid", "foreign aid", "official development assistance", "oda", "usaid", "dismantl*", "aid freeze", "funding freeze", "stop work order*", "funding gap*", "underfund*", "humanitarian financing", "humanitarian funding", "pooled fund*", "country based pooled fund*", "cerf", "global humanitarian overview", "humanitarian response plan*", "appeal* funded", "funding crunch", "funding crisis", "liquidity crisis", "un liquidity", "pepfar", "uk aid", "fcdo", "0 7 per cent", "0 3 per cent", "gni", "aid budget cut*", "development budget*", "rescission*", "doge", "trump cuts", "ration cut*", "pipeline break*", "staff cuts", "job cuts", "layoffs", "redundanc*", "ngo closures", "programme closures", "contraction", "retrenchment", "humanitarian needs overview", "donor fatigue", "donor government*", "shrinking aid", "aid budget*", "aid architecture", "financing gap", "hyper prioriti*", "prioritisation", "prioritization", "baisse de l aide", "coupes budgetaires", "financement humanitaire", "aide publique au developpement", "cortes na ajuda"],
   },
   {
     id: "reset",
     label: "Humanitarian reset & system reform",
     systemic: true,
-    terms: ["humanitarian reset", "the reset", "reset humanitaire", "un80", "un reform", "system reform", "grand bargain", "iasc", "inter agency standing committee", "flagship initiative", "humanitarian architecture", "humanitarian system", "systeme humanitaire", "transformation agenda", "agency merger*", "merging agencies", "emergency relief coordinator", "cluster system", "cluster approach", "humanitarian coordination", "coordination humanitaire", "area based coordination"],
+    terms: ["humanitarian reset", "the reset", "reset humanitaire", "un80", "un reform", "system reform", "grand bargain", "iasc", "inter agency standing committee", "flagship initiative", "humanitarian architecture", "humanitarian system", "systeme humanitaire", "transformation agenda", "agency merger*", "merging agencies", "emergency relief coordinator", "cluster system", "cluster approach", "humanitarian coordination", "coordination humanitaire", "area based coordination", "people centred", "people centered", "needs based", "hyper prioritised", "hyper prioritized", "humanitarian compact", "new humanitarian architecture", "ocha", "humanitarian leadership", "humanitarian coordinator*", "humanitarian country team*", "agency mandates"],
   },
   {
     id: "localisation",
     label: "Localisation & shifting power",
     systemic: true,
-    terms: ["localisation", "localization", "localis*", "localiz*", "locally led", "local actors", "local and national actors", "national ngos", "local ngos", "ong locales", "ong nationales", "acteurs locaux", "community led", "community based organi*", "mutual aid", "emergency response rooms", "err", "shift the power", "shifting power", "power shift", "decoloni*", "charter for change", "intermediar*", "direct funding", "overhead*", "indirect cost*", "women led organi*", "women s rights organi*", "proximate", "local leadership", "equitable partnership*", "leadership locale"],
+    terms: ["localisation", "localization", "localis*", "localiz*", "locally led", "local actors", "local and national actors", "national ngos", "local ngos", "ong locales", "ong nationales", "acteurs locaux", "community led", "community based organi*", "mutual aid", "emergency response rooms", "err", "shift the power", "shifting power", "power shift", "decoloni*", "charter for change", "intermediar*", "direct funding", "overhead*", "indirect cost*", "women led organi*", "women s rights organi*", "proximate", "local leadership", "equitable partnership*", "leadership locale", "survivor led", "refugee led", "refugee led organi*", "youth led", "faith based", "faith actors", "grassroots", "community philanthropy", "african philanthropy", "pledge for change", "risk sharing", "partnership*", "capacity sharing", "power imbalance*", "ubuntu", "solidarity", "african led", "african solutions"],
   },
   {
     id: "global-south",
     label: "Global South & non-traditional actors",
     systemic: true,
-    terms: ["global south", "sud global", "non traditional donor*", "emerging donor*", "new donors", "gulf donor*", "gulf humanitarian*", "saudi aid", "ksrelief", "emirati aid", "uae aid", "qatari aid", "qatar fund for development", "qatar charity", "kuwaiti aid", "turkish aid", "turkiye s aid", "tika", "afad", "chinese aid", "china s aid", "south south", "brics", "india s aid", "african humanitarian agency", "african union humanitarian", "au humanitarian", "afreximbank", "solidarity based", "middle powers", "islamic humanitarian*", "islamic relief", "zakat", "waqf", "diaspora", "remittance*"],
+    terms: ["global south", "sud global", "non traditional donor*", "emerging donor*", "new donors", "gulf donor*", "gulf humanitarian*", "saudi aid", "ksrelief", "emirati aid", "uae aid", "qatari aid", "qatar fund for development", "qatar charity", "kuwaiti aid", "turkish aid", "turkiye s aid", "tika", "afad", "chinese aid", "china s aid", "south south", "brics", "india s aid", "african humanitarian agency", "african union humanitarian", "au humanitarian", "afreximbank", "solidarity based", "middle powers", "islamic humanitarian*", "islamic relief", "zakat", "waqf", "diaspora", "remittance*", "africa cdc", "african development solutions", "south african aid", "nigeria s aid", "kenya s humanitarian", "egypt s aid", "regional humanitarian", "humanitarian diplomacy", "geopolitics of aid", "aid and geopolitics", "new donors"],
   },
   {
     id: "access",
     label: "Access & the operating environment",
-    terms: ["humanitarian access", "acces humanitaire", "access constraint*", "access impediment*", "bureaucratic impediment*", "humanitarian negotiation*", "negotiat* access", "armed group* engagement", "engagement with armed groups", "non state armed group*", "deconflict*", "besieg*", "siege", "blockade", "aid diversion", "obstruction of aid", "obstructing aid", "aid obstruction", "starvation as a weapon", "starvation", "humanitarian corridor*", "cross border aid", "cross line", "adre crossing", "denial of access", "humanitarian space", "espace humanitaire", "operating environment", "visa restrictions", "travel permit*", "communications blackout"],
+    terms: ["humanitarian access", "acces humanitaire", "access constraint*", "access impediment*", "bureaucratic impediment*", "humanitarian negotiation*", "negotiat* access", "armed group* engagement", "engagement with armed groups", "non state armed group*", "deconflict*", "besieg*", "siege", "blockade", "aid diversion", "obstruction of aid", "obstructing aid", "aid obstruction", "starvation as a weapon", "starvation", "humanitarian corridor*", "cross border aid", "cross line", "adre crossing", "denial of access", "humanitarian space", "espace humanitaire", "operating environment", "visa restrictions", "travel permit*", "communications blackout", "access negotiation*", "frontline negotiation*", "remote management", "remote programming", "de facto authorities", "humanitarian corridor*", "crossline", "aid blockade", "weaponi* aid", "weaponi* food", "registration of ngos", "ngo law", "ngo regulation", "shrinking civic space", "expulsion of aid", "expelled ngo*"],
   },
   {
     id: "principles",
     label: "Principles, politicisation & sanctions",
-    terms: ["humanitarian principles", "principes humanitaires", "neutrality", "neutralite", "impartiality", "impartialite", "independence of humanitarian", "principled humanitarian*", "politicis*", "politiciz*", "instrumentalis*", "instrumentaliz*", "counter terror*", "counterterror*", "sanctions regime*", "sanctions exemption*", "humanitarian carve out*", "humanitarian exemption*", "resolution 2664", "militaris*", "securitis*", "international humanitarian law", "droit international humanitaire", "ihl", "dih", "protection of civilians"],
+    terms: ["humanitarian principles", "principes humanitaires", "neutrality", "neutralite", "impartiality", "impartialite", "independence of humanitarian", "principled humanitarian*", "politicis*", "politiciz*", "instrumentalis*", "instrumentaliz*", "counter terror*", "counterterror*", "sanctions regime*", "sanctions exemption*", "humanitarian carve out*", "humanitarian exemption*", "resolution 2664", "resolution 2417", "militaris*", "securitis*", "humanitarian ethics", "dunantist", "solidarity based humanitarian*", "politics of aid", "aid conditionality", "conditionality", "international humanitarian law", "droit international humanitaire", "ihl", "dih", "protection of civilians"],
   },
   {
     id: "security",
     label: "Aid worker safety & risk",
-    terms: ["aid worker*", "humanitarian worker*", "travailleurs humanitaires", "attacks on aid", "attacks on humanitarian*", "staff killed", "humanitarian staff", "duty of care", "risk transfer", "risk sharing", "security risk management", "kidnapping of aid", "national staff", "looting of aid", "warehouse* looted"],
+    terms: ["aid worker*", "humanitarian worker*", "travailleurs humanitaires", "attacks on aid", "attacks on humanitarian*", "staff killed", "humanitarian staff", "duty of care", "risk transfer", "risk sharing", "security risk management", "kidnapping of aid", "national staff", "local staff", "looting of aid", "warehouse* looted", "aid worker deaths", "deadliest year", "security incidents", "insecurity insight", "aid worker security"],
   },
   {
     id: "nexus",
     label: "Nexus, climate & anticipatory action",
-    terms: ["nexus", "humanitarian development peace", "triple nexus", "hdp", "anticipatory action", "action anticipatoire", "early action", "early warning", "alerte precoce", "climate finance", "climate crisis", "climate shocks", "drought", "secheresse", "floods", "inondations", "el nino", "loss and damage", "resilience", "protracted crisis", "protracted crises", "protracted displacement", "durable solutions", "solutions durables", "social protection"],
+    terms: ["nexus", "humanitarian development peace", "triple nexus", "hdp", "anticipatory action", "action anticipatoire", "early action", "early warning", "alerte precoce", "climate finance", "climate crisis", "climate shocks", "drought", "secheresse", "floods", "inondations", "el nino", "loss and damage", "resilience", "protracted crisis", "protracted crises", "protracted displacement", "durable solutions", "solutions durables", "social protection", "shock responsive", "disaster risk", "climate adaptation", "climate displacement", "development actors", "peacebuilding", "humanitarian development", "phase out", "exit strateg*"],
   },
   {
     id: "accountability",
     label: "Accountability & participation",
-    terms: ["accountability to affected people", "accountability to affected populations", "aap", "participation revolution", "affected people", "affected communities", "feedback mechanism*", "community engagement", "psea", "sexual exploitation and abuse", "safeguarding", "redevabilite", "core humanitarian standard"],
+    terms: ["accountability to affected people", "accountability to affected populations", "aap", "participation revolution", "affected people", "affected communities", "feedback mechanism*", "community engagement", "psea", "sexual exploitation and abuse", "safeguarding", "redevabilite", "core humanitarian standard", "chs", "ground truth", "perception survey*", "community feedback", "dignity", "people affected by crisis", "affected populations", "voice of affected", "inclusion", "disability inclusion", "gender", "protection mainstreaming"],
   },
   {
     id: "cash-digital",
     label: "Cash, data & technology",
-    terms: ["cash assistance", "cash transfer*", "cash and voucher*", "multipurpose cash", "transferts monetaires", "digital humanitarian*", "artificial intelligence", "data protection", "biometric*", "digital identity", "humanitarian data", "mobile money", "starlink"],
+    terms: ["cash assistance", "cash transfer*", "cash and voucher*", "multipurpose cash", "transferts monetaires", "digital humanitarian*", "artificial intelligence", "data protection", "biometric*", "digital identity", "humanitarian data", "mobile money", "starlink", "ai in humanitarian*", "humanitarian innovation", "innovation", "data responsibility", "anticipatory finance", "forecast based financing", "insurance", "risk financing"],
   },
   {
     id: "crises",
@@ -118,10 +118,15 @@ const HUMANITARIAN_THEMES: Theme[] = [
     terms: ["sudan", "darfur", "el fasher", "el fashir", "kordofan", "south sudan", "eastern drc", "north kivu", "south kivu", "ituri", "goma", "central sahel", "lake chad", "lac tchad", "tigray", "amhara", "somalia", "cabo delgado", "anglophone crisis", "central african republic", "famine", "ipc 5", "ipc phase 5", "cholera", "mpox", "refugee camp*", "camps de refugies", "chad refugee*", "displaced", "deplaces", "idps", "returnees"],
   },
   {
+    id: "general",
+    label: "Humanitarian policy & practice",
+    terms: ["humanitarian*", "aid agenc*", "aid organi*", "relief", "ngo*", "international ngo*", "un agenc*", "donor*", "refugee*", "displacement", "famine", "food insecurity", "aide humanitaire", "ajuda humanitaria"],
+  },
+  {
     id: "future",
     label: "The future of humanitarianism",
     systemic: true,
-    terms: ["future of humanitarian*", "avenir de l humanitaire", "new humanitarianism", "humanitarian landscape", "humanitarian sector", "secteur humanitaire", "aid sector", "aid industry", "post aid", "beyond aid", "aid dependency", "multilateralism", "multilateral system", "humanitarian model", "humanitarian action", "action humanitaire", "what next for aid", "end of aid", "rethinking aid", "rethink* humanitarian*", "decolonising aid", "decolonizing aid"],
+    terms: ["future of humanitarian*", "avenir de l humanitaire", "new humanitarianism", "humanitarian landscape", "humanitarian sector", "secteur humanitaire", "aid sector", "aid industry", "post aid", "beyond aid", "aid dependency", "multilateralism", "multilateral system", "humanitarian model", "humanitarian action", "action humanitaire", "what next for aid", "end of aid", "rethinking aid", "rethink* humanitarian*", "decolonising aid", "decolonizing aid", "humanitarian imperative", "humanitarian identity", "humanitarian ecosystem", "humanitarian response", "international aid", "aid system", "development cooperation", "development aid", "aid effectiveness", "aid policy", "humanitarian policy", "politique humanitaire", "humanitarian crisis response", "state of the humanitarian system", "humanitarian trends", "global humanitarian assistance", "humanitarianism", "humanitarisme", "humanitaire"],
   },
 ];
 
@@ -148,7 +153,7 @@ const ELECTION_THEMES: Theme[] = [
 ];
 
 const ECONOMY_THEMES: Theme[] = [
-  { id: "debt-fiscal", label: "Debt, fiscal stress & IMF programmes", terms: ["sovereign debt", "dette souveraine", "public debt", "dette publique", "debt distress", "surendettement", "debt crisis", "crise de la dette", "debt restructur*", "restructuration de la dette", "common framework", "cadre commun", "paris club", "eurobond*", "panda bond*", "default*", "defaut de paiement", "debt service", "service de la dette", "debt servicing", "fiscal deficit", "deficit budgetaire", "fiscal consolidation", "austerity", "austerite", "budget deficit", "imf programme", "imf program", "imf deal", "programme du fmi", "fmi", "extended credit facility", "facilite elargie de credit", "bailout", "credit rating*", "notation", "downgrade*", "upgrade*", "domestic revenue", "tax reform*", "reforme fiscale", "tax*", "impot*", "divida"] },
+  { id: "debt-fiscal", label: "Debt, fiscal stress & IMF programmes", terms: ["debt", "dette", "sovereign debt", "dette souveraine", "public debt", "dette publique", "debt distress", "surendettement", "debt crisis", "crise de la dette", "debt restructur*", "restructuration de la dette", "common framework", "cadre commun", "paris club", "eurobond*", "panda bond*", "default*", "defaut de paiement", "debt service", "service de la dette", "debt servicing", "fiscal deficit", "deficit budgetaire", "fiscal consolidation", "austerity", "austerite", "budget deficit", "imf programme", "imf program", "imf deal", "programme du fmi", "fmi", "extended credit facility", "facilite elargie de credit", "bailout", "credit rating*", "notation", "downgrade*", "upgrade*", "domestic revenue", "tax reform*", "reforme fiscale", "tax*", "impot*", "divida"] },
   { id: "macro", label: "Inflation, currencies & monetary policy", terms: ["inflation", "interest rate*", "taux directeur", "taux d interet", "central bank*", "banque centrale", "bceao", "beac", "monetary policy", "politique monetaire", "currency", "monnaie", "exchange rate*", "taux de change", "devaluat*", "depreciat*", "naira", "cedi", "kenyan shilling", "ugandan shilling", "rand", "birr", "kwacha", "egyptian pound", "leone", "cfa franc", "franc cfa", "eco currency", "monnaie eco", "forex", "foreign exchange", "devises", "fx reserves", "foreign reserves", "reserves de change", "dollar shortage*", "penurie de dollars", "dollarisation", "dollarization"] },
   { id: "growth", label: "Growth, outlook & structural change", terms: ["gdp", "pib", "economic growth", "croissance economique", "croissance", "growth outlook", "growth forecast*", "perspectives economiques", "recession", "slowdown", "ralentissement", "economic outlook", "economic recovery", "reprise economique", "productivity", "productivite", "structural transformation", "transformation structurelle", "industrialis*", "industrializ*", "manufacturing", "economic diversification", "diversification", "special economic zone*", "crescimento"] },
   { id: "investment", label: "Investment, finance & capital markets", terms: ["foreign direct investment", "investissements directs etrangers", "fdi", "ide", "investor*", "investisseur*", "private capital", "private sector", "secteur prive", "development finance", "climate finance", "finance climatique", "green bond*", "blended finance", "financial inclusion", "inclusion financiere", "fintech", "mobile money", "m pesa", "banking sector", "banks", "banques", "stock exchange", "bourse", "brvm", "jse", "nse", "capital market*", "remittance*", "transferts de fonds", "sovereign wealth fund*", "pension fund*", "private equity", "venture capital", "startup funding"] },
@@ -325,10 +330,14 @@ const DEMONYMS: [RegExp, string][] = [
   [/\balgerians?\b|\balgeriens?\b/, "DZ"], [/\bmoroccans?\b|\bmarocains?\b/, "MA"], [/\btunisians?\b|\btunisiens?\b/, "TN"], [/\bmauritanians?\b|\bmauritaniens?\b/, "MR"], [/\btogolese\b|\btogolais/, "TG"], [/\bbeninese\b|\bbeninois/, "BJ"],
   [/\bcentral africans?\b|\bcentrafricains?\b/, "CF"], [/\bgabonese\b|\bgabonais/, "GA"], [/\bliberians?\b/, "LR"], [/\bsierra leoneans?\b/, "SL"], [/\bnamibians?\b/, "NA"], [/\bmalagasy\b|\bmalgaches?\b/, "MG"], [/\bsahrawis?\b/, "EH"],
 ];
+/** Crises and regions outside Africa: a humanitarian piece about one of these, and nowhere in Africa, is kept but out of scope. */
+const ELSEWHERE = /\b(gaza|palestin\w*|west bank|lebanon|liban|syria\w*|syrie|yemen\w*|iraq\w*|irak|afghan\w*|myanmar|burma|rohingya|bangladesh|cox s bazar|haiti\w*|venezuela\w*|colombia\w*|ukrain\w*|pakistan\w*|nepal|philippines|indonesia|latin america|amerique latine|central america|darien|asia pacific|pacific islands|turkiye earthquake|turkey earthquake|kashmir|sri lanka)\b/;
 const AFRICA_WORDS = /\b(africa\w*|afrique|africain\w*|africano?s?|sub saharan|subsaharien\w*|pan african\w*|panafrican\w*)\b/;
 
 export interface Where {
   africa: boolean;
+  /** Names a place outside Africa (the Middle East, Ukraine, Myanmar…). */
+  elsewhere: boolean;
   /** African countries, most-mentioned first. */
   countries: string[];
   /** Towns and regions named, most specific first, at most eight ("El Fasher", "North Kivu"). */
@@ -342,8 +351,12 @@ export function africaOf(text: string): Where {
   const t = fold(text);
   const counts = new Map<string, number>();
   const places: string[] = [];
+  let elsewhere = ELSEWHERE.test(t);
   for (const l of namedLocations(text)) {
-    if (MIDDLE_EAST_CODES.has(l.countryCode)) continue;
+    if (MIDDLE_EAST_CODES.has(l.countryCode)) {
+      elsewhere = true;
+      continue;
+    }
     counts.set(l.countryCode, (counts.get(l.countryCode) ?? 0) + (l.precision === "country" ? 1 : 1.5));
     if (l.precision !== "country" && !places.includes(l.label)) places.push(l.label);
   }
@@ -355,6 +368,7 @@ export function africaOf(text: string): Where {
   const blocs = BLOC_TERMS.filter(([, rx]) => rx.test(t)).map(([b]) => b);
   return {
     africa: countries.length > 0 || regions.size > 0 || blocs.length > 0 || AFRICA_WORDS.test(t),
+    elsewhere,
     countries,
     places: places.slice(0, 8),
     regions: REGIONS.filter((r) => regions.has(r)),
@@ -383,6 +397,13 @@ export interface AnalysisItem {
   score: number;
 }
 
+/**
+ * A source whose work is mainly humanitarian (it writes on New Humanitarianism and at most one other domain, with
+ * New Humanitarianism first): everything it publishes is humanitarian reflection, so its pieces need no keyword to
+ * get in; the themes only tag them ("Humanitarian policy & practice" when nothing more specific matches).
+ */
+export const isHumanitarianSpecialist = (s: Source) => s.domains[0] === "humanitarian" && s.domains.length <= 2;
+
 /** The domains a piece belongs to, among those its source writes on. */
 export function classify(raw: { url: string; title: string; summary: string; source: Source; published: string }): AnalysisItem[] {
   const text = `${raw.title}. ${raw.summary}`;
@@ -393,16 +414,23 @@ export function classify(raw: { url: string; title: string; summary: string; sou
   const out: AnalysisItem[] = [];
   for (const id of raw.source.domains) {
     const d = domainOf(id)!;
-    if (!d.signal.test(folded)) continue;
-    const themes = themesOf(id, text);
-    const hits = themes.reduce((n, t) => n + t.hits, 0);
-    const substantive = themes.filter((t) => !d.themes.find((x) => x.id === t.id)?.context).reduce((n, t) => n + t.hits, 0);
-    if (substantive === 0 || hits < (specialist ? 1 : d.minHits)) continue;
+    const takeAll = id === "humanitarian" && isHumanitarianSpecialist(raw.source);
+    if (!takeAll && !d.signal.test(folded)) continue;
+    let themes = themesOf(id, text);
+    // "General" only tags a piece nothing more specific describes.
+    if (themes.some((t) => t.id !== "general")) themes = themes.filter((t) => t.id !== "general");
+    const counting = themes.filter((t) => t.id !== "general" || takeAll);
+    const hits = counting.reduce((n, t) => n + t.hits, 0);
+    const substantive = counting.filter((t) => !d.themes.find((x) => x.id === t.id)?.context).reduce((n, t) => n + t.hits, 0);
+    if (!takeAll && (substantive === 0 || hits < (specialist ? 1 : d.minHits))) continue;
+    if (takeAll && themes.length === 0) themes = [{ id: "general", hits: 0 }];
     const systemic = themes.some((t) => d.themes.find((x) => x.id === t.id)?.systemic);
-    // Outside Africa, only the system-level themes count.
-    if (!africa && !systemic) continue;
+    // New Humanitarianism keeps Africa, system-level reflections and general reflections tied to no place; a piece
+    // about a crisis elsewhere (Gaza, Ukraine…) is kept out of scope, under "Everything". Other domains need Africa.
+    const inScope = id === "humanitarian" ? africa || systemic || !where.elsewhere : africa;
+    if (!inScope && id !== "humanitarian") continue;
     out.push({
-      id: hashId(raw.url || raw.title),
+      id: hashId(fold(raw.title).trim() || raw.url),
       domain: id,
       url: raw.url,
       title: raw.title,
@@ -415,7 +443,7 @@ export function classify(raw: { url: string; title: string; summary: string; sou
       regions: where.regions,
       blocs: where.blocs,
       africa,
-      inScope: africa || systemic,
+      inScope,
       score: hits + (africa ? 2 : 0) + (systemic ? 1 : 0) + (where.places.length ? 1 : 0),
     });
   }
@@ -500,6 +528,8 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
   // Columns added after the first release.
   const cols = new Set(((await db.prepare(`PRAGMA table_info(strategic_analyses)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
   for (const c of ["places", "regions", "blocs"]) if (!cols.has(c)) await db.prepare(`ALTER TABLE strategic_analyses ADD COLUMN ${c} TEXT`).run();
+  const scols = new Set(((await db.prepare(`PRAGMA table_info(strategic_sources)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
+  for (const c of ["backfilled_at", "gnews_at", "backfill_note"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
   // One-time move of the first version's humanitarian tables.
   const old = await db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('hum_analyses', 'hum_sources')`).all<{ name: string }>();
   const names = new Set((old.results ?? []).map((r) => r.name));
@@ -527,85 +557,230 @@ const CHECK_EVERY_MS = 60 * 60_000;
 const REDISCOVER_MS = 7 * 24 * 3600_000;
 /** Sources read per run: the cron runs every few minutes, so every source is still read about hourly. */
 const BATCH = 22;
-/** Pieces older than this when first seen are not stored: the panel is about what is new. */
-const MAX_AGE_DAYS = 120;
+/** Sources whose past year is fetched per run (see backfill), New Humanitarianism's first. */
+const BACKFILL_BATCH = 4;
+/** Sources searched on Google News per run (daily per source), which also covers sites with no feed. */
+const GNEWS_BATCH = 6;
+const GNEWS_EVERY_MS = 24 * 3600_000;
+/** How far back pieces are kept: a year and a little. */
+const MAX_AGE_DAYS = 400;
+const WP_PAGES = 12;
+const SUBSTACK_PAGES = 6;
 
 type Fetcher = (url: string) => Promise<Response>;
-const defaultFetch: Fetcher = (url) => fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLens/1.0; +https://afrilensconsulting.com)", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*" }, signal: AbortSignal.timeout(20000) });
+const defaultFetch: Fetcher = (url) => fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (compatible; TheLens/1.0; +https://afrilensconsulting.com)", Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, application/json, */*" }, signal: AbortSignal.timeout(20000) });
+
+type Entry = { title: string; url: string; published: string; summary: string };
+
+/** Words for a Google News search of one source in one domain (a source covering one or two domains is searched whole). */
+const GNEWS_WORDS: Record<DomainId, string> = {
+  humanitarian: "(humanitarian OR aid OR refugees OR localisation OR localization OR displacement OR humanitaire)",
+  geopolitics: '(geopolitics OR "foreign policy" OR China OR Russia OR Gulf OR "African Union" OR diplomacy)',
+  elections: "(election OR elections OR vote OR coup OR democracy OR élection)",
+  economy: "(economy OR debt OR inflation OR IMF OR investment OR growth)",
+  trade: "(trade OR tariffs OR AfCFTA OR exports OR AGOA OR corridor)",
+  cyber: "(cyber OR cybersecurity OR digital OR disinformation OR surveillance OR internet)",
+  conflict: "(conflict OR war OR jihadist OR insurgency OR ceasefire OR militia OR conflit)",
+};
+
+const hostOf = (u: string) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+};
+
+/** Google News RSS searches for a source: one per domain for broad sources, one for the whole site otherwise. */
+export function gnewsQueries(src: Source, window: string): string[] {
+  const host = hostOf(src.url);
+  if (!host) return [];
+  const africa = src.africa ? "" : " (Africa OR African OR Afrique)";
+  const qs = src.domains.length <= 2 ? [`site:${host} when:${window}`] : src.domains.map((d) => `site:${host} ${GNEWS_WORDS[d]}${d === "humanitarian" ? "" : africa} when:${window}`);
+  return qs.map((q) => `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`);
+}
+
+/** Google News titles end with " - Source"; drop it. */
+const cleanGnews = (e: Entry): Entry => ({ ...e, title: e.title.replace(/\s+[-–—|]\s+[^-–—|]{2,80}$/, "").trim() });
 
 /**
- * Reads the sources due a check (not read in the last hour, least recently read first, at most `limit`), stores new
- * pieces per domain, and returns how many were new.
+ * Reads the sources due a check (not read in the last hour, least recently read first, at most `limit`), fetches the
+ * past year of a few sources not yet backfilled, searches Google News for a few sources due their daily search, and
+ * stores new pieces per domain. Returns how many were new.
+ *
+ * Backfill, once per source: older pages of a WordPress feed (?paged=2…), the archive of a Substack, and a year of
+ * Google News results for the site. Backfilled pieces are dated by when they were published, not when the Lens found
+ * them, so they fill the reading list without counting as new or setting off alerts.
  */
 export async function collectStrategicAnalyses(
   env: Env,
-  opts: { force?: boolean; now?: Date; fetcher?: Fetcher; discover?: typeof discoverFeed; limit?: number } = {}
-): Promise<{ ran: boolean; added: number; sources: number }> {
+  opts: { force?: boolean; now?: Date; fetcher?: Fetcher; discover?: typeof discoverFeed; limit?: number; backfill?: number; gnews?: number } = {}
+): Promise<{ ran: boolean; added: number; sources: number; backfilled: number }> {
   const db = env.DB;
   const now = opts.now ?? new Date();
+  const nowIso = now.toISOString();
   const fetcher = opts.fetcher ?? defaultFetch;
   const discover = opts.discover ?? discoverFeed;
   await ensureAnalysisTables(db);
 
-  const states = new Map((await db.prepare(`SELECT url, feed_url, checked_at, status FROM strategic_sources`).all<{ url: string; feed_url: string | null; checked_at: string | null; status: string | null }>()).results?.map((r) => [r.url, r]) ?? []);
-  const age = (s: Source) => {
-    const t = states.get(s.url)?.checked_at;
-    return t ? now.getTime() - Date.parse(t) : Infinity;
-  };
+  type State = { url: string; feed_url: string | null; checked_at: string | null; status: string | null; backfilled_at: string | null; gnews_at: string | null };
+  const states = new Map((await db.prepare(`SELECT url, feed_url, checked_at, status, backfilled_at, gnews_at FROM strategic_sources`).all<State>()).results?.map((r) => [r.url, r]) ?? []);
+  const since = (t: string | null | undefined) => (t ? now.getTime() - Date.parse(t) : Infinity);
+  const age = (s: Source) => since(states.get(s.url)?.checked_at);
   const due = SOURCES.filter((s) => opts.force || age(s) >= CHECK_EVERY_MS)
     .sort((a, b) => age(b) - age(a))
     .slice(0, opts.limit ?? BATCH);
-  if (due.length === 0) return { ran: false, added: 0, sources: 0 };
+  const backfillDue = SOURCES.filter((s) => !states.get(s.url)?.backfilled_at)
+    .sort((a, b) => Number(b.domains.includes("humanitarian")) - Number(a.domains.includes("humanitarian")))
+    .slice(0, opts.backfill ?? BACKFILL_BATCH);
+  const backfillSet = new Set(backfillDue.map((s) => s.url));
+  const gnewsDue = SOURCES.filter((s) => !backfillSet.has(s.url) && states.get(s.url)?.backfilled_at && since(states.get(s.url)?.gnews_at) >= GNEWS_EVERY_MS)
+    .sort((a, b) => since(states.get(b.url)?.gnews_at) - since(states.get(a.url)?.gnews_at))
+    .slice(0, opts.gnews ?? GNEWS_BATCH);
+  if (due.length === 0 && backfillDue.length === 0 && gnewsDue.length === 0) return { ran: false, added: 0, sources: 0, backfilled: 0 };
 
   const cutoff = new Date(now.getTime() - MAX_AGE_DAYS * 86_400_000).toISOString();
   let added = 0;
 
-  const one = async (src: Source) => {
-    const state = states.get(src.url);
-    let feedUrl = state?.feed_url ?? null;
+  // Found while backfilling, a piece published in the last three days still counts as new (and can alert); older ones
+  // are dated by publication.
+  const recentIso = new Date(now.getTime() - 3 * 86_400_000).toISOString();
+  /** Classifies and stores entries; returns how many distinct pieces were kept. `old` dates older ones by publication. */
+  const store = async (src: Source, entries: Entry[], old: boolean): Promise<number> => {
+    const kept = entries.filter((e) => e.published >= cutoff && e.published <= new Date(now.getTime() + 86_400_000).toISOString()).flatMap((e) => classify({ ...e, source: src }));
+    for (let i = 0; i < kept.length; i += 50) {
+      const results = await db.batch(
+        kept.slice(i, i + 50).map((it) =>
+          db
+            .prepare(`INSERT OR IGNORE INTO strategic_analyses (domain, id, url, title, summary, source, published, themes, countries, places, regions, blocs, africa, in_scope, score, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+            .bind(it.domain, it.id, it.url, it.title, it.summary, it.source, it.published, JSON.stringify(it.themes), JSON.stringify(it.countries), JSON.stringify(it.places), JSON.stringify(it.regions), JSON.stringify(it.blocs), it.africa ? 1 : 0, it.inScope ? 1 : 0, it.score, old && it.published < recentIso ? it.published : nowIso)
+        )
+      );
+      added += results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+    }
+    return new Set(kept.map((k) => k.id)).size;
+  };
+
+  const getText = async (url: string): Promise<string | null> => {
     try {
-      if (!feedUrl || (state?.checked_at && now.getTime() - Date.parse(state.checked_at) > REDISCOVER_MS && state.status !== "ok")) {
-        const found = await discover(src.url);
-        if (found.status !== "ok") throw new Error(found.status === "no_feed" ? "No feed found on this site" : found.message);
-        feedUrl = found.feedUrl;
-      }
-      const res = await fetcher(feedUrl);
-      if (!res.ok) throw new Error(`Feed returned ${res.status}`);
-      const entries = parseFeed(await res.text());
-      const fresh = entries.filter((e) => e.published >= cutoff);
-      const kept = fresh.flatMap((e) => classify({ ...e, source: src }));
-      if (kept.length) {
-        const results = await db.batch(
-          kept.map((it) =>
-            db
-              .prepare(`INSERT OR IGNORE INTO strategic_analyses (domain, id, url, title, summary, source, published, themes, countries, places, regions, blocs, africa, in_scope, score, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-              .bind(it.domain, it.id, it.url, it.title, it.summary, it.source, it.published, JSON.stringify(it.themes), JSON.stringify(it.countries), JSON.stringify(it.places), JSON.stringify(it.regions), JSON.stringify(it.blocs), it.africa ? 1 : 0, it.inScope ? 1 : 0, it.score, now.toISOString())
-          )
-        );
-        added += results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
-      }
-      const keptPieces = new Set(kept.map((k) => k.id)).size;
-      await db
-        .prepare(`INSERT INTO strategic_sources (url, name, feed_url, checked_at, status, error, items, kept, last_ok) VALUES (?,?,?,?,'ok',NULL,?,?,?) ON CONFLICT(url) DO UPDATE SET name = excluded.name, feed_url = excluded.feed_url, checked_at = excluded.checked_at, status = 'ok', error = NULL, items = excluded.items, kept = excluded.kept, last_ok = excluded.last_ok`)
-        .bind(src.url, src.name, feedUrl, now.toISOString(), entries.length, keptPieces, now.toISOString())
-        .run();
-    } catch (err) {
-      await db
-        .prepare(`INSERT INTO strategic_sources (url, name, feed_url, checked_at, status, error) VALUES (?,?,?,?,'error',?) ON CONFLICT(url) DO UPDATE SET name = excluded.name, feed_url = COALESCE(excluded.feed_url, strategic_sources.feed_url), checked_at = excluded.checked_at, status = 'error', error = excluded.error`)
-        .bind(src.url, src.name, feedUrl, now.toISOString(), err instanceof Error ? err.message.slice(0, 300) : String(err))
-        .run();
+      const r = await fetcher(url);
+      return r.ok ? await r.text() : null;
+    } catch {
+      return null;
     }
   };
 
+  const gnews = async (src: Source, window: string): Promise<Entry[]> => {
+    const out: Entry[] = [];
+    for (const q of gnewsQueries(src, window)) {
+      const xml = await getText(q);
+      if (xml) out.push(...parseFeed(xml).map(cleanGnews));
+    }
+    return out;
+  };
+
+  /** The past year of one source: older feed pages, a Substack archive, and Google News. */
+  const backfill = async (src: Source, feedUrl: string | null, firstPage: string | null): Promise<string> => {
+    const notes: string[] = [];
+    let n = 0;
+    if (feedUrl) {
+      let prevFirst = firstPage ? parseFeed(firstPage)[0]?.url : undefined;
+      let pages = 0;
+      for (let p = 2; p <= WP_PAGES; p++) {
+        const xml = await getText(`${feedUrl}${feedUrl.includes("?") ? "&" : "?"}paged=${p}`);
+        const entries = xml ? parseFeed(xml) : [];
+        if (entries.length === 0 || entries[0].url === prevFirst) break;
+        prevFirst = entries[0].url;
+        pages++;
+        n += await store(src, entries, true);
+        if (entries[entries.length - 1].published < cutoff) break;
+      }
+      if (pages) notes.push(`${pages} older feed pages`);
+      const host = hostOf(feedUrl);
+      if (host.endsWith("substack.com") || /substack/i.test(firstPage ?? "")) {
+        const origin = new URL(feedUrl).origin;
+        let got = 0;
+        for (let p = 0; p < SUBSTACK_PAGES; p++) {
+          const body = await getText(`${origin}/api/v1/archive?sort=new&offset=${p * 50}&limit=50`);
+          let posts: { title?: string; canonical_url?: string; post_date?: string; subtitle?: string; description?: string }[] = [];
+          try {
+            posts = body ? JSON.parse(body) : [];
+          } catch {
+            posts = [];
+          }
+          if (!Array.isArray(posts) || posts.length === 0) break;
+          const entries = posts
+            .filter((x) => x.title && x.canonical_url && x.post_date)
+            .map((x) => ({ title: x.title!, url: x.canonical_url!, published: new Date(x.post_date!).toISOString(), summary: x.subtitle || x.description || "" }));
+          got += entries.length;
+          n += await store(src, entries, true);
+          if (entries.length && entries[entries.length - 1].published < cutoff) break;
+        }
+        if (got) notes.push(`${got} archive posts`);
+      }
+    }
+    const g = await gnews(src, "1y");
+    if (g.length) notes.push(`${g.length} Google News results`);
+    n += await store(src, g, true);
+    return `${n} pieces from the past year${notes.length ? ` (${notes.join(", ")})` : ""}`;
+  };
+
+  const one = async (src: Source) => {
+    const state = states.get(src.url);
+    let feedUrl = state?.feed_url ?? null;
+    let firstPage: string | null = null;
+    const doBackfill = backfillSet.has(src.url);
+    try {
+      try {
+        if (!feedUrl || (state?.checked_at && since(state.checked_at) > REDISCOVER_MS && state.status !== "ok")) {
+          const found = await discover(src.url);
+          if (found.status !== "ok") throw new Error(found.status === "no_feed" ? "No feed found on this site" : found.message);
+          feedUrl = found.feedUrl;
+        }
+        const res = await fetcher(feedUrl);
+        if (!res.ok) throw new Error(`Feed returned ${res.status}`);
+        firstPage = await res.text();
+        const entries = parseFeed(firstPage);
+        const kept = await store(src, entries, doBackfill);
+        await db
+          .prepare(`INSERT INTO strategic_sources (url, name, feed_url, checked_at, status, error, items, kept, last_ok) VALUES (?,?,?,?,'ok',NULL,?,?,?) ON CONFLICT(url) DO UPDATE SET name = excluded.name, feed_url = excluded.feed_url, checked_at = excluded.checked_at, status = 'ok', error = NULL, items = excluded.items, kept = excluded.kept, last_ok = excluded.last_ok`)
+          .bind(src.url, src.name, feedUrl, nowIso, entries.length, kept, nowIso)
+          .run();
+      } catch (err) {
+        await db
+          .prepare(`INSERT INTO strategic_sources (url, name, feed_url, checked_at, status, error) VALUES (?,?,?,?,'error',?) ON CONFLICT(url) DO UPDATE SET name = excluded.name, feed_url = COALESCE(excluded.feed_url, strategic_sources.feed_url), checked_at = excluded.checked_at, status = 'error', error = excluded.error`)
+          .bind(src.url, src.name, feedUrl, nowIso, err instanceof Error ? err.message.slice(0, 300) : String(err))
+          .run();
+        feedUrl = null;
+      }
+      if (doBackfill) {
+        const note = await backfill(src, feedUrl, firstPage);
+        await db.prepare(`UPDATE strategic_sources SET backfilled_at = ?, gnews_at = ?, backfill_note = ? WHERE url = ?`).bind(nowIso, nowIso, note, src.url).run();
+      }
+    } catch (err) {
+      console.error(`[analyses] ${src.name} failed`, err);
+    }
+  };
+
+  const searchDaily = async (src: Source) => {
+    try {
+      await store(src, await gnews(src, "3d"), false);
+    } finally {
+      await db.prepare(`UPDATE strategic_sources SET gnews_at = ? WHERE url = ?`).bind(nowIso, src.url).run();
+    }
+  };
+
+  // Sources to read: the due ones, plus the ones being backfilled (which need their feed read first).
+  const toRead = [...due, ...backfillDue.filter((s) => !due.some((d) => d.url === s.url))];
+  const queue: (() => Promise<void>)[] = [...toRead.map((s) => () => one(s)), ...gnewsDue.map((s) => () => searchDaily(s))];
   // A few at a time, so one slow site does not hold the rest.
-  const queue = [...due];
   await Promise.all(
     Array.from({ length: 6 }, async () => {
-      for (let s = queue.shift(); s; s = queue.shift()) await one(s);
+      for (let job = queue.shift(); job; job = queue.shift()) await job();
     })
   );
-  await db.prepare(`DELETE FROM strategic_analyses WHERE first_seen < ?`).bind(new Date(now.getTime() - 365 * 86_400_000).toISOString()).run();
-  return { ran: true, added, sources: due.length };
+  await db.prepare(`DELETE FROM strategic_analyses WHERE published < ?`).bind(cutoff).run();
+  return { ran: true, added, sources: toRead.length + gnewsDue.length, backfilled: backfillDue.length };
 }
 
 /* ── Reading ──────────────────────────────────────────────────────────── */
@@ -653,7 +828,7 @@ export async function listAnalyses(db: D1Database, domain: DomainId, opts: { day
   const since = new Date(Date.now() - (opts.days ?? 60) * 86_400_000).toISOString();
   const rows = await db
     .prepare(`SELECT * FROM strategic_analyses WHERE domain = ? AND published >= ? ${opts.all ? "" : "AND in_scope = 1"} ORDER BY published DESC LIMIT ?`)
-    .bind(domain, since, Math.min(opts.limit ?? 300, 1000))
+    .bind(domain, since, Math.min(opts.limit ?? 1000, 1500))
     .all<Record<string, unknown>>();
   return (rows.results ?? []).map(rowToView);
 }
@@ -673,18 +848,18 @@ export async function domainSummary(db: D1Database): Promise<Record<string, { re
 export async function newAnalysesSince(db: D1Database, domain: DomainId, since: string, limit = 10): Promise<AnalysisView[]> {
   await ensureAnalysisTables(db);
   const rows = await db
-    .prepare(`SELECT * FROM strategic_analyses WHERE domain = ? AND in_scope = 1 AND first_seen > ? ORDER BY score DESC, published DESC LIMIT ?`)
-    .bind(domain, since, limit)
+    .prepare(`SELECT * FROM strategic_analyses WHERE domain = ? AND in_scope = 1 AND first_seen > ? AND published > ? ORDER BY score DESC, published DESC LIMIT ?`)
+    .bind(domain, since, new Date(Date.parse(since) - 7 * 86_400_000).toISOString(), limit)
     .all<Record<string, unknown>>();
   return (rows.results ?? []).map(rowToView);
 }
 
-export async function sourceStatus(db: D1Database, domain: DomainId): Promise<{ name: string; url: string; kind: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[]> {
+export async function sourceStatus(db: D1Database, domain: DomainId): Promise<{ name: string; url: string; kind: string; backfill: string | null; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[]> {
   await ensureAnalysisTables(db);
   const rows = (await db.prepare(`SELECT * FROM strategic_sources`).all<Record<string, unknown>>()).results ?? [];
   const byUrl = new Map(rows.map((r) => [String(r.url), r]));
   return SOURCES.filter((s) => s.domains.includes(domain)).map((s) => {
     const r = byUrl.get(s.url);
-    return { name: s.name, url: s.url, kind: SOURCE_KIND_LABEL[s.kind], status: r ? String(r.status) : "not yet checked", error: r?.error != null ? String(r.error) : null, items: Number(r?.items ?? 0), kept: Number(r?.kept ?? 0), lastOk: r?.last_ok != null ? String(r.last_ok) : null };
+    return { name: s.name, url: s.url, kind: SOURCE_KIND_LABEL[s.kind], backfill: r?.backfill_note != null ? String(r.backfill_note) : null, status: r ? String(r.status) : "not yet checked", error: r?.error != null ? String(r.error) : null, items: Number(r?.items ?? 0), kept: Number(r?.kept ?? 0), lastOk: r?.last_ok != null ? String(r.last_ok) : null };
   });
 }
