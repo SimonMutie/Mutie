@@ -19,6 +19,11 @@ export interface Source {
   domains: DomainId[];
   /** Other feed addresses to try when the main one refuses or has moved. */
   altFeeds?: string[];
+  /**
+   * Publishes mostly courses, events, calls or network news alongside some analysis: its pieces must pass the full
+   * keyword test even if it writes mainly on humanitarianism (no "keep everything").
+   */
+  strictIntake?: boolean;
   /** Feeds of sections the main feed leaves out (a WordPress site's "publication" section), read every time too. */
   sectionFeeds?: string[];
 }
@@ -245,10 +250,10 @@ export const SOURCES: Source[] = [
   },
   intl("ALNAP", "https://www.alnap.org/", [H]),
   intl("ICRC Humanitarian Law & Policy blog", "https://blogs.icrc.org/law-and-policy/feed/", [H, K]),
-  intl("ICVA", "https://www.icvanetwork.org/", [H]),
+  { ...intl("ICVA", "https://www.icvanetwork.org/", [H]), strictIntake: true },
   intl("Humanitarian Outcomes", "https://humanitarianoutcomes.org/", [H]),
   intl("Global Public Policy Institute (GPPi)", "https://gppi.net/", [H, G]),
-  intl("CHS Alliance", "https://www.chsalliance.org/", [H]),
+  { ...intl("CHS Alliance", "https://www.chsalliance.org/", [H]), strictIntake: true },
   intl("MSF CRASH", "https://msf-crash.org/en", [H]),
   intl("Development Initiatives", "https://devinit.org/", [H, Ec]),
   intl("Center on International Cooperation (NYU)", "https://cic.nyu.edu/", [H, G]),
@@ -256,11 +261,11 @@ export const SOURCES: Source[] = [
   intl("Norwegian Refugee Council", "https://www.nrc.no/", [H]),
   intl("Feinstein International Center", "https://fic.tufts.edu/", [H]),
   intl("Harvard Humanitarian Initiative", "https://hhi.harvard.edu/", [H]),
-  intl("Start Network", "https://startnetwork.org/", [H]),
-  intl("Bond", "https://www.bond.org.uk/", [H]),
-  intl("InterAction", "https://www.interaction.org/", [H]),
-  intl("Charter4Change", "https://charter4change.org/feed/", [H]),
-  intl("NEAR Network", "https://www.near.ngo/", [H]),
+  { ...intl("Start Network", "https://startnetwork.org/", [H]), strictIntake: true },
+  { ...intl("Bond", "https://www.bond.org.uk/", [H]), strictIntake: true },
+  { ...intl("InterAction", "https://www.interaction.org/", [H]), strictIntake: true },
+  { ...intl("Charter4Change", "https://charter4change.org/feed/", [H]), strictIntake: true },
+  { ...intl("NEAR Network", "https://www.near.ngo/", [H]), strictIntake: true },
   intl("Peace Direct", "https://www.peacedirect.org/feed/", [H, K]),
   af("Adeso", "https://adesoafrica.org/", [H]),
   // Keyword-filtered (New Humanitarianism is not their first domain): they also publish on much else.
@@ -275,19 +280,19 @@ export const SOURCES: Source[] = [
   intl("Global Interagency Security Forum (GISF)", "https://gisf.ngo/", [H]),
   intl("Insecurity Insight", "https://insecurityinsight.org/", [H, K]),
   intl("CDA Collaborative Learning", "https://www.cdacollaborative.org/", [H]),
-  intl("Elrha", "https://www.elrha.org/", [H]),
-  intl("Humanitarian Leadership Academy", "https://www.humanitarianleadershipacademy.org/", [H]),
-  intl("Sphere", "https://spherestandards.org/", [H]),
-  intl("H2H Network", "https://h2hnetwork.org/", [H]),
-  intl("Pledge for Change", "https://pledgeforchange2030.org/", [H]),
-  intl("Global Fund for Community Foundations (#ShiftThePower)", "https://globalfundcommunityfoundations.org/", [H]),
+  { ...intl("Elrha", "https://www.elrha.org/", [H]), strictIntake: true },
+  { ...intl("Humanitarian Leadership Academy", "https://www.humanitarianleadershipacademy.org/", [H]), strictIntake: true },
+  { ...intl("Sphere", "https://spherestandards.org/", [H]), strictIntake: true },
+  { ...intl("H2H Network", "https://h2hnetwork.org/", [H]), strictIntake: true },
+  { ...intl("Pledge for Change", "https://pledgeforchange2030.org/", [H]), strictIntake: true },
+  { ...intl("Global Fund for Community Foundations (#ShiftThePower)", "https://globalfundcommunityfoundations.org/", [H]), strictIntake: true },
   intl("Refugee Studies Centre (Oxford)", "https://www.rsc.ox.ac.uk/", [H]),
   intl("Forced Migration Review", "https://www.fmreview.org/", [H]),
   intl("Mixed Migration Centre", "https://mixedmigration.org/", [H, G], true),
   intl("Internal Displacement Monitoring Centre", "https://www.internal-displacement.org/", [H]),
   intl("Disasters (journal)", "https://onlinelibrary.wiley.com/feed/14677717/most-recent", [H]),
   intl("Journal of International Humanitarian Action", "https://jhumanitarianaction.springeropen.com/articles/most-recent/rss.xml", [H]),
-  af("Somalia NGO Consortium", "https://somaliangoconsortium.org/", [H]),
+  { ...af("Somalia NGO Consortium", "https://somaliangoconsortium.org/", [H]), strictIntake: true },
 
   /* ── Analysts and their newsletters ────────────────────────────────────────────────────────────── */
   who("Ken Opalo — An Africanist Perspective", "https://kenopalo.substack.com/feed", [Ec, G, E]),
