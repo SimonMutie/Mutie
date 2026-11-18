@@ -1539,6 +1539,14 @@ export interface StrategicAnalysesData {
   themes: { id: string; label: string; systemic: boolean; context: boolean; terms: string[] }[];
   regions: string[];
   countryNames: Record<string, string>;
+  /** Admins only: what the collector is doing. */
+  diagnostics?: {
+    lastRun?: { startedAt: string; finishedAt: string | null; seconds?: number; added?: number; lanes?: Record<string, number>; stored?: Record<string, number>; fetchFails?: Record<string, number>; errors?: string[]; planned?: Record<string, unknown> } | null;
+    sources?: Record<string, number>;
+    pages?: Record<string, number>;
+    stored?: Record<string, { all: number; inScope: number }>;
+    error?: string;
+  } | null;
   sources: { name: string; url: string; kind: string; backfill: string | null; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
   fetchedAt: string;
 }
