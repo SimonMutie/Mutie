@@ -262,13 +262,23 @@ function termRegex(term: string): RegExp {
   const body = t.endsWith("*") ? `${t.slice(0, -1)}\\w*` : t;
   return new RegExp(`(?:^|[^\\w])${body}(?=$|[^\\w])`);
 }
-const THEME_RX = new Map(DOMAINS.map((d) => [d.id, d.themes.map((th) => ({ id: th.id, systemic: !!th.systemic, rx: th.terms.map(termRegex) }))]));
+// Each theme has one combined pattern, tested first: most themes do not match most texts, so their terms are never
+// tested one by one.
+const THEME_RX = new Map(
+  DOMAINS.map((d) => [
+    d.id,
+    d.themes.map((th) => {
+      const rx = th.terms.map(termRegex);
+      return { id: th.id, systemic: !!th.systemic, any: new RegExp(rx.map((r) => `(?:${r.source})`).join("|")), rx };
+    }),
+  ])
+);
 
 /** The themes of a domain a text touches, most-matched first, with how many terms matched. */
 export function themesOf(domain: DomainId, text: string): { id: string; hits: number }[] {
   const t = fold(text);
   return (THEME_RX.get(domain) ?? [])
-    .map((th) => ({ id: th.id, hits: th.rx.filter((r) => r.test(t)).length }))
+    .map((th) => ({ id: th.id, hits: th.any.test(t) ? th.rx.filter((r) => r.test(t)).length : 0 }))
     .filter((x) => x.hits > 0)
     .sort((a, b) => b.hits - a.hits);
 }
@@ -534,7 +544,17 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_candidates (url TEXT PRIMARY KEY, source_url TEXT NOT NULL, lastmod TEXT, priority INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_candidates_pending ON strategic_candidates(status, priority, lastmod)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_analyses_url ON strategic_analyses(url)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
   ]);
+  // One-time: the first catch-ups shared the main schedule's request budget and many found nothing because their
+  // requests were refused, so every source's past year is fetched again on Strategic Analyses' own schedule.
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'catchup_reset_v1'`).first())) {
+    await db.batch([
+      db.prepare(`UPDATE strategic_sources SET backfilled_at = NULL, backfill_note = NULL, sitemap_at = NULL, sitemap_note = NULL, gnews_at = NULL`),
+      db.prepare(`UPDATE strategic_candidates SET status = 'pending' WHERE status = 'failed'`),
+      db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('catchup_reset_v1', ?)`).bind(JSON.stringify(new Date().toISOString())),
+    ]);
+  }
   // One-time move of the first version's humanitarian tables.
   const old = await db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('hum_analyses', 'hum_sources')`).all<{ name: string }>();
   const names = new Set((old.results ?? []).map((r) => r.name));
@@ -567,9 +587,11 @@ const BACKFILL_BATCH = 6;
 /** Sources searched on Google News per run (daily per source), which also covers sites with no feed. */
 const GNEWS_BATCH = 6;
 const GNEWS_EVERY_MS = 24 * 3600_000;
+/** A run starts no new job after this long, so it finishes well inside Cloudflare's limits. */
+const RUN_BUDGET_MS = 60_000;
 /** How far back pieces are kept: a year and a little. */
 const MAX_AGE_DAYS = 400;
-const WP_PAGES = 12;
+const WP_PAGES = 8;
 /** Sources whose sitemap is read per run, and pages opened per run to read a sitemap find's title, summary and date. */
 const SITEMAP_BATCH = 4;
 const ENRICH_BATCH = 25;
@@ -718,8 +740,10 @@ export async function collectStrategicAnalyses(
   const due = SOURCES.filter((s) => opts.force || age(s) >= CHECK_EVERY_MS)
     .sort((a, b) => age(b) - age(a))
     .slice(0, opts.limit ?? BATCH);
+  // Humanitarian specialists first (light, and the tab that needs it most), then other humanitarian sources, narrowest first.
+  const rank = (s: Source) => (isHumanitarianSpecialist(s) ? 0 : s.domains.includes("humanitarian") ? 1 : 2) * 10 + s.domains.length;
   const backfillDue = SOURCES.filter((s) => !states.get(s.url)?.backfilled_at)
-    .sort((a, b) => Number(b.domains.includes("humanitarian")) - Number(a.domains.includes("humanitarian")))
+    .sort((a, b) => rank(a) - rank(b))
     .slice(0, opts.backfill ?? BACKFILL_BATCH);
   const backfillSet = new Set(backfillDue.map((s) => s.url));
   const gnewsDue = SOURCES.filter((s) => !backfillSet.has(s.url) && states.get(s.url)?.backfilled_at && since(states.get(s.url)?.gnews_at) >= GNEWS_EVERY_MS)
@@ -728,7 +752,7 @@ export async function collectStrategicAnalyses(
   type SitemapState = { url: string; sitemap_at: string | null };
   const sitemapDone = new Set(((await db.prepare(`SELECT url, sitemap_at FROM strategic_sources WHERE sitemap_at IS NOT NULL`).all<SitemapState>()).results ?? []).map((r) => r.url));
   const sitemapDue = SOURCES.filter((s) => !sitemapDone.has(s.url))
-    .sort((a, b) => Number(b.domains.includes("humanitarian")) - Number(a.domains.includes("humanitarian")))
+    .sort((a, b) => rank(a) - rank(b))
     .slice(0, opts.sitemaps ?? SITEMAP_BATCH);
   const pending = ((await db.prepare(`SELECT url, source_url, lastmod FROM strategic_candidates WHERE status = 'pending' ORDER BY priority DESC, lastmod DESC LIMIT ?`).bind(opts.enrich ?? ENRICH_BATCH).all<{ url: string; source_url: string; lastmod: string | null }>()).results ?? []);
   if (due.length === 0 && backfillDue.length === 0 && gnewsDue.length === 0 && sitemapDue.length === 0 && pending.length === 0) return { ran: false, added: 0, sources: 0, backfilled: 0 };
@@ -736,30 +760,54 @@ export async function collectStrategicAnalyses(
   const cutoff = new Date(now.getTime() - MAX_AGE_DAYS * 86_400_000).toISOString();
   let added = 0;
 
+  const startedAt = Date.now();
+  const errors: string[] = [];
+  const stored: Record<string, number> = {};
+  const lanes = { read: 0, backfill: 0, gnews: 0, sitemaps: 0, pages: 0, skipped: 0 };
+  await setState(db, "last_run", { startedAt: nowIso, finishedAt: null, planned: { read: due.length, backfill: backfillDue.map((s) => s.name), gnews: gnewsDue.length, sitemaps: sitemapDue.map((s) => s.name), pages: pending.length } });
   // Found while backfilling, a piece published in the last three days still counts as new (and can alert); older ones
   // are dated by publication.
   const recentIso = new Date(now.getTime() - 3 * 86_400_000).toISOString();
   /** Classifies and stores entries; returns how many distinct pieces were kept. `old` dates older ones by publication. */
   const store = async (src: Source, entries: Entry[], old: boolean): Promise<number> => {
     const kept = entries.filter((e) => e.published >= cutoff && e.published <= new Date(now.getTime() + 86_400_000).toISOString()).flatMap((e) => classify({ ...e, source: src }));
-    for (let i = 0; i < kept.length; i += 50) {
-      const results = await db.batch(
-        kept.slice(i, i + 50).map((it) =>
+    for (let i = 0; i < kept.length; i += 40) {
+      const write = () => db.batch(
+        kept.slice(i, i + 40).map((it) =>
           db
             .prepare(`INSERT OR IGNORE INTO strategic_analyses (domain, id, url, title, summary, source, published, themes, countries, places, regions, blocs, africa, in_scope, score, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
             .bind(it.domain, it.id, it.url, it.title, it.summary, it.source, it.published, JSON.stringify(it.themes), JSON.stringify(it.countries), JSON.stringify(it.places), JSON.stringify(it.regions), JSON.stringify(it.blocs), it.africa ? 1 : 0, it.inScope ? 1 : 0, it.score, old && it.published < recentIso ? it.published : nowIso)
         )
       );
-      added += results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+      let results: D1Result[] | null = null;
+      try {
+        results = await write();
+      } catch {
+        // The database is busy now and then: wait a moment and try once more.
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          results = await write();
+        } catch (err) {
+          errors.push(`${src.name}: could not save (${err instanceof Error ? err.message.slice(0, 100) : String(err)})`);
+        }
+      }
+      added += (results ?? []).reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
+      stored[src.name] = (stored[src.name] ?? 0) + (results ?? []).reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
     }
     return new Set(kept.map((k) => k.id)).size;
   };
 
+  // Failed fetches are counted with a few reasons (blocked, timed out, request budget used up), never silently empty.
+  const fetchFails: Record<string, number> = {};
+  const failReason = (why: string) => (fetchFails[why] = (fetchFails[why] ?? 0) + 1);
   const getText = async (url: string): Promise<string | null> => {
     try {
       const r = await fetcher(url);
-      return r.ok ? await r.text() : null;
-    } catch {
+      if (r.ok) return await r.text();
+      if (r.status !== 404) failReason(`HTTP ${r.status}${url.includes("news.google.com") ? " (Google News)" : ""}`);
+      return null;
+    } catch (err) {
+      failReason(err instanceof Error ? err.message.slice(0, 80) : String(err));
       return null;
     }
   };
@@ -848,11 +896,14 @@ export async function collectStrategicAnalyses(
         feedUrl = null;
       }
       if (doBackfill) {
+        // Marked before the work, so a run cut short never retries the same source forever; the note says so.
+        await db.prepare(`UPDATE strategic_sources SET backfilled_at = ?, backfill_note = ? WHERE url = ?`).bind(nowIso, "Past year: started, not finished", src.url).run();
         const note = await backfill(src, feedUrl, firstPage);
         await db.prepare(`UPDATE strategic_sources SET backfilled_at = ?, gnews_at = ?, backfill_note = ? WHERE url = ?`).bind(nowIso, nowIso, note, src.url).run();
       }
     } catch (err) {
       console.error(`[analyses] ${src.name} failed`, err);
+      errors.push(`${src.name}: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`);
     }
   };
 
@@ -867,6 +918,10 @@ export async function collectStrategicAnalyses(
   /** Lists a source's content pages from the past year from its sitemap, to be opened a batch at a time. */
   const readSitemap = async (src: Source) => {
     let note = "No sitemap found";
+    await db
+      .prepare(`INSERT INTO strategic_sources (url, name, sitemap_at, sitemap_note) VALUES (?,?,?,?) ON CONFLICT(url) DO UPDATE SET sitemap_at = excluded.sitemap_at, sitemap_note = excluded.sitemap_note`)
+      .bind(src.url, src.name, nowIso, "Sitemap: started, not finished")
+      .run();
     try {
       const origin = new URL(src.url).origin;
       const robots = (await getText(`${origin}/robots.txt`)) ?? "";
@@ -934,20 +989,64 @@ export async function collectStrategicAnalyses(
   // Sources to read: the due ones, plus the ones being backfilled (which need their feed read first).
   const toRead = [...due, ...backfillDue.filter((s) => !due.some((d) => d.url === s.url))];
   const queue: (() => Promise<void>)[] = [
-    ...toRead.map((s) => () => one(s)),
-    ...gnewsDue.map((s) => () => searchDaily(s)),
-    ...sitemapDue.map((s) => () => readSitemap(s)),
-    ...pending.map((c) => () => openPage(c)),
+    ...toRead.map((s) => async () => (await one(s), void (backfillSet.has(s.url) ? lanes.backfill++ : lanes.read++))),
+    ...sitemapDue.map((s) => async () => (await readSitemap(s), void lanes.sitemaps++)),
+    ...pending.map((c) => async () => (await openPage(c), void lanes.pages++)),
+    ...gnewsDue.map((s) => async () => (await searchDaily(s), void lanes.gnews++)),
   ];
-  // A few at a time, so one slow site does not hold the rest.
+  // A few at a time, so one slow site does not hold the rest; nothing new starts once the run's time is up.
   await Promise.all(
     Array.from({ length: 6 }, async () => {
-      for (let job = queue.shift(); job; job = queue.shift()) await job();
+      for (let job = queue.shift(); job; job = queue.shift()) {
+        if (Date.now() - startedAt > RUN_BUDGET_MS) {
+          lanes.skipped++;
+          continue;
+        }
+        try {
+          await job();
+        } catch (err) {
+          errors.push(err instanceof Error ? err.message.slice(0, 120) : String(err));
+        }
+      }
     })
   );
   await db.prepare(`DELETE FROM strategic_analyses WHERE published < ?`).bind(cutoff).run();
   await db.prepare(`DELETE FROM strategic_candidates WHERE status != 'pending' AND created_at < ?`).bind(new Date(now.getTime() - 30 * 86_400_000).toISOString()).run();
+  await setState(db, "last_run", { startedAt: nowIso, finishedAt: new Date().toISOString(), seconds: Math.round((Date.now() - startedAt) / 1000), added, lanes, stored, fetchFails, errors: errors.slice(0, 12) });
   return { ran: true, added, sources: toRead.length + gnewsDue.length + sitemapDue.length, backfilled: backfillDue.length };
+}
+
+/* ── Run record and diagnostics ─────────────────────────────────────────── */
+
+async function setState(db: D1Database, key: string, value: unknown): Promise<void> {
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).run();
+    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(key, JSON.stringify(value)).run();
+  } catch {
+    /* diagnostics only */
+  }
+}
+
+/** What the collector is doing: its last run, how far the year's catch-up has got, and what is stored per domain. */
+export async function analysisDiagnostics(db: D1Database): Promise<Record<string, unknown>> {
+  await ensureAnalysisTables(db);
+  await db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`).run();
+  const [run, src, cand, per] = await Promise.all([
+    db.prepare(`SELECT value FROM strategic_state WHERE key = 'last_run'`).first<{ value: string }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS total, SUM(status = 'ok') AS ok, SUM(status = 'error') AS failing, SUM(backfilled_at IS NOT NULL) AS backfilled, SUM(backfill_note = 'Past year: started, not finished') AS backfill_cut, SUM(sitemap_at IS NOT NULL) AS sitemaps_read, SUM(sitemap_note LIKE '%publications%') AS sitemaps_found FROM strategic_sources`
+      )
+      .first<Record<string, number>>(),
+    db.prepare(`SELECT status, COUNT(*) AS n FROM strategic_candidates GROUP BY status`).all<{ status: string; n: number }>(),
+    db.prepare(`SELECT domain, COUNT(*) AS n, SUM(in_scope) AS in_scope FROM strategic_analyses GROUP BY domain`).all<{ domain: string; n: number; in_scope: number }>(),
+  ]);
+  return {
+    lastRun: run ? JSON.parse(run.value) : null,
+    sources: { listed: SOURCES.length, ...(src ?? {}) },
+    pages: Object.fromEntries((cand.results ?? []).map((r) => [r.status, r.n])),
+    stored: Object.fromEntries((per.results ?? []).map((r) => [r.domain, { all: r.n, inScope: r.in_scope }])),
+  };
 }
 
 /* ── Reading ──────────────────────────────────────────────────────────── */
