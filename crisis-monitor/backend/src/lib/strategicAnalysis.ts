@@ -1,327 +1,247 @@
 import type { Env } from "../bindings";
-import { AFRICA_CENTROIDS, AFRICA_GEO_COUNTRIES, MIDDLE_EAST_CODES, normalizeName } from "./africaGeo";
+import { AFRICA_CENTROIDS, MIDDLE_EAST_CODES, namedLocations } from "./africaGeo";
 import { discoverFeed } from "./feedDiscovery";
+import { SOURCE_KIND_LABEL, SOURCES, type DomainId, type Source, type SourceKind } from "./strategicSources";
+
+export { SOURCES, type DomainId, type Source };
 
 /**
- * Strategic analyses: what think tanks, research centres and specialist outlets publish on Africa, sorted into
- * domains (New Humanitarianism, Geopolitics, Elections, Economy, Trade, Cybersecurity, Conflict). Each domain has its
- * own keyword taxonomy and its own sources; many sources feed several domains, and one piece can sit in more than one.
+ * Strategic analyses: what think tanks, research centres, analysts and specialist outlets publish on Africa, sorted
+ * into domains (New Humanitarianism, Geopolitics, Elections, Economy, Trade, Cybersecurity, Conflict). Each domain has
+ * its own keyword taxonomy (English, French and Portuguese, since much African analysis is not in English, plus a
+ * theme for the places and bodies the domain turns on); the sources are in strategicSources.ts.
  *
- * The collector reads a batch of the least recently checked sources every run (so every source is read about hourly
+ * The collector reads a batch of the least recently read sources every run (so every source is read about hourly
  * without one run making too many requests), keeps pieces that match a domain's taxonomy and are about Africa (or,
  * for New Humanitarianism, are system-level reflections that shape Africa), and stores them per domain with their
- * themes and the African countries they discuss. New pieces are sent to anyone subscribed to that domain's alerts
- * (alertDelivery.ts, scope "analyses", query_id = domain).
+ * themes, the African countries, places, regions and regional blocs they discuss. New pieces are sent to anyone
+ * subscribed to that domain's alerts (alertDelivery.ts, scope "analyses", query_id = domain).
+ *
+ * Matching ignores case, accents, apostrophes and hyphens on both sides ("élection" = "election", "Côte d'Ivoire" =
+ * "cote d ivoire", "farmer-herder" = "farmer herder").
  */
 
-/* ── Domains, sources and taxonomy ────────────────────────────────────── */
-
-export type DomainId = "humanitarian" | "geopolitics" | "elections" | "economy" | "trade" | "cyber" | "conflict";
+/* ── Taxonomy ─────────────────────────────────────────────────────────── */
 
 export interface Theme {
   id: string;
   label: string;
-  /** Lower-case terms; a term ending in "*" matches any word that starts with it. */
+  /** A term ending in "*" matches any word that starts with it. */
   terms: string[];
   /** Shapes the whole system, so counts even when a piece names no African country. */
   systemic?: boolean;
+  /** Tags a piece (where, which crisis) but never qualifies it on its own. */
+  context?: boolean;
 }
 
 export interface Domain {
   id: DomainId;
   label: string;
   blurb: string;
-  /** A piece must be about the domain at all before its themes count. */
+  /** Run on the folded text: a piece must be about the domain at all before its themes count. */
   signal: RegExp;
   themes: Theme[];
   /** Theme-term hits needed from a source that covers many domains (a specialist source needs one). */
   minHits: number;
 }
 
-export interface Source {
-  name: string;
-  /** The feed, or the site's homepage when its feed is found by discovery. */
-  url: string;
-  /** Africa-based or Africa-focused: everything it publishes counts as about Africa. */
-  africa: boolean;
-  domains: DomainId[];
+/** Lower case, no accents; apostrophes, hyphens and dashes as spaces ("L'Alliance" → "l alliance"). */
+export function fold(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/['’‘ʼ`´]/g, " ")
+    .replace(/[-‐‑–—_/]/g, " ")
+    .replace(/\s+/g, " ");
 }
-
-const ALL: DomainId[] = ["humanitarian", "geopolitics", "elections", "economy", "trade", "cyber", "conflict"];
-
-/**
- * Think tanks, research centres and specialist outlets, with the domains each writes on. Sites without a findable
- * feed are reported in the source status (Strategic Analyses → Sources & keywords), not dropped silently.
- */
-export const SOURCES: Source[] = [
-  // African think tanks and Africa-focused analysis (broad)
-  { name: "Institute for Security Studies (ISS Africa)", url: "https://issafrica.org/", africa: true, domains: ALL },
-  { name: "Africa Center for Strategic Studies", url: "https://africacenter.org/feed/", africa: true, domains: ["humanitarian", "geopolitics", "elections", "cyber", "conflict"] },
-  { name: "South African Institute of International Affairs (SAIIA)", url: "https://saiia.org.za/feed/", africa: true, domains: ["humanitarian", "geopolitics", "elections", "economy", "trade", "cyber"] },
-  { name: "The Conversation Africa", url: "https://theconversation.com/africa/articles.atom", africa: true, domains: ALL },
-  { name: "Africa Portal", url: "https://www.africaportal.org/", africa: true, domains: ALL },
-  { name: "African Arguments", url: "https://africanarguments.org/feed/", africa: true, domains: ["humanitarian", "geopolitics", "elections", "economy", "conflict"] },
-  { name: "ACCORD", url: "https://www.accord.org.za/feed/", africa: true, domains: ["humanitarian", "geopolitics", "elections", "conflict"] },
-  { name: "Amani Africa", url: "https://amaniafrica-et.org/feed/", africa: true, domains: ["humanitarian", "geopolitics", "elections", "conflict"] },
-  { name: "ECDPM", url: "https://ecdpm.org/", africa: true, domains: ["humanitarian", "geopolitics", "economy", "trade"] },
-  { name: "West Africa Network for Peacebuilding (WANEP)", url: "https://wanep.org/wanep/", africa: true, domains: ["humanitarian", "elections", "conflict"] },
-  { name: "Institute for Peace and Security Studies (IPSS, Addis Ababa)", url: "https://ipss-addis.org/", africa: true, domains: ["geopolitics", "conflict", "elections"] },
-  { name: "HORN International Institute for Strategic Studies", url: "https://horninstitute.org/feed/", africa: true, domains: ["geopolitics", "conflict", "cyber"] },
-  { name: "Rift Valley Institute", url: "https://riftvalley.net/", africa: true, domains: ["humanitarian", "conflict", "elections", "economy"] },
-  { name: "Policy Center for the New South", url: "https://www.policycenter.ma/", africa: true, domains: ["geopolitics", "economy", "trade", "conflict"] },
-  { name: "Good Governance Africa", url: "https://gga.org/", africa: true, domains: ["elections", "economy", "geopolitics"] },
-  { name: "Mo Ibrahim Foundation", url: "https://mo.ibrahim.foundation/", africa: true, domains: ["elections", "economy", "geopolitics"] },
-  { name: "Kujenga Amani (SSRC)", url: "https://kujenga-amani.ssrc.org/feed/", africa: true, domains: ["conflict", "humanitarian"] },
-  { name: "The Africa Report", url: "https://www.theafricareport.com/feed/", africa: true, domains: ["geopolitics", "elections", "economy", "trade"] },
-  // International think tanks writing on Africa (broad)
-  { name: "International Crisis Group", url: "https://www.crisisgroup.org/", africa: false, domains: ["humanitarian", "geopolitics", "elections", "conflict"] },
-  { name: "Chatham House", url: "https://www.chathamhouse.org/", africa: false, domains: ALL },
-  { name: "CSIS Africa Program", url: "https://www.csis.org/programs/africa-program", africa: true, domains: ["geopolitics", "economy", "trade", "conflict"] },
-  { name: "Brookings Africa Growth Initiative", url: "https://www.brookings.edu/projects/africa-growth-initiative/", africa: true, domains: ["economy", "trade", "geopolitics"] },
-  { name: "Carnegie Endowment for International Peace", url: "https://carnegieendowment.org/", africa: false, domains: ["geopolitics", "elections", "cyber", "conflict"] },
-  { name: "Atlantic Council Africa Center", url: "https://www.atlanticcouncil.org/programs/africa-center/", africa: true, domains: ["geopolitics", "economy", "trade", "conflict"] },
-  { name: "Wilson Center Africa Program", url: "https://www.wilsoncenter.org/program/africa-program", africa: true, domains: ["geopolitics", "elections", "economy", "conflict"] },
-  { name: "European Council on Foreign Relations (ECFR)", url: "https://ecfr.eu/", africa: false, domains: ["geopolitics", "conflict", "trade"] },
-  { name: "Royal United Services Institute (RUSI)", url: "https://www.rusi.org/", africa: false, domains: ["geopolitics", "conflict", "cyber"] },
-  { name: "Clingendael Institute", url: "https://www.clingendael.org/", africa: false, domains: ["geopolitics", "conflict", "humanitarian"] },
-  { name: "German Institute for International and Security Affairs (SWP)", url: "https://www.swp-berlin.org/en/", africa: false, domains: ["geopolitics", "conflict"] },
-  { name: "IPI Global Observatory", url: "https://theglobalobservatory.org/feed/", africa: false, domains: ["humanitarian", "conflict", "geopolitics"] },
-  { name: "Center for Global Development", url: "https://www.cgdev.org/", africa: false, domains: ["humanitarian", "economy", "trade"] },
-  { name: "ODI Global", url: "https://odi.org/en/", africa: false, domains: ["humanitarian", "economy", "trade"] },
-  { name: "War on the Rocks", url: "https://warontherocks.com/feed/", africa: false, domains: ["geopolitics", "conflict"] },
-  // New Humanitarianism
-  { name: "The New Humanitarian", url: "https://www.thenewhumanitarian.org/rss/all.xml", africa: false, domains: ["humanitarian"] },
-  { name: "Humanitarian Practice Network", url: "https://odihpn.org/feed/", africa: false, domains: ["humanitarian"] },
-  { name: "ALNAP", url: "https://www.alnap.org/", africa: false, domains: ["humanitarian"] },
-  { name: "ICRC Humanitarian Law & Policy blog", url: "https://blogs.icrc.org/law-and-policy/feed/", africa: false, domains: ["humanitarian", "conflict"] },
-  { name: "ICVA", url: "https://www.icvanetwork.org/", africa: false, domains: ["humanitarian"] },
-  { name: "Humanitarian Outcomes", url: "https://humanitarianoutcomes.org/", africa: false, domains: ["humanitarian"] },
-  { name: "Global Public Policy Institute (GPPi)", url: "https://gppi.net/", africa: false, domains: ["humanitarian", "geopolitics"] },
-  { name: "CHS Alliance", url: "https://www.chsalliance.org/", africa: false, domains: ["humanitarian"] },
-  { name: "MSF Centre for Applied Reflection on Humanitarian Practice (CRASH)", url: "https://msf-crash.org/en", africa: false, domains: ["humanitarian"] },
-  { name: "Development Initiatives", url: "https://devinit.org/", africa: false, domains: ["humanitarian", "economy"] },
-  { name: "Center on International Cooperation (NYU)", url: "https://cic.nyu.edu/", africa: false, domains: ["humanitarian", "geopolitics"] },
-  { name: "Refugees International", url: "https://www.refugeesinternational.org/feed/", africa: false, domains: ["humanitarian"] },
-  { name: "Norwegian Refugee Council", url: "https://www.nrc.no/", africa: false, domains: ["humanitarian"] },
-  { name: "Devex", url: "https://www.devex.com/", africa: false, domains: ["humanitarian", "economy"] },
-  { name: "Charter4Change", url: "https://charter4change.org/feed/", africa: false, domains: ["humanitarian"] },
-  { name: "NEAR Network", url: "https://www.near.ngo/", africa: false, domains: ["humanitarian"] },
-  { name: "Peace Direct", url: "https://www.peacedirect.org/feed/", africa: false, domains: ["humanitarian", "conflict"] },
-  { name: "Adeso", url: "https://adesoafrica.org/", africa: true, domains: ["humanitarian"] },
-  // Elections and democracy
-  { name: "EISA (Electoral Institute for Sustainable Democracy in Africa)", url: "https://www.eisa.org/", africa: true, domains: ["elections"] },
-  { name: "Afrobarometer", url: "https://www.afrobarometer.org/", africa: true, domains: ["elections"] },
-  { name: "Democracy in Africa", url: "https://democracyinafrica.org/feed/", africa: true, domains: ["elections"] },
-  { name: "CDD-Ghana", url: "https://cddgh.org/", africa: true, domains: ["elections"] },
-  { name: "Centre for Democracy and Development (CDD West Africa)", url: "https://www.cddwestafrica.org/", africa: true, domains: ["elections", "conflict"] },
-  { name: "Yiaga Africa", url: "https://yiaga.org/", africa: true, domains: ["elections"] },
-  { name: "International IDEA", url: "https://www.idea.int/", africa: false, domains: ["elections"] },
-  { name: "The Carter Center", url: "https://www.cartercenter.org/", africa: false, domains: ["elections", "conflict"] },
-  { name: "IFES", url: "https://www.ifes.org/", africa: false, domains: ["elections"] },
-  { name: "National Democratic Institute", url: "https://www.ndi.org/", africa: false, domains: ["elections"] },
-  // Economy
-  { name: "African Economic Research Consortium (AERC)", url: "https://aercafrica.org/", africa: true, domains: ["economy"] },
-  { name: "Africa Policy Research Institute (APRI)", url: "https://afripoli.org/", africa: true, domains: ["economy", "geopolitics", "trade"] },
-  { name: "African Center for Economic Transformation (ACET)", url: "https://acetforafrica.org/", africa: true, domains: ["economy", "trade"] },
-  { name: "Development Reimagined", url: "https://developmentreimagined.com/", africa: true, domains: ["economy", "trade", "geopolitics"] },
-  { name: "Boston University Global Development Policy Center", url: "https://www.bu.edu/gdp/", africa: false, domains: ["economy", "trade"] },
-  // Trade
-  { name: "tralac (Trade Law Centre)", url: "https://www.tralac.org/", africa: true, domains: ["trade"] },
-  { name: "Hinrich Foundation", url: "https://www.hinrichfoundation.com/", africa: false, domains: ["trade"] },
-  { name: "IISD", url: "https://www.iisd.org/", africa: false, domains: ["trade", "economy"] },
-  { name: "The China Global South Project", url: "https://chinaglobalsouth.com/", africa: false, domains: ["trade", "geopolitics", "economy"] },
-  // Cybersecurity and digital
-  { name: "CIPESA", url: "https://cipesa.org/feed/", africa: true, domains: ["cyber"] },
-  { name: "Paradigm Initiative", url: "https://paradigmhq.org/", africa: true, domains: ["cyber"] },
-  { name: "Research ICT Africa", url: "https://researchictafrica.net/", africa: true, domains: ["cyber"] },
-  { name: "Access Now", url: "https://www.accessnow.org/", africa: false, domains: ["cyber"] },
-  { name: "DFRLab (Atlantic Council)", url: "https://dfrlab.org/", africa: false, domains: ["cyber"] },
-  { name: "Global Partners Digital", url: "https://www.gp-digital.org/", africa: false, domains: ["cyber"] },
-  { name: "Digital Watch Observatory", url: "https://dig.watch/", africa: false, domains: ["cyber"] },
-  // Conflict and security
-  { name: "ACLED", url: "https://acleddata.com/", africa: false, domains: ["conflict"] },
-  { name: "Small Arms Survey", url: "https://www.smallarmssurvey.org/", africa: false, domains: ["conflict"] },
-  { name: "Global Initiative Against Transnational Organized Crime", url: "https://globalinitiative.net/", africa: false, domains: ["conflict", "economy"] },
-  { name: "Critical Threats", url: "https://www.criticalthreats.org/", africa: false, domains: ["conflict"] },
-  { name: "Combating Terrorism Center at West Point", url: "https://ctc.westpoint.edu/", africa: false, domains: ["conflict"] },
-];
 
 const HUMANITARIAN_THEMES: Theme[] = [
   {
     id: "funding",
     label: "Funding cuts & aid financing",
     systemic: true,
-    terms: ["funding cut*", "aid cut*", "budget cut*", "cuts to aid", "foreign aid", "official development assistance", "oda", "usaid", "dismantl*", "aid freeze", "funding freeze", "funding gap*", "underfund*", "humanitarian financing", "humanitarian funding", "pooled fund*", "cerf", "global humanitarian overview", "donor fatigue", "donor government*", "shrinking aid", "aid budget*", "aid architecture", "financing gap", "hyper-prioriti*", "prioritisation", "prioritization"],
+    terms: ["funding cut*", "aid cut*", "budget cut*", "cuts to aid", "foreign aid", "official development assistance", "oda", "usaid", "dismantl*", "aid freeze", "funding freeze", "stop work order*", "funding gap*", "underfund*", "humanitarian financing", "humanitarian funding", "pooled fund*", "country based pooled fund*", "cerf", "global humanitarian overview", "humanitarian response plan*", "appeal* funded", "donor fatigue", "donor government*", "shrinking aid", "aid budget*", "aid architecture", "financing gap", "hyper prioriti*", "prioritisation", "prioritization", "baisse de l aide", "coupes budgetaires", "financement humanitaire", "aide publique au developpement", "cortes na ajuda"],
   },
   {
     id: "reset",
     label: "Humanitarian reset & system reform",
     systemic: true,
-    terms: ["humanitarian reset", "the reset", "un80", "un reform", "system reform", "grand bargain", "iasc", "inter-agency standing committee", "flagship initiative", "humanitarian architecture", "humanitarian system", "transformation agenda", "agency merger*", "merging agencies", "emergency relief coordinator"],
+    terms: ["humanitarian reset", "the reset", "reset humanitaire", "un80", "un reform", "system reform", "grand bargain", "iasc", "inter agency standing committee", "flagship initiative", "humanitarian architecture", "humanitarian system", "systeme humanitaire", "transformation agenda", "agency merger*", "merging agencies", "emergency relief coordinator", "cluster system", "cluster approach", "humanitarian coordination", "coordination humanitaire", "area based coordination"],
   },
   {
     id: "localisation",
     label: "Localisation & shifting power",
     systemic: true,
-    terms: ["localisation", "localization", "localis*", "localiz*", "locally led", "locally-led", "local actors", "local and national actors", "national ngos", "local ngos", "community-led", "shift the power", "shifting power", "power shift", "decoloni*", "charter for change", "intermediar*", "direct funding", "women-led organi*", "women's rights organi*", "proximate", "local leadership", "equitable partnership*"],
+    terms: ["localisation", "localization", "localis*", "localiz*", "locally led", "local actors", "local and national actors", "national ngos", "local ngos", "ong locales", "ong nationales", "acteurs locaux", "community led", "community based organi*", "mutual aid", "emergency response rooms", "err", "shift the power", "shifting power", "power shift", "decoloni*", "charter for change", "intermediar*", "direct funding", "overhead*", "indirect cost*", "women led organi*", "women s rights organi*", "proximate", "local leadership", "equitable partnership*", "leadership locale"],
   },
   {
     id: "global-south",
     label: "Global South & non-traditional actors",
     systemic: true,
-    terms: ["global south", "non-traditional donor*", "emerging donor*", "new donors", "gulf donor*", "gulf humanitarian*", "saudi aid", "ksrelief", "emirati aid", "uae aid", "qatari aid", "qatar fund for development", "kuwaiti aid", "turkish aid", "türkiye's aid", "chinese aid", "china's aid", "south-south", "brics", "india's aid", "african humanitarian agency", "african union", "au humanitarian", "solidarity-based", "middle powers", "islamic humanitarian*", "zakat", "diaspora"],
+    terms: ["global south", "sud global", "non traditional donor*", "emerging donor*", "new donors", "gulf donor*", "gulf humanitarian*", "saudi aid", "ksrelief", "emirati aid", "uae aid", "qatari aid", "qatar fund for development", "qatar charity", "kuwaiti aid", "turkish aid", "turkiye s aid", "tika", "afad", "chinese aid", "china s aid", "south south", "brics", "india s aid", "african humanitarian agency", "african union humanitarian", "au humanitarian", "afreximbank", "solidarity based", "middle powers", "islamic humanitarian*", "islamic relief", "zakat", "waqf", "diaspora", "remittance*"],
   },
   {
     id: "access",
     label: "Access & the operating environment",
-    terms: ["humanitarian access", "access constraint*", "access impediment*", "bureaucratic impediment*", "humanitarian negotiation*", "negotiat* access", "armed group* engagement", "engagement with armed groups", "non-state armed group*", "deconflict*", "besieg*", "siege", "aid diversion", "obstruction of aid", "obstructing aid", "aid obstruction", "starvation as a weapon", "humanitarian corridor*", "cross-border aid", "cross-line", "denial of access", "humanitarian space", "operating environment"],
+    terms: ["humanitarian access", "acces humanitaire", "access constraint*", "access impediment*", "bureaucratic impediment*", "humanitarian negotiation*", "negotiat* access", "armed group* engagement", "engagement with armed groups", "non state armed group*", "deconflict*", "besieg*", "siege", "blockade", "aid diversion", "obstruction of aid", "obstructing aid", "aid obstruction", "starvation as a weapon", "starvation", "humanitarian corridor*", "cross border aid", "cross line", "adre crossing", "denial of access", "humanitarian space", "espace humanitaire", "operating environment", "visa restrictions", "travel permit*", "communications blackout"],
   },
   {
     id: "principles",
     label: "Principles, politicisation & sanctions",
-    terms: ["humanitarian principles", "neutrality", "impartiality", "principled humanitarian*", "politicis*", "politiciz*", "instrumentalis*", "instrumentaliz*", "counter-terror*", "counterterror*", "sanctions regime*", "sanctions exemption*", "humanitarian carve-out*", "humanitarian exemption*", "militaris*", "securitis*", "international humanitarian law", "ihl"],
+    terms: ["humanitarian principles", "principes humanitaires", "neutrality", "neutralite", "impartiality", "impartialite", "independence of humanitarian", "principled humanitarian*", "politicis*", "politiciz*", "instrumentalis*", "instrumentaliz*", "counter terror*", "counterterror*", "sanctions regime*", "sanctions exemption*", "humanitarian carve out*", "humanitarian exemption*", "resolution 2664", "militaris*", "securitis*", "international humanitarian law", "droit international humanitaire", "ihl", "dih", "protection of civilians"],
   },
   {
     id: "security",
     label: "Aid worker safety & risk",
-    terms: ["aid worker*", "humanitarian worker*", "attacks on aid", "attacks on humanitarian*", "staff killed", "duty of care", "risk transfer", "risk sharing", "security risk management", "kidnapping of aid"],
+    terms: ["aid worker*", "humanitarian worker*", "travailleurs humanitaires", "attacks on aid", "attacks on humanitarian*", "staff killed", "humanitarian staff", "duty of care", "risk transfer", "risk sharing", "security risk management", "kidnapping of aid", "national staff", "looting of aid", "warehouse* looted"],
   },
   {
     id: "nexus",
     label: "Nexus, climate & anticipatory action",
-    terms: ["nexus", "humanitarian-development-peace", "triple nexus", "hdp", "anticipatory action", "early action", "early warning", "climate finance", "climate crisis", "loss and damage", "resilience", "protracted crisis", "protracted crises", "durable solutions"],
+    terms: ["nexus", "humanitarian development peace", "triple nexus", "hdp", "anticipatory action", "action anticipatoire", "early action", "early warning", "alerte precoce", "climate finance", "climate crisis", "climate shocks", "drought", "secheresse", "floods", "inondations", "el nino", "loss and damage", "resilience", "protracted crisis", "protracted crises", "protracted displacement", "durable solutions", "solutions durables", "social protection"],
   },
   {
     id: "accountability",
     label: "Accountability & participation",
-    terms: ["accountability to affected people", "accountability to affected populations", "aap", "participation revolution", "affected people", "feedback mechanism*", "community engagement", "psea", "sexual exploitation and abuse", "safeguarding"],
+    terms: ["accountability to affected people", "accountability to affected populations", "aap", "participation revolution", "affected people", "affected communities", "feedback mechanism*", "community engagement", "psea", "sexual exploitation and abuse", "safeguarding", "redevabilite", "core humanitarian standard"],
   },
   {
     id: "cash-digital",
     label: "Cash, data & technology",
-    terms: ["cash assistance", "cash transfer*", "cash and voucher*", "digital humanitarian*", "artificial intelligence", "data protection", "biometric*", "digital identity", "humanitarian data"],
+    terms: ["cash assistance", "cash transfer*", "cash and voucher*", "multipurpose cash", "transferts monetaires", "digital humanitarian*", "artificial intelligence", "data protection", "biometric*", "digital identity", "humanitarian data", "mobile money", "starlink"],
+  },
+  {
+    id: "crises",
+    label: "Africa's major crises",
+    context: true,
+    terms: ["sudan", "darfur", "el fasher", "el fashir", "kordofan", "south sudan", "eastern drc", "north kivu", "south kivu", "ituri", "goma", "central sahel", "lake chad", "lac tchad", "tigray", "amhara", "somalia", "cabo delgado", "anglophone crisis", "central african republic", "famine", "ipc 5", "ipc phase 5", "cholera", "mpox", "refugee camp*", "camps de refugies", "chad refugee*", "displaced", "deplaces", "idps", "returnees"],
   },
   {
     id: "future",
     label: "The future of humanitarianism",
     systemic: true,
-    terms: ["future of humanitarian*", "new humanitarianism", "humanitarian landscape", "humanitarian sector", "aid sector", "aid industry", "post-aid", "beyond aid", "aid dependency", "multilateralism", "multilateral system", "humanitarian model", "humanitarian action", "what next for aid", "end of aid", "rethinking aid", "rethink* humanitarian*"],
+    terms: ["future of humanitarian*", "avenir de l humanitaire", "new humanitarianism", "humanitarian landscape", "humanitarian sector", "secteur humanitaire", "aid sector", "aid industry", "post aid", "beyond aid", "aid dependency", "multilateralism", "multilateral system", "humanitarian model", "humanitarian action", "action humanitaire", "what next for aid", "end of aid", "rethinking aid", "rethink* humanitarian*", "decolonising aid", "decolonizing aid"],
   },
 ];
 
-
 const GEOPOLITICS_THEMES: Theme[] = [
-  { id: "major-powers", label: "Major powers in Africa", terms: ["great power*", "great-power", "china", "chinese", "beijing", "russia*", "kremlin", "moscow", "united states", "washington", "us policy", "us-africa", "trump administration", "european union", "eu-africa", "brussels", "france", "french", "paris", "united kingdom", "britain", "british"] },
-  { id: "middle-powers", label: "Gulf, Türkiye & middle powers", terms: ["middle power*", "gulf state*", "gulf countries", "uae", "emirati*", "abu dhabi", "saudi*", "riyadh", "qatar*", "doha", "turkey", "türkiye", "turkish", "ankara", "iran*", "tehran", "israel*", "india*", "new delhi", "japan*", "brazil*", "south korea*"] },
-  { id: "multilateral", label: "AU, regional blocs & multilateralism", terms: ["african union", "au commission", "peace and security council", "ecowas", "sadc", "eac", "east african community", "igad", "eccas", "alliance of sahel states", "aes", "un security council", "unsc", "brics", "g20", "multilateral*", "regional bloc*", "regional organi*", "permanent seat"] },
-  { id: "security-partnerships", label: "Security partnerships & foreign military presence", terms: ["military base*", "naval base*", "security cooperation", "security partner*", "defence pact*", "defense pact*", "defence agreement*", "defense agreement*", "arms deal*", "arms sale*", "foreign troops", "troop withdrawal", "military presence", "wagner", "africa corps", "private military", "mercenar*", "drone sale*", "military training"] },
-  { id: "resources-corridors", label: "Resources, corridors & strategic geography", terms: ["critical mineral*", "rare earth*", "cobalt", "lithium", "uranium", "red sea", "bab el-mandeb", "gulf of aden", "horn of africa", "strategic port*", "port deal*", "sea access", "access to the sea", "lobito corridor", "belt and road", "infrastructure diplomacy", "mineral diplomacy"] },
-  { id: "diplomacy", label: "Diplomacy, alignment & sovereignty", terms: ["foreign policy", "diplomac*", "diplomat*", "summit*", "non-align*", "alignment", "strategic autonomy", "sovereignty", "neocolonial*", "anti-french", "anti-western", "recognition of somaliland", "somaliland", "sanction*", "envoy*", "bilateral relations", "rapprochement", "rift with"] },
-  { id: "influence", label: "Influence & information competition", terms: ["soft power", "influence operation*", "information war*", "disinformation", "propaganda", "media influence", "scholarships", "cultural diplomacy", "narrative*"] },
+  { id: "major-powers", label: "Major powers in Africa", terms: ["great power*", "grandes puissances", "china", "chinese", "chine", "chinois", "beijing", "pekin", "focac", "russia*", "russie", "russe*", "kremlin", "moscow", "moscou", "united states", "etats unis", "washington", "us africa", "trump administration", "africom", "european union", "union europeenne", "eu africa", "brussels", "france", "french", "francais", "francafrique", "paris", "united kingdom", "britain", "british", "royaume uni", "portugal", "germany", "italy", "mattei plan"] },
+  { id: "middle-powers", label: "Gulf, Türkiye & middle powers", terms: ["middle power*", "puissances moyennes", "gulf state*", "gulf countries", "golfe", "uae", "emirati*", "emirats", "abu dhabi", "saudi*", "arabie saoudite", "riyadh", "qatar*", "doha", "turkey", "turkiye", "turquie", "turkish", "ankara", "iran*", "tehran", "israel*", "india*", "inde", "new delhi", "japan*", "ticad", "brazil*", "south korea*", "indonesia", "egypt*"] },
+  { id: "multilateral", label: "AU, regional blocs & multilateralism", terms: ["african union", "union africaine", "au commission", "commission de l ua", "peace and security council", "conseil de paix et de securite", "ecowas", "cedeao", "sadc", "eac", "east african community", "igad", "eccas", "ceeac", "comesa", "arab maghreb union", "uma", "cen sad", "alliance of sahel states", "alliance des etats du sahel", "aes", "confederation of sahel states", "un security council", "conseil de securite", "unsc", "a3", "a3 plus", "brics", "g20", "multilateral*", "multilateralisme", "regional bloc*", "regional organi*", "permanent seat", "ezulwini consensus", "agenda 2063"] },
+  { id: "security-partnerships", label: "Security partnerships & foreign military presence", terms: ["military base*", "base militaire", "naval base*", "base navale", "security cooperation", "cooperation securitaire", "security partner*", "defence pact*", "defense pact*", "defence agreement*", "defense agreement*", "accord de defense", "arms deal*", "arms sale*", "ventes d armes", "foreign troops", "troupes etrangeres", "troop withdrawal", "retrait des troupes", "military presence", "presence militaire", "wagner", "africa corps", "private military", "mercenar*", "drone sale*", "bayraktar", "military training", "military advisers", "barkhane"] },
+  { id: "arenas", label: "Strategic arenas: Red Sea, Sahel, Great Lakes, Gulf of Guinea…", terms: ["red sea", "mer rouge", "bab el mandeb", "gulf of aden", "golfe d aden", "horn of africa", "corne de l afrique", "sahel", "gulf of guinea", "golfe de guinee", "great lakes", "grands lacs", "indian ocean", "ocean indien", "mozambique channel", "maghreb", "nile", "nil", "gerd", "grand ethiopian renaissance dam", "renaissance dam", "western sahara", "sahara occidental", "polisario", "somaliland", "berbera", "port sudan", "djibouti", "suez canal", "canal de suez", "sinai", "libya", "fezzan", "lake chad", "lac tchad", "cabo delgado", "sea access", "access to the sea", "acces a la mer"] },
+  { id: "resources", label: "Resources, minerals & infrastructure diplomacy", terms: ["critical mineral*", "minerais critiques", "rare earth*", "terres rares", "cobalt", "lithium", "uranium", "coltan", "copper", "gold", "oil", "petrole", "gas", "gaz", "strategic port*", "port deal*", "dp world", "lobito corridor", "corridor de lobito", "belt and road", "global gateway", "pgii", "infrastructure diplomacy", "mineral diplomacy", "minerals for security", "resource nationalism", "nationalisme des ressources"] },
+  { id: "diplomacy", label: "Diplomacy, alignment & sovereignty", terms: ["foreign policy", "politique etrangere", "diplomac*", "diplomati*", "diplomat*", "summit*", "sommet*", "non align*", "alignment", "strategic autonomy", "autonomie strategique", "sovereignty", "souverainete", "soberania", "neocolonial*", "anti french", "sentiment anti francais", "anti western", "pan african*", "panafrican*", "recognition", "reconnaissance", "sanction*", "envoy*", "envoye special", "bilateral relations", "rapprochement", "rupture", "expulsion of ambassador*", "rift with"] },
+  { id: "influence", label: "Influence & information competition", terms: ["soft power", "influence operation*", "operations d influence", "information war*", "guerre informationnelle", "disinformation", "desinformation", "propaganda", "propagande", "media influence", "rt", "sputnik", "african initiative", "scholarships", "cultural diplomacy", "narrative*", "recit*"] },
+  { id: "migration", label: "Migration, borders & mobility", terms: ["migration", "migrants", "migratoire", "border*", "frontiere*", "externalis*", "externaliz*", "migration deal*", "migration partnership*", "returns agreement*", "readmission", "free movement", "libre circulation", "mediterranean crossing*", "central mediterranean", "atlantic route", "canary islands", "smuggling network*"] },
 ];
 
 const ELECTION_THEMES: Theme[] = [
-  { id: "contests", label: "Elections, campaigns & candidates", terms: ["presidential election*", "general election*", "legislative election*", "parliamentary election*", "local election*", "municipal election*", "by-election*", "run-off", "runoff", "second round", "primaries", "party primar*", "campaign*", "candidate*", "nomination*", "manifesto*", "electoral calendar", "polling day", "turnout", "election results", "landslide", "incumbent*", "opposition"] },
-  { id: "integrity", label: "Electoral integrity & administration", terms: ["electoral commission", "election commission", "election management bod*", "iebc", "inec", "voter registration", "voter roll*", "voters roll", "voter register", "biometric voter", "results transmission", "rigging", "rigged", "electoral fraud", "vote fraud", "irregularit*", "tallying", "observer*", "observation mission*", "credibility", "election petition*", "electoral court*", "disputed result*", "recount", "boycott*"] },
-  { id: "violence", label: "Electoral violence & unrest", terms: ["electoral violence", "election violence", "election-related violence", "post-election", "pre-election", "protest*", "crackdown", "internet shutdown*", "arrest of opposition", "opposition leader* arrested", "intimidation", "vote buying", "vote-buying", "abduction*", "state of emergency"] },
-  { id: "backsliding", label: "Term limits, coups & democratic backsliding", terms: ["term limit*", "third term", "fourth term", "constitutional amendment*", "constitutional change*", "constitutional referendum", "referendum", "coup*", "junta*", "military rule", "transition*", "transitional", "democratic backslid*", "backsliding", "authoritarian*", "democratic decline", "democratic recession", "postpone* election*", "delayed election*", "succession"] },
-  { id: "opinion", label: "Public opinion & participation", terms: ["afrobarometer", "opinion poll*", "survey*", "public trust", "trust in", "youth vote", "young voters", "gen z", "women's participation", "women in politics", "voter apathy", "civic space", "civil society"] },
-  { id: "information", label: "Election information integrity", terms: ["disinformation", "misinformation", "fake news", "information manipulation", "deepfake*", "social media", "influence operation*", "hate speech", "media freedom"] },
+  { id: "contests", label: "Elections, campaigns & candidates", terms: ["presidential election*", "election presidentielle", "presidentielle", "general election*", "elections generales", "legislative election*", "legislatives", "parliamentary election*", "local election*", "municipal election*", "municipales", "elections locales", "by election*", "run off", "runoff", "second round", "second tour", "premier tour", "primaries", "party primar*", "campaign*", "campagne electorale", "candidate*", "candidat*", "nomination*", "manifesto*", "electoral calendar", "calendrier electoral", "polling day", "turnout", "taux de participation", "election results", "resultats", "landslide", "incumbent*", "sortant", "opposition", "eleicoes", "eleicao", "candidato*", "electoral alliance*", "coalition*"] },
+  { id: "integrity", label: "Electoral integrity & administration", terms: ["electoral commission", "election commission", "commission electorale", "election management bod*", "iebc", "inec", "ceni", "cena", "nec", "zec", "ecz", "cne", "ec ghana", "voter registration", "enrolement", "inscription sur les listes", "voter roll*", "voters roll", "voter register", "fichier electoral", "liste electorale", "biometric voter", "bvas", "irev", "results transmission", "transmission des resultats", "rigging", "rigged", "electoral fraud", "fraude electorale", "fraude", "vote fraud", "irregularit*", "tallying", "depouillement", "observer*", "observateur*", "observation mission*", "mission d observation", "credibility", "credibilite", "election petition*", "contentieux electoral", "electoral court*", "cour constitutionnelle", "constitutional court", "supreme court ruling", "disputed result*", "recount", "boycott*", "diaspora vote", "electoral code", "code electoral"] },
+  { id: "violence", label: "Electoral violence & unrest", terms: ["electoral violence", "election violence", "violences electorales", "election related violence", "post election", "post electoral", "postelectoral*", "pre election", "pre electoral", "protest*", "manifestation*", "crackdown", "repression", "internet shutdown*", "coupure d internet", "arrest of opposition", "opposition leader* arrested", "arrestation d opposants", "intimidation", "vote buying", "achat de voix", "abduction*", "enlevement*", "state of emergency", "etat d urgence", "curfew", "couvre feu", "gen z protest*"] },
+  { id: "backsliding", label: "Term limits, coups & democratic backsliding", terms: ["term limit*", "limitation des mandats", "third term", "troisieme mandat", "fourth term", "quatrieme mandat", "constitutional amendment*", "constitutional change*", "revision constitutionnelle", "nouvelle constitution", "new constitution", "constitutional referendum", "referendum", "coup*", "coup d etat", "putsch", "junta*", "junte*", "military rule", "transition*", "transitional", "charte de la transition", "democratic backslid*", "backsliding", "recul democratique", "authoritarian*", "autoritar*", "democratic decline", "democratic recession", "postpone* election*", "delayed election*", "report des elections", "succession", "dynast*", "life president*", "unconstitutional change* of government", "changement anticonstitutionnel"] },
+  { id: "norms", label: "Regional norms & sanctions", terms: ["african charter on democracy", "acdeg", "ecowas protocol on democracy", "protocole de la cedeao", "sadc principles and guidelines", "au suspension", "suspended from the african union", "suspension de l ua", "ecowas sanctions", "sanctions de la cedeao", "election observation mission", "au election observation", "ecowas observer*", "sadc electoral observation", "peace and security council", "mediation*", "mediateur*"] },
+  { id: "opinion", label: "Public opinion & participation", terms: ["afrobarometer", "afrobarometre", "opinion poll*", "sondage*", "survey*", "public trust", "trust in", "confiance", "youth vote", "young voters", "jeunes electeurs", "gen z", "women s participation", "women in politics", "participation des femmes", "voter apathy", "abstention", "civic space", "espace civique", "civil society", "societe civile", "political parties", "partis politiques"] },
+  { id: "information", label: "Election information integrity", terms: ["disinformation", "desinformation", "misinformation", "fake news", "infox", "information manipulation", "deepfake*", "social media", "reseaux sociaux", "influence operation*", "hate speech", "discours de haine", "media freedom", "liberte de la presse", "fact check*"] },
 ];
 
 const ECONOMY_THEMES: Theme[] = [
-  { id: "debt-fiscal", label: "Debt, fiscal stress & IMF programmes", terms: ["sovereign debt", "public debt", "debt distress", "debt crisis", "debt restructur*", "common framework", "eurobond*", "default*", "debt service", "debt servicing", "fiscal deficit", "fiscal consolidation", "austerity", "budget deficit", "imf programme", "imf program", "imf deal", "extended credit facility", "bailout", "credit rating*", "downgrade*", "upgrade*", "domestic revenue", "tax reform*", "tax*"] },
-  { id: "macro", label: "Inflation, currencies & monetary policy", terms: ["inflation", "interest rate*", "central bank*", "monetary policy", "currency", "exchange rate*", "devaluat*", "depreciat*", "naira", "cedi", "kenyan shilling", "rand", "birr", "kwacha", "egyptian pound", "cfa franc", "eco currency", "forex", "foreign exchange", "fx reserves", "foreign reserves", "dollar shortage*"] },
-  { id: "growth", label: "Growth, outlook & structural change", terms: ["gdp", "economic growth", "growth outlook", "growth forecast*", "recession", "slowdown", "economic outlook", "economic recovery", "productivity", "structural transformation", "industrialis*", "industrializ*", "manufacturing", "economic diversification", "diversification"] },
-  { id: "investment", label: "Investment, finance & capital markets", terms: ["foreign direct investment", "fdi", "investor*", "private capital", "private sector", "development finance", "climate finance", "green bond*", "blended finance", "financial inclusion", "fintech", "mobile money", "banking sector", "banks", "stock exchange", "capital market*", "remittance*", "sovereign wealth fund*", "pension fund*"] },
-  { id: "resources-energy", label: "Mining, energy & commodities", terms: ["mining", "mining code", "critical mineral*", "oil", "crude", "natural gas", "lng", "refiner*", "energy transition", "electricity", "power sector", "power cuts", "load shedding", "load-shedding", "commodity price*", "commodities", "cocoa", "coffee", "gold price", "copper"] },
-  { id: "livelihoods", label: "Jobs, prices & livelihoods", terms: ["unemployment", "youth unemployment", "jobs", "employment", "informal sector", "informal economy", "cost of living", "cost-of-living", "food prices", "fuel prices", "poverty", "inequality", "wages", "minimum wage", "living standards"] },
-  { id: "reform", label: "Reform, subsidies & governance of the economy", terms: ["subsidy removal", "fuel subsidy", "subsidies", "privatis*", "privatiz*", "state-owned enterprise*", "parastatal*", "corruption", "illicit financial flows", "economic reform*", "structural reform*", "finance bill", "budget"] },
+  { id: "debt-fiscal", label: "Debt, fiscal stress & IMF programmes", terms: ["sovereign debt", "dette souveraine", "public debt", "dette publique", "debt distress", "surendettement", "debt crisis", "crise de la dette", "debt restructur*", "restructuration de la dette", "common framework", "cadre commun", "paris club", "eurobond*", "panda bond*", "default*", "defaut de paiement", "debt service", "service de la dette", "debt servicing", "fiscal deficit", "deficit budgetaire", "fiscal consolidation", "austerity", "austerite", "budget deficit", "imf programme", "imf program", "imf deal", "programme du fmi", "fmi", "extended credit facility", "facilite elargie de credit", "bailout", "credit rating*", "notation", "downgrade*", "upgrade*", "domestic revenue", "tax reform*", "reforme fiscale", "tax*", "impot*", "divida"] },
+  { id: "macro", label: "Inflation, currencies & monetary policy", terms: ["inflation", "interest rate*", "taux directeur", "taux d interet", "central bank*", "banque centrale", "bceao", "beac", "monetary policy", "politique monetaire", "currency", "monnaie", "exchange rate*", "taux de change", "devaluat*", "depreciat*", "naira", "cedi", "kenyan shilling", "ugandan shilling", "rand", "birr", "kwacha", "egyptian pound", "leone", "cfa franc", "franc cfa", "eco currency", "monnaie eco", "forex", "foreign exchange", "devises", "fx reserves", "foreign reserves", "reserves de change", "dollar shortage*", "penurie de dollars", "dollarisation", "dollarization"] },
+  { id: "growth", label: "Growth, outlook & structural change", terms: ["gdp", "pib", "economic growth", "croissance economique", "croissance", "growth outlook", "growth forecast*", "perspectives economiques", "recession", "slowdown", "ralentissement", "economic outlook", "economic recovery", "reprise economique", "productivity", "productivite", "structural transformation", "transformation structurelle", "industrialis*", "industrializ*", "manufacturing", "economic diversification", "diversification", "special economic zone*", "crescimento"] },
+  { id: "investment", label: "Investment, finance & capital markets", terms: ["foreign direct investment", "investissements directs etrangers", "fdi", "ide", "investor*", "investisseur*", "private capital", "private sector", "secteur prive", "development finance", "climate finance", "finance climatique", "green bond*", "blended finance", "financial inclusion", "inclusion financiere", "fintech", "mobile money", "m pesa", "banking sector", "banks", "banques", "stock exchange", "bourse", "brvm", "jse", "nse", "capital market*", "remittance*", "transferts de fonds", "sovereign wealth fund*", "pension fund*", "private equity", "venture capital", "startup funding"] },
+  { id: "resources-energy", label: "Mining, energy & commodities", terms: ["mining", "secteur minier", "mining code", "code minier", "critical mineral*", "oil", "petrole", "crude", "natural gas", "gaz naturel", "lng", "refiner*", "raffinerie", "dangote refinery", "energy transition", "transition energetique", "electricity", "electricite", "power sector", "power cuts", "delestage*", "load shedding", "eskom", "mission 300", "commodity price*", "cours des matieres premieres", "commodities", "matieres premieres", "cocoa", "cacao", "coffee", "gold price", "copper", "green hydrogen"] },
+  { id: "livelihoods", label: "Jobs, prices & livelihoods", terms: ["unemployment", "chomage", "youth unemployment", "chomage des jeunes", "jobs", "emploi*", "employment", "informal sector", "secteur informel", "informal economy", "cost of living", "cout de la vie", "vie chere", "food prices", "prix alimentaires", "fuel prices", "prix du carburant", "poverty", "pauvrete", "inequality", "inegalites", "wages", "salaires", "minimum wage", "salaire minimum", "living standards", "pouvoir d achat"] },
+  { id: "reform", label: "Reform, subsidies & economic governance", terms: ["subsidy removal", "fuel subsidy", "subvention*", "subsidies", "privatis*", "privatiz*", "state owned enterprise*", "entreprises publiques", "parastatal*", "corruption", "illicit financial flows", "flux financiers illicites", "economic reform*", "reformes economiques", "structural reform*", "finance bill", "loi de finances", "budget", "public procurement", "marches publics", "audit*"] },
+  { id: "zones", label: "Monetary zones & regional economies", terms: ["waemu", "uemoa", "cemac", "sacu", "common monetary area", "eac monetary union", "franc zone", "zone franc", "afreximbank", "african credit rating agency", "african financial institutions", "regional economic outlook", "economies africaines", "african economies", "frontier market*", "marches frontieres"] },
 ];
 
 const TRADE_THEMES: Theme[] = [
-  { id: "afcfta", label: "AfCFTA & regional integration", terms: ["afcfta", "african continental free trade", "continental free trade", "intra-african trade", "intra-regional trade", "regional integration", "regional economic communit*", "customs union", "rules of origin", "ecowas", "eac", "sadc", "comesa", "single market", "free movement", "papss", "guided trade initiative"] },
-  { id: "partners", label: "US, EU, China & Gulf trade relations", terms: ["agoa", "african growth and opportunity act", "tariff*", "reciprocal tariff*", "trade war", "eu-africa", "economic partnership agreement*", "cbam", "carbon border", "deforestation regulation", "eudr", "china-africa", "focac", "zero-tariff", "zero tariff", "duty-free", "gulf investment", "trade deficit", "trade surplus", "bilateral trade"] },
-  { id: "supply-chains", label: "Supply chains & critical minerals", terms: ["supply chain*", "value chain*", "critical mineral*", "beneficiation", "local processing", "value addition", "value-addition", "export ban*", "raw material*", "battery", "batteries", "cobalt", "lithium", "manganese", "graphite", "copper", "nearshoring", "friendshoring", "minerals security partnership"] },
-  { id: "logistics", label: "Ports, shipping & trade corridors", terms: ["port*", "shipping", "red sea", "suez", "freight", "logistics", "corridor*", "lobito", "railway*", "standard gauge", "trade facilitation", "border post*", "one-stop border", "transit", "container*"] },
-  { id: "agri-commodities", label: "Agricultural & commodity trade", terms: ["agricultural trade", "agricultural export*", "food trade", "food import*", "grain", "wheat", "fertili*", "cocoa", "coffee", "tea export*", "cashew", "horticulture", "export*", "import*", "commodity price*", "commodity export*"] },
-  { id: "policy", label: "Trade policy, WTO & digital trade", terms: ["wto", "world trade organization", "trade policy", "trade negotiation*", "market access", "non-tariff barrier*", "protectionis*", "trade agreement*", "trade deal*", "free trade agreement*", "digital trade", "e-commerce", "services trade", "trade in services", "special economic zone*", "export processing zone*"] },
+  { id: "afcfta", label: "AfCFTA & regional integration", terms: ["afcfta", "zlecaf", "african continental free trade", "zone de libre echange continentale", "continental free trade", "intra african trade", "commerce intra africain", "intra regional trade", "regional integration", "integration regionale", "regional economic communit*", "communautes economiques regionales", "customs union", "union douaniere", "rules of origin", "regles d origine", "ecowas", "cedeao", "eac", "sadc", "comesa", "tripartite free trade", "single market", "marche commun", "free movement", "libre circulation", "papss", "guided trade initiative", "etls", "tarif exterieur commun", "common external tariff"] },
+  { id: "partners", label: "US, EU, China & Gulf trade relations", terms: ["agoa", "african growth and opportunity act", "tariff*", "tarif*", "droits de douane", "reciprocal tariff*", "trade war", "guerre commerciale", "eu africa", "ue afrique", "economic partnership agreement*", "accord de partenariat economique", "ape", "epa", "cbam", "carbon border", "mecanisme d ajustement carbone", "deforestation regulation", "eudr", "china africa", "chine afrique", "focac", "zero tariff", "zero tariff treatment", "duty free", "gulf investment", "trade deficit", "deficit commercial", "trade surplus", "bilateral trade", "commerce bilateral", "gsp", "everything but arms"] },
+  { id: "supply-chains", label: "Supply chains & critical minerals", terms: ["supply chain*", "chaines d approvisionnement", "value chain*", "chaines de valeur", "critical mineral*", "minerais critiques", "beneficiation", "local processing", "transformation locale", "value addition", "export ban*", "interdiction d exportation", "raw material*", "matieres premieres", "battery", "batteries", "cobalt", "lithium", "manganese", "graphite", "copper", "cuivre", "nearshoring", "friendshoring", "minerals security partnership", "mineral processing"] },
+  { id: "logistics", label: "Ports, shipping & trade corridors", terms: ["port*", "shipping", "transport maritime", "red sea", "mer rouge", "suez", "freight", "fret", "logistics", "logistique", "corridor*", "lobito", "northern corridor", "central corridor", "lapsset", "abidjan lagos corridor", "dakar bamako", "djibouti", "mombasa", "dar es salaam", "tema", "lekki", "berbera", "port sudan", "durban", "tanger med", "railway*", "chemin de fer", "standard gauge", "trade facilitation", "facilitation des echanges", "border post*", "one stop border", "poste frontiere", "transit", "container*", "conteneurs"] },
+  { id: "agri-commodities", label: "Agricultural & commodity trade", terms: ["agricultural trade", "commerce agricole", "agricultural export*", "food trade", "food import*", "importations alimentaires", "grain", "cereales", "wheat", "ble", "fertili*", "engrais", "cocoa", "cacao", "coffee", "cafe", "tea export*", "cashew", "cajou", "cotton", "coton", "horticulture", "export*", "exportation*", "import*", "importation*", "commodity price*", "commodity export*", "black sea grain"] },
+  { id: "policy", label: "Trade policy, WTO & digital trade", terms: ["wto", "omc", "world trade organization", "organisation mondiale du commerce", "trade policy", "politique commerciale", "trade negotiation*", "negociations commerciales", "market access", "acces au marche", "non tariff barrier*", "barrieres non tarifaires", "protectionis*", "trade agreement*", "accord commercial", "trade deal*", "free trade agreement*", "accord de libre echange", "digital trade", "commerce numerique", "e commerce", "services trade", "trade in services", "special economic zone*", "zones economiques speciales", "export processing zone*", "industrial policy", "politique industrielle"] },
 ];
 
 const CYBER_THEMES: Theme[] = [
-  { id: "threats", label: "Cyber threats & incidents", terms: ["cyberattack*", "cyber attack*", "cyber-attack*", "ransomware", "malware", "data breach*", "breach*", "hack*", "ddos", "phishing", "cybercrime", "cyber crime", "cybercriminal*", "online fraud", "scam*", "sim swap*", "hacktivis*", "state-sponsored", "threat actor*", "vulnerabilit*"] },
-  { id: "infrastructure", label: "Critical infrastructure & resilience", terms: ["critical infrastructure", "critical information infrastructure", "banking system*", "financial sector", "telecom*", "undersea cable*", "submarine cable*", "cable cut*", "power grid", "government systems", "e-government", "payment system*", "mobile money", "outage*", "cyber resilience"] },
-  { id: "policy", label: "Cyber policy, law & capacity", terms: ["cybersecurity strategy", "cyber strategy", "national cert", "cert", "csirt", "cybersecurity law", "cybersecurity act", "cybercrime law", "cybercrimes act", "computer misuse", "malabo convention", "data protection", "privacy law", "data protection law", "data protection act", "cyber capacity", "capacity building", "cyber diplomacy", "cyber norms", "cybercrime convention", "cybersecurity"] },
-  { id: "rights", label: "Surveillance, shutdowns & digital rights", terms: ["surveillance", "spyware", "pegasus", "predator", "facial recognition", "digital rights", "internet shutdown*", "network disruption*", "internet freedom", "censorship", "social media ban*", "online freedom", "digital authoritarian*", "data localis*", "data localiz*", "lawful interception"] },
-  { id: "information", label: "Information operations & disinformation", terms: ["disinformation", "misinformation", "influence operation*", "information warfare", "information operation*", "propaganda", "troll*", "bot network*", "bots", "coordinated inauthentic", "deepfake*", "foreign information manipulation", "fimi", "fake account*"] },
-  { id: "emerging", label: "AI, digital ID & emerging tech", terms: ["artificial intelligence", "ai governance", "ai policy", "generative ai", "digital public infrastructure", "digital id*", "digital identity", "biometric*", "cloud", "data centre*", "data center*", "starlink", "satellite internet", "5g"] },
+  { id: "threats", label: "Cyber threats & incidents", terms: ["cyberattack*", "cyber attack*", "cyberattaque*", "ransomware", "rancongiciel*", "malware", "logiciel malveillant", "data breach*", "fuite de donnees", "breach*", "hack*", "piratage", "pirate*", "ddos", "phishing", "hameconnage", "cybercrime", "cyber crime", "cybercriminalite", "cybercriminal*", "online fraud", "fraude en ligne", "scam*", "arnaque*", "sim swap*", "hacktivis*", "state sponsored", "threat actor*", "vulnerabilit*", "zero day", "business email compromise", "crypto fraud", "pig butchering", "scam compound*"] },
+  { id: "infrastructure", label: "Critical infrastructure & resilience", terms: ["critical infrastructure", "infrastructures critiques", "critical information infrastructure", "banking system*", "financial sector", "telecom*", "operateurs telecoms", "undersea cable*", "submarine cable*", "cables sous marins", "cable cut*", "power grid", "government systems", "e government", "administration en ligne", "payment system*", "mobile money", "outage*", "panne*", "cyber resilience", "data centre*", "data center*", "ixp", "internet exchange point"] },
+  { id: "policy", label: "Cyber policy, law & capacity", terms: ["cybersecurity strategy", "strategie nationale de cybersecurite", "cyber strategy", "national cert", "cert", "csirt", "cirt", "cybersecurity law", "loi sur la cybersecurite", "cybersecurity act", "cybercrime law", "loi sur la cybercriminalite", "cybercrimes act", "computer misuse", "malabo convention", "convention de malabo", "au data policy framework", "data protection", "protection des donnees", "privacy law", "data protection law", "data protection act", "data protection authority", "odpc", "ndpc", "information regulator", "cyber capacity", "capacity building", "renforcement des capacites", "cyber diplomacy", "cyber norms", "cybercrime convention", "budapest convention", "cybersecurity", "cybersecurite", "smart africa", "afrinic"] },
+  { id: "rights", label: "Surveillance, shutdowns & digital rights", terms: ["surveillance", "spyware", "logiciel espion", "pegasus", "predator", "facial recognition", "reconnaissance faciale", "safe city", "digital rights", "droits numeriques", "internet shutdown*", "coupure d internet", "coupures d internet", "network disruption*", "throttling", "internet freedom", "liberte sur internet", "censorship", "censure", "social media ban*", "blocage des reseaux sociaux", "online freedom", "digital authoritarian*", "data localis*", "data localiz*", "lawful interception", "sim registration", "false news offence*"] },
+  { id: "information", label: "Information operations & disinformation", terms: ["disinformation", "desinformation", "misinformation", "infox", "influence operation*", "operations d influence", "information warfare", "guerre informationnelle", "information operation*", "propaganda", "propagande", "troll*", "bot network*", "bots", "coordinated inauthentic", "deepfake*", "hypertrucage", "foreign information manipulation", "fimi", "fake account*", "faux comptes"] },
+  { id: "emerging", label: "AI, digital ID & emerging tech", terms: ["artificial intelligence", "intelligence artificielle", "ai governance", "ai policy", "generative ai", "au continental ai strategy", "digital public infrastructure", "infrastructure publique numerique", "digital id*", "digital identity", "identite numerique", "huduma namba", "maisha namba", "biometric*", "biometrie", "cloud", "starlink", "satellite internet", "5g", "huawei", "digital silk road"] },
 ];
 
 const CONFLICT_THEMES: Theme[] = [
-  { id: "dynamics", label: "Armed conflict dynamics", terms: ["war", "civil war", "fighting", "offensive", "counteroffensive", "clashes", "frontline*", "front line*", "siege", "battle*", "escalat*", "airstrike*", "air strike*", "drone strike*", "drone attack*", "shelling", "rapid support forces", "rsf", "m23", "fano", "tigray"] },
-  { id: "extremism", label: "Jihadism & violent extremism", terms: ["jihad*", "al-shabaab", "al shabaab", "islamic state", "isis", "iswap", "is sahel", "jnim", "boko haram", "al-qaeda", "al qaeda", "aqim", "adf", "allied democratic forces", "violent extremis*", "counterterror*", "counter-terror*", "radicalis*", "radicaliz*", "insurgen*", "terror*"] },
-  { id: "coups", label: "Coups & military rule", terms: ["coup*", "junta*", "military government", "military rule", "putsch", "mutin*", "return to civilian rule", "alliance of sahel states", "aes"] },
-  { id: "peace", label: "Peace processes & mediation", terms: ["ceasefire*", "cease-fire*", "peace talks", "peace process*", "peace agreement*", "peace deal*", "mediation", "mediator*", "negotiation*", "national dialogue", "truce", "jeddah", "disarmament", "ddr", "demobilis*", "demobiliz*", "reconciliation"] },
-  { id: "operations", label: "Peace operations & security partnerships", terms: ["peacekeep*", "peace operation*", "peace support operation*", "au mission", "aussom", "atmis", "monusco", "unmiss", "minusma", "sadc mission", "samidrc", "wagner", "africa corps", "private military", "mercenar*", "security force assistance", "foreign troops", "multinational force"] },
-  { id: "communal", label: "Communal, local & resource conflict", terms: ["intercommunal", "inter-communal", "communal violence", "farmer-herder", "herder*", "pastoralist*", "land dispute*", "cattle raid*", "ethnic violence", "ethnic tension*", "militia*", "self-defence group*", "self-defense group*", "vigilante*", "banditry", "bandit*"] },
-  { id: "illicit", label: "Illicit economies & organised crime", terms: ["organised crime", "organized crime", "trafficking", "smuggling", "illicit gold", "illegal mining", "artisanal mining", "galamsey", "arms flows", "arms trafficking", "small arms", "kidnap*", "piracy", "illicit economy", "illicit economies", "war economy"] },
-  { id: "civilians", label: "Civilians, atrocities & accountability", terms: ["civilian casualt*", "civilians killed", "massacre*", "atrocit*", "genocide", "ethnic cleansing", "war crime*", "crimes against humanity", "sexual violence", "conflict-related sexual violence", "protection of civilians", "mass grave*", "icc", "accountability"] },
+  { id: "dynamics", label: "Armed conflict dynamics", terms: ["war", "guerre", "civil war", "guerre civile", "fighting", "combats", "offensive", "counteroffensive", "contre offensive", "clashes", "affrontements", "frontline*", "front line*", "siege", "blocus", "battle*", "bataille", "escalat*", "escalade", "airstrike*", "air strike*", "frappes aeriennes", "drone strike*", "drone attack*", "frappes de drones", "shelling", "bombardement*", "rapid support forces", "forces de soutien rapide", "rsf", "saf", "sudanese armed forces", "m23", "afc", "fano", "tplf", "ola", "oromo liberation army", "guerra", "conflito"] },
+  { id: "extremism", label: "Jihadism & violent extremism", terms: ["jihad*", "djihad*", "al shabaab", "shabaab", "islamic state", "etat islamique", "isis", "iswap", "is sahel", "eigs", "isgs", "jnim", "gsim", "boko haram", "jas", "lakurawa", "ansaru", "al qaeda", "al qaida", "aqim", "aqmi", "adf", "allied democratic forces", "iscap", "ahlu sunnah wal jamaah", "ansar al sunna", "violent extremis*", "extremisme violent", "counterterror*", "counter terror*", "contre terrorisme", "radicalis*", "radicaliz*", "insurgen*", "insurrection*", "terror*", "terroris*", "insurgencia"] },
+  { id: "coups", label: "Coups & military rule", terms: ["coup*", "coup d etat", "putsch*", "junta*", "junte*", "military government", "gouvernement militaire", "military rule", "regime militaire", "mutin*", "return to civilian rule", "retour a l ordre constitutionnel", "alliance of sahel states", "alliance des etats du sahel", "aes", "conseil national pour la sauvegarde de la patrie", "cnsp", "transition militaire"] },
+  { id: "peace", label: "Peace processes & mediation", terms: ["ceasefire*", "cease fire*", "cessez le feu", "peace talks", "pourparlers de paix", "peace process*", "processus de paix", "peace agreement*", "accord de paix", "peace deal*", "mediation", "mediator*", "mediateur*", "negotiation*", "negociation*", "national dialogue", "dialogue national", "dialogue inclusif", "truce", "treve", "jeddah", "doha process", "luanda process", "nairobi process", "washington accord*", "pretoria agreement", "disarmament", "desarmement", "ddr", "demobilis*", "demobiliz*", "reconciliation", "transitional justice", "justice transitionnelle"] },
+  { id: "operations", label: "Peace operations & security partnerships", terms: ["peacekeep*", "maintien de la paix", "casques bleus", "peace operation*", "peace support operation*", "au mission", "mission de l ua", "aussom", "atmis", "amisom", "monusco", "unmiss", "minusca", "minusma", "unisfa", "sadc mission", "samidrc", "samim", "eacrf", "multinational joint task force", "mnjtf", "force conjointe", "g5 sahel", "accra initiative", "wagner", "africa corps", "private military", "mercenar*", "security force assistance", "foreign troops", "troupes etrangeres", "multinational force", "rwandan troops", "burundian troops"] },
+  { id: "communal", label: "Communal, local & resource conflict", terms: ["intercommunal", "inter communal", "intercommunautaire*", "communal violence", "violences communautaires", "farmer herder", "agriculteurs eleveurs", "herder*", "eleveur*", "pastoralist*", "pasteurs", "transhumance", "land dispute*", "conflits fonciers", "cattle raid*", "vol de betail", "ethnic violence", "violences ethniques", "ethnic tension*", "militia*", "milice*", "self defence group*", "self defense group*", "groupes d autodefense", "vdp", "volontaires pour la defense de la patrie", "dozo", "koglweogo", "wazalendo", "codeco", "mai mai", "anti balaka", "vigilante*", "banditry", "banditisme", "bandit*", "ambazonia*", "separatist*", "separatiste*"] },
+  { id: "illicit", label: "Illicit economies & organised crime", terms: ["organised crime", "organized crime", "crime organise", "trafficking", "trafic*", "smuggling", "contrebande", "illicit gold", "or illicite", "illegal mining", "orpaillage", "artisanal mining", "galamsey", "arms flows", "arms trafficking", "trafic d armes", "small arms", "armes legeres", "kidnap*", "enlevement*", "kidnapping for ransom", "piracy", "piraterie", "illicit economy", "illicit economies", "war economy", "economie de guerre", "drug trafficking", "trafic de drogue", "cocaine", "captagon", "fuel smuggling"] },
+  { id: "civilians", label: "Civilians, atrocities & accountability", terms: ["civilian casualt*", "victimes civiles", "civilians killed", "civils tues", "massacre*", "tuerie*", "atrocit*", "genocide", "ethnic cleansing", "nettoyage ethnique", "war crime*", "crimes de guerre", "crimes against humanity", "crimes contre l humanite", "sexual violence", "violences sexuelles", "conflict related sexual violence", "protection of civilians", "protection des civils", "mass grave*", "charnier*", "icc", "cpi", "international criminal court", "cour penale internationale", "accountability", "extrajudicial", "executions sommaires", "child soldiers", "enfants soldats"] },
+  { id: "theatres", label: "Conflict theatres", terms: ["darfur", "el fasher", "el fashir", "kordofan", "khartoum", "omdurman", "blue nile", "gezira", "eastern drc", "est de la rdc", "north kivu", "nord kivu", "south kivu", "sud kivu", "ituri", "goma", "bukavu", "central sahel", "sahel central", "liptako gourma", "menaka", "tillaberi", "djibo", "kidal", "lake chad", "lac tchad", "borno", "diffa", "far north", "extreme nord", "cabo delgado", "jubaland", "puntland", "lower shabelle", "middle shabelle", "galmudug", "tigray", "amhara", "oromia", "northwest region", "southwest region", "nord ouest", "sud ouest", "tripoli", "fezzan", "central african republic", "centrafrique", "zamfara", "katsina", "sokoto", "plateau state", "benue", "upper nile", "jonglei", "northern benin", "nord benin", "northern togo", "savanes", "coastal states", "pays cotiers"] },
 ];
 
 export const DOMAINS: Domain[] = [
   {
     id: "humanitarian",
     label: "New Humanitarianism",
-    blurb: "How humanitarianism is changing: funding cuts, the reset, localisation, Global South actors, access and the future of aid.",
-    signal: /\b(humanitarian\w*|aid|relief|ngos?|donors?|refugees?|displace\w*|idps?|famine|food insecurity|emergency response|development assistance|civil society)\b/i,
+    blurb: "How humanitarianism is changing: funding cuts, the reset, localisation, Global South actors, access, principles and the future of aid, with Africa's major crises.",
+    signal: /\b(humanitar\w*|aid|aide|ajuda|relief|ngos?|ong|donors?|bailleurs?|refugee\w*|refugie\w*|displace\w*|deplace\w*|idps?|famine|food insecurity|insecurite alimentaire|emergency response|development assistance|civil society|societe civile)\b/,
     themes: HUMANITARIAN_THEMES,
     minHits: 1,
   },
   {
     id: "geopolitics",
     label: "Geopolitics",
-    blurb: "Africa in the world: major and middle powers, the AU and regional blocs, security partnerships, strategic geography and alignment.",
-    signal: /\b(geopolitic\w*|foreign polic\w*|diplomac\w*|diplomat\w*|great.power|influence|competition|rivalr\w*|allian\w*|partnership|summit|bloc|sanction\w*|china|chinese|russia\w*|united states|washington|european union|france|french|gulf|emirati|uae|saudi|qatar\w*|turkey|türkiye|turkish|african union|ecowas|brics|military base|security cooperation|strategic)\b/i,
+    blurb: "Africa in the world: major and middle powers, the AU and regional blocs, security partnerships, strategic arenas, resources, alignment, influence and migration.",
+    signal: /\b(geopoliti\w*|foreign polic\w*|politique etrangere|diplomac\w*|diplomati\w*|great power|grandes puissances|influence|competition|rivalr\w*|allian\w*|partnership|partenariat|summit|sommet|bloc|sanction\w*|china|chine|chinese|russia\w*|russie|united states|etats unis|washington|european union|union europeenne|france|french|gulf|golfe|emirati|uae|saudi|qatar\w*|turkey|turkiye|turquie|african union|union africaine|ecowas|cedeao|brics|military base|security cooperation|strategic|strategique|sovereignty|souverainete)\b/,
     themes: GEOPOLITICS_THEMES,
     minHits: 2,
   },
   {
     id: "elections",
     label: "Elections",
-    blurb: "Elections and democratic politics in Africa: contests, integrity, violence, term limits and coups, opinion and information.",
-    signal: /\b(election\w*|electoral|vot(e|es|ers?|ing)|ballot\w*|polls?|polling|referendum\w*|candidate\w*|campaign\w*|incumbent\w*|opposition|parliament\w*|presidential|term limits?|democra\w*|coup\w*)\b/i,
+    blurb: "Elections and democratic politics in Africa: contests, integrity, violence, term limits and coups, regional norms, opinion and information.",
+    signal: /\b(election\w*|electora\w*|eleic\w*|vot(e|es|ers?|ing)|voto|ballot\w*|scrutin|polls?|polling|referendum\w*|candidat\w*|campaign\w*|campagne|incumbent\w*|opposition|parliament\w*|parlement\w*|presidential\w*|presidentielle|legislatives|term limits?|mandat|democra\w*|coup\w*|junte|junta)\b/,
     themes: ELECTION_THEMES,
     minHits: 2,
   },
   {
     id: "economy",
     label: "Economy",
-    blurb: "African economies: debt and IMF programmes, inflation and currencies, growth, investment, resources, livelihoods and reform.",
-    signal: /\b(econom\w*|gdp|growth|inflation|debt\w*|fiscal|budget\w*|currenc\w*|monetary|central bank|imf|investment\w*|investors?|financ\w*|bonds?|tax\w*|revenue\w*|recession|poverty|jobs|employment|prices)\b/i,
+    blurb: "African economies: debt and IMF programmes, inflation and currencies, growth, investment, resources and energy, livelihoods, reform and monetary zones.",
+    signal: /\b(econom\w*|gdp|pib|growth|croissance|inflation|debt\w*|dette|divida|fiscal\w*|budget\w*|currenc\w*|monnaie|monetary|monetaire|central bank|banque centrale|imf|fmi|investment\w*|investissement\w*|investors?|financ\w*|bonds?|tax\w*|impot\w*|revenue\w*|recession|poverty|pauvrete|jobs|emploi|employment|prices|prix)\b/,
     themes: ECONOMY_THEMES,
     minHits: 2,
   },
   {
     id: "trade",
     label: "Trade",
-    blurb: "Africa's trade: the AfCFTA and regional integration, relations with the US, EU, China and the Gulf, supply chains, corridors and policy.",
-    signal: /\b(trade|trading|tariffs?|exports?|imports?|afcfta|agoa|customs|supply chains?|value chains?|commodit\w*|market access|wto|ports?|logistics|corridors?|shipping)\b/i,
+    blurb: "Africa's trade: the AfCFTA and regional integration, relations with the US, EU, China and the Gulf, supply chains, ports and corridors, commodities and policy.",
+    signal: /\b(trade|trading|commerce\w*|commercial\w*|tariffs?|tarif\w*|douane\w*|exports?|exportation\w*|imports?|importation\w*|afcfta|zlecaf|agoa|customs|supply chains?|value chains?|chaines? de valeur|commodit\w*|matieres premieres|market access|wto|omc|ports?|logisti\w*|corridors?|shipping)\b/,
     themes: TRADE_THEMES,
     minHits: 2,
   },
   {
     id: "cyber",
     label: "Cybersecurity",
-    blurb: "Cyber threats, critical infrastructure, policy and law, surveillance and shutdowns, information operations and emerging tech in Africa.",
-    signal: /\b(cyber\w*|hack\w*|ransomware|malware|breach\w*|data protection|digital|internet|online|surveillance|spyware|disinformation|encryption|phishing|artificial intelligence|telecom\w*)\b/i,
+    blurb: "Cyber threats, critical infrastructure, policy and law, surveillance and shutdowns, information operations, AI and digital ID in Africa.",
+    signal: /\b(cyber\w*|hack\w*|piratage|ransomware|malware|breach\w*|data protection|protection des donnees|digital|numerique\w*|internet|online|en ligne|surveillance|spyware|disinformation|desinformation|encryption|phishing|artificial intelligence|intelligence artificielle|telecom\w*)\b/,
     themes: CYBER_THEMES,
     minHits: 2,
   },
   {
     id: "conflict",
     label: "Conflict",
-    blurb: "Armed conflict in Africa: dynamics, jihadism, coups, peace processes, peace operations, communal and illicit violence, and civilians.",
-    signal: /\b(conflict\w*|wars?|fighting|armed|insurg\w*|militants?|jihad\w*|terror\w*|rebels?|militias?|violence|attacks?|ceasefire|peace|security|military|coups?|clashes|offensive|junta)\b/i,
+    blurb: "Armed conflict in Africa: dynamics, jihadism, coups, peace processes, peace operations, communal and illicit violence, civilians and the main theatres.",
+    signal: /\b(conflict\w*|conflit\w*|conflito\w*|wars?|guerre\w*|guerra|fighting|combats?|armed|arme\w*|insurg\w*|militants?|jihad\w*|djihad\w*|terror\w*|rebel\w*|rebelle\w*|militias?|milices?|violence\w*|attacks?|attaques?|ceasefire|cessez|peace|paix|security|securite|military|militaire\w*|coups?|clashes|affrontements|offensive|junta|junte)\b/,
     themes: CONFLICT_THEMES,
     minHits: 2,
   },
@@ -331,51 +251,115 @@ export const domainOf = (id: string): Domain | undefined => DOMAINS.find((d) => 
 export const themeLabel = (domain: string, id: string) => domainOf(domain)?.themes.find((t) => t.id === id)?.label ?? id;
 
 function termRegex(term: string): RegExp {
-  const t = term.replace(/[.*+?^${}()|[\]\\]/g, (ch) => (ch === "*" ? ch : `\\${ch}`));
-  const body = t.endsWith("*") ? `${t.slice(0, -1)}[\\w-]*` : t;
-  return new RegExp(`(?:^|[^\\w])${body}(?=$|[^\\w])`, "i");
+  const t = fold(term)
+    .trim()
+    .replace(/[.*+?^${}()|[\]\\]/g, (ch) => (ch === "*" ? ch : `\\${ch}`));
+  const body = t.endsWith("*") ? `${t.slice(0, -1)}\\w*` : t;
+  return new RegExp(`(?:^|[^\\w])${body}(?=$|[^\\w])`);
 }
 const THEME_RX = new Map(DOMAINS.map((d) => [d.id, d.themes.map((th) => ({ id: th.id, systemic: !!th.systemic, rx: th.terms.map(termRegex) }))]));
 
 /** The themes of a domain a text touches, most-matched first, with how many terms matched. */
 export function themesOf(domain: DomainId, text: string): { id: string; hits: number }[] {
+  const t = fold(text);
   return (THEME_RX.get(domain) ?? [])
-    .map((th) => ({ id: th.id, hits: th.rx.filter((r) => r.test(text)).length }))
-    .filter((t) => t.hits > 0)
+    .map((th) => ({ id: th.id, hits: th.rx.filter((r) => r.test(t)).length }))
+    .filter((x) => x.hits > 0)
     .sort((a, b) => b.hits - a.hits);
 }
 
-/* ── Africa ───────────────────────────────────────────────────────────── */
+/* ── Places, regions and blocs ────────────────────────────────────────── */
 
-const AFRICA_NAMES: { code: string; rx: RegExp }[] = Object.entries(AFRICA_GEO_COUNTRIES)
-  .filter(([code]) => !MIDDLE_EAST_CODES.has(code))
-  .flatMap(([code, info]) => [info.name, ...info.aliases].filter((n) => n.length >= 4).map((n) => ({ code, rx: new RegExp(`\\b${normalizeName(n).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`) })));
-const AFRICA_DEMONYMS: [RegExp, string][] = [
-  [/\bsudanese\b/, "SD"], [/\bsouth sudanese\b/, "SS"], [/\bethiopians?\b/, "ET"], [/\beritreans?\b/, "ER"], [/\bsomalis?\b/, "SO"], [/\bkenyans?\b/, "KE"],
-  [/\bugandans?\b/, "UG"], [/\bcongolese\b/, "CD"], [/\bmalians?\b/, "ML"], [/\bnigeriens?\b/, "NE"], [/\bnigerians?\b/, "NG"], [/\bburkinabe\b/, "BF"],
-  [/\bchadians?\b/, "TD"], [/\bcameroonians?\b/, "CM"], [/\blibyans?\b/, "LY"], [/\bmozambicans?\b/, "MZ"], [/\bzimbabweans?\b/, "ZW"], [/\bdarfuri\b/, "SD"], [/\btigrayans?\b/, "ET"],
+export const REGIONS = ["North Africa", "Sahel", "West Africa", "Horn of Africa", "East Africa", "Great Lakes", "Central Africa", "Southern Africa", "Indian Ocean"] as const;
+export type Region = (typeof REGIONS)[number];
+
+const COUNTRY_REGIONS: Record<string, Region[]> = {
+  DZ: ["North Africa"], EG: ["North Africa"], LY: ["North Africa"], MA: ["North Africa"], TN: ["North Africa"], EH: ["North Africa"],
+  MR: ["North Africa", "Sahel", "West Africa"], ML: ["Sahel", "West Africa"], BF: ["Sahel", "West Africa"], NE: ["Sahel", "West Africa"], TD: ["Sahel", "Central Africa"],
+  BJ: ["West Africa"], CV: ["West Africa"], CI: ["West Africa"], GM: ["West Africa"], GH: ["West Africa"], GN: ["West Africa"], GW: ["West Africa"], LR: ["West Africa"], NG: ["West Africa"], SN: ["West Africa"], SL: ["West Africa"], TG: ["West Africa"],
+  DJ: ["Horn of Africa"], ER: ["Horn of Africa"], ET: ["Horn of Africa", "East Africa"], SO: ["Horn of Africa", "East Africa"], SD: ["Horn of Africa"], SS: ["Horn of Africa", "East Africa"],
+  KE: ["East Africa"], TZ: ["East Africa"], UG: ["East Africa", "Great Lakes"], RW: ["East Africa", "Great Lakes"], BI: ["East Africa", "Great Lakes"],
+  CD: ["Central Africa", "Great Lakes"], CM: ["Central Africa"], CF: ["Central Africa"], CG: ["Central Africa"], GA: ["Central Africa"], GQ: ["Central Africa"], ST: ["Central Africa"],
+  AO: ["Southern Africa"], BW: ["Southern Africa"], LS: ["Southern Africa"], MW: ["Southern Africa"], MZ: ["Southern Africa"], NA: ["Southern Africa"], ZA: ["Southern Africa"], SZ: ["Southern Africa"], ZM: ["Southern Africa"], ZW: ["Southern Africa"],
+  MG: ["Indian Ocean", "Southern Africa"], MU: ["Indian Ocean"], SC: ["Indian Ocean"], KM: ["Indian Ocean"],
+};
+
+const REGION_TERMS: [Region, RegExp][] = [
+  ["North Africa", /\b(north africa\w*|afrique du nord|maghreb\w*|mashreq|nord de l afrique)\b/],
+  ["Sahel", /\b(sahel\w*|liptako|sahara sahel|sahelo saharienne?)\b/],
+  ["West Africa", /\b(west africa\w*|afrique de l ouest|ouest africaine?|gulf of guinea|golfe de guinee|coastal states|pays cotiers)\b/],
+  ["Horn of Africa", /\b(horn of africa|corne de l afrique|greater horn|red sea|mer rouge|bab el mandeb)\b/],
+  ["East Africa", /\b(east africa\w*|afrique de l est|est africaine?)\b/],
+  ["Great Lakes", /\b(great lakes|grands lacs|kivus?)\b/],
+  ["Central Africa", /\b(central africa\w*|afrique centrale|lake chad basin|bassin du lac tchad)\b/],
+  ["Southern Africa", /\b(southern africa\w*|afrique australe)\b/],
+  ["Indian Ocean", /\b(indian ocean islands|ocean indien|mozambique channel|canal du mozambique)\b/],
 ];
-const AFRICA_REGION = /\b(africa|african|sahel|sahelian|horn of africa|lake chad|great lakes|east africa|west africa|central africa|southern africa|north africa|sub-saharan|maghreb)\b/;
 
-/** The African countries a text discusses, most-mentioned first, and whether it is about Africa at all. */
-export function africaOf(text: string): { africa: boolean; countries: string[] } {
-  // "Ethiopia's" reads as "Ethiopia".
-  const t = normalizeName(text.replace(/['’‘ʼ]s\b/g, ""));
+/** Regional blocs and bodies, as they are shown. */
+const BLOC_TERMS: [string, RegExp][] = [
+  ["AU", /\b(african union|union africaine|au commission|commission de l ua|peace and security council|psc|conseil de paix et de securite|aussom|atmis|amisom)\b/],
+  ["ECOWAS", /\b(ecowas|cedeao)\b/],
+  ["SADC", /\b(sadc|samidrc|samim)\b/],
+  ["EAC", /\b(eac|east african community|communaute d afrique de l est|eacrf)\b/],
+  ["IGAD", /\bigad\b/],
+  ["ECCAS", /\b(eccas|ceeac)\b/],
+  ["COMESA", /\bcomesa\b/],
+  ["AES", /\b(alliance of sahel states|alliance des etats du sahel|confederation of sahel states|confederation des etats du sahel|aes)\b/],
+  ["AfCFTA", /\b(afcfta|zlecaf|continental free trade)\b/],
+  ["UEMOA / WAEMU", /\b(uemoa|waemu|bceao)\b/],
+  ["CEMAC", /\b(cemac|beac)\b/],
+  ["AMU", /\b(arab maghreb union|union du maghreb arabe)\b/],
+  ["CEN-SAD", /\bcen sad\b/],
+  ["ICGLR", /\b(icglr|cirgl|international conference on the great lakes)\b/],
+  ["Lake Chad Basin / MNJTF", /\b(lake chad basin commission|lcbc|mnjtf|multinational joint task force|force multinationale mixte)\b/],
+  ["SACU", /\bsacu\b/],
+];
+
+const DEMONYMS: [RegExp, string][] = [
+  [/\bsudanese\b|\bsoudanais/, "SD"], [/\bsouth sudanese\b|\bsud soudanais/, "SS"], [/\bethiopians?\b|\bethiopien/, "ET"], [/\beritreans?\b|\berythreen/, "ER"], [/\bsomalis?\b|\bsomaliens?\b/, "SO"], [/\bkenyans?\b|\bkenyan/, "KE"],
+  [/\bugandans?\b|\bougandais/, "UG"], [/\bcongolese\b|\bcongolais/, "CD"], [/\bmalians?\b|\bmaliens?\b/, "ML"], [/\bnigeriens?\b/, "NE"], [/\bnigerians?\b|\bnigerian/, "NG"], [/\bburkinabe\b/, "BF"],
+  [/\bchadians?\b|\btchadiens?\b/, "TD"], [/\bcameroonians?\b|\bcamerounais/, "CM"], [/\blibyans?\b|\blibyens?\b/, "LY"], [/\bmozambicans?\b|\bmocambicanos?\b/, "MZ"], [/\bzimbabweans?\b/, "ZW"], [/\bdarfuri\b/, "SD"], [/\btigrayans?\b/, "ET"],
+  [/\bivorians?\b|\bivoiriens?\b/, "CI"], [/\bsenegalese\b|\bsenegalais/, "SN"], [/\bghanaians?\b/, "GH"], [/\bguineans?\b|\bguineens?\b/, "GN"], [/\brwandans?\b|\brwandais/, "RW"], [/\bburundians?\b|\bburundais/, "BI"],
+  [/\btanzanians?\b/, "TZ"], [/\bzambians?\b/, "ZM"], [/\bangolans?\b|\bangolanos?\b/, "AO"], [/\bmalawians?\b/, "MW"], [/\bsouth africans?\b|\bsud africains?\b/, "ZA"], [/\begyptians?\b|\begyptiens?\b/, "EG"],
+  [/\balgerians?\b|\balgeriens?\b/, "DZ"], [/\bmoroccans?\b|\bmarocains?\b/, "MA"], [/\btunisians?\b|\btunisiens?\b/, "TN"], [/\bmauritanians?\b|\bmauritaniens?\b/, "MR"], [/\btogolese\b|\btogolais/, "TG"], [/\bbeninese\b|\bbeninois/, "BJ"],
+  [/\bcentral africans?\b|\bcentrafricains?\b/, "CF"], [/\bgabonese\b|\bgabonais/, "GA"], [/\bliberians?\b/, "LR"], [/\bsierra leoneans?\b/, "SL"], [/\bnamibians?\b/, "NA"], [/\bmalagasy\b|\bmalgaches?\b/, "MG"], [/\bsahrawis?\b/, "EH"],
+];
+const AFRICA_WORDS = /\b(africa\w*|afrique|africain\w*|africano?s?|sub saharan|subsaharien\w*|pan african\w*|panafrican\w*)\b/;
+
+export interface Where {
+  africa: boolean;
+  /** African countries, most-mentioned first. */
+  countries: string[];
+  /** Towns and regions named, most specific first, at most eight ("El Fasher", "North Kivu"). */
+  places: string[];
+  regions: Region[];
+  blocs: string[];
+}
+
+/** Where in Africa a text is about: countries, the towns and regions it names, the wider regions and the blocs. */
+export function africaOf(text: string): Where {
+  const t = fold(text);
   const counts = new Map<string, number>();
-  for (const { code, rx } of AFRICA_NAMES) {
-    const n = (t.match(new RegExp(rx.source, "g")) ?? []).length;
-    if (n) counts.set(code, (counts.get(code) ?? 0) + n);
+  const places: string[] = [];
+  for (const l of namedLocations(text)) {
+    if (MIDDLE_EAST_CODES.has(l.countryCode)) continue;
+    counts.set(l.countryCode, (counts.get(l.countryCode) ?? 0) + (l.precision === "country" ? 1 : 1.5));
+    if (l.precision !== "country" && !places.includes(l.label)) places.push(l.label);
   }
-  for (const [rx, code] of AFRICA_DEMONYMS) if (rx.test(t)) counts.set(code, (counts.get(code) ?? 0) + 1);
-  // "South Sudan" also matches "Sudan": drop the Sudan count it caused.
-  if (counts.has("SS") && counts.has("SD")) {
-    const ss = (t.match(/\bsouth sudan/g) ?? []).length;
-    const sd = (counts.get("SD") ?? 0) - ss;
-    if (sd > 0) counts.set("SD", sd);
-    else counts.delete("SD");
-  }
+  for (const [rx, code] of DEMONYMS) if (rx.test(t)) counts.set(code, (counts.get(code) ?? 0) + 1);
   const countries = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  return { africa: countries.length > 0 || AFRICA_REGION.test(t), countries };
+  const regions = new Set<Region>();
+  for (const c of countries) for (const r of COUNTRY_REGIONS[c] ?? []) regions.add(r);
+  for (const [r, rx] of REGION_TERMS) if (rx.test(t)) regions.add(r);
+  const blocs = BLOC_TERMS.filter(([, rx]) => rx.test(t)).map(([b]) => b);
+  return {
+    africa: countries.length > 0 || regions.size > 0 || blocs.length > 0 || AFRICA_WORDS.test(t),
+    countries,
+    places: places.slice(0, 8),
+    regions: REGIONS.filter((r) => regions.has(r)),
+    blocs,
+  };
 }
 
 /* ── Classifying a piece ──────────────────────────────────────────────── */
@@ -390,6 +374,9 @@ export interface AnalysisItem {
   published: string;
   themes: string[];
   countries: string[];
+  places: string[];
+  regions: Region[];
+  blocs: string[];
   africa: boolean;
   /** About Africa, or (New Humanitarianism) a system-level reflection that shapes Africa: shown and alerted on. */
   inScope: boolean;
@@ -399,16 +386,18 @@ export interface AnalysisItem {
 /** The domains a piece belongs to, among those its source writes on. */
 export function classify(raw: { url: string; title: string; summary: string; source: Source; published: string }): AnalysisItem[] {
   const text = `${raw.title}. ${raw.summary}`;
-  const { africa: mentionsAfrica, countries } = africaOf(text);
-  const africa = mentionsAfrica || raw.source.africa;
+  const folded = fold(text);
+  const where = africaOf(text);
+  const africa = where.africa || raw.source.africa;
   const specialist = raw.source.domains.length <= 2;
   const out: AnalysisItem[] = [];
   for (const id of raw.source.domains) {
     const d = domainOf(id)!;
-    if (!d.signal.test(text)) continue;
+    if (!d.signal.test(folded)) continue;
     const themes = themesOf(id, text);
     const hits = themes.reduce((n, t) => n + t.hits, 0);
-    if (hits === 0 || hits < (specialist ? 1 : d.minHits)) continue;
+    const substantive = themes.filter((t) => !d.themes.find((x) => x.id === t.id)?.context).reduce((n, t) => n + t.hits, 0);
+    if (substantive === 0 || hits < (specialist ? 1 : d.minHits)) continue;
     const systemic = themes.some((t) => d.themes.find((x) => x.id === t.id)?.systemic);
     // Outside Africa, only the system-level themes count.
     if (!africa && !systemic) continue;
@@ -421,14 +410,21 @@ export function classify(raw: { url: string; title: string; summary: string; sou
       source: raw.source.name,
       published: raw.published,
       themes: themes.map((t) => t.id),
-      countries,
+      countries: where.countries,
+      places: where.places,
+      regions: where.regions,
+      blocs: where.blocs,
       africa,
       inScope: africa || systemic,
-      score: hits + (africa ? 2 : 0) + (systemic ? 1 : 0),
+      score: hits + (africa ? 2 : 0) + (systemic ? 1 : 0) + (where.places.length ? 1 : 0),
     });
   }
   return out;
 }
+
+const SOURCE_BY_NAME = new Map(SOURCES.map((s) => [s.name, s]));
+export const sourceKindOf = (name: string): SourceKind | null => SOURCE_BY_NAME.get(name)?.kind ?? null;
+export { SOURCE_KIND_LABEL };
 
 /* ── Feeds ────────────────────────────────────────────────────────────── */
 
@@ -496,11 +492,14 @@ let ready = false;
 export async function ensureAnalysisTables(db: D1Database): Promise<void> {
   if (ready) return;
   await db.batch([
-    db.prepare(`CREATE TABLE IF NOT EXISTS strategic_analyses (domain TEXT NOT NULL, id TEXT NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL, summary TEXT, source TEXT NOT NULL, published TEXT NOT NULL, themes TEXT NOT NULL, countries TEXT NOT NULL, africa INTEGER NOT NULL, in_scope INTEGER NOT NULL, score INTEGER NOT NULL, first_seen TEXT NOT NULL, PRIMARY KEY (domain, id))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS strategic_analyses (domain TEXT NOT NULL, id TEXT NOT NULL, url TEXT NOT NULL, title TEXT NOT NULL, summary TEXT, source TEXT NOT NULL, published TEXT NOT NULL, themes TEXT NOT NULL, countries TEXT NOT NULL, places TEXT, regions TEXT, blocs TEXT, africa INTEGER NOT NULL, in_scope INTEGER NOT NULL, score INTEGER NOT NULL, first_seen TEXT NOT NULL, PRIMARY KEY (domain, id))`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_analyses_published ON strategic_analyses(domain, published)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_analyses_first_seen ON strategic_analyses(first_seen)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_sources (url TEXT PRIMARY KEY, name TEXT NOT NULL, feed_url TEXT, checked_at TEXT, status TEXT, error TEXT, items INTEGER NOT NULL DEFAULT 0, kept INTEGER NOT NULL DEFAULT 0, last_ok TEXT)`),
   ]);
+  // Columns added after the first release.
+  const cols = new Set(((await db.prepare(`PRAGMA table_info(strategic_analyses)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
+  for (const c of ["places", "regions", "blocs"]) if (!cols.has(c)) await db.prepare(`ALTER TABLE strategic_analyses ADD COLUMN ${c} TEXT`).run();
   // One-time move of the first version's humanitarian tables.
   const old = await db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('hum_analyses', 'hum_sources')`).all<{ name: string }>();
   const names = new Set((old.results ?? []).map((r) => r.name));
@@ -527,7 +526,7 @@ export function resetAnalysisTables(): void {
 const CHECK_EVERY_MS = 60 * 60_000;
 const REDISCOVER_MS = 7 * 24 * 3600_000;
 /** Sources read per run: the cron runs every few minutes, so every source is still read about hourly. */
-const BATCH = 14;
+const BATCH = 22;
 /** Pieces older than this when first seen are not stored: the panel is about what is new. */
 const MAX_AGE_DAYS = 120;
 
@@ -579,8 +578,8 @@ export async function collectStrategicAnalyses(
         const results = await db.batch(
           kept.map((it) =>
             db
-              .prepare(`INSERT OR IGNORE INTO strategic_analyses (domain, id, url, title, summary, source, published, themes, countries, africa, in_scope, score, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-              .bind(it.domain, it.id, it.url, it.title, it.summary, it.source, it.published, JSON.stringify(it.themes), JSON.stringify(it.countries), it.africa ? 1 : 0, it.inScope ? 1 : 0, it.score, now.toISOString())
+              .prepare(`INSERT OR IGNORE INTO strategic_analyses (domain, id, url, title, summary, source, published, themes, countries, places, regions, blocs, africa, in_scope, score, first_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              .bind(it.domain, it.id, it.url, it.title, it.summary, it.source, it.published, JSON.stringify(it.themes), JSON.stringify(it.countries), JSON.stringify(it.places), JSON.stringify(it.regions), JSON.stringify(it.blocs), it.africa ? 1 : 0, it.inScope ? 1 : 0, it.score, now.toISOString())
           )
         );
         added += results.reduce((n, r) => n + (r.meta?.changes ?? 0), 0);
@@ -613,6 +612,8 @@ export async function collectStrategicAnalyses(
 
 export interface AnalysisView extends AnalysisItem {
   firstSeen: string;
+  /** African think tank, international think tank, analyst / newsletter or specialist outlet. */
+  sourceKind: string | null;
   /** The African country it discusses most, if any. */
   lat: number | null;
   lng: number | null;
@@ -631,10 +632,17 @@ function rowToView(r: Record<string, unknown>): AnalysisView {
     published: String(r.published),
     themes: JSON.parse(String(r.themes ?? "[]")),
     countries,
+    places: JSON.parse(String(r.places ?? "[]")),
+    regions: JSON.parse(String(r.regions ?? "[]")),
+    blocs: JSON.parse(String(r.blocs ?? "[]")),
     africa: !!r.africa,
     inScope: !!r.in_scope,
     score: Number(r.score),
     firstSeen: String(r.first_seen),
+    sourceKind: (() => {
+      const k = sourceKindOf(String(r.source));
+      return k ? SOURCE_KIND_LABEL[k] : null;
+    })(),
     lat: pin ? pin[0] : null,
     lng: pin ? pin[1] : null,
   };
@@ -671,12 +679,12 @@ export async function newAnalysesSince(db: D1Database, domain: DomainId, since: 
   return (rows.results ?? []).map(rowToView);
 }
 
-export async function sourceStatus(db: D1Database, domain: DomainId): Promise<{ name: string; url: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[]> {
+export async function sourceStatus(db: D1Database, domain: DomainId): Promise<{ name: string; url: string; kind: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[]> {
   await ensureAnalysisTables(db);
   const rows = (await db.prepare(`SELECT * FROM strategic_sources`).all<Record<string, unknown>>()).results ?? [];
   const byUrl = new Map(rows.map((r) => [String(r.url), r]));
   return SOURCES.filter((s) => s.domains.includes(domain)).map((s) => {
     const r = byUrl.get(s.url);
-    return { name: s.name, url: s.url, status: r ? String(r.status) : "not yet checked", error: r?.error != null ? String(r.error) : null, items: Number(r?.items ?? 0), kept: Number(r?.kept ?? 0), lastOk: r?.last_ok != null ? String(r.last_ok) : null };
+    return { name: s.name, url: s.url, kind: SOURCE_KIND_LABEL[s.kind], status: r ? String(r.status) : "not yet checked", error: r?.error != null ? String(r.error) : null, items: Number(r?.items ?? 0), kept: Number(r?.kept ?? 0), lastOk: r?.last_ok != null ? String(r.last_ok) : null };
   });
 }
