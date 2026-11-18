@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { africaOf, analysisDiagnostics, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
+import { africaOf, analysisDiagnostics, bingQuery, classify, isNotAnalysis, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
 import { buildAnalysesNotification } from "../src/lib/alertDelivery";
 import { fakeD1 } from "./fakeD1";
 
@@ -48,6 +48,41 @@ describe("the domains and their taxonomies", () => {
     expect(w).toMatchObject({ africa: true, countries: ["SD"], places: expect.arrayContaining(["El Fasher"]), regions: ["Horn of Africa"], blocs: expect.arrayContaining(["AU", "IGAD"]) });
     expect(africaOf("La CEDEAO face aux juntes du Sahel").regions).toEqual(expect.arrayContaining(["Sahel"]));
     expect(africaOf("L'Alliance des États du Sahel quitte la CEDEAO").blocs).toEqual(expect.arrayContaining(["AES", "ECOWAS"]));
+  });
+
+  it("applies New Humanitarianism's Boolean rules: (group) AND (group), any term in a group", () => {
+    const ids = (t: string) => themesOf("humanitarian", t).map((x) => x.id);
+    // No listed phrase, but AID AND CUTS.
+    expect(ids("Donors slash budgets: what shrinking grants mean for NGOs")).toContain("funding");
+    expect(ids("Les bailleurs réduisent leurs financements")).toContain("funding");
+    // SYSTEM AND REFORM.
+    expect(ids("Can the UN system reinvent itself?")).toContain("reset");
+    // LOCAL_ACTORS AND LOCAL_ISSUES.
+    expect(ids("Grassroots groups want a seat at the table")).toContain("localisation");
+    // NEW_ACTORS AND AID.
+    expect(ids("How Türkiye became a major humanitarian donor in Somalia")).toContain("global-south");
+    // ACCESS_SUBJECT AND ACCESS_OBSTACLES.
+    expect(ids("Convoys blocked at checkpoints for weeks")).toContain("access");
+    // WORKERS AND HARM; DISPLACED AND DISPLACEMENT_POLICY; FUTURE AND HUMANITARIANISM.
+    expect(ids("Three volunteers abducted in North Kivu")).toContain("security");
+    expect(ids("Refugee self-reliance and the right to work in Uganda")).toContain("displacement");
+    expect(ids("The legitimacy crisis of humanitarianism")).toContain("future");
+    // One group alone is not enough.
+    expect(ids("Budget pressures at the ministry of sport")).not.toContain("funding");
+  });
+
+  it("keeps only analytical publications (NOT site pages, notices, vacancies, events, calls)", () => {
+    const u = "https://x.org/publications/a-long-slug-for-the-piece";
+    for (const title of ["About the GDHO", "About us", "Our team", "Publications", "Contact", "Call for proposals: research on localisation", "Vacancy: Senior Policy Adviser", "Webinar: the future of aid", "Press release: new board chair", "Annual report 2025", "Donate"]) expect(isNotAnalysis({ title, summary: "", url: u }), title).toBe(true);
+    expect(isNotAnalysis({ title: "A real piece on aid", summary: "Anonymous (not verified) Wed, 07/22/2026 - 10:18", url: u })).toBe(true);
+    expect(isNotAnalysis({ title: "Localisation after the cuts", summary: "", url: "https://x.org/about/localisation-after-the-cuts" })).toBe(true);
+    for (const title of ["The reset, revisited", "Localisation after the cuts", "Who decides? Power and the humanitarian reset", "About time: why local NGOs must lead"]) expect(isNotAnalysis({ title, summary: "", url: u }), title).toBe(title.startsWith("About time"));
+    expect(classify({ ...base, title: "About the GDHO", summary: "", source: src(["humanitarian"]) })).toEqual([]);
+  });
+
+  it("asks Bing News when Google News returns nothing", () => {
+    const g = "https://news.google.com/rss/search?q=" + encodeURIComponent("site:thenewhumanitarian.org when:1y") + "&hl=en-US";
+    expect(bingQuery(g)).toBe("https://www.bing.com/news/search?q=site%3Athenewhumanitarian.org&format=rss&setlang=en");
   });
 
   it("reads French and Portuguese, and ignores accents and hyphens", () => {
