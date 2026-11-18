@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { X } from "lucide-react";
-import { api, type AnalysisDomain, type StrategicAnalysesData } from "../api";
+import { MapPin, X } from "lucide-react";
+import { api, type AnalysisDomain, type StrategicAnalysesData, type StrategicAnalysis } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import { accent, card, chip, footnote, ghost, heading, input, muted, select, tag, text } from "./panelUi";
 
@@ -49,6 +49,10 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
   const [days, setDays] = useState(60);
   const [all, setAll] = useState(false);
   const [theme, setTheme] = useState<string | null>(null);
+  const [region, setRegion] = useState<string | null>(null);
+  const [country, setCountry] = useState<string>("");
+  const [bloc, setBloc] = useState<string | null>(null);
+  const [kind, setKind] = useState<string>("");
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -83,6 +87,10 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
     setSeenAt(store.get(seenKey(d)));
     setDomain(d);
     setTheme(null);
+    setRegion(null);
+    setCountry("");
+    setBloc(null);
+    setKind("");
     setQ("");
     setAll(false);
     setData(null);
@@ -97,8 +105,27 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
 
   const items = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (current?.items ?? []).filter((i) => (!theme || i.themes.includes(theme)) && (!needle || `${i.title} ${i.summary} ${i.source}`.toLowerCase().includes(needle)));
-  }, [current, theme, q]);
+    return (current?.items ?? []).filter(
+      (i) =>
+        (!theme || i.themes.includes(theme)) &&
+        (!region || i.regions.includes(region)) &&
+        (!country || i.countries.includes(country)) &&
+        (!bloc || i.blocs.includes(bloc)) &&
+        (!kind || i.sourceKind === kind) &&
+        (!needle || `${i.title} ${i.summary} ${i.source} ${i.places.join(" ")}`.toLowerCase().includes(needle))
+    );
+  }, [current, theme, region, country, bloc, kind, q]);
+  const countOf = (pick: (i: StrategicAnalysis) => string[]) => {
+    const m = new Map<string, number>();
+    for (const i of current?.items ?? []) for (const v of pick(i)) m.set(v, (m.get(v) ?? 0) + 1);
+    return m;
+  };
+  const regionCounts = useMemo(() => countOf((i) => i.regions), [current]); // eslint-disable-line react-hooks/exhaustive-deps
+  const countryCounts = useMemo(() => countOf((i) => i.countries), [current]); // eslint-disable-line react-hooks/exhaustive-deps
+  const blocCounts = useMemo(() => countOf((i) => i.blocs), [current]); // eslint-disable-line react-hooks/exhaustive-deps
+  const kindCounts = useMemo(() => countOf((i) => (i.sourceKind ? [i.sourceKind] : [])), [current]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cname = (c: string) => current?.countryNames[c] ?? c;
+  const filtered = !!(theme || region || country || bloc || kind || q.trim());
   const themeCounts = useMemo(() => {
     const m = new Map<string, number>();
     for (const i of current?.items ?? []) for (const t of i.themes) m.set(t, (m.get(t) ?? 0) + 1);
@@ -187,7 +214,7 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
 
         <div style={{ display: "flex", gap: 6, padding: "10px 18px 0", alignItems: "center", flexShrink: 0 }}>
           {(["analyses", "alerts", "sources"] as const).map((t) => (
-            <button key={t} style={chip(sub === t)} aria-pressed={sub === t} onClick={() => setSub(t)}>
+            <button key={t} style={{ ...chip(sub === t), whiteSpace: "nowrap", flexShrink: 0 }} aria-pressed={sub === t} onClick={() => setSub(t)}>
               {t === "analyses" ? "Analyses" : t === "alerts" ? "Alerts" : "Sources & keywords"}
             </button>
           ))}
@@ -196,8 +223,8 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
 
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px 18px" }}>
           {sub === "analyses" && (
-            <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 16, alignItems: "start" }}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8, position: "sticky", top: 0 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 16, alignItems: "start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <input style={input} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles, summaries, sources" aria-label="Search analyses" />
                 <select style={{ ...select, width: "100%" }} value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="How far back">
                   <option value={30}>Last 30 days</option>
@@ -205,6 +232,64 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                   <option value={180}>Last 6 months</option>
                   <option value={365}>Last year</option>
                 </select>
+                <select style={{ ...select, width: "100%" }} value={country} onChange={(e) => setCountry(e.target.value)} aria-label="Country">
+                  <option value="">All countries</option>
+                  {[...countryCounts.entries()]
+                    .sort((a, b) => cname(a[0]).localeCompare(cname(b[0])))
+                    .map(([c, n]) => (
+                      <option key={c} value={c}>
+                        {cname(c)} ({n})
+                      </option>
+                    ))}
+                </select>
+                <select style={{ ...select, width: "100%" }} value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Type of source">
+                  <option value="">All types of source</option>
+                  {[...kindCounts.entries()].map(([k, n]) => (
+                    <option key={k} value={k}>
+                      {k} ({n})
+                    </option>
+                  ))}
+                </select>
+                {filtered && (
+                  <button
+                    style={ghost}
+                    onClick={() => {
+                      setTheme(null);
+                      setRegion(null);
+                      setCountry("");
+                      setBloc(null);
+                      setKind("");
+                      setQ("");
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                )}
+                <div style={heading}>Regions</div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {(current?.regions ?? []).map((r) => {
+                    const n = regionCounts.get(r) ?? 0;
+                    return (
+                      <button key={r} disabled={!n} style={{ ...chip(region === r), opacity: n ? 1 : 0.4, cursor: n ? "pointer" : "default" }} onClick={() => setRegion(region === r ? null : r)}>
+                        {r} <span style={{ opacity: 0.7 }}>{n || ""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {blocCounts.size > 0 && (
+                  <>
+                    <div style={heading}>Blocs & bodies</div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {[...blocCounts.entries()]
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([b, n]) => (
+                          <button key={b} style={chip(bloc === b)} onClick={() => setBloc(bloc === b ? null : b)}>
+                            {b} <span style={{ opacity: 0.7 }}>{n}</span>
+                          </button>
+                        ))}
+                    </div>
+                  </>
+                )}
                 {domain === "humanitarian" && (
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     <button style={chip(!all)} onClick={() => setAll(false)} title="About Africa, or a system-level reflection that shapes Africa">
@@ -245,6 +330,8 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                     <div key={i.id} style={{ ...card, borderColor: isNew ? "rgba(212,175,55,0.55)" : undefined }}>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
                         {isNew && <span style={tag(accent)}>NEW</span>}
+                        {i.sourceKind === "Analyst / newsletter" && <span style={tag("#a78bfa")}>ANALYST</span>}
+                        {i.sourceKind === "African think tank" && <span style={tag("#4ade80")}>AFRICAN THINK TANK</span>}
                         <span style={{ color: muted, fontSize: 11 }}>
                           {i.source} · {new Date(i.published).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                         </span>
@@ -259,7 +346,16 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                             {label(t)}
                           </span>
                         ))}
-                        {i.countries.length > 0 && <span style={{ color: muted, fontSize: 10.5 }}>· {i.countries.slice(0, 6).join(", ")}</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5, fontSize: 10.5, color: muted }}>
+                        {i.places.length > 0 && (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, color: text }}>
+                            <MapPin size={10} /> {i.places.slice(0, 4).join(", ")}
+                          </span>
+                        )}
+                        {i.countries.length > 0 && <span>{i.countries.slice(0, 6).map(cname).join(", ")}</span>}
+                        {i.countries.length === 0 && i.regions.length > 0 && <span>{i.regions.join(", ")}</span>}
+                        {i.blocs.length > 0 && <span style={{ color: "#9db4ff" }}>{i.blocs.join(" · ")}</span>}
                       </div>
                     </div>
                   );
@@ -286,8 +382,15 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                   </div>
                 )}
                 <div style={heading}>Sources for {domainLabel} ({current?.sources.length ?? 0})</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                  {(current?.sources ?? []).map((s) => (
+                {["African think tank", "International think tank", "Analyst / newsletter", "Specialist outlet"].map((k) => {
+                  const list = (current?.sources ?? []).filter((s) => s.kind === k);
+                  if (!list.length) return null;
+                  return (
+                <div key={k} style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
+                  <div style={{ color: accent, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                    {k === "Analyst / newsletter" ? "Analysts & newsletters" : `${k}s`} ({list.length})
+                  </div>
+                  {list.map((s) => (
                     <div key={s.url} style={{ display: "flex", gap: 6, alignItems: "baseline", fontSize: 11.5 }}>
                       <span style={{ width: 8, height: 8, borderRadius: 4, flex: "0 0 8px", background: s.status === "ok" ? "#4ade80" : s.status === "error" ? "#f87171" : "#93a1b8" }} />
                       <a href={s.url} target="_blank" rel="noreferrer" style={{ color: text, flex: 1 }}>
@@ -299,6 +402,8 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                     </div>
                   ))}
                 </div>
+                  );
+                })}
               </div>
               <div>
                 <div style={heading}>Keyword taxonomy</div>
@@ -308,13 +413,15 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                       <summary style={{ cursor: "pointer", fontWeight: 600 }}>
                         <span style={{ color: colour(t.id) }}>●</span> {t.label}
                         {t.systemic && <span style={{ color: muted, fontWeight: 400 }}> · system-level</span>}
+                        {t.context && <span style={{ color: muted, fontWeight: 400 }}> · context only</span>}
+                        <span style={{ color: muted, fontWeight: 400 }}> · {t.terms.length} terms</span>
                       </summary>
                       <div style={{ color: muted, marginTop: 6, lineHeight: 1.5 }}>{t.terms.map((x) => x.replace(/\*$/, "…")).join(" · ")}</div>
                     </details>
                   ))}
                 </div>
                 <div style={{ ...footnote, marginTop: 10 }}>
-                  A piece is kept when it is about this domain and matches its themes (two matches from a source that covers many domains), and it is about Africa or comes from an African source.
+                  Terms are matched in English, French and Portuguese, ignoring accents and hyphens. A piece is kept when it is about this domain and matches its themes (two matches from a source that covers many domains), and it is about Africa or comes from an Africa-focused source. Places are recognised down to towns and provinces, and every piece is tagged with its African countries, regions and regional blocs.
                   {domain === "humanitarian" && " For New Humanitarianism, system-level reflections that shape Africa are kept even when they name no African country."} Sources marked red have no feed the Lens can read; they are retried every week.
                 </div>
               </div>
