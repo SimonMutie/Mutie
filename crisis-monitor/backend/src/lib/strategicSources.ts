@@ -19,6 +19,8 @@ export interface Source {
   domains: DomainId[];
   /** Other feed addresses to try when the main one refuses or has moved. */
   altFeeds?: string[];
+  /** Feeds of sections the main feed leaves out (a WordPress site's "publication" section), read every time too. */
+  sectionFeeds?: string[];
 }
 
 export const SOURCE_KIND_LABEL: Record<SourceKind, string> = {
@@ -235,7 +237,12 @@ export const SOURCES: Source[] = [
     ...outlet("The New Humanitarian", "https://www.thenewhumanitarian.org/rss/all.xml", [H, K], false),
     altFeeds: ["https://www.thenewhumanitarian.org/rss.xml", "https://www.thenewhumanitarian.org/feed", "https://www.thenewhumanitarian.org/rss/news.xml", "https://www.thenewhumanitarian.org/rss/analysis.xml"],
   },
-  intl("Humanitarian Practice Network", "https://odihpn.org/feed/", [H]),
+  {
+    ...intl("Humanitarian Practice Network", "https://odihpn.org/feed/", [H]),
+    // Its articles, magazine pieces and network papers live in a "publication" section the main feed leaves out.
+    altFeeds: ["https://odihpn.org/en/feed/"],
+    sectionFeeds: ["https://odihpn.org/en/publication/feed/", "https://odihpn.org/feed/?post_type=publication"],
+  },
   intl("ALNAP", "https://www.alnap.org/", [H]),
   intl("ICRC Humanitarian Law & Policy blog", "https://blogs.icrc.org/law-and-policy/feed/", [H, K]),
   intl("ICVA", "https://www.icvanetwork.org/", [H]),
