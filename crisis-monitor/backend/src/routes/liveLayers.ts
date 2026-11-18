@@ -1,3 +1,4 @@
+import { collectHumanitarianAnalyses, humanitarianSourceStatus, HUM_THEMES, listHumanitarianAnalyses } from "../lib/humanitarianAnalysis";
 import { Hono } from "hono";
 import { twoline2satrec, propagate, gstime, eciToGeodetic, degreesLong, degreesLat } from "satellite.js";
 import { Reader as MmdbReader, type CountryResponse } from "mmdb-lib";
@@ -2549,4 +2550,28 @@ liveLayersRouter.get("/live-broadcasts", async (c) => {
     async () => ({ broadcasts: LIVE_BROADCASTS, total: LIVE_BROADCASTS.length, fetchedAt: new Date().toISOString() }),
     86400 // static reference list, same as /maritime and /nuclear-facilities
   );
+});
+
+/**
+ * Strategic humanitarian analyses (Threats & Intel → Humanitarian Analyses): think-tank and research-centre
+ * reflections on the changing humanitarian landscape, focused on Africa (lib/humanitarianAnalysis.ts).
+ * ?all=1 includes pieces outside the Africa / system-level scope; ?days= sets how far back (default 60).
+ */
+liveLayersRouter.get("/humanitarian-analysis", async (c) => {
+  const days = Math.min(365, Math.max(1, Number(c.req.query("days")) || 60));
+  const all = c.req.query("all") === "1";
+  const [items, sources] = await Promise.all([listHumanitarianAnalyses(c.env.DB, { days, all }), humanitarianSourceStatus(c.env.DB)]);
+  return c.json({
+    items,
+    themes: HUM_THEMES.map((t) => ({ id: t.id, label: t.label, systemic: !!t.systemic, terms: t.terms })),
+    sources,
+    fetchedAt: new Date().toISOString(),
+  });
+});
+
+/** Admin only: collect now instead of waiting for the hourly run. */
+liveLayersRouter.post("/humanitarian-analysis/refresh", async (c) => {
+  if (c.get("role") !== "admin") return c.json({ error: "Admin access required" }, 403);
+  const result = await collectHumanitarianAnalyses(c.env, { force: true });
+  return c.json(result);
 });
