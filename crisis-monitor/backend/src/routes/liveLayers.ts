@@ -2561,7 +2561,7 @@ liveLayersRouter.get("/live-broadcasts", async (c) => {
 liveLayersRouter.get("/strategic-analyses", async (c) => {
   const domain = domainOf(c.req.query("domain") ?? "humanitarian");
   if (!domain) return c.json({ error: "Unknown domain" }, 400);
-  const days = Math.min(365, Math.max(1, Number(c.req.query("days")) || 60));
+  const days = Math.min(400, Math.max(1, Number(c.req.query("days")) || 365));
   const all = c.req.query("all") === "1";
   const [items, sources, summary] = await Promise.all([listAnalyses(c.env.DB, domain.id, { days, all }), sourceStatus(c.env.DB, domain.id), domainSummary(c.env.DB)]);
   return c.json({
@@ -2576,9 +2576,9 @@ liveLayersRouter.get("/strategic-analyses", async (c) => {
   });
 });
 
-/** Admin only: read the sources least recently read now (up to 30) instead of waiting for the scheduled runs. */
+/** Admin only: read the sources least recently read now (up to 30), and backfill the past year of six more. */
 liveLayersRouter.post("/strategic-analyses/refresh", async (c) => {
   if (c.get("role") !== "admin") return c.json({ error: "Admin access required" }, 403);
-  const result = await collectStrategicAnalyses(c.env, { force: true, limit: 30 });
+  const result = await collectStrategicAnalyses(c.env, { force: true, limit: 30, backfill: 6 });
   return c.json(result);
 });
