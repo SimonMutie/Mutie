@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { enablePushAlerts, pushSupported, thisDeviceEndpoint } from "../pushAlerts";
-import { api, type AlertChannel, type AlertSubscription, type AlertSubscriptionList } from "../api";
+import { api, type AlertChannel, type AlertSubscription, type AlertSubscriptionList, type AnalysisDomain } from "../api";
 
 /**
  * Where to be told about new developments: email and/or Signal, for one
@@ -9,7 +9,7 @@ import { api, type AlertChannel, type AlertSubscription, type AlertSubscriptionL
  * Used on a query's dashboard and in Settings (escalation feed).
  */
 
-type Target = { scope: "escalations" } | { scope: "humanitarian" } | { scope: "query"; queryId: string };
+type Target = { scope: "escalations" } | { scope: "analyses"; domain: AnalysisDomain; label: string } | { scope: "query"; queryId: string };
 
 const FREQUENCY_LABELS: Record<number, string> = { 5: "Within 5 minutes", 15: "Within 15 minutes", 60: "At most hourly", 360: "At most every 6 hours", 1440: "Once a day" };
 const CHANNEL_LABEL: Record<AlertChannel, string> = { email: "Email", signal: "Signal", push: "Device" };
@@ -25,17 +25,19 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
   const [channel, setChannel] = useState<AlertChannel>("email");
   const [destination, setDestination] = useState("");
   const isEsc = target.scope === "escalations";
-  const isHum = target.scope === "humanitarian";
+  const isHum = target.scope === "analyses";
+  const domain = target.scope === "analyses" ? target.domain : undefined;
+  const domainLabel = target.scope === "analyses" ? target.label : "";
   const [minLevel, setMinLevel] = useState<string>(isEsc ? "elevated" : "any");
   const [frequency, setFrequency] = useState<number>(isEsc || isHum ? 15 : 60);
 
   const queryId = target.scope === "query" ? target.queryId : null;
   const load = useCallback(() => {
     api
-      .listAlertSubscriptions(queryId ? { scope: "query", queryId } : { scope: isHum ? "humanitarian" : "escalations" })
+      .listAlertSubscriptions(queryId ? { scope: "query", queryId } : domain ? { scope: "analyses", domain } : { scope: "escalations" })
       .then((d) => (setData(d), setError(null)))
       .catch((e) => setError(errText(e, "Could not load your alerts.")));
-  }, [queryId, isHum]);
+  }, [queryId, domain]);
   useEffect(load, [load]);
 
   async function add(e: React.FormEvent) {
@@ -44,9 +46,9 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
     setError(null);
     setNotice(null);
     try {
-      await api.createAlertSubscription({ scope: target.scope, query_id: queryId ?? undefined, channel, destination, min_level: minLevel, frequency_minutes: frequency });
+      await api.createAlertSubscription({ scope: target.scope, query_id: queryId ?? domain, channel, destination, min_level: minLevel, frequency_minutes: frequency });
       setDestination("");
-      setNotice(isEsc ? "Added. You will hear about escalations that happen from now on." : isHum ? "Added. You will hear about analyses posted from now on." : "Added. You will hear about developments from now on.");
+      setNotice(isEsc ? "Added. You will hear about escalations that happen from now on." : isHum ? `Added. You will hear about ${domainLabel} analyses posted from now on.` : "Added. You will hear about developments from now on.");
       load();
     } catch (err) {
       setError(errText(err, "Could not add this."));
@@ -100,7 +102,7 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
     setBusy("device");
     setError(null);
     setNotice(null);
-    const err = await enablePushAlerts({ askPermission: true, scope: isHum ? "humanitarian" : "escalations" });
+    const err = await enablePushAlerts({ askPermission: true, domain });
     if (err) setError(err);
     else setNotice("Alerts are on for this device. Use “Send a test” to see one.");
     load();
@@ -124,7 +126,7 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
         {isEsc
           ? "Get a message when a conflict escalation is flagged, raised to a higher level, or gains significant new reporting. Each message says what changed, gives an analysis, and links the reports."
           : isHum
-            ? "Get a message when a new strategic humanitarian analysis is posted: its source, themes, the African countries it discusses, and the link."
+            ? `Get a message when a new ${domainLabel} analysis is posted: its source, themes, the African countries it discusses, and the link.`
             : "Get a message when this query has new developments: a short summary of what changed, an analysis, and links to the reports."}
       </p>
 
@@ -132,7 +134,7 @@ export default function AlertDeliveryPanel({ target, compact = false }: { target
         <div style={{ border: "1px solid var(--border-soft)", borderRadius: 8, padding: "10px 12px", background: "var(--panel-raised)", display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Pop up on your devices</div>
           <div style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text-muted)" }}>
-            {isHum ? "New analyses" : "Escalation alerts"} appear as a notification on each device you turn this on for, even when The Lens is closed or the device was asleep. Do it once on every phone and computer you use. On an iPhone or iPad, add The Lens to the Home Screen first.
+            {isHum ? `New ${domainLabel} analyses` : "Escalation alerts"} appear as a notification on each device you turn this on for, even when The Lens is closed or the device was asleep. Do it once on every phone and computer you use. On an iPhone or iPad, add The Lens to the Home Screen first.
           </div>
           {pushSupported() ? (
             hasThisDevice ? (
