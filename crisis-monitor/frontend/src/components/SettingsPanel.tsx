@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, setToken, type AuthUser, type EscalationPipelineStatus } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
+import { setMapTilerKey } from "../mapProvider";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled, introVoiceEnabled, setIntroVoiceEnabled } from "../intro";
 
 interface Props {
@@ -47,6 +48,8 @@ export default function SettingsPanel({ onBack, user }: Props) {
       <CreditsCard />
 
       <OpeningSequenceCard />
+
+      {user.role === "admin" && <MapProviderCard />}
 
       {user.role === "admin" && <AiUsageCard />}
     </div>
@@ -338,3 +341,75 @@ const primaryBtnStyle: React.CSSProperties = {
   fontWeight: 600,
   fontSize: 13,
 };
+
+/** Platform admin: the MapTiler key for the better basemaps, kept in the database (never in the public code). */
+function MapProviderCard() {
+  const [current, setCurrent] = useState<{ maptiler: string | null; fromEnv: boolean; updatedAt: string | null } | null>(null);
+  const [value, setValue] = useState("");
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.getMapProvider().then(setCurrent).catch(() => setCurrent(null));
+  }, []);
+
+  /** Loads one MapTiler tile with the key, which proves the key works from this site. */
+  const check = (key: string) =>
+    new Promise<boolean>((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = `https://api.maptiler.com/maps/streets-v2/256/2/2/1.png?key=${encodeURIComponent(key)}`;
+    });
+
+  async function save(next: string | null) {
+    setBusy(true);
+    setStatus(null);
+    try {
+      if (next && !(await check(next))) {
+        setStatus({ ok: false, text: "MapTiler refused this key from this site. Check the key, and that this site's address is allowed in the key's settings on MapTiler." });
+        return;
+      }
+      await api.setMapProvider(next);
+      setMapTilerKey(next);
+      setCurrent({ maptiler: next, fromEnv: false, updatedAt: new Date().toISOString() });
+      setValue("");
+      setStatus({ ok: true, text: next ? "Saved. The MapTiler maps are on for everyone; open maps reload with them." : "Removed. The maps are back to the free basemaps." });
+    } catch (e) {
+      setStatus({ ok: false, text: e instanceof Error ? e.message : "Could not save." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const masked = current?.maptiler ? `${current.maptiler.slice(0, 4)}…${current.maptiler.slice(-3)}` : null;
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>Maps (MapTiler)</div>
+      <div style={{ fontSize: 12.5, opacity: 0.75, marginBottom: 10, lineHeight: 1.5 }}>
+        With a MapTiler key, every map in the Lens uses MapTiler's basemaps: Streets, Dark, Data, Outdoor, Topographic, Satellite and Satellite with labels, and the 3D globe uses its dark style and terrain. In MapTiler, restrict the key to this site's address so it cannot be used anywhere else.
+      </div>
+      <div style={{ fontSize: 12.5, marginBottom: 10 }}>
+        {masked ? (
+          <>
+            Key in use: <code>{masked}</code>
+            {current?.fromEnv ? " (set on the server)" : current?.updatedAt ? `, saved ${new Date(current.updatedAt).toLocaleDateString()}` : ""}
+          </>
+        ) : (
+          "No key set: the maps use the free basemaps."
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input value={value} onChange={(e) => setValue(e.target.value.trim())} placeholder="Paste the MapTiler API key" style={{ flex: "1 1 240px" }} aria-label="MapTiler API key" />
+        <button disabled={busy || !value} onClick={() => void save(value)}>
+          {busy ? "Checking…" : "Save key"}
+        </button>
+        {current?.maptiler && !current.fromEnv && (
+          <button disabled={busy} onClick={() => void save(null)}>
+            Remove
+          </button>
+        )}
+      </div>
+      {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
+    </div>
+  );
+}
