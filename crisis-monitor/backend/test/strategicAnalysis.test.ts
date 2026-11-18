@@ -142,7 +142,7 @@ describe("collecting and alerting", () => {
     const discover = async (u: string) => (u === ok ? { status: "ok" as const, feedUrl: "https://feed/ok" } : { status: "no_feed" as const });
     const fetcher = async () => new Response(feed);
     const now = new Date("2026-11-17T09:00:00Z");
-    const lanes = { backfill: 0, gnews: 0, sitemaps: 0, enrich: 0 };
+    const lanes = { backfill: 0, gnews: 0, sitemaps: 0, enrich: 0, sections: 0 };
     const r1 = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 5, ...lanes });
     expect(r1.sources).toBe(5);
     expect(r1.added).toBeGreaterThanOrEqual(3);
@@ -190,7 +190,7 @@ describe("collecting and alerting", () => {
     resetAnalysisTables();
     await ensureAnalysisTables(DB as never);
     for (const s of SOURCES) if (s !== tnh && s !== sub) await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at) VALUES (?,?,?,?,?)`).bind(s.url, s.name, now.toISOString(), now.toISOString(), now.toISOString()).run();
-    const r = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0, sitemaps: 0, enrich: 0 });
+    const r = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0, sitemaps: 0, enrich: 0, sections: 0 });
     expect(r.backfilled).toBe(2);
     const hum = await listAnalyses(DB as never, "humanitarian", { days: 400 });
     expect(hum.map((i) => i.title).sort()).toEqual(["Aid cuts bite in Sudan", "Localisation in Somalia after the cuts", "The humanitarian reset, six months on"].sort());
@@ -202,7 +202,7 @@ describe("collecting and alerting", () => {
     // Google News: searched once per domain for broad sources, once for the whole site for specialists.
     expect(calls.filter((u) => u.startsWith("https://news.google.com/") && u.includes("thenewhumanitarian.org")).length).toBe(1);
     // Not backfilled twice.
-    const again = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0, sitemaps: 0, enrich: 0 });
+    const again = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0, sitemaps: 0, enrich: 0, sections: 0 });
     expect(again.backfilled).toBe(0);
   });
 
@@ -256,7 +256,7 @@ describe("collecting and alerting", () => {
     for (const s of SOURCES) if (s !== alnap) await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at, sitemap_at) VALUES (?,?,?,?,?,?)`).bind(s.url, s.name, now.toISOString(), now.toISOString(), now.toISOString(), now.toISOString()).run();
     await DB.prepare(`UPDATE strategic_sources SET sitemap_at = NULL WHERE url = ?`).bind(alnap.url).run();
     await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at) VALUES (?,?,?,?,?)`).bind(alnap.url, alnap.name, now.toISOString(), now.toISOString(), now.toISOString()).run();
-    const lanes = { now, fetcher, discover: async () => ({ status: "no_feed" as const }), limit: 0, backfill: 0, gnews: 0 };
+    const lanes = { now, fetcher, discover: async () => ({ status: "no_feed" as const }), limit: 0, backfill: 0, gnews: 0, sections: 0 };
     await collectStrategicAnalyses(env, { ...lanes, sitemaps: 5, enrich: 0 });
     const pending = await DB.prepare(`SELECT COUNT(*) AS n FROM strategic_candidates WHERE status = 'pending'`).first<{ n: number }>();
     expect(pending?.n).toBe(30);
@@ -273,6 +273,45 @@ describe("collecting and alerting", () => {
     expect(diag.lastRun.finishedAt).not.toBeNull();
     expect(diag.pages.done).toBe(30);
     expect(diag.stored.humanitarian.inScope).toBe(30);
+  });
+
+  it("finds the publication feeds a WordPress main feed leaves out (HPN), reads them every time and pages back a year", async () => {
+    const { DB } = fakeD1();
+    const env = { DB } as never;
+    const now = new Date("2026-11-17T09:00:00Z");
+    const hpn = SOURCES.find((s) => s.name === "Humanitarian Practice Network")!;
+    const iss = SOURCES[0];
+    const item = (t: string, u: string, d: string) => `<item><title>${t}</title><link>${u}</link><pubDate>${new Date(d).toUTCString()}</pubDate><description>Humanitarian analysis.</description></item>`;
+    const rss = (...items: string[]) => `<rss><channel>${items.join("")}</channel></rss>`;
+    const fetcher = async (u: string) => {
+      if (u === hpn.url) return new Response(rss(item("HPN at the World Humanitarian Forum", "https://odihpn.org/news/forum", "2026-11-10")));
+      if (u === "https://odihpn.org/en/publication/feed/") return new Response(rss(item("Aid suspension: who carries the burden?", "https://odihpn.org/en/publication/aid-suspension-who-carries-the-burden/", "2026-11-12")));
+      if (u === "https://odihpn.org/en/publication/feed/?paged=2") return new Response(rss(item("Designed to exclude: what pooled funds reveal about localisation in practice", "https://odihpn.org/en/publication/designed-to-exclude/", "2026-08-27")));
+      // A section found by probing a broad source.
+      if (u === "https://issafrica.org/feed/?post_type=research") return new Response(rss(item("Funding cuts and the humanitarian reset in the Horn of Africa", "https://issafrica.org/research/cuts-horn", "2026-10-01")));
+      return new Response("", { status: 404 });
+    };
+    resetAnalysisTables();
+    await ensureAnalysisTables(DB as never);
+    for (const s of SOURCES) await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at, sitemap_at, sections_at) VALUES (?,?,?,?,?,?,?)`).bind(s.url, s.name, now.toISOString(), now.toISOString(), now.toISOString(), now.toISOString(), s === hpn || s === iss ? null : now.toISOString()).run();
+    await DB.prepare(`UPDATE strategic_sources SET feed_url = url WHERE url = ?`).bind(hpn.url).run();
+    const base2 = { now, fetcher, discover: async (u: string) => ({ status: "ok" as const, feedUrl: u }), limit: 0, backfill: 0, gnews: 0, sitemaps: 0, enrich: 0 };
+    await collectStrategicAnalyses(env, { ...base2, sections: 5 });
+    const titles = (await listAnalyses(DB as never, "humanitarian", { days: 400 })).map((i) => i.title);
+    expect(titles).toEqual(expect.arrayContaining(["Aid suspension: who carries the burden?", "Designed to exclude: what pooled funds reveal about localisation in practice", "Funding cuts and the humanitarian reset in the Horn of Africa"]));
+    const issState = await DB.prepare(`SELECT extra_feeds FROM strategic_sources WHERE url = ?`).bind(iss.url).first<{ extra_feeds: string }>();
+    expect(JSON.parse(issState!.extra_feeds)).toEqual(["https://issafrica.org/feed/?post_type=research"]);
+    // On the next hourly read, the section feed is read alongside the main feed.
+    await DB.prepare(`DELETE FROM strategic_analyses`).run();
+    await DB.prepare(`UPDATE strategic_sources SET checked_at = NULL WHERE url = ?`).bind(hpn.url).run();
+    await collectStrategicAnalyses(env, { ...base2, limit: 1, sections: 0 });
+    expect((await listAnalyses(DB as never, "humanitarian", { days: 400 })).map((i) => i.title)).toContain("Aid suspension: who carries the burden?");
+  });
+
+  it("drops navigation and site-name pages", () => {
+    const hs = src(["humanitarian"]);
+    for (const title of ["Posts pagination", "Page 3 of 125", "Read more", "Submit an Article", "All Publications"]) expect(isNotAnalysis({ title, summary: "", url: "https://x.org/a/b-c-d" }), title).toBe(true);
+    expect(classify({ ...base, title: "Think tank", summary: "humanitarian", source: { ...hs, name: "Think tank" } })).toEqual([]);
   });
 
   it("moves the first version's humanitarian pieces into New Humanitarianism", async () => {
