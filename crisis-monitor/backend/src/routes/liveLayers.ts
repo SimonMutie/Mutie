@@ -2573,7 +2573,7 @@ liveLayersRouter.get("/strategic-analyses", async (c) => {
     domain: domain.id,
     domains: DOMAINS.map((d) => ({ id: d.id, label: d.label, blurb: d.blurb, recent: summary[d.id]?.recent ?? 0, latest: summary[d.id]?.latest ?? null })),
     items,
-    themes: domain.themes.map((t) => ({ id: t.id, label: t.label, systemic: !!t.systemic, context: !!t.context, terms: t.terms })),
+    themes: domain.themes.map((t) => ({ id: t.id, label: t.label, systemic: !!t.systemic, context: !!t.context, terms: t.terms, rules: t.rules ?? [] })),
     regions: REGIONS,
     countryNames: Object.fromEntries([...new Set(items.flatMap((i) => i.countries))].map((c) => [c, countryName(c)])),
     sources,
