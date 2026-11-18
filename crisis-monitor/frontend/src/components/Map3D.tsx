@@ -14,6 +14,7 @@ import { api, type EscalationIncident } from "../api";
 import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
 import { pinSvg } from "./actorTheme";
 import EscalationHoverCard from "./EscalationHoverCard";
+import { maptilerKey, maptilerStyle, maptilerTerrain } from "../mapProvider";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
 // runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
@@ -412,7 +413,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     if (!containerRef.current) return;
     const map = new MapLibreMap({
       container: containerRef.current,
-      style: CARTO_DARK_MATTER_STYLE,
+      // MapTiler's dark streets style (richer detail, crisper labels) once the admin has set its key; CARTO otherwise.
+      style: maptilerKey() ? maptilerStyle("streets-v2-dark") : CARTO_DARK_MATTER_STYLE,
       // Centered/zoomed on the same Africa/Middle East framing as the
       // reference screenshots, rather than a full whole-earth view — at
       // zoom ~2 the dark-matter style's land color (#0e0e0e) sits so close
@@ -651,7 +653,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         layout: { visibility: "none" },
       });
 
-      map.addSource("lens-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
+      // MapTiler's elevation model with the key (finer), the open Terrarium tiles otherwise.
+      if (maptilerKey()) map.addSource("lens-terrain", { type: "raster-dem", tiles: [maptilerTerrain()], tileSize: 512, encoding: "mapbox", maxzoom: 14 });
+      else map.addSource("lens-terrain", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
 
       const POINT_LAYERS = ["lens-points-circle", "lens-incident-pins", "lens-points-warning-icon", "lens-aircraft"];
       const TERRITORY_LAYER = "lens-territory-changes-fill";
