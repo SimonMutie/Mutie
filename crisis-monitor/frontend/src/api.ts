@@ -2210,6 +2210,8 @@ export const api = {
   refreshDueDiligenceList: (list: string) => req<{ ok: boolean; entries?: number }>("/api/due-diligence/sources/refresh", { method: "POST", body: JSON.stringify({ list }) }),
   dueDiligenceSources: () => req<{ sanctions: { id: string; label: string; status: string; entries?: number; asOf?: string; error?: string }[]; companies_house: boolean }>("/api/due-diligence/sources/status"),
 
+  getMapProvider: () => req<{ maptiler: string | null; fromEnv: boolean; updatedAt: string | null }>("/api/map-settings/provider"),
+  setMapProvider: (maptiler: string | null) => req<{ ok: boolean }>("/api/map-settings/provider", { method: "PUT", body: JSON.stringify({ maptiler }) }),
   getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
   listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "analyses"; domain: AnalysisDomain } | { scope: "query"; queryId: string }) =>
     req<AlertSubscriptionList>(
