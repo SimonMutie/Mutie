@@ -381,6 +381,7 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                     {note && <span style={{ color: muted }}>{note}</span>}
                   </div>
                 )}
+                {isAdmin && current?.diagnostics && <Diagnostics d={current.diagnostics} />}
                 <div style={heading}>Sources for {domainLabel} ({current?.sources.length ?? 0})</div>
                 {["African think tank", "International think tank", "Analyst / newsletter", "Specialist outlet"].map((k) => {
                   const list = (current?.sources ?? []).filter((s) => s.kind === k);
@@ -430,6 +431,55 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Admins only: what the collector is doing, so a stalled catch-up or failing sources are visible at a glance. */
+function Diagnostics({ d }: { d: NonNullable<StrategicAnalysesData["diagnostics"]> }) {
+  if (d.error) return <div style={{ ...card, color: "#f87171", marginBottom: 10 }}>Diagnostics unavailable: {d.error}</div>;
+  const r = d.lastRun;
+  const s = d.sources ?? {};
+  const p = d.pages ?? {};
+  const when = (t: string) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const row = (k: string, v: React.ReactNode) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+      <span style={{ color: muted }}>{k}</span>
+      <span style={{ textAlign: "right" }}>{v}</span>
+    </div>
+  );
+  return (
+    <div style={{ ...card, marginBottom: 12, display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+      <div style={{ ...heading, margin: 0 }}>Collector status (admin)</div>
+      {r ? (
+        row(
+          "Last run",
+          r.finishedAt ? (
+            `${when(r.startedAt)}, ${r.seconds ?? "?"}s, ${r.added ?? 0} new · read ${r.lanes?.read ?? 0}, catch-up ${r.lanes?.backfill ?? 0}, sitemaps ${r.lanes?.sitemaps ?? 0}, pages ${r.lanes?.pages ?? 0}, searches ${r.lanes?.gnews ?? 0}${r.lanes?.skipped ? `, ${r.lanes.skipped} left for next run` : ""}`
+          ) : (
+            <span style={{ color: "#f87171" }}>started {when(r.startedAt)} and did not finish</span>
+          )
+        )
+      ) : (
+        row("Last run", "none recorded yet")
+      )}
+      {row("Sources", `${s.ok ?? 0} feeds working · ${s.failing ?? 0} without a readable feed · ${s.listed ?? 0} listed`)}
+      {row("Past-year catch-up", `${s.backfilled ?? 0} of ${s.listed ?? 0} done${s.backfill_cut ? ` (${s.backfill_cut} cut short)` : ""}`)}
+      {row("Sitemaps", `${s.sitemaps_read ?? 0} read · ${s.sitemaps_found ?? 0} listed publications`)}
+      {row("Pages from sitemaps", `${p.pending ?? 0} waiting · ${p.done ?? 0} read · ${p.failed ?? 0} unreadable`)}
+      {row("Stored", Object.entries(d.stored ?? {}).map(([k, v]) => `${k} ${v.inScope}`).join(" · ") || "nothing yet")}
+      {r?.fetchFails && Object.keys(r.fetchFails).length > 0 &&
+        row(
+          "Failed requests last run",
+          <span style={{ color: "#facc15" }}>
+            {Object.entries(r.fetchFails)
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 4)
+              .map(([k, n]) => `${n} × ${k}`)
+              .join(" · ")}
+          </span>
+        )}
+      {(r?.errors?.length ?? 0) > 0 && <div style={{ color: "#f87171", marginTop: 4, lineHeight: 1.4 }}>{r!.errors!.slice(0, 5).join(" · ")}</div>}
     </div>
   );
 }
