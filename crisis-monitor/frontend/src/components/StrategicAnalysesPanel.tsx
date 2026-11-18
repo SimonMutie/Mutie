@@ -408,6 +408,24 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                 })}
               </div>
               <div>
+                <div style={heading}>Boolean query</div>
+                <div style={{ ...card, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 11, lineHeight: 1.6, marginBottom: 10 }}>
+                  <span style={{ color: accent }}>({domainLabel} signal)</span> AND <span style={{ color: accent }}>(ANY theme below)</span>
+                  {domain === "humanitarian" ? (
+                    <>
+                      {" "}AND <span style={{ color: accent }}>(Africa OR system-level OR names no crisis outside Africa)</span>
+                    </>
+                  ) : (
+                    <>
+                      {" "}AND <span style={{ color: accent }}>(Africa)</span>
+                    </>
+                  )}{" "}
+                  NOT <span style={{ color: "#f87171" }}>(site pages, notices, vacancies, events, calls, press releases)</span>
+                  <div style={{ color: muted, marginTop: 4, fontFamily: "inherit" }}>
+                    {domain === "humanitarian" ? "Humanitarian specialist sources skip the signal and theme tests: everything they publish is kept. " : ""}
+                    Theme = (term OR term OR …) OR ((group) AND (group)). {totalTerms(current?.themes ?? [])} terms; the AND rules stand for about {combos(current?.themes ?? []).toLocaleString("en-GB")} term combinations.
+                  </div>
+                </div>
                 <div style={heading}>Keyword taxonomy</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {(current?.themes ?? []).map((t) => (
@@ -416,9 +434,21 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                         <span style={{ color: colour(t.id) }}>●</span> {t.label}
                         {t.systemic && <span style={{ color: muted, fontWeight: 400 }}> · system-level</span>}
                         {t.context && <span style={{ color: muted, fontWeight: 400 }}> · context only</span>}
-                        <span style={{ color: muted, fontWeight: 400 }}> · {t.terms.length} terms</span>
+                        <span style={{ color: muted, fontWeight: 400 }}> · {t.terms.length + t.rules.flat(2).length} terms{t.rules.length ? ` · ${t.rules.length} AND rule${t.rules.length > 1 ? "s" : ""}` : ""}</span>
                       </summary>
-                      <div style={{ color: muted, marginTop: 6, lineHeight: 1.5 }}>{t.terms.map((x) => x.replace(/\*$/, "…")).join(" · ")}</div>
+                      <div style={{ color: muted, marginTop: 6, lineHeight: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 10.5 }}>
+                        {t.terms.length > 0 && <div>({t.terms.map(bq).join(" OR ")})</div>}
+                        {t.rules.map((rule, ri) => (
+                          <div key={ri} style={{ marginTop: 6 }}>
+                            <span style={{ color: accent }}>OR </span>
+                            {rule.map((g, gi) => (
+                              <span key={gi}>
+                                {gi > 0 && <span style={{ color: accent }}> AND </span>}({g.map(bq).join(" OR ")})
+                              </span>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
                     </details>
                   ))}
                 </div>
@@ -483,3 +513,8 @@ function Diagnostics({ d }: { d: NonNullable<StrategicAnalysesData["diagnostics"
     </div>
   );
 }
+
+/** A term as written in a Boolean query: phrases in quotes, a trailing * kept as the wildcard. */
+const bq = (t: string) => (t.includes(" ") ? `"${t}"` : t);
+const totalTerms = (themes: StrategicAnalysesData["themes"]) => themes.reduce((n, t) => n + t.terms.length + t.rules.flat(2).length, 0);
+const combos = (themes: StrategicAnalysesData["themes"]) => themes.reduce((n, t) => n + t.rules.reduce((m, r) => m + r.reduce((k, g) => k * g.length, 1), 0), 0);
