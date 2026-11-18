@@ -1,3 +1,5 @@
+import { countryName } from "./africaGeo";
+import { listHumanitarianAnalyses, newHumanitarianSince, themeLabel, type HumItemView } from "./humanitarianAnalysis";
 import { buildMapScene, mapCaption, sceneToPng, toBase64 } from "./staticMap";
 import { all, first, run, nowIso } from "../db";
 import { newId } from "../ids";
@@ -28,14 +30,14 @@ import { channelsAvailable, sendNotification, type Channel, type Notification, t
  * told — once the channel accepted it; a failed send is retried next tick.
  */
 
-export type Scope = "query" | "escalations";
+export type Scope = "query" | "escalations" | "humanitarian";
 /** Escalation feed: "elevated" | "critical". Query: "any" (every new
  *  development) or "alert" (only once an alert has opened for the query —
  *  today a coverage surge, see queryWatch.ts). */
 export type MinLevel = "any" | "alert" | "elevated" | "critical";
 
 export const FREQUENCIES = [5, 15, 60, 360, 1440] as const;
-export const DEFAULT_FREQUENCY: Record<Scope, number> = { query: 60, escalations: 15 };
+export const DEFAULT_FREQUENCY: Record<Scope, number> = { query: 60, escalations: 15, humanitarian: 60 };
 const LEVEL_RANK: Record<string, number> = { any: 0, alert: 0, info: 0, elevated: 1, critical: 2 };
 /** Reports that must join a known incident before it is announced again. */
 const UPDATE_REPORT_STEP = 3;
@@ -395,6 +397,41 @@ async function runQuerySub(env: Env, sub: Subscription, now: number, ai: { left:
   if (result.ok) await run(env.DB, "UPDATE alert_subscriptions SET cursor_at = ? WHERE id = ?", [nowIso(), sub.id]);
 }
 
+// ── Strategic humanitarian analyses ──────────────────────────────────────
+
+/** One message for the new analyses since the last send: what each piece is, its themes, its source and link. */
+export function buildHumanitarianNotification(items: HumItemView[], testing = false): Notification {
+  const n = items.length;
+  const africa = items.filter((i) => i.africa).length;
+  return {
+    subject: `${testing ? "[Test] " : ""}${n === 1 ? `New humanitarian analysis: ${clip(items[0].title, 90)}` : `${n} new strategic humanitarian analyses`}`,
+    overview:
+      n === 1
+        ? `${items[0].source} has published a new analysis${items[0].africa ? " on Africa" : " on the humanitarian system"}.`
+        : `${n} new analyses on the changing humanitarian landscape${africa ? `, ${africa} of them on Africa` : ""}.`,
+    sections: items.map((i) => ({
+      heading: `${i.source} · ${i.themes.slice(0, 3).map(themeLabel).join(" · ")}`,
+      changed: tidy(i.title),
+      analysis: tidy(clip(i.summary, 420)) + (i.countries.length ? ` (Countries discussed: ${i.countries.map(countryName).join(", ")}.)` : ""),
+      links: [{ title: i.title, url: i.url, source: i.source }],
+    })),
+    links: [],
+    footer: "The Lens · Afrilens Consulting. Strategic humanitarian analyses, collected from think tanks and research centres. Manage these alerts in Live OSINT → Humanitarian.",
+  };
+}
+
+async function runHumanitarianSub(env: Env, sub: Subscription, now: number): Promise<void> {
+  if (sub.last_sent_at && now - Date.parse(sub.last_sent_at) < sub.frequency_minutes * 60_000) return;
+  // A new subscription starts from now: it is told about what is posted next, not the backlog.
+  const since = sub.cursor_at ?? sub.created_at;
+  const items = await newHumanitarianSince(env.DB, since, 10);
+  if (items.length === 0) return;
+  const newest = items.reduce((m, i) => (i.firstSeen > m ? i.firstSeen : m), since);
+  const result = await sendNotification(env, sub.channel, sub.destination, buildHumanitarianNotification(items));
+  await recordSend(env, sub, result);
+  if (result.ok) await run(env.DB, "UPDATE alert_subscriptions SET cursor_at = ? WHERE id = ?", [newest, sub.id]);
+}
+
 // ── Dispatcher ───────────────────────────────────────────────────────────
 
 async function recordSend(env: Env, sub: Subscription, result: { ok: boolean; error?: string; gone?: boolean }): Promise<void> {
@@ -431,6 +468,8 @@ export async function dispatchAlertSubscriptions(env: Env): Promise<void> {
       if (sub.scope === "escalations") {
         flagged ??= await getFlaggedIncidents(env);
         await runEscalationSub(env, sub, flagged, now);
+      } else if (sub.scope === "humanitarian") {
+        await runHumanitarianSub(env, sub, now);
       } else {
         await runQuerySub(env, sub, now, ai);
       }
@@ -445,6 +484,20 @@ export async function dispatchAlertSubscriptions(env: Env): Promise<void> {
 /** A real message in the real format, sent on request, so the person can see
  *  what they will get. Does not move the subscription's position. */
 export async function sendTestMessage(env: Env, sub: Subscription): Promise<{ ok: boolean; error?: string; note?: string }> {
+  if (sub.scope === "humanitarian") {
+    const recent = (await listHumanitarianAnalyses(env.DB, { days: 30, limit: 3 })).slice(0, 3);
+    if (recent.length === 0) {
+      const r = await sendNotification(env, sub.channel, sub.destination, {
+        subject: "[Test] Strategic humanitarian analyses",
+        overview: "This is a test of your humanitarian analysis alerts. Nothing has been collected yet; real alerts will list each new analysis with its source, themes and link.",
+        sections: [],
+        links: [],
+        footer: "The Lens · Afrilens Consulting.",
+      });
+      return { ...r, note: "Nothing collected yet, so a plain test message was sent." };
+    }
+    return sendNotification(env, sub.channel, sub.destination, buildHumanitarianNotification(recent, true));
+  }
   if (sub.scope === "escalations") {
     const flagged = (await getFlaggedIncidents(env)).filter((i) => LEVEL_RANK[i.level] >= LEVEL_RANK[sub.min_level]);
     if (flagged.length === 0) {
