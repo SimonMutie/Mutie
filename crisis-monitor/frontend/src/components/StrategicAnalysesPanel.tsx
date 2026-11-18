@@ -46,7 +46,7 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
   const [sub, setSub] = useState<Sub>("analyses");
   const [data, setData] = useState<StrategicAnalysesData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [days, setDays] = useState(60);
+  const [days, setDays] = useState(365);
   const [all, setAll] = useState(false);
   const [theme, setTheme] = useState<string | null>(null);
   const [region, setRegion] = useState<string | null>(null);
@@ -321,7 +321,7 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                 {!current && !error && <div style={{ color: muted }}>Loading…</div>}
                 {current && items.length === 0 && (
                   <div style={{ color: muted, lineHeight: 1.5 }}>
-                    Nothing {theme ? `on ${label(theme)} ` : ""}in this period yet. Every source is read about once an hour; a new tab can take an hour or two to fill.
+                    Nothing {theme ? `on ${label(theme)} ` : ""}in this period yet. Every source is read hourly and its past year is being fetched a few sources at a time, so the list keeps filling over the next few hours.
                   </div>
                 )}
                 {items.map((i) => {
@@ -396,8 +396,9 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                       <a href={s.url} target="_blank" rel="noreferrer" style={{ color: text, flex: 1 }}>
                         {s.name}
                       </a>
-                      <span style={{ color: muted, textAlign: "right" }} title={s.error ?? undefined}>
-                        {s.status === "ok" ? `${s.kept} of ${s.items} relevant` : s.status === "error" ? (s.error ?? "error") : s.status}
+                      <span style={{ color: muted, textAlign: "right" }} title={[s.error, s.backfill && `Past year: ${s.backfill}`].filter(Boolean).join(" · ") || undefined}>
+                        {s.status === "ok" ? `${s.kept} of ${s.items} relevant` : s.status === "error" ? `${s.error ?? "error"}${s.backfill ? " · found via Google News" : ""}` : s.status}
+                        {!s.backfill && <span style={{ color: "#facc15" }}> · past year pending</span>}
                       </span>
                     </div>
                   ))}
@@ -422,7 +423,7 @@ export default function StrategicAnalysesPanel({ isAdmin, onClose }: { isAdmin: 
                 </div>
                 <div style={{ ...footnote, marginTop: 10 }}>
                   Terms are matched in English, French and Portuguese, ignoring accents and hyphens. A piece is kept when it is about this domain and matches its themes (two matches from a source that covers many domains), and it is about Africa or comes from an Africa-focused source. Places are recognised down to towns and provinces, and every piece is tagged with its African countries, regions and regional blocs.
-                  {domain === "humanitarian" && " For New Humanitarianism, system-level reflections that shape Africa are kept even when they name no African country."} Sources marked red have no feed the Lens can read; they are retried every week.
+                  {domain === "humanitarian" && " For New Humanitarianism, system-level reflections that shape Africa are kept even when they name no African country."} Each source's past year is fetched once (older feed pages, newsletter archives and a Google News search of the site), and every source is also searched on Google News daily, so sites with no feed (marked red) are still covered. Hover over a source to see what its backfill found.
                 </div>
               </div>
             </div>
