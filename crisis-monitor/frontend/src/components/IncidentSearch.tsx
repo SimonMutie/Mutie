@@ -10,6 +10,8 @@ import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
+import { basemapKeys, resolveBasemap } from "./mapConstants";
+import { useMapTilerKey } from "../mapProvider";
 import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
@@ -43,7 +45,9 @@ export default function IncidentSearch() {
   }>({});
   const [incidents, setIncidents] = useState<IncidentItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [basemap, setBasemap] = useState<BasemapKey>("osm");
+  const [basemapChoice, setBasemap] = useState<BasemapKey | null>(null);
+  useMapTilerKey();
+  const basemap = resolveBasemap(basemapChoice);
   const [viewMode, setViewMode] = useState<ViewMode>("markers");
   const [heatmapStyle, setHeatmapStyle] = useState<HeatmapStyle>(DEFAULT_HEATMAP_STYLE);
   const [annotations, setAnnotations] = useState<Record<string, PopupAnnotation>>({});
@@ -238,7 +242,7 @@ export default function IncidentSearch() {
         <div>
           <div className="eyebrow" style={{ marginBottom: 8 }}>BASEMAP</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {(Object.keys(BASEMAPS) as BasemapKey[]).map((k) => (
+            {basemapKeys().map((k) => (
               <button key={k} onClick={() => setBasemap(k)} style={chipStyle(basemap === k)}>
                 {BASEMAPS[k].label}
               </button>
