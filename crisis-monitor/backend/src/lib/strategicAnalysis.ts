@@ -446,6 +446,8 @@ const PAGE_TITLES = new RegExp(
       "programmes?", "programs?", "countries", "regions", "topics", "themes", "issues", "annual reports?( \\d{4})?", "financial statements?",
       "page not found", "not found", "404", "access denied", "error", "untitled", "home page", "multimedia", "videos?", "podcasts?", "photos?",
       "gallery", "galerie", "nous contacter", "equipe", "partenaires", "actualites", "evenements", "emplois", "recrutement",
+      "posts pagination", "read more", "load more", "show more", "next page", "previous page", "page \\d+", "page \\d+ of \\d+", "all publications",
+      "latest publications", "latest", "featured", "highlights", "in focus", "spotlight", "subscribe to our newsletter", "submit an article",
     ].join("|") +
     ")$"
 );
@@ -487,6 +489,10 @@ export const isHumanitarianSpecialist = (s: Source) => s.domains[0] === "humanit
 /** The domains a piece belongs to, among those its source writes on. */
 export function classify(raw: { url: string; title: string; summary: string; source: Source; published: string }): AnalysisItem[] {
   if (isNotAnalysis(raw)) return [];
+  // A page titled with the site's own name ("Humanitarian Practice Network", "Home - ODI") is not a publication.
+  const ft = fold(raw.title).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  const fs = fold(raw.source.name).replace(/\([^)]*\)/g, "").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  if (ft === fs || ft === `home ${fs}` || ft === `${fs} home`) return [];
   const text = `${raw.title}. ${raw.summary}`;
   const folded = fold(text);
   const where = africaOf(text);
@@ -612,7 +618,7 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
   const cols = new Set(((await db.prepare(`PRAGMA table_info(strategic_analyses)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
   for (const c of ["places", "regions", "blocs"]) if (!cols.has(c)) await db.prepare(`ALTER TABLE strategic_analyses ADD COLUMN ${c} TEXT`).run();
   const scols = new Set(((await db.prepare(`PRAGMA table_info(strategic_sources)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
-  for (const c of ["backfilled_at", "gnews_at", "backfill_note", "sitemap_at", "sitemap_note"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
+  for (const c of ["backfilled_at", "gnews_at", "backfill_note", "sitemap_at", "sitemap_note", "sections_at", "extra_feeds"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_candidates (url TEXT PRIMARY KEY, source_url TEXT NOT NULL, lastmod TEXT, priority INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`),
     db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_candidates_pending ON strategic_candidates(status, priority, lastmod)`),
@@ -620,11 +626,11 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
     db.prepare(`CREATE TABLE IF NOT EXISTS strategic_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)`),
   ]);
   // Drop stored pieces that are not analytical publications ("About the GDHO"), whenever the filter changes.
-  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v2'`).first())) {
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v3'`).first())) {
     const rows = (await db.prepare(`SELECT domain, id, title, summary, url FROM strategic_analyses`).all<{ domain: string; id: string; title: string; summary: string | null; url: string }>()).results ?? [];
     const junk = rows.filter((r) => isNotAnalysis({ title: r.title, summary: r.summary ?? "", url: r.url }));
     for (let i = 0; i < junk.length; i += 50) await db.batch(junk.slice(i, i + 50).map((r) => db.prepare(`DELETE FROM strategic_analyses WHERE domain = ? AND id = ?`).bind(r.domain, r.id)));
-    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v2', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
+    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v3', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
   }
   // One-time: the first catch-ups shared the main schedule's request budget and many found nothing because their
   // requests were refused, so every source's past year is fetched again on Strategic Analyses' own schedule.
@@ -674,6 +680,8 @@ const MAX_AGE_DAYS = 400;
 const WP_PAGES = 8;
 /** Sources whose sitemap is read per run, and pages opened per run to read a sitemap find's title, summary and date. */
 const SITEMAP_BATCH = 4;
+/** Sources checked per run for section feeds (SECTION_FEED_PATHS). */
+const SECTIONS_BATCH = 4;
 const ENRICH_BATCH = 25;
 const MAX_CHILD_SITEMAPS = 10;
 const MAX_CANDIDATES_PER_SOURCE = 500;
@@ -746,7 +754,20 @@ export function parseSitemap(xml: string): { index: boolean; entries: { loc: str
 }
 
 const NOT_CONTENT = /\/(tag|tags|category|categories|author|authors|page|events?|jobs?|careers?|vacanc\w*|about|about-us|contact|donate|people|staff|team|experts?|wp-content|feed|search|login|cart|shop|privacy|terms|cookies?)(\/|$)|\.(pdf|jpe?g|png|gif|docx?|xlsx?|zip|mp3|mp4)$/i;
-const CHILD_SKIP = /(tag|category|author|attachment|product|event|job|career|people|staff|person|expert|taxonomy|image|video|media|page-sitemap|pages?\.xml)/i;
+const CHILD_SKIP = /(tag|category|author|attachment|product|event|job|career|people|staff|person|expert|taxonom|users?|image|video|media|page-sitemap|pages?\.xml|posts-page-)/i;
+
+/**
+ * Feeds of the sections a site's main feed leaves out: on WordPress the main feed carries only ordinary posts, so
+ * publications, reports and research kept as their own type have feeds of their own. Tried once per source.
+ */
+export const SECTION_FEED_PATHS = [
+  "/feed/?post_type=publication", "/feed/?post_type=publications", "/feed/?post_type=report", "/feed/?post_type=reports", "/feed/?post_type=research",
+  "/feed/?post_type=resource", "/feed/?post_type=resources", "/feed/?post_type=article", "/feed/?post_type=analysis", "/feed/?post_type=insight",
+  "/feed/?post_type=insights", "/feed/?post_type=commentary", "/feed/?post_type=paper", "/feed/?post_type=brief", "/feed/?post_type=blog",
+  "/publication/feed/", "/publications/feed/", "/en/publication/feed/", "/en/publications/feed/", "/research/feed/", "/en/research/feed/",
+  "/reports/feed/", "/analysis/feed/", "/insights/feed/", "/commentary/feed/", "/articles/feed/", "/blog/feed/", "/en/blog/feed/", "/opinion/feed/",
+  "/policy-briefs/feed/", "/papers/feed/", "/resources/feed/", "/en/feed/", "/fr/feed/", "/pt/feed/",
+];
 
 /** The last path segment as words: "/publications/the-humanitarian-reset-what-next" → "the humanitarian reset what next". */
 export const slugWords = (u: string) => {
@@ -820,7 +841,7 @@ export function pageMeta(html: string): { title: string; summary: string; publis
  */
 export async function collectStrategicAnalyses(
   env: Env,
-  opts: { force?: boolean; now?: Date; fetcher?: Fetcher; discover?: typeof discoverFeed; limit?: number; backfill?: number; gnews?: number; sitemaps?: number; enrich?: number } = {}
+  opts: { force?: boolean; now?: Date; fetcher?: Fetcher; discover?: typeof discoverFeed; limit?: number; backfill?: number; gnews?: number; sitemaps?: number; enrich?: number; sections?: number } = {}
 ): Promise<{ ran: boolean; added: number; sources: number; backfilled: number }> {
   const db = env.DB;
   const now = opts.now ?? new Date();
@@ -829,8 +850,17 @@ export async function collectStrategicAnalyses(
   const discover = opts.discover ?? discoverFeed;
   await ensureAnalysisTables(db);
 
-  type State = { url: string; feed_url: string | null; checked_at: string | null; status: string | null; backfilled_at: string | null; gnews_at: string | null };
-  const states = new Map((await db.prepare(`SELECT url, feed_url, checked_at, status, backfilled_at, gnews_at FROM strategic_sources`).all<State>()).results?.map((r) => [r.url, r]) ?? []);
+  type State = { url: string; feed_url: string | null; checked_at: string | null; status: string | null; backfilled_at: string | null; gnews_at: string | null; sections_at: string | null; extra_feeds: string | null };
+  const states = new Map((await db.prepare(`SELECT url, feed_url, checked_at, status, backfilled_at, gnews_at, sections_at, extra_feeds FROM strategic_sources`).all<State>()).results?.map((r) => [r.url, r]) ?? []);
+  const extraFeedsOf = (s: Source): string[] => {
+    let found: string[] = [];
+    try {
+      found = JSON.parse(states.get(s.url)?.extra_feeds ?? "[]");
+    } catch {
+      found = [];
+    }
+    return [...new Set([...(s.sectionFeeds ?? []), ...found])];
+  };
   const since = (t: string | null | undefined) => (t ? now.getTime() - Date.parse(t) : Infinity);
   const age = (s: Source) => since(states.get(s.url)?.checked_at);
   const due = SOURCES.filter((s) => opts.force || age(s) >= CHECK_EVERY_MS)
@@ -850,8 +880,11 @@ export async function collectStrategicAnalyses(
   const sitemapDue = SOURCES.filter((s) => !sitemapDone.has(s.url))
     .sort((a, b) => rank(a) - rank(b))
     .slice(0, opts.sitemaps ?? SITEMAP_BATCH);
+  const sectionsDue = SOURCES.filter((s) => !states.get(s.url)?.sections_at)
+    .sort((a, b) => rank(a) - rank(b))
+    .slice(0, opts.sections ?? SECTIONS_BATCH);
   const pending = ((await db.prepare(`SELECT url, source_url, lastmod FROM strategic_candidates WHERE status = 'pending' ORDER BY priority DESC, lastmod DESC LIMIT ?`).bind(opts.enrich ?? ENRICH_BATCH).all<{ url: string; source_url: string; lastmod: string | null }>()).results ?? []);
-  if (due.length === 0 && backfillDue.length === 0 && gnewsDue.length === 0 && sitemapDue.length === 0 && pending.length === 0) return { ran: false, added: 0, sources: 0, backfilled: 0 };
+  if (due.length === 0 && backfillDue.length === 0 && gnewsDue.length === 0 && sitemapDue.length === 0 && sectionsDue.length === 0 && pending.length === 0) return { ran: false, added: 0, sources: 0, backfilled: 0 };
 
   const cutoff = new Date(now.getTime() - MAX_AGE_DAYS * 86_400_000).toISOString();
   let added = 0;
@@ -859,7 +892,7 @@ export async function collectStrategicAnalyses(
   const startedAt = Date.now();
   const errors: string[] = [];
   const stored: Record<string, number> = {};
-  const lanes = { read: 0, backfill: 0, gnews: 0, sitemaps: 0, pages: 0, skipped: 0 };
+  const lanes = { read: 0, backfill: 0, gnews: 0, sections: 0, sitemaps: 0, pages: 0, skipped: 0 };
   await setState(db, "last_run", { startedAt: nowIso, finishedAt: null, planned: { read: due.length, backfill: backfillDue.map((s) => s.name), gnews: gnewsDue.length, sitemaps: sitemapDue.map((s) => s.name), pages: pending.length } });
   // Found while backfilling, a piece published in the last three days still counts as new (and can alert); older ones
   // are dated by publication.
@@ -924,22 +957,65 @@ export async function collectStrategicAnalyses(
     return out;
   };
 
+  /** Older pages of a (WordPress) feed, back a year: ?paged=2, 3… until a page repeats, is empty or is too old. */
+  const pageThrough = async (src: Source, feedUrl: string, firstPage: string | null): Promise<{ pages: number; kept: number }> => {
+    let prevFirst = firstPage ? parseFeed(firstPage)[0]?.url : undefined;
+    let pages = 0;
+    let kept = 0;
+    for (let p = 2; p <= WP_PAGES; p++) {
+      const xml = await getText(`${feedUrl}${feedUrl.includes("?") ? "&" : "?"}paged=${p}`);
+      const entries = xml ? parseFeed(xml) : [];
+      if (entries.length === 0 || entries[0].url === prevFirst) break;
+      prevFirst = entries[0].url;
+      pages++;
+      kept += await store(src, entries, true);
+      if (entries[entries.length - 1].published < cutoff) break;
+    }
+    return { pages, kept };
+  };
+
+  /** Finds the feeds of sections the main feed leaves out, keeps them for every read, and fetches their past year. */
+  const probeSections = async (src: Source) => {
+    await db.prepare(`INSERT INTO strategic_sources (url, name, sections_at) VALUES (?,?,?) ON CONFLICT(url) DO UPDATE SET sections_at = excluded.sections_at`).bind(src.url, src.name, nowIso).run();
+    let origin: string;
+    try {
+      origin = new URL(src.url).origin;
+    } catch {
+      return;
+    }
+    const mainFeed = states.get(src.url)?.feed_url;
+    const mainUrls = new Set(mainFeed ? parseFeed((await getText(mainFeed)) ?? "").map((e) => e.url) : []);
+    const found: string[] = [];
+    const seenFirst = new Set<string>();
+    for (const path of SECTION_FEED_PATHS) {
+      const url = `${origin}${path}`;
+      if (url === mainFeed || (src.sectionFeeds ?? []).includes(url)) continue;
+      const xml = await getText(url);
+      const entries = xml ? parseFeed(xml) : [];
+      // A real section: it has items, they are not just the main feed again, and not a copy of a section already found.
+      if (entries.length === 0 || entries.every((e) => mainUrls.has(e.url)) || seenFirst.has(entries[0].url)) continue;
+      seenFirst.add(entries[0].url);
+      found.push(url);
+      await store(src, entries, true);
+      await pageThrough(src, url, xml);
+    }
+    for (const url of src.sectionFeeds ?? []) {
+      const xml = await getText(url);
+      if (xml && parseFeed(xml).length) {
+        await store(src, parseFeed(xml), true);
+        await pageThrough(src, url, xml);
+      }
+    }
+    await db.prepare(`UPDATE strategic_sources SET extra_feeds = ? WHERE url = ?`).bind(JSON.stringify(found), src.url).run();
+  };
+
   /** The past year of one source: older feed pages, a Substack archive, and Google News. */
   const backfill = async (src: Source, feedUrl: string | null, firstPage: string | null): Promise<string> => {
     const notes: string[] = [];
     let n = 0;
     if (feedUrl) {
-      let prevFirst = firstPage ? parseFeed(firstPage)[0]?.url : undefined;
-      let pages = 0;
-      for (let p = 2; p <= WP_PAGES; p++) {
-        const xml = await getText(`${feedUrl}${feedUrl.includes("?") ? "&" : "?"}paged=${p}`);
-        const entries = xml ? parseFeed(xml) : [];
-        if (entries.length === 0 || entries[0].url === prevFirst) break;
-        prevFirst = entries[0].url;
-        pages++;
-        n += await store(src, entries, true);
-        if (entries[entries.length - 1].published < cutoff) break;
-      }
+      const { pages, kept } = await pageThrough(src, feedUrl, firstPage);
+      n += kept;
       if (pages) notes.push(`${pages} older feed pages`);
       const host = hostOf(feedUrl);
       if (host.endsWith("substack.com") || /substack/i.test(firstPage ?? "")) {
@@ -995,7 +1071,12 @@ export async function collectStrategicAnalyses(
         if (!res.ok) throw new Error(`Feed returned ${res.status}`);
         firstPage = await res.text();
         const entries = parseFeed(firstPage);
-        const kept = await store(src, entries, doBackfill);
+        let kept = await store(src, entries, doBackfill);
+        // Sections the main feed leaves out (publications, reports, research), read every time as well.
+        for (const extra of extraFeedsOf(src)) {
+          const xml = await getText(extra);
+          if (xml) kept += await store(src, parseFeed(xml), doBackfill);
+        }
         await db
           .prepare(`INSERT INTO strategic_sources (url, name, feed_url, checked_at, status, error, items, kept, last_ok) VALUES (?,?,?,?,'ok',NULL,?,?,?) ON CONFLICT(url) DO UPDATE SET name = excluded.name, feed_url = excluded.feed_url, checked_at = excluded.checked_at, status = 'ok', error = NULL, items = excluded.items, kept = excluded.kept, last_ok = excluded.last_ok`)
           .bind(src.url, src.name, feedUrl, nowIso, entries.length, kept, nowIso)
@@ -1056,9 +1137,11 @@ export async function collectStrategicAnalyses(
         } else pages.push(...top.entries);
         if (pages.length) break;
       }
+      // Newest first: by date where the sitemap gives one, otherwise last-listed first (WordPress lists oldest first).
       const picked = pages
+        .map((p, i) => ({ ...p, i }))
         .filter((p) => (!p.lastmod || p.lastmod >= cutoff) && worthOpening(src, p.loc))
-        .sort((a, b) => (b.lastmod ?? "").localeCompare(a.lastmod ?? ""))
+        .sort((a, b) => (b.lastmod ?? "").localeCompare(a.lastmod ?? "") || b.i - a.i)
         .slice(0, MAX_CANDIDATES_PER_SOURCE);
       const priority = src.domains.includes("humanitarian") ? 1 : 0;
       for (let i = 0; i < picked.length; i += 50) {
@@ -1102,6 +1185,7 @@ export async function collectStrategicAnalyses(
   const toRead = [...due, ...backfillDue.filter((s) => !due.some((d) => d.url === s.url))];
   const queue: (() => Promise<void>)[] = [
     ...toRead.map((s) => async () => (await one(s), void (backfillSet.has(s.url) ? lanes.backfill++ : lanes.read++))),
+    ...sectionsDue.map((s) => async () => (await probeSections(s), void lanes.sections++)),
     ...sitemapDue.map((s) => async () => (await readSitemap(s), void lanes.sitemaps++)),
     ...pending.map((c) => async () => (await openPage(c), void lanes.pages++)),
     ...gnewsDue.map((s) => async () => (await searchDaily(s), void lanes.gnews++)),
