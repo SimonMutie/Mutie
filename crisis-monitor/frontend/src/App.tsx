@@ -323,6 +323,7 @@ export default function App() {
         {view === "live-osint" && (
           <LiveIntelView
             canAfrIntel={user.can_afrintel !== false}
+            isAdmin={user.role === "admin"}
             queries={queries}
             onQueriesChanged={loadQueries}
             onOpenQuery={(queryId) => setView({ queryId })}
