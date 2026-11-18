@@ -1,4 +1,5 @@
 import { setSessionUser } from "./session";
+import { loadMapProvider } from "./mapProvider";
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import AlertPopups from "./components/AlertPopups";
 import { api, ApiError, connectLiveFeed, getToken, setToken, type AuthUser, type MonitoringQueryItem } from "./api";
@@ -88,7 +89,12 @@ export default function App() {
   const [user, setUserState] = useState<AuthUser | null>(null);
   const setUser = (u: AuthUser | null) => {
     setSessionUser(u);
-    setUserState(u);
+    if (!u) {
+      setUserState(u);
+      return;
+    }
+    // The maps' provider key first (at most 2.5 s, behind the opening globe), so the first map drawn is the better one.
+    void Promise.race([loadMapProvider(), new Promise((r) => setTimeout(r, 2500))]).finally(() => setUserState(u));
   };
   const [view, setView] = useState<View>("live-osint");
   // Set when coming back from a monitoring page, so the map reopens with
