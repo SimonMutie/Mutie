@@ -1516,9 +1516,15 @@ export interface StrategicAnalysis {
   title: string;
   summary: string;
   source: string;
+  /** "African think tank", "International think tank", "Analyst / newsletter" or "Specialist outlet". */
+  sourceKind: string | null;
   published: string;
   themes: string[];
   countries: string[];
+  /** Towns and regions named ("El Fasher", "North Kivu"). */
+  places: string[];
+  regions: string[];
+  blocs: string[];
   africa: boolean;
   inScope: boolean;
   score: number;
@@ -1530,8 +1536,10 @@ export interface StrategicAnalysesData {
   domain: AnalysisDomain;
   domains: { id: AnalysisDomain; label: string; blurb: string; recent: number; latest: string | null }[];
   items: StrategicAnalysis[];
-  themes: { id: string; label: string; systemic: boolean; terms: string[] }[];
-  sources: { name: string; url: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
+  themes: { id: string; label: string; systemic: boolean; context: boolean; terms: string[] }[];
+  regions: string[];
+  countryNames: Record<string, string>;
+  sources: { name: string; url: string; kind: string; status: string; error: string | null; items: number; kept: number; lastOk: string | null }[];
   fetchedAt: string;
 }
 
