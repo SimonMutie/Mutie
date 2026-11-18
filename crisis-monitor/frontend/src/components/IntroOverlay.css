@@ -1,84 +1,39 @@
-/* The opening sequence: the eye opens, the welcome appears, and the view
-   passes through the pupil into the site. One orchestrated moment, played
-   once per visit; everything here is torn down when it ends. */
+/* The opening sequence: the Earth spins in and settles on Africa (IntroGlobe), the welcome appears, and the
+   screen opens from the globe onto the site. One orchestrated moment, played once per visit; everything here is
+   torn down when it ends. */
 
 .intro {
   position: fixed;
   inset: 0;
   z-index: 10000;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  place-items: center;
   overflow: hidden;
-  background: #050a12;
+  background: radial-gradient(ellipse at 50% 40%, #0b1a33 0%, #050a14 55%, #02050b 100%);
   color: #eef3f8;
   cursor: pointer;
   --intro-teal: #14b8a6;
+  --intro-gold: #d4af37;
   --intro-blue: #6d97ff;
 }
+/* The globe and everything round it, drawn on one canvas covering the screen. */
+.intro__globe {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  animation: intro-appear 1.2s ease-out forwards;
+}
+/* The welcome sits below the globe. */
 .intro__stage {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(56px, 11vh, 120px);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: clamp(22px, 4vh, 40px);
   box-sizing: border-box;
-  width: 100%;
-  max-width: 100%;
-  padding: 24px 16px;
+  padding: 0 16px;
   text-align: center;
-}
-
-/* ── the eye ── */
-.intro__eye {
-  position: relative;
-  width: clamp(240px, 46vmin, 460px);
-  aspect-ratio: 400 / 220;
-  transform-origin: 50% 50%; /* the pupil is the centre of the eye */
-}
-.intro__eye svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-/* The lids part from a closed line. */
-.intro__lids,
-.intro__ball {
-  transform-box: view-box;
-  transform-origin: 200px 112px;
-}
-.intro__lids {
-  transform: scaleY(0.02);
-  animation: intro-open 0.75s cubic-bezier(0.22, 1, 0.36, 1) 0.15s forwards;
-}
-/* After it has opened the eye blinks three times, then the look settles on the viewer. */
-.intro__ball {
-  animation: intro-blink 4.6s linear 1.5s 1 both;
-}
-.intro__iris {
-  transform-box: view-box;
-  transform-origin: 200px 110px;
-  opacity: 0;
-  transform: scale(0.85);
-  animation: intro-iris 0.6s ease-out 0.45s forwards, intro-glance 4.6s ease-in-out 1.6s 1 both;
-}
-.intro__pupil {
-  transform-box: view-box;
-  transform-origin: 200px 110px;
-  animation: intro-pupil 4.6s ease-in-out 1.6s 1 both;
-}
-/* The flood: a disc the size of the pupil that grows to cover the screen. */
-.intro__flood {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 17%; /* the pupil's diameter, as drawn in the mark */
-  aspect-ratio: 1;
-  margin: -8.5% 0 0 -8.5%;
-  border-radius: 50%;
-  background: var(--intro-teal);
-  transform: scale(0);
-  will-change: transform;
+  pointer-events: none;
 }
 
 /* ── the words ── */
@@ -93,43 +48,31 @@
   transform: translateY(10px);
   animation: intro-rise 0.6s ease-out 0.75s forwards;
 }
+.intro__words h1 {
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.75);
+}
 .intro__words h1 span {
-  color: var(--intro-teal);
+  color: var(--intro-gold);
 }
 .intro__words p {
   margin: 14px auto 0;
   max-width: min(34em, 100%);
   font-size: clamp(15px, 2.1vmin, 19px);
   line-height: 1.55;
-  color: #a9b8ca;
+  color: #b7c5d6;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.85);
   opacity: 0;
   transform: translateY(10px);
   animation: intro-rise 0.6s ease-out 1.05s forwards;
 }
 
-/* ── leaving: through the pupil ── */
-/* Unhurried: the pupil takes about a second and a half to fill the screen,
-   then the screen clears to show the site. */
-/* No coloured flood any more: the screen opens like an iris from the pupil, and the 3D map underneath
-   (see Map3D's intro-reveal) grows from a point to fill the whole screen. */
+/* ── leaving: into the globe ── */
+/* The globe rushes towards the viewer (IntroGlobe) while the screen opens like an iris from its centre, and the 3D
+   map underneath (see Map3D's intro-reveal) grows from a point to fill the whole screen. */
 @property --intro-hole {
   syntax: "<length>";
   inherits: false;
   initial-value: 0px;
-}
-.intro--leaving .intro__flood {
-  display: none;
-}
-/* Leaving: the eye stops blinking and the view moves in through the pupil while the map opens from it. */
-.intro--leaving .intro__ball,
-.intro--leaving .intro__iris,
-.intro--leaving .intro__pupil {
-  animation: none;
-  opacity: 1;
-  transform: none;
-}
-.intro--leaving .intro__eye {
-  animation: intro-dolly 2.2s cubic-bezier(0.55, 0, 0.8, 0.45) forwards;
 }
 .intro--leaving .intro__words {
   animation: intro-fade 0.7s ease-in forwards;
@@ -180,41 +123,10 @@
   outline-offset: 2px;
 }
 
-@keyframes intro-open {
-  to {
-    transform: scaleY(1);
-  }
-}
-@keyframes intro-iris {
+@keyframes intro-appear {
   to {
     opacity: 1;
-    transform: scale(1);
   }
-}
-@keyframes intro-blink {
-  0%, 100% { transform: scaleY(1); }
-  3% { transform: scaleY(0.05); }
-  7% { transform: scaleY(1); }
-  36% { transform: scaleY(1); }
-  39% { transform: scaleY(0.05); }
-  43% { transform: scaleY(1); }
-  68% { transform: scaleY(1); }
-  71% { transform: scaleY(0.05); }
-  76% { transform: scaleY(1); }
-}
-@keyframes intro-glance {
-  0%, 12% { transform: translate(0, 0) scale(1); }
-  30% { transform: translate(-16px, -3px) scale(1); }
-  52% { transform: translate(14px, 2px) scale(1); }
-  80%, 100% { transform: translate(0, 0) scale(1); }
-}
-@keyframes intro-pupil {
-  0%, 20% { transform: scale(1); }
-  55% { transform: scale(1.18); }
-  100% { transform: scale(0.95); }
-}
-@keyframes intro-dolly {
-  to { transform: scale(var(--intro-dolly, 14)); }
 }
 @keyframes intro-rise {
   to {
@@ -227,11 +139,6 @@
     --intro-hole: var(--intro-hole-max, 150vmax);
   }
 }
-@keyframes intro-flood {
-  to {
-    transform: scale(var(--intro-flood-scale, 30));
-  }
-}
 @keyframes intro-fade {
   to {
     opacity: 0;
@@ -241,20 +148,13 @@
 /* For visitors who ask their device for less motion: the same welcome,
    shown and removed with a fade — nothing opens, turns or zooms. */
 @media (prefers-reduced-motion: reduce) {
-  .intro__lids,
-  .intro__ball,
-  .intro__iris,
-  .intro__pupil,
+  .intro__globe,
   .intro__words h1,
   .intro__words p,
   .intro__controls {
     animation: none;
     opacity: 1;
     transform: none;
-  }
-  .intro--leaving .intro__flood,
-  .intro--leaving .intro__eye {
-    animation: none;
   }
   .intro--leaving,
   .intro--leaving .intro__words {
