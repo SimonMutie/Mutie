@@ -529,7 +529,12 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
   const cols = new Set(((await db.prepare(`PRAGMA table_info(strategic_analyses)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
   for (const c of ["places", "regions", "blocs"]) if (!cols.has(c)) await db.prepare(`ALTER TABLE strategic_analyses ADD COLUMN ${c} TEXT`).run();
   const scols = new Set(((await db.prepare(`PRAGMA table_info(strategic_sources)`).all<{ name: string }>()).results ?? []).map((c) => c.name));
-  for (const c of ["backfilled_at", "gnews_at", "backfill_note"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
+  for (const c of ["backfilled_at", "gnews_at", "backfill_note", "sitemap_at", "sitemap_note"]) if (!scols.has(c)) await db.prepare(`ALTER TABLE strategic_sources ADD COLUMN ${c} TEXT`).run();
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS strategic_candidates (url TEXT PRIMARY KEY, source_url TEXT NOT NULL, lastmod TEXT, priority INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_candidates_pending ON strategic_candidates(status, priority, lastmod)`),
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_strategic_analyses_url ON strategic_analyses(url)`),
+  ]);
   // One-time move of the first version's humanitarian tables.
   const old = await db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('hum_analyses', 'hum_sources')`).all<{ name: string }>();
   const names = new Set((old.results ?? []).map((r) => r.name));
@@ -558,13 +563,18 @@ const REDISCOVER_MS = 7 * 24 * 3600_000;
 /** Sources read per run: the cron runs every few minutes, so every source is still read about hourly. */
 const BATCH = 22;
 /** Sources whose past year is fetched per run (see backfill), New Humanitarianism's first. */
-const BACKFILL_BATCH = 4;
+const BACKFILL_BATCH = 6;
 /** Sources searched on Google News per run (daily per source), which also covers sites with no feed. */
 const GNEWS_BATCH = 6;
 const GNEWS_EVERY_MS = 24 * 3600_000;
 /** How far back pieces are kept: a year and a little. */
 const MAX_AGE_DAYS = 400;
 const WP_PAGES = 12;
+/** Sources whose sitemap is read per run, and pages opened per run to read a sitemap find's title, summary and date. */
+const SITEMAP_BATCH = 4;
+const ENRICH_BATCH = 25;
+const MAX_CHILD_SITEMAPS = 10;
+const MAX_CANDIDATES_PER_SOURCE = 500;
 const SUBSTACK_PAGES = 6;
 
 type Fetcher = (url: string) => Promise<Response>;
@@ -603,6 +613,84 @@ export function gnewsQueries(src: Source, window: string): string[] {
 /** Google News titles end with " - Source"; drop it. */
 const cleanGnews = (e: Entry): Entry => ({ ...e, title: e.title.replace(/\s+[-–—|]\s+[^-–—|]{2,80}$/, "").trim() });
 
+/* ── Sitemaps ──────────────────────────────────────────────────────────── */
+
+/** <loc> and <lastmod> of each <sitemap> or <url> entry. */
+export function parseSitemap(xml: string): { index: boolean; entries: { loc: string; lastmod: string | null }[] } {
+  const index = /<sitemapindex[\s>]/i.test(xml);
+  const entries = [...xml.matchAll(/<(?:url|sitemap)>([\s\S]*?)<\/(?:url|sitemap)>/gi)].map((m) => {
+    const loc = (m[1].match(/<loc>\s*(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?\s*<\/loc>/i)?.[1] ?? "").replace(/&amp;/g, "&").trim();
+    const lm = m[1].match(/<lastmod>\s*([^<]+?)\s*<\/lastmod>/i)?.[1];
+    const t = lm ? Date.parse(lm) : NaN;
+    return { loc, lastmod: Number.isFinite(t) ? new Date(t).toISOString() : null };
+  });
+  return { index, entries: entries.filter((e) => e.loc) };
+}
+
+const NOT_CONTENT = /\/(tag|tags|category|categories|author|authors|page|events?|jobs?|careers?|vacanc\w*|about|about-us|contact|donate|people|staff|team|experts?|wp-content|feed|search|login|cart|shop|privacy|terms|cookies?)(\/|$)|\.(pdf|jpe?g|png|gif|docx?|xlsx?|zip|mp3|mp4)$/i;
+const CHILD_SKIP = /(tag|category|author|attachment|product|event|job|career|people|staff|person|expert|taxonomy|image|video|media|page-sitemap|pages?\.xml)/i;
+
+/** The last path segment as words: "/publications/the-humanitarian-reset-what-next" → "the humanitarian reset what next". */
+export const slugWords = (u: string) => {
+  try {
+    const parts = new URL(u).pathname.split("/").filter(Boolean);
+    return decodeURIComponent(parts[parts.length - 1] ?? "").replace(/\.[a-z]{2,4}$/, "").replace(/[-_+]+/g, " ");
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * Whether a sitemap address is worth opening for a source: a content page (not a tag, author, event or file), with a
+ * real slug, under the source's own section when it is listed by one (csis.org/programs/africa-program), and — for a
+ * broad international source — a slug that already looks like one of its domains (and, outside New Humanitarianism,
+ * like Africa). Africa-focused sources and humanitarian specialists keep every content page.
+ */
+export function worthOpening(src: Source, loc: string): boolean {
+  let u: URL;
+  let base: URL;
+  try {
+    u = new URL(loc);
+    base = new URL(src.url);
+  } catch {
+    return false;
+  }
+  if (u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) return false;
+  if (NOT_CONTENT.test(u.pathname) || u.search) return false;
+  const words = slugWords(loc);
+  if (words.replace(/\s/g, "").length < 12 || words.split(" ").length < 3) return false;
+  if (src.africa || isHumanitarianSpecialist(src)) return true;
+  const w = fold(words);
+  const where = africaOf(words);
+  return src.domains.some((d) => domainOf(d)!.signal.test(w) && (where.africa || (d === "humanitarian" && !where.elsewhere)));
+}
+
+/** Title, summary and publication date from a page's head. */
+export function pageMeta(html: string): { title: string; summary: string; published: string | null } {
+  const head = html.slice(0, 300_000);
+  const meta = (names: string[]) => {
+    for (const n of names) {
+      const m =
+        head.match(new RegExp(`<meta[^>]+(?:property|name|itemprop)=["']${n}["'][^>]*content=["']([^"']*)["']`, "i")) ??
+        head.match(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name|itemprop)=["']${n}["']`, "i"));
+      if (m?.[1]) return m[1];
+    }
+    return "";
+  };
+  const unescape = (x: string) => x.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;|&apos;|&#8217;|&rsquo;/g, "’").replace(/&#8211;|&ndash;/g, "–").replace(/&#8212;|&mdash;/g, "—").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
+  let title = unescape(meta(["og:title", "twitter:title"]) || head.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "");
+  // "The reset, a year on | ODI" → "The reset, a year on"
+  title = title.replace(/\s+[|–—]\s+[^|–—]{2,60}$/, "").trim();
+  const summary = unescape(meta(["og:description", "description", "twitter:description"]));
+  const dateRaw =
+    meta(["article:published_time", "datePublished", "date", "dc.date", "DC.date.issued", "citation_publication_date", "pubdate"]) ||
+    head.match(/"datePublished"\s*:\s*"([^"]+)"/)?.[1] ||
+    head.match(/<time[^>]+datetime=["']([^"']+)["']/i)?.[1] ||
+    "";
+  const t = Date.parse(dateRaw);
+  return { title, summary, published: Number.isFinite(t) ? new Date(t).toISOString() : null };
+}
+
 /**
  * Reads the sources due a check (not read in the last hour, least recently read first, at most `limit`), fetches the
  * past year of a few sources not yet backfilled, searches Google News for a few sources due their daily search, and
@@ -614,7 +702,7 @@ const cleanGnews = (e: Entry): Entry => ({ ...e, title: e.title.replace(/\s+[-�
  */
 export async function collectStrategicAnalyses(
   env: Env,
-  opts: { force?: boolean; now?: Date; fetcher?: Fetcher; discover?: typeof discoverFeed; limit?: number; backfill?: number; gnews?: number } = {}
+  opts: { force?: boolean; now?: Date; fetcher?: Fetcher; discover?: typeof discoverFeed; limit?: number; backfill?: number; gnews?: number; sitemaps?: number; enrich?: number } = {}
 ): Promise<{ ran: boolean; added: number; sources: number; backfilled: number }> {
   const db = env.DB;
   const now = opts.now ?? new Date();
@@ -637,7 +725,13 @@ export async function collectStrategicAnalyses(
   const gnewsDue = SOURCES.filter((s) => !backfillSet.has(s.url) && states.get(s.url)?.backfilled_at && since(states.get(s.url)?.gnews_at) >= GNEWS_EVERY_MS)
     .sort((a, b) => since(states.get(b.url)?.gnews_at) - since(states.get(a.url)?.gnews_at))
     .slice(0, opts.gnews ?? GNEWS_BATCH);
-  if (due.length === 0 && backfillDue.length === 0 && gnewsDue.length === 0) return { ran: false, added: 0, sources: 0, backfilled: 0 };
+  type SitemapState = { url: string; sitemap_at: string | null };
+  const sitemapDone = new Set(((await db.prepare(`SELECT url, sitemap_at FROM strategic_sources WHERE sitemap_at IS NOT NULL`).all<SitemapState>()).results ?? []).map((r) => r.url));
+  const sitemapDue = SOURCES.filter((s) => !sitemapDone.has(s.url))
+    .sort((a, b) => Number(b.domains.includes("humanitarian")) - Number(a.domains.includes("humanitarian")))
+    .slice(0, opts.sitemaps ?? SITEMAP_BATCH);
+  const pending = ((await db.prepare(`SELECT url, source_url, lastmod FROM strategic_candidates WHERE status = 'pending' ORDER BY priority DESC, lastmod DESC LIMIT ?`).bind(opts.enrich ?? ENRICH_BATCH).all<{ url: string; source_url: string; lastmod: string | null }>()).results ?? []);
+  if (due.length === 0 && backfillDue.length === 0 && gnewsDue.length === 0 && sitemapDue.length === 0 && pending.length === 0) return { ran: false, added: 0, sources: 0, backfilled: 0 };
 
   const cutoff = new Date(now.getTime() - MAX_AGE_DAYS * 86_400_000).toISOString();
   let added = 0;
@@ -770,9 +864,81 @@ export async function collectStrategicAnalyses(
     }
   };
 
+  /** Lists a source's content pages from the past year from its sitemap, to be opened a batch at a time. */
+  const readSitemap = async (src: Source) => {
+    let note = "No sitemap found";
+    try {
+      const origin = new URL(src.url).origin;
+      const robots = (await getText(`${origin}/robots.txt`)) ?? "";
+      const roots = [...new Set([...[...robots.matchAll(/^\s*sitemap:\s*(\S+)/gim)].map((m) => m[1]), `${origin}/sitemap_index.xml`, `${origin}/sitemap.xml`, `${origin}/wp-sitemap.xml`])];
+      const pages: { loc: string; lastmod: string | null }[] = [];
+      for (const root of roots) {
+        const xml = await getText(root);
+        if (!xml || !/<(urlset|sitemapindex)[\s>]/i.test(xml)) continue;
+        const top = parseSitemap(xml);
+        if (top.index) {
+          // Newest child sitemaps first; skip ones for tags, authors, events, media and static pages.
+          const children = top.entries
+            .filter((c) => !CHILD_SKIP.test(c.loc) && (!c.lastmod || c.lastmod >= cutoff))
+            .sort((a, b) => (b.lastmod ?? "").localeCompare(a.lastmod ?? ""))
+            .slice(0, MAX_CHILD_SITEMAPS);
+          for (const c of children) {
+            const cx = await getText(c.loc);
+            if (cx) pages.push(...parseSitemap(cx).entries);
+          }
+        } else pages.push(...top.entries);
+        if (pages.length) break;
+      }
+      const picked = pages
+        .filter((p) => (!p.lastmod || p.lastmod >= cutoff) && worthOpening(src, p.loc))
+        .sort((a, b) => (b.lastmod ?? "").localeCompare(a.lastmod ?? ""))
+        .slice(0, MAX_CANDIDATES_PER_SOURCE);
+      const priority = src.domains.includes("humanitarian") ? 1 : 0;
+      for (let i = 0; i < picked.length; i += 50) {
+        await db.batch(picked.slice(i, i + 50).map((p) => db.prepare(`INSERT OR IGNORE INTO strategic_candidates (url, source_url, lastmod, priority, status, created_at) VALUES (?,?,?,?,'pending',?)`).bind(p.loc, src.url, p.lastmod, priority, nowIso)));
+      }
+      if (pages.length) note = `${picked.length} publications from the past year listed in the sitemap (of ${pages.length} pages)`;
+    } catch (err) {
+      note = `Sitemap failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`;
+    }
+    await db
+      .prepare(`INSERT INTO strategic_sources (url, name, sitemap_at, sitemap_note) VALUES (?,?,?,?) ON CONFLICT(url) DO UPDATE SET sitemap_at = excluded.sitemap_at, sitemap_note = excluded.sitemap_note`)
+      .bind(src.url, src.name, nowIso, note)
+      .run();
+  };
+
+  const sourceByUrl = new Map(SOURCES.map((s) => [s.url, s]));
+  /** Opens a page a sitemap listed, reads its title, summary and date, and stores it like a feed item. */
+  const openPage = async (c: { url: string; source_url: string; lastmod: string | null }) => {
+    let status = "failed";
+    try {
+      const src = sourceByUrl.get(c.source_url);
+      const known = await db.prepare(`SELECT 1 FROM strategic_analyses WHERE url = ? LIMIT 1`).bind(c.url).first();
+      if (!src || known) status = "done";
+      else {
+        const html = await getText(c.url);
+        if (html) {
+          const m = pageMeta(html);
+          const published = m.published ?? c.lastmod;
+          if (m.title && published) {
+            await store(src, [{ title: m.title, url: c.url, published, summary: m.summary }], true);
+            status = "done";
+          }
+        }
+      }
+    } finally {
+      await db.prepare(`UPDATE strategic_candidates SET status = ? WHERE url = ?`).bind(status, c.url).run();
+    }
+  };
+
   // Sources to read: the due ones, plus the ones being backfilled (which need their feed read first).
   const toRead = [...due, ...backfillDue.filter((s) => !due.some((d) => d.url === s.url))];
-  const queue: (() => Promise<void>)[] = [...toRead.map((s) => () => one(s)), ...gnewsDue.map((s) => () => searchDaily(s))];
+  const queue: (() => Promise<void>)[] = [
+    ...toRead.map((s) => () => one(s)),
+    ...gnewsDue.map((s) => () => searchDaily(s)),
+    ...sitemapDue.map((s) => () => readSitemap(s)),
+    ...pending.map((c) => () => openPage(c)),
+  ];
   // A few at a time, so one slow site does not hold the rest.
   await Promise.all(
     Array.from({ length: 6 }, async () => {
@@ -780,7 +946,8 @@ export async function collectStrategicAnalyses(
     })
   );
   await db.prepare(`DELETE FROM strategic_analyses WHERE published < ?`).bind(cutoff).run();
-  return { ran: true, added, sources: toRead.length + gnewsDue.length, backfilled: backfillDue.length };
+  await db.prepare(`DELETE FROM strategic_candidates WHERE status != 'pending' AND created_at < ?`).bind(new Date(now.getTime() - 30 * 86_400_000).toISOString()).run();
+  return { ran: true, added, sources: toRead.length + gnewsDue.length + sitemapDue.length, backfilled: backfillDue.length };
 }
 
 /* ── Reading ──────────────────────────────────────────────────────────── */
@@ -860,6 +1027,6 @@ export async function sourceStatus(db: D1Database, domain: DomainId): Promise<{ 
   const byUrl = new Map(rows.map((r) => [String(r.url), r]));
   return SOURCES.filter((s) => s.domains.includes(domain)).map((s) => {
     const r = byUrl.get(s.url);
-    return { name: s.name, url: s.url, kind: SOURCE_KIND_LABEL[s.kind], backfill: r?.backfill_note != null ? String(r.backfill_note) : null, status: r ? String(r.status) : "not yet checked", error: r?.error != null ? String(r.error) : null, items: Number(r?.items ?? 0), kept: Number(r?.kept ?? 0), lastOk: r?.last_ok != null ? String(r.last_ok) : null };
+    return { name: s.name, url: s.url, kind: SOURCE_KIND_LABEL[s.kind], backfill: [r?.backfill_note, r?.sitemap_note].filter((x) => x != null).map(String).join(" · ") || null, status: r ? String(r.status) : "not yet checked", error: r?.error != null ? String(r.error) : null, items: Number(r?.items ?? 0), kept: Number(r?.kept ?? 0), lastOk: r?.last_ok != null ? String(r.last_ok) : null };
   });
 }
