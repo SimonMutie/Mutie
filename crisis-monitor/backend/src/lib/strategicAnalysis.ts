@@ -477,11 +477,15 @@ export function looksLikeSpam(text: string): boolean {
  * NOT clause of every domain's query: a site page, notice, vacancy, event, call or press release, not an analytical
  * publication. Also drops comment pages ("Anonymous (not verified)") and titles too short to be a publication.
  */
+/** Events, courses, calls and recruitment, wherever the words sit in a title ("…: HLA applicant information session"). */
+const NOTICE_ANYWHERE =
+  /\b(information session|info session|applicant (information|session|guide|webinar)|for applicants|applicants? (wanted|sought)|applications? (are )?open|how to apply|apply (now|today|by)|deadline to apply|open call|call for (applications|proposals|papers|submissions|expressions|nominations|participants)|registration (is )?open|register (now|here|today)|join (us|the conversation) (for|on|at)|webinars?|webinaires?|online event|live event|launch event|information event|virtual event|in person event|hybrid event|workshop (on|for|report|series)|masterclass|training (course|programme|program|session|workshop)|online course|short course|free course|e learning|learning (session|series|event)|fellowship (programme|program|opportunit\w*)|scholarships?|bootcamp|event (recap|recording|report)|(webinar|session|event|panel) recording|recording of (the|our)|presentation slides|(event|conference|workshop) agenda|save the date|panel discussion|vacanc(y|ies)|job openings?|we are hiring|now hiring|internships?|consultancy (opportunit\w*|vacanc\w*)|request for (proposals|quotations|expressions of interest)|expression of interest|invitation to tender|call for tenders|tender notice|appel (a|aux) candidatures|offre d emploi|formation en ligne|inscriptions? ouvertes?|podcast trailer|newsletter (issue|edition)|monthly (newsletter|update|digest)|weekly (newsletter|update|digest)|in the news|media coverage|press coverage)\b/;
+
 export function isNotAnalysis(raw: { title: string; summary: string; url: string }): boolean {
   const t = fold(raw.title).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
   if (!t) return true;
   if (looksLikeSpam(`${raw.title} ${raw.summary} ${raw.url.replace(/[-_/]+/g, " ")}`)) return true;
-  if (PAGE_TITLES.test(t) || PAGE_OPENINGS.test(t)) return true;
+  if (PAGE_TITLES.test(t) || PAGE_OPENINGS.test(t) || NOTICE_ANYWHERE.test(t)) return true;
   if (t.split(" ").length < 3) return true;
   if (/anonymous \(not verified\)|\(not verified\)/i.test(raw.summary) || /^submitted by /i.test(raw.summary.trim())) return true;
   try {
@@ -517,7 +521,7 @@ export function classify(raw: { url: string; title: string; summary: string; sou
     // A humanitarian specialist skips the keyword thresholds, but a piece still has to show some humanitarian content
     // (the signal or any theme): a hacked or off-topic page from such a site is not kept.
     // A source caught serving spam (`strict`) loses this: its pieces must pass the full keyword test like anyone's.
-    const takeAll = !raw.strict && id === "humanitarian" && isHumanitarianSpecialist(raw.source) && (d.signal.test(folded) || themesOf(id, text).some((t) => t.id !== "general"));
+    const takeAll = !raw.strict && !raw.source.strictIntake && id === "humanitarian" && isHumanitarianSpecialist(raw.source) && (d.signal.test(folded) || themesOf(id, text).some((t) => t.id !== "general"));
     if (!takeAll && !d.signal.test(folded)) continue;
     let themes = themesOf(id, text);
     // "General" only tags a piece nothing more specific describes.
@@ -649,19 +653,19 @@ export async function ensureAnalysisTables(db: D1Database): Promise<void> {
     ]);
   }
   // Drop stored pieces that are not analytical publications ("About the GDHO", casino spam), whenever the filter changes.
-  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v4'`).first())) {
+  if (!(await db.prepare(`SELECT 1 FROM strategic_state WHERE key = 'not_analysis_v5'`).first())) {
     const rows = (await db.prepare(`SELECT domain, id, title, summary, url, source FROM strategic_analyses`).all<{ domain: string; id: string; title: string; summary: string | null; url: string; source: string }>()).results ?? [];
     // Hosts that served spam: everything from them is checked again with the full keyword test.
     const spamHosts = new Set(rows.filter((r) => looksLikeSpam(`${r.title} ${r.summary ?? ""} ${r.url.replace(/[-_/]+/g, " ")}`)).map((r) => hostOf(r.url)));
     const bySourceName = new Map(SOURCES.map((x) => [x.name, x]));
     const junk = rows.filter((r) => {
       if (isNotAnalysis({ title: r.title, summary: r.summary ?? "", url: r.url })) return true;
-      if (!spamHosts.has(hostOf(r.url))) return false;
       const src = bySourceName.get((r as { source?: string }).source ?? "");
+      if (!spamHosts.has(hostOf(r.url)) && !src?.strictIntake) return false;
       return !src || classify({ title: r.title, summary: r.summary ?? "", url: r.url, published: new Date().toISOString(), source: src, strict: true }).every((x) => x.domain !== r.domain);
     });
     for (let i = 0; i < junk.length; i += 50) await db.batch(junk.slice(i, i + 50).map((r) => db.prepare(`DELETE FROM strategic_analyses WHERE domain = ? AND id = ?`).bind(r.domain, r.id)));
-    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v4', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
+    await db.prepare(`INSERT INTO strategic_state (key, value) VALUES ('not_analysis_v5', ?)`).bind(JSON.stringify({ at: new Date().toISOString(), removed: junk.length })).run();
   }
   // One-time: the first catch-ups shared the main schedule's request budget and many found nothing because their
   // requests were refused, so every source's past year is fetched again on Strategic Analyses' own schedule.
