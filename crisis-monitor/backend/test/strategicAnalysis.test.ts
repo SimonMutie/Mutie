@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { africaOf, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, newAnalysesSince, parseFeed, resetAnalysisTables, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
+import { africaOf, classify, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
 import { buildAnalysesNotification } from "../src/lib/alertDelivery";
 import { fakeD1 } from "./fakeD1";
 
@@ -102,7 +102,7 @@ describe("collecting and alerting", () => {
     const discover = async (u: string) => (u === ok ? { status: "ok" as const, feedUrl: "https://feed/ok" } : { status: "no_feed" as const });
     const fetcher = async () => new Response(feed);
     const now = new Date("2026-11-17T09:00:00Z");
-    const lanes = { backfill: 0, gnews: 0 };
+    const lanes = { backfill: 0, gnews: 0, sitemaps: 0, enrich: 0 };
     const r1 = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 5, ...lanes });
     expect(r1.sources).toBe(5);
     expect(r1.added).toBeGreaterThanOrEqual(3);
@@ -150,7 +150,7 @@ describe("collecting and alerting", () => {
     resetAnalysisTables();
     await ensureAnalysisTables(DB as never);
     for (const s of SOURCES) if (s !== tnh && s !== sub) await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at) VALUES (?,?,?,?,?)`).bind(s.url, s.name, now.toISOString(), now.toISOString(), now.toISOString()).run();
-    const r = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0 });
+    const r = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0, sitemaps: 0, enrich: 0 });
     expect(r.backfilled).toBe(2);
     const hum = await listAnalyses(DB as never, "humanitarian", { days: 400 });
     expect(hum.map((i) => i.title).sort()).toEqual(["Aid cuts bite in Sudan", "Localisation in Somalia after the cuts", "The humanitarian reset, six months on"].sort());
@@ -162,7 +162,7 @@ describe("collecting and alerting", () => {
     // Google News: searched once per domain for broad sources, once for the whole site for specialists.
     expect(calls.filter((u) => u.startsWith("https://news.google.com/") && u.includes("thenewhumanitarian.org")).length).toBe(1);
     // Not backfilled twice.
-    const again = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0 });
+    const again = await collectStrategicAnalyses(env, { now, fetcher, discover, limit: 0, backfill: 5, gnews: 0, sitemaps: 0, enrich: 0 });
     expect(again.backfilled).toBe(0);
   });
 
@@ -174,6 +174,61 @@ describe("collecting and alerting", () => {
     const q = gnewsQueries(chatham, "3d").map(decodeURIComponent);
     expect(q.find((x) => x.includes("humanitarian"))).not.toContain("(Africa OR African OR Afrique)");
     expect(q.find((x) => x.includes("election"))).toContain("(Africa OR African OR Afrique)");
+  });
+
+  it("reads sitemaps, picks the publications worth opening, and reads a page's title, summary and date", () => {
+    const idx = `<sitemapindex><sitemap><loc>https://x.org/post-sitemap.xml</loc><lastmod>2026-11-01T00:00:00+00:00</lastmod></sitemap><sitemap><loc>https://x.org/category-sitemap.xml</loc></sitemap></sitemapindex>`;
+    expect(parseSitemap(idx)).toMatchObject({ index: true, entries: [{ loc: "https://x.org/post-sitemap.xml", lastmod: "2026-11-01T00:00:00.000Z" }, { loc: "https://x.org/category-sitemap.xml", lastmod: null }] });
+    const hs: Source = { name: "Hum", url: "https://alnap.example/", africa: false, kind: "international", domains: ["humanitarian"] };
+    expect(worthOpening(hs, "https://alnap.example/publications/the-state-of-the-humanitarian-system-2026")).toBe(true);
+    expect(worthOpening(hs, "https://alnap.example/tag/localisation")).toBe(false);
+    expect(worthOpening(hs, "https://alnap.example/about")).toBe(false);
+    expect(worthOpening(hs, "https://alnap.example/files/report-2026.pdf")).toBe(false);
+    expect(worthOpening(hs, "https://other.example/publications/the-state-of-the-humanitarian-system")).toBe(false);
+    // A broad international source: only slugs that already look like the domain (and Africa outside humanitarian).
+    const broad: Source = { name: "Big", url: "https://big.example/", africa: false, kind: "international", domains: ["humanitarian", "conflict", "geopolitics"] };
+    expect(worthOpening(broad, "https://big.example/research/aid-cuts-and-the-future-of-humanitarian-action")).toBe(true);
+    expect(worthOpening(broad, "https://big.example/research/war-in-sudan-and-the-limits-of-mediation")).toBe(true);
+    expect(worthOpening(broad, "https://big.example/research/war-in-ukraine-and-european-defence-spending")).toBe(false);
+    expect(worthOpening(broad, "https://big.example/research/humanitarian-access-in-gaza-under-siege")).toBe(false);
+    const html = `<html><head><title>Ignored | Site</title><meta property="og:title" content="Localisation after the cuts &amp; what comes next | ALNAP"><meta name="description" content="How local NGOs in Somalia are adapting."><meta property="article:published_time" content="2026-04-02T10:00:00Z"></head></html>`;
+    expect(pageMeta(html)).toEqual({ title: "Localisation after the cuts & what comes next", summary: "How local NGOs in Somalia are adapting.", published: "2026-04-02T10:00:00.000Z" });
+    expect(pageMeta(`<title>The reset, a year on</title><script type="application/ld+json">{"datePublished":"2026-01-05"}</script>`)).toMatchObject({ title: "The reset, a year on", published: "2026-01-05T00:00:00.000Z" });
+  });
+
+  it("finds a year of publications through a source's sitemap and opens them in batches", async () => {
+    const { DB } = fakeD1();
+    const env = { DB } as never;
+    const now = new Date("2026-11-17T09:00:00Z");
+    const alnap = SOURCES.find((s) => s.name === "ALNAP")!;
+    const o = new URL(alnap.url).origin;
+    const urls = Array.from({ length: 30 }, (_, i) => `${o}/publications/humanitarian-reflection-number-${i + 1}-on-aid`);
+    const fetcher = async (u: string) => {
+      if (u === `${o}/robots.txt`) return new Response(`User-agent: *\nSitemap: ${o}/sitemap_index.xml`);
+      if (u === `${o}/sitemap_index.xml`) return new Response(`<sitemapindex><sitemap><loc>${o}/post-sitemap.xml</loc><lastmod>2026-11-10</lastmod></sitemap><sitemap><loc>${o}/author-sitemap.xml</loc></sitemap></sitemapindex>`);
+      if (u === `${o}/post-sitemap.xml`) return new Response(`<urlset>${urls.map((x, i) => `<url><loc>${x}</loc><lastmod>2026-0${(i % 9) + 1}-15</lastmod></url>`).join("")}<url><loc>${o}/publications/too-old-reflection-from-long-ago</loc><lastmod>2024-01-01</lastmod></url><url><loc>${o}/tag/aid</loc></url></urlset>`);
+      const i = urls.indexOf(u);
+      if (i >= 0) return new Response(`<title>Reflection ${i + 1} on the humanitarian system | ALNAP</title><meta name="description" content="Aid and localisation.">`);
+      return new Response("", { status: 404 });
+    };
+    resetAnalysisTables();
+    await ensureAnalysisTables(DB as never);
+    for (const s of SOURCES) if (s !== alnap) await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at, sitemap_at) VALUES (?,?,?,?,?,?)`).bind(s.url, s.name, now.toISOString(), now.toISOString(), now.toISOString(), now.toISOString()).run();
+    await DB.prepare(`UPDATE strategic_sources SET sitemap_at = NULL WHERE url = ?`).bind(alnap.url).run();
+    await DB.prepare(`INSERT INTO strategic_sources (url, name, checked_at, backfilled_at, gnews_at) VALUES (?,?,?,?,?)`).bind(alnap.url, alnap.name, now.toISOString(), now.toISOString(), now.toISOString()).run();
+    const lanes = { now, fetcher, discover: async () => ({ status: "no_feed" as const }), limit: 0, backfill: 0, gnews: 0 };
+    await collectStrategicAnalyses(env, { ...lanes, sitemaps: 5, enrich: 0 });
+    const pending = await DB.prepare(`SELECT COUNT(*) AS n FROM strategic_candidates WHERE status = 'pending'`).first<{ n: number }>();
+    expect(pending?.n).toBe(30);
+    await collectStrategicAnalyses(env, { ...lanes, sitemaps: 0, enrich: 25 });
+    await collectStrategicAnalyses(env, { ...lanes, sitemaps: 0, enrich: 25 });
+    const items = await listAnalyses(DB as never, "humanitarian", { days: 400 });
+    expect(items).toHaveLength(30);
+    expect(items[0].title).toMatch(/^Reflection \d+ on the humanitarian system$/);
+    // Dated by the sitemap, so none of them alerts.
+    expect(await newAnalysesSince(DB as never, "humanitarian", "2026-11-17T08:00:00Z")).toHaveLength(0);
+    const [status] = (await sourceStatus(DB as never, "humanitarian")).filter((x) => x.name === "ALNAP");
+    expect(status.backfill).toContain("30 publications from the past year");
   });
 
   it("moves the first version's humanitarian pieces into New Humanitarianism", async () => {
