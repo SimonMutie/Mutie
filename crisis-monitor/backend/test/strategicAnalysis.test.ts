@@ -78,6 +78,11 @@ describe("the domains and their taxonomies", () => {
     expect(isNotAnalysis({ title: "Localisation after the cuts", summary: "", url: "https://x.org/about/localisation-after-the-cuts" })).toBe(true);
     for (const title of ["The reset, revisited", "Localisation after the cuts", "Who decides? Power and the humanitarian reset", "About time: why local NGOs must lead"]) expect(isNotAnalysis({ title, summary: "", url: u }), title).toBe(title.startsWith("About time"));
     expect(classify({ ...base, title: "About the GDHO", summary: "", source: src(["humanitarian"]) })).toEqual([]);
+    // Spam injected into a hacked humanitarian site.
+    const spam = { ...base, url: "https://somalingoconsortium.org/cv66-review-bangladeshi-guide-to-casino-bonuses-payments-and-withdrawals/", title: "Cv66 review: Bangladeshi guide to casino, bonuses, payments and withdrawals", summary: "", source: src(["humanitarian"]) };
+    expect(isNotAnalysis(spam)).toBe(true);
+    expect(classify(spam)).toEqual([]);
+    expect(classify({ ...base, title: "Top ten tips for choosing a new laptop this year", summary: "", source: src(["humanitarian"]) })).toEqual([]);
   });
 
   it("asks Bing News when Google News returns nothing", () => {
@@ -103,7 +108,7 @@ describe("the domains and their taxonomies", () => {
     // No humanitarian keyword in the title: kept, tagged with the general theme.
     const [piece] = classify({ ...base, title: "The reset is dead, long live the reset?", summary: "", source: hs });
     expect(piece).toMatchObject({ domain: "humanitarian", inScope: true });
-    const [general] = classify({ ...base, title: "Notes from the field", summary: "", source: hs });
+    const [general] = classify({ ...base, title: "Notes from the field on relief", summary: "", source: hs });
     expect(general.themes).toEqual(["general"]);
     // A general reflection tied to no place, from a broad source: in scope.
     expect(classify({ ...base, title: "Rethinking risk sharing between aid donors and local partners", summary: "", source: src(ALL) })[0]).toMatchObject({ inScope: true });
