@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { africaOf, analysisDiagnostics, bingQuery, classify, isNotAnalysis, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
+import { africaOf, analysisDiagnostics, bingQuery, classify, dateInUrl, isNotAnalysis, collectStrategicAnalyses, DOMAINS, domainSummary, ensureAnalysisTables, gnewsQueries, listAnalyses, pageMeta, parseSitemap, worthOpening, newAnalysesSince, parseFeed, resetAnalysisTables, sourceStatus, SOURCES, themesOf, type DomainId, type Source } from "../src/lib/strategicAnalysis";
 import { buildAnalysesNotification } from "../src/lib/alertDelivery";
 import { fakeD1 } from "./fakeD1";
 
@@ -246,9 +246,11 @@ describe("collecting and alerting", () => {
     const fetcher = async (u: string) => {
       if (u === `${o}/robots.txt`) return new Response(`User-agent: *\nSitemap: ${o}/sitemap_index.xml`);
       if (u === `${o}/sitemap_index.xml`) return new Response(`<sitemapindex><sitemap><loc>${o}/post-sitemap.xml</loc><lastmod>2026-11-10</lastmod></sitemap><sitemap><loc>${o}/author-sitemap.xml</loc></sitemap></sitemapindex>`);
-      if (u === `${o}/post-sitemap.xml`) return new Response(`<urlset>${urls.map((x, i) => `<url><loc>${x}</loc><lastmod>2026-0${(i % 9) + 1}-15</lastmod></url>`).join("")}<url><loc>${o}/publications/too-old-reflection-from-long-ago</loc><lastmod>2024-01-01</lastmod></url><url><loc>${o}/tag/aid</loc></url></urlset>`);
+      if (u === `${o}/post-sitemap.xml`) return new Response(`<urlset>${urls.map((x, i) => `<url><loc>${x}</loc><lastmod>2026-0${(i % 9) + 1}-15</lastmod></url>`).join("")}<url><loc>${o}/publications/whatever-it-takes-a-rapid-increase-in-aid</loc><lastmod>2026-11-10</lastmod></url><url><loc>${o}/publications/too-old-reflection-from-long-ago</loc><lastmod>2024-01-01</lastmod></url><url><loc>${o}/tag/aid</loc></url></urlset>`);
       const i = urls.indexOf(u);
-      if (i >= 0) return new Response(`<title>Reflection ${i + 1} on the humanitarian system | ALNAP</title><meta name="description" content="Aid and localisation.">`);
+      if (i >= 0) return new Response(`<title>Reflection ${i + 1} on the humanitarian system | ALNAP</title><meta name="description" content="Aid and localisation."><meta property="article:published_time" content="2026-0${(i % 9) + 1}-15T08:00:00Z">`);
+      // A 2020 paper the sitemap says was "modified" this month, with no date of its own on the page.
+      if (u === `${o}/publications/whatever-it-takes-a-rapid-increase-in-aid`) return new Response(`<title>Whatever It Takes: a rapid increase in aid amid the coronavirus pandemic</title>`);
       return new Response("", { status: 404 });
     };
     resetAnalysisTables();
@@ -259,19 +261,22 @@ describe("collecting and alerting", () => {
     const lanes = { now, fetcher, discover: async () => ({ status: "no_feed" as const }), limit: 0, backfill: 0, gnews: 0, sections: 0 };
     await collectStrategicAnalyses(env, { ...lanes, sitemaps: 5, enrich: 0 });
     const pending = await DB.prepare(`SELECT COUNT(*) AS n FROM strategic_candidates WHERE status = 'pending'`).first<{ n: number }>();
-    expect(pending?.n).toBe(30);
+    expect(pending?.n).toBe(31);
     await collectStrategicAnalyses(env, { ...lanes, sitemaps: 0, enrich: 25 });
     await collectStrategicAnalyses(env, { ...lanes, sitemaps: 0, enrich: 25 });
+    // The undated 2020 paper is not stored under the sitemap's "last modified" date.
+    expect((await listAnalyses(DB as never, "humanitarian", { days: 400 })).some((x) => x.title.startsWith("Whatever It Takes"))).toBe(false);
     const items = await listAnalyses(DB as never, "humanitarian", { days: 400 });
     expect(items).toHaveLength(30);
     expect(items[0].title).toMatch(/^Reflection \d+ on the humanitarian system$/);
     // Dated by the sitemap, so none of them alerts.
     expect(await newAnalysesSince(DB as never, "humanitarian", "2026-11-17T08:00:00Z")).toHaveLength(0);
     const [status] = (await sourceStatus(DB as never, "humanitarian")).filter((x) => x.name === "ALNAP");
-    expect(status.backfill).toContain("30 publications from the past year");
+    expect(status.backfill).toContain("31 publications from the past year");
     const diag = (await analysisDiagnostics(DB as never)) as { lastRun: { finishedAt: string | null; lanes: Record<string, number> }; pages: Record<string, number>; stored: Record<string, { inScope: number }> };
     expect(diag.lastRun.finishedAt).not.toBeNull();
     expect(diag.pages.done).toBe(30);
+    expect(diag.pages.undated).toBe(1);
     expect(diag.stored.humanitarian.inScope).toBe(30);
   });
 
@@ -306,6 +311,26 @@ describe("collecting and alerting", () => {
     await DB.prepare(`UPDATE strategic_sources SET checked_at = NULL WHERE url = ?`).bind(hpn.url).run();
     await collectStrategicAnalyses(env, { ...base2, limit: 1, sections: 0 });
     expect((await listAnalyses(DB as never, "humanitarian", { days: 400 })).map((i) => i.title)).toContain("Aid suspension: who carries the burden?");
+  });
+
+  it("catches spam however it is worded, and treats a source serving it as compromised", () => {
+    const sc = src(["humanitarian"]);
+    for (const title of ["BDBajee online overview and options – bonuses, payments & mobile experience", "Krikya app download: login guide, deposits and withdrawals", "Jeetbuzz review for Bangladeshi players: bonuses and payment methods"]) {
+      expect(isNotAnalysis({ title, summary: "", url: "https://somalingoconsortium.org/x-y-z" }), title).toBe(true);
+    }
+    // Real humanitarian writing about cash payments is not spam.
+    expect(isNotAnalysis({ title: "Cash payments and withdrawals for refugees in Dadaab", summary: "", url: "https://x.org/a-b-c" })).toBe(false);
+    // Compromised: an off-topic page with one stray humanitarian word no longer gets in on the source's name.
+    const stray = { ...base, title: "Customer assistance and features of our new platform", summary: "", source: sc };
+    expect(classify(stray).length).toBe(1);
+    expect(classify({ ...stray, strict: true })).toEqual([]);
+    expect(classify({ ...base, title: "Aid cuts leave Somali NGOs without funding", summary: "", source: sc, strict: true }).map((x) => x.domain)).toEqual(["humanitarian"]);
+  });
+
+  it("reads publication dates from addresses", () => {
+    expect(dateInUrl("https://x.org/2020/04/15/whatever-it-takes")).toBe("2020-04-15T00:00:00.000Z");
+    expect(dateInUrl("https://x.org/blog/2025-11-a-piece")).toBe("2025-11-01T00:00:00.000Z");
+    expect(dateInUrl("https://x.org/resources/whatever-it-takes-620982/")).toBeNull();
   });
 
   it("drops navigation and site-name pages", () => {
