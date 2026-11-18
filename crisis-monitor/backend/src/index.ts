@@ -1,4 +1,4 @@
-import { collectHumanitarianAnalyses } from "./lib/humanitarianAnalysis";
+import { collectStrategicAnalyses } from "./lib/strategicAnalysis";
 import { advanceFactsBackfill } from "./lib/incidentFacts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -200,11 +200,11 @@ export default {
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
 
-    // Strategic humanitarian analyses from think tanks (at most hourly; lib/humanitarianAnalysis.ts).
+    // Strategic Analyses from think tanks: a batch of the sources due a read each tick (lib/strategicAnalysis.ts).
     ctx.waitUntil(
-      collectHumanitarianAnalyses(env)
-        .then((r) => r.ran && console.log(`[humanitarian] ${r.added} new analyses from ${r.sources} sources`))
-        .catch((err) => console.error("[humanitarian] collection failed", err))
+      collectStrategicAnalyses(env)
+        .then((r) => r.ran && console.log(`[analyses] ${r.added} new pieces from ${r.sources} sources`))
+        .catch((err) => console.error("[analyses] collection failed", err))
     );
     // Copy existing incidents into the slim counting table, a chunk per tick, until it is complete
     // (lib/incidentFacts.ts); new and edited incidents reach it by trigger.
