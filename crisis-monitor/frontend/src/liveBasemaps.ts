@@ -1,4 +1,4 @@
-import { maptilerKey, MAPTILER_ATTRIBUTION } from "./mapProvider";
+import { maptilerKey, maptilerSession, MAPTILER_ATTRIBUTION } from "./mapProvider";
 
 /**
  * The basemaps of Live OSINT, shared by both map engines (the 3D globe and the flat map) so any basemap works in
@@ -52,7 +52,8 @@ export function liveBasemaps(): LiveBasemap[] {
   return DEFS.flatMap((d): LiveBasemap[] => {
     if (key) {
       const base = `https://api.maptiler.com/maps/${d.mt.style}`;
-      return [{ id: d.id, label: d.label, hint: d.hint, attribution: MAPTILER_ATTRIBUTION, leafletUrl: `${base}/256/{z}/{x}/{y}{r}.${d.mt.ext}?key=${key}`, glTiles: [`${base}/{z}/{x}/{y}.${d.mt.ext}?key=${key}`], glTileSize: 512 }];
+      const sid = maptilerSession();
+      return [{ id: d.id, label: d.label, hint: d.hint, attribution: MAPTILER_ATTRIBUTION, leafletUrl: `${base}/256/{z}/{x}/{y}{r}.${d.mt.ext}?key=${key}${sid ? `&mtsid=${sid}` : ""}`, glTiles: [`${base}/{z}/{x}/{y}.${d.mt.ext}?key=${key}`], glTileSize: 512 }];
     }
     if (!d.free) return [];
     const gl = d.free.url.replace("{r}", d.free.retina ? "@2x" : "");
