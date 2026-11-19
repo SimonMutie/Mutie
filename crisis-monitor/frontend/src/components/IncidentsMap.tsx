@@ -63,7 +63,7 @@ interface Props {
 // the app keeps working unchanged — a plain re-export alone wouldn't give
 // this file itself a usable local binding.
 import { adminDefaultChoice, BASEMAPS, basemapKeys, resolveBasemap, type BasemapKey } from "./mapConstants";
-import { useMapTilerKey } from "../mapProvider";
+import { useMapTilerKey, tileOptions } from "../mapProvider";
 import { Tooltip as LeafletTooltip } from "react-leaflet";
 import { ACTOR_CATEGORIES, ACTOR_THEME, OTHER_CATEGORY, classifyActor, classifyIncident, pinSvg as basePinSvg, type ActorCategory, type ActorShape } from "./actorTheme";
 export { classifyActor, ACTOR_THEME, type ActorCategory, type ActorShape };
@@ -2017,7 +2017,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
       >
         <LeafletMapControls compass={false} />
         {scaleEnabled && <ScaleControl position="bottomleft" />}
-        <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
+        <TileLayer key={BASEMAPS[basemap].url} url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} {...tileOptions(BASEMAPS[basemap].url)} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
         <MapInstanceCapture onReady={setMapInstance} />
