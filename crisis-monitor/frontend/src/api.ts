@@ -2215,7 +2215,9 @@ export const api = {
   getMapExtras: () => req<MapTilerExtras>("/api/map-settings/provider/extras"),
   getVehicles: () => req<{ vehicles: Vehicle[] }>("/api/tracking/vehicles"),
   addVehicle: (v: { name: string; color: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle; token: string }>("/api/tracking/vehicles", { method: "POST", body: JSON.stringify(v) }),
-  updateVehicle: (id: string, v: { name?: string; color?: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle }>(`/api/tracking/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(v) }),
+  getVehicleAlerts: () => req<{ alerts: VehicleAlert[] }>("/api/tracking/alerts"),
+  ackVehicleAlert: (id: string) => req<{ ok: boolean }>(`/api/tracking/alerts/${id}/ack`, { method: "POST" }),
+  updateVehicle: (id: string, v: VehicleRulesUpdate) => req<{ vehicle: Vehicle }>(`/api/tracking/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(v) }),
   newVehicleToken: (id: string) => req<{ token: string }>(`/api/tracking/vehicles/${id}/token`, { method: "POST" }),
   deleteVehicle: (id: string) => req<{ ok: boolean }>(`/api/tracking/vehicles/${id}`, { method: "DELETE" }),
   getTrackingLog: () => req<{ log: { at: string; outcome: string; method: string; contentType: string; userAgent: string; device: string; sample: string }[] }>("/api/tracking/log"),
@@ -2770,8 +2772,35 @@ export interface Vehicle {
   name: string;
   color: string;
   speedLimitKmh: number | null;
+  /** Safe zone: an alert when the vehicle leaves it (and a note when it is back). */
+  zone: { lat: number; lng: number; radiusM: number } | null;
+  /** Quiet hours (Nairobi time): an alert when the vehicle moves in them. */
+  quietHours: { from: number; to: number } | null;
+  /** An alert when nothing is heard from the vehicle for this many minutes. */
+  silentMinutes: number | null;
+  /** A rule is broken right now (speeding, outside its zone, silent). */
+  alerting: boolean;
   createdAt: string;
-  last: { at: string; lat: number; lng: number; speedKmh: number | null; heading: number | null; ignition: boolean | null; battery: number | null } | null;
+  last: { at: string; lat: number; lng: number; speedKmh: number | null; heading: number | null; ignition: boolean | null; battery: number | null; accuracyM: number | null } | null;
+}
+export interface VehicleRulesUpdate {
+  name?: string;
+  color?: string;
+  speedLimitKmh?: number | null;
+  zone?: { lat: number; lng: number; radiusM: number } | null;
+  quietHours?: { from: number; to: number } | null;
+  silentMinutes?: number | null;
+}
+export interface VehicleAlert {
+  id: string;
+  vehicleId: string;
+  kind: "speed" | "zone" | "quiet" | "silent";
+  severity: "alert" | "info";
+  message: string;
+  at: string;
+  lat: number | null;
+  lng: number | null;
+  acknowledged: boolean;
 }
 export interface VehiclePoint {
   at: string;
