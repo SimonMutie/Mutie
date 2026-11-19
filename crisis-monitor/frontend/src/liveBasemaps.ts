@@ -39,7 +39,7 @@ export interface LiveBasemap {
   label: string;
   hint: string;
   attribution: string;
-  /** Leaflet (flat map): 256-pixel tiles, {r} for sharper tiles on high-density screens. */
+  /** Leaflet (flat map): MapTiler's as 512-pixel tiles (see tileOptions), {r} for sharper tiles on high-density screens. */
   leafletUrl: string;
   /** MapLibre (3D globe): tile addresses and their size. */
   glTiles: string[];
@@ -53,7 +53,7 @@ export function liveBasemaps(): LiveBasemap[] {
     if (key) {
       const base = `https://api.maptiler.com/maps/${d.mt.style}`;
       const sid = maptilerSession();
-      return [{ id: d.id, label: d.label, hint: d.hint, attribution: MAPTILER_ATTRIBUTION, leafletUrl: `${base}/256/{z}/{x}/{y}{r}.${d.mt.ext}?key=${key}${sid ? `&mtsid=${sid}` : ""}`, glTiles: [`${base}/{z}/{x}/{y}.${d.mt.ext}?key=${key}`], glTileSize: 512 }];
+      return [{ id: d.id, label: d.label, hint: d.hint, attribution: MAPTILER_ATTRIBUTION, leafletUrl: `${base}/{z}/{x}/{y}{r}.${d.mt.ext}?key=${key}${sid ? `&mtsid=${sid}` : ""}`, glTiles: [`${base}/{z}/{x}/{y}.${d.mt.ext}?key=${key}`], glTileSize: 512 }];
     }
     if (!d.free) return [];
     const gl = d.free.url.replace("{r}", d.free.retina ? "@2x" : "");
