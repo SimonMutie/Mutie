@@ -11,20 +11,31 @@ import type { SpotlightScope } from "./spotlightRegions";
 import { speakWelcomeIfPending } from "./intro";
 import ErrorBoundary, { isStaleBuildError } from "./components/ErrorBoundary";
 
-const QueryDashboard = lazy(() => import("./components/QueryDashboard"));
-const SharedVisual = lazy(() => import("./components/SharedVisual"));
-const QueryEditor = lazy(() => import("./components/QueryEditor"));
-const AdminPanel = lazy(() => import("./components/AdminPanel"));
-const BroadcastAlerts = lazy(() => import("./components/BroadcastAlerts"));
-const SourcesRegister = lazy(() => import("./components/SourcesRegister"));
-const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
-const IncidentsDashboard = lazy(() => import("./components/IncidentsDashboard"));
-const DueDiligenceView = lazy(() => import("./components/DueDiligenceView"));
-const PublicDashboardView = lazy(() => import("./components/PublicDashboardView"));
-const LiveIntelView = lazy(() => import("./components/LiveIntelView"));
-const RegionalSpotlight = lazy(() => import("./components/RegionalSpotlight"));
-const PublicSpotlightView = lazy(() => import("./components/PublicSpotlightView"));
-const SharedReport = lazy(() => import("./components/SharedReport"));
+/** A view's code, loaded when first opened. If the browser holds a failed copy of the file (for example from the
+ *  minute a new version was going live), it is asked for once more with a fresh address, which bypasses that copy. */
+function lazyView<T extends React.ComponentType<any>>(load: () => Promise<{ default: T }>) {
+  return lazy(() =>
+    load().catch((err: unknown) => {
+      const url = err instanceof Error ? /https?:\/\/\S+?\.js/.exec(err.message)?.[0] : undefined;
+      if (!url) throw err;
+      return import(/* @vite-ignore */ `${url}?retry=${Date.now()}`) as Promise<{ default: T }>;
+    })
+  );
+}
+const QueryDashboard = lazyView(() => import("./components/QueryDashboard"));
+const SharedVisual = lazyView(() => import("./components/SharedVisual"));
+const QueryEditor = lazyView(() => import("./components/QueryEditor"));
+const AdminPanel = lazyView(() => import("./components/AdminPanel"));
+const BroadcastAlerts = lazyView(() => import("./components/BroadcastAlerts"));
+const SourcesRegister = lazyView(() => import("./components/SourcesRegister"));
+const SettingsPanel = lazyView(() => import("./components/SettingsPanel"));
+const IncidentsDashboard = lazyView(() => import("./components/IncidentsDashboard"));
+const DueDiligenceView = lazyView(() => import("./components/DueDiligenceView"));
+const PublicDashboardView = lazyView(() => import("./components/PublicDashboardView"));
+const LiveIntelView = lazyView(() => import("./components/LiveIntelView"));
+const RegionalSpotlight = lazyView(() => import("./components/RegionalSpotlight"));
+const PublicSpotlightView = lazyView(() => import("./components/PublicSpotlightView"));
+const SharedReport = lazyView(() => import("./components/SharedReport"));
 
 /** Each view above used to be a plain, eager import — meaning every
  *  page's code (including the mapping page, IncidentsDashboard) shared
