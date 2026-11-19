@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
+import { roadRouteWithFallback } from "../maptilerServices";
 import MapBrand from "./MapBrand";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LeafletMapControls from "./LeafletMapControls";
@@ -518,8 +519,9 @@ function isPointNearShapeGeometry(lat: number, lng: number, geometry: GeoJSON.Fe
 }
 
 async function fetchRoadRoute(points: [number, number][]): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number }> {
-  // Through the Lens's own server, which tries several OpenStreetMap routing servers in turn (backend lib/routing.ts).
-  const route = await api.getRoadRoute(points, "driving");
+  // MapTiler's routing first (with the key), then the Lens's own server, which tries several OpenStreetMap routing
+  // servers in turn (backend lib/routing.ts).
+  const route = await roadRouteWithFallback(points, "driving", () => api.getRoadRoute(points, "driving"));
   const geometry: [number, number][] = route.coordinates.map(([lng, lat]) => [lat, lng]);
   return { geometry, distanceKm: route.distanceMeters / 1000, durationMin: route.durationSeconds / 60 };
 }
