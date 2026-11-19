@@ -11,6 +11,7 @@ import { queryBulkEvents, TONE_OVERRIDE_THRESHOLD, type BulkEventPoint } from ".
 import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getSituationEvents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { countryName, resolveCountryCode } from "../lib/africaGeo";
+import { roadRoute, type RoadRoute, type RouteMode } from "../lib/routing";
 import { activeCountries } from "../lib/ucdpActive";
 import { conflictCountries, conflictProvinces, escalationWaves, type EscalationCountryPoint, type EscalationPoint } from "../lib/conflictZones";
 import { buildMapScene, mapCaption, sceneToSvg } from "../lib/staticMap";
@@ -2346,62 +2347,31 @@ liveLayersRouter.get("/satellites", async (c) => {
   );
 });
 
-interface RouteResult {
-  /** [lng, lat] pairs, matching GeoJSON coordinate order. */
-  coordinates: [number, number][];
-  distanceMeters: number;
-  durationSeconds: number;
-}
+type RouteResult = RoadRoute;
 
 const VALID_ROUTE_PROFILES = new Set(["driving", "walking", "cycling"]);
 
-/** OSRM's free public demo server (router.project-osrm.org) — no key
- *  required, but explicitly posted by the OSRM project as a demo/evaluation
- *  instance, not a production SLA: rate-limited and offered with no uptime
- *  guarantee. Proxied here (rather than called directly from the browser)
- *  both to share one small cache across viewers requesting the same
- *  from/to/mode, and because a production deployment that outgrows this
- *  demo instance's limits would swap the upstream URL here for a paid
- *  provider (Mapbox/ORS/self-hosted OSRM) or a real key, without any
- *  frontend change. */
+/**
+ * A road route (lib/routing.ts tries the OpenStreetMap community's routing servers, then Valhalla, then OSRM's demo).
+ * ?from=lat,lng&to=lat,lng for two points, or ?points=lat,lng;lat,lng;… for a route through several; ?mode=driving,
+ * walking or cycling. Cached briefly so the same route asked for again does not hit the servers.
+ */
 liveLayersRouter.get("/route", async (c) => {
-  const from = c.req.query("from"); // "lat,lng"
-  const to = c.req.query("to");
-  const profile = c.req.query("mode") ?? "driving";
-  if (!from || !to) return Response.json({ error: "Missing from/to query params (each \"lat,lng\")" }, { status: 400 });
+  const profile = (c.req.query("mode") ?? "driving") as RouteMode;
   if (!VALID_ROUTE_PROFILES.has(profile)) return Response.json({ error: "mode must be driving, walking, or cycling" }, { status: 400 });
-
   const parseLatLng = (s: string): [number, number] | null => {
     const m = /^(-?\d+\.?\d*),(-?\d+\.?\d*)$/.exec(s.trim());
     if (!m) return null;
-    return [parseFloat(m[1]), parseFloat(m[2])];
+    const lat = parseFloat(m[1]);
+    const lng = parseFloat(m[2]);
+    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
   };
-  const fromLatLng = parseLatLng(from);
-  const toLatLng = parseLatLng(to);
-  if (!fromLatLng || !toLatLng) return Response.json({ error: "from/to must be \"lat,lng\" numbers" }, { status: 400 });
-
-  return cachedJson<RouteResult>(
-    c.req.raw,
-    async () => {
-      // OSRM's coordinate order is lng,lat (GeoJSON convention), the
-      // opposite of this route's own lat,lng query params — the query
-      // params match how every other part of this app writes coordinates
-      // (see resolveLocation elsewhere), the conversion happens right here.
-      const coordPart = `${fromLatLng[1]},${fromLatLng[0]};${toLatLng[1]},${toLatLng[0]}`;
-      const res = await fetch(
-        `https://router.project-osrm.org/route/v1/${profile}/${coordPart}?overview=full&geometries=geojson`
-      );
-      if (!res.ok) throw new Error(`OSRM demo server returned ${res.status}`);
-      const raw = (await res.json()) as {
-        code: string;
-        routes?: Array<{ geometry: { coordinates: [number, number][] }; distance: number; duration: number }>;
-      };
-      const route = raw.routes?.[0];
-      if (raw.code !== "Ok" || !route) throw new Error(`OSRM could not find a ${profile} route between those points`);
-      return { coordinates: route.geometry.coordinates, distanceMeters: route.distance, durationSeconds: route.duration };
-    },
-    120 // 2 min — same from/to/mode requested again shortly after (e.g. a re-render) shouldn't re-hit the shared demo server
-  );
+  const raw = c.req.query("points") ? c.req.query("points")!.split(";") : [c.req.query("from") ?? "", c.req.query("to") ?? ""];
+  const points = raw.map(parseLatLng);
+  if (points.length < 2 || points.length > 25 || points.some((p) => !p)) {
+    return Response.json({ error: "Give two to 25 points as \"lat,lng\" (from/to, or points separated by ;)" }, { status: 400 });
+  }
+  return cachedJson<RouteResult>(c.req.raw, () => roadRoute(points as [number, number][], profile), 300);
 });
 
 /**
