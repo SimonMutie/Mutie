@@ -6,6 +6,7 @@ import { NEUTRAL_COUNTRY } from "./worldCountries";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import MapNavPad from "./MapNavPad";
+import { Map as MaptilerMap, config as mtConfig } from "@maptiler/sdk";
 import { Map as MapLibreMap, Popup, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
@@ -14,7 +15,7 @@ import { api, type EscalationIncident } from "../api";
 import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
 import { pinSvg } from "./actorTheme";
 import EscalationHoverCard from "./EscalationHoverCard";
-import { maptilerKey, maptilerStyle, maptilerTerrain } from "../mapProvider";
+import { maptilerKey, setMaptilerSession, maptilerStyle, maptilerTerrain } from "../mapProvider";
 import { liveBasemap, type BasemapId } from "../liveBasemaps";
 import { DOT, drawWarningIcon, WARNING_COLOR, WARNING_SIZE } from "./mapSymbols";
 
@@ -443,10 +444,13 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
 
   useEffect(() => {
     if (!containerRef.current) return;
-    const map = new MapLibreMap({
+    // With the MapTiler key the globe is MapTiler's SDK map (the same MapLibre engine, one copy, shared), so MapTiler
+    // bills the Lens per map session rather than per tile. Without the key, plain MapLibre on the free maps.
+    const mtKey = maptilerKey();
+    const options = {
       container: containerRef.current,
       // MapTiler's dark streets style (richer detail, crisper labels) once the admin has set its key; CARTO otherwise.
-      style: maptilerKey() ? maptilerStyle("streets-v2-dark") : CARTO_DARK_MATTER_STYLE,
+      style: mtKey ? maptilerStyle("streets-v2-dark") : CARTO_DARK_MATTER_STYLE,
       // Centered/zoomed on the same Africa/Middle East framing as the
       // reference screenshots, rather than a full whole-earth view — at
       // zoom ~2 the dark-matter style's land color (#0e0e0e) sits so close
@@ -454,10 +458,30 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // barely read against it; this starting view shows real granularity
       // (borders, place labels) immediately instead of requiring the
       // viewer to zoom in first to see anything.
-      center: [40, 12],
+      center: [40, 12] as [number, number],
       zoom: 3.4,
       attributionControl: { compact: true, customAttribution: ["Boundaries: Natural Earth, geoBoundaries (CC BY 4.0)", "Events: GDELT"] },
-    });
+    };
+    let map: MapLibreMap;
+    if (mtKey) {
+      mtConfig.telemetry = false;
+      map = new MaptilerMap({
+        ...options,
+        style: options.style as string,
+        apiKey: mtKey,
+        // The Lens keeps its own controls, globe, sky and labels: the SDK's extras are off.
+        navigationControl: false,
+        geolocateControl: false,
+        maptilerLogo: false,
+        space: false,
+        halo: false,
+        globeMercatorSwitchZoom: false,
+        logSDKVersion: false,
+      }) as unknown as MapLibreMap;
+      setMaptilerSession((map as unknown as MaptilerMap).getMaptilerSessionId());
+    } else {
+      map = new MapLibreMap(options);
+    }
     mapRef.current = map;
     map.on("rotate", () => setBearing(map.getBearing()));
 
