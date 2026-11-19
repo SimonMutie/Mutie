@@ -228,18 +228,17 @@ async function receive(c: { env: Env; req: { method: string; url: string; query:
     // five minutes: the car stays where it was precisely seen, and only the time it was heard from moves on.
     const prev = await first<VehicleRow>(db, `SELECT * FROM vehicles WHERE id = ?`, [v.id]);
     if (prev && (!prev.last_at || prev.last_at <= f.at)) {
-      const rough = f.accuracy !== null && f.accuracy > ROUGH_M;
-      const keepPrecise = rough && prev.last_at && prev.last_accuracy !== null && prev.last_accuracy <= ROUGH_M && Date.parse(f.at) - Date.parse(prev.last_at) < 5 * 60_000;
-      if (keepPrecise) {
+      const shown = await placeCar(db, prev, f);
+      if (!shown) {
         await run(db, `UPDATE vehicles SET last_battery = COALESCE(?, last_battery) WHERE id = ?`, [f.battery, v.id]);
       } else {
         await run(
           db,
           `UPDATE vehicles SET last_at = ?, last_lat = ?, last_lng = ?, last_speed_kmh = ?, last_heading = COALESCE(?, last_heading), last_ignition = COALESCE(?, last_ignition), last_battery = COALESCE(?, last_battery), last_accuracy = ? WHERE id = ?`,
-          [f.at, f.lat, f.lng, f.speedKmh, f.heading, f.ignition === null ? null : f.ignition ? 1 : 0, f.battery, f.accuracy, v.id]
+          [f.at, shown.lat, shown.lng, f.speedKmh, f.heading, f.ignition === null ? null : f.ignition ? 1 : 0, f.battery, shown.accuracy, v.id]
         );
       }
-      await checkRules(db, prev, f);
+      await checkRules(db, prev, { ...f, ...(shown ? { lat: shown.lat, lng: shown.lng, accuracy: shown.accuracy } : {}) });
     }
     saved++;
   }
@@ -253,13 +252,51 @@ async function receive(c: { env: Env; req: { method: string; url: string; query:
 }
 
 /** Beyond this many metres a fix is rough (Wi-Fi or cell towers rather than satellites). */
-const ROUGH_M = 60;
+const ROUGH_M = 30;
 
 const metres = (aLat: number, aLng: number, bLat: number, bLng: number) => {
   const r = Math.PI / 180;
   const x = Math.sin(((bLat - aLat) * r) / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(((bLng - aLng) * r) / 2) ** 2;
   return 2 * 6371000 * Math.asin(Math.sqrt(x));
 };
+/**
+ * Where to draw the car for a new fix, or null to leave it where it is. Three standard GPS filters:
+ *  - a rough fix (worse than ±30 m: Wi-Fi or cell towers, no satellites) does not move the car off a precise fix from
+ *    the last five minutes;
+ *  - a jump no car could make (faster than 250 km/h from the last precise fix) is ignored as a glitch;
+ *  - a parked car (not moving, all recent fixes within 40 m) is drawn at the precision-weighted average of its last
+ *    few minutes of fixes, which removes the few metres of wander every GPS has standing still.
+ */
+async function placeCar(db: D1Database, prev: VehicleRow, f: Fix): Promise<{ lat: number; lng: number; accuracy: number | null } | null> {
+  const lastPrecise = prev.last_at && prev.last_lat !== null && prev.last_lng !== null && prev.last_accuracy !== null && prev.last_accuracy <= ROUGH_M;
+  const gapMs = prev.last_at ? Date.parse(f.at) - Date.parse(prev.last_at) : Infinity;
+  if (f.accuracy !== null && f.accuracy > ROUGH_M && lastPrecise && gapMs < 5 * 60_000) return null;
+  if (lastPrecise && gapMs > 0 && gapMs < 10 * 60_000) {
+    const kmh = metres(prev.last_lat as number, prev.last_lng as number, f.lat, f.lng) / 1000 / (gapMs / 3600_000);
+    if (kmh > 250) return null;
+  }
+  if ((f.speedKmh ?? 0) < 3 && (f.accuracy === null || f.accuracy <= ROUGH_M)) {
+    const recent = await all<{ lat: number; lng: number; accuracy_m: number | null; speed_kmh: number | null }>(
+      db,
+      `SELECT lat, lng, accuracy_m, speed_kmh FROM vehicle_positions WHERE vehicle_id = ? AND at >= ? AND at <= ? AND (accuracy_m IS NULL OR accuracy_m <= ?) ORDER BY at DESC LIMIT 12`,
+      [prev.id, new Date(Date.parse(f.at) - 3 * 60_000).toISOString(), f.at, ROUGH_M]
+    );
+    const still = recent.filter((r) => (r.speed_kmh ?? 0) < 3 && metres(r.lat, r.lng, f.lat, f.lng) < 40);
+    if (still.length >= 3) {
+      let w = 0, lat = 0, lng = 0;
+      for (const r of still) {
+        const a = Math.max(3, r.accuracy_m ?? 10);
+        const k = 1 / (a * a);
+        w += k;
+        lat += r.lat * k;
+        lng += r.lng * k;
+      }
+      return { lat: lat / w, lng: lng / w, accuracy: Math.max(1, Math.round(Math.sqrt(1 / w))) };
+    }
+  }
+  return { lat: f.lat, lng: f.lng, accuracy: f.accuracy };
+}
+
 /** The hour in Nairobi (the alert rules' quiet hours are local time). */
 const nairobiHour = (iso: string) => Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Nairobi", hour: "numeric", hour12: false }).format(new Date(iso))) % 24;
 const inQuiet = (h: number, from: number, to: number) => (from === to ? false : from < to ? h >= from && h < to : h >= from || h < to);
@@ -529,6 +566,19 @@ authed.post("/alerts/:id/ack", async (c) => {
   const ids = (await visible(c as never)).map((v) => v.id);
   if (ids.length) await run(c.env.DB, `UPDATE vehicle_alerts SET acknowledged_at = ? WHERE id = ? AND vehicle_id IN (${ids.map(() => "?").join(",")})`, [nowIso(), c.req.param("id"), ...ids]);
   return c.json({ ok: true });
+});
+
+/** A vehicle's last 30 fixes as the phone sent them (rough ones included), for checking precision in Settings. */
+authed.get("/vehicles/:id/recent", async (c) => {
+  await ensureTables(c.env.DB);
+  const [row] = await visible(c as never, c.req.param("id"));
+  if (!row) return c.json({ error: "Not found" }, 404);
+  const points = await all<{ at: string; lat: number; lng: number; accuracy_m: number | null; speed_kmh: number | null }>(
+    c.env.DB,
+    `SELECT at, lat, lng, accuracy_m, speed_kmh FROM vehicle_positions WHERE vehicle_id = ? ORDER BY at DESC LIMIT 30`,
+    [row.id]
+  );
+  return c.json({ shown: shape(row).last, points: points.map((p) => ({ at: p.at, lat: p.lat, lng: p.lng, accuracyM: p.accuracy_m, speedKmh: p.speed_kmh })) });
 });
 
 /** The last reports received (for the Settings card), admins only. */
