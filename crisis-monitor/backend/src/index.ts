@@ -21,6 +21,7 @@ import { customDashboardsRouter, publicDashboardsRouter } from "./routes/customD
 import { datasetsRouter } from "./routes/datasets";
 import { clientsRouter } from "./routes/clients";
 import { mapSettingsRouter } from "./routes/map-settings";
+import { trackingRouter, pruneVehiclePositions } from "./routes/tracking";
 import { liveLayersRouter } from "./routes/liveLayers";
 import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
@@ -130,6 +131,7 @@ app.route("/api/public/dashboards", publicDashboardsRouter);
 app.route("/api/datasets", datasetsRouter);
 app.route("/api/clients", clientsRouter);
 app.route("/api/map-settings", mapSettingsRouter);
+app.route("/api/tracking", trackingRouter);
 app.route("/api/live-layers", liveLayersRouter);
 app.route("/api/afrintel", afrIntelRouter);
 app.route("/api/global-status", globalStatusRouter);
@@ -253,6 +255,11 @@ export default {
     // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
     // newly flagged incident reaches email/Signal in the same tick.
     ctx.waitUntil(stageDailyIfDue(env, controller.scheduledTime).catch((err) => console.error("[staging] daily collection failed", err)));
+
+    // Vehicle positions older than 90 days removed, once a day (the 03:00 UTC tick).
+    if (new Date(controller.scheduledTime).getUTCHours() === 3 && new Date(controller.scheduledTime).getUTCMinutes() < 5) {
+      ctx.waitUntil(pruneVehiclePositions(env.DB));
+    }
 
     // Aircraft over Africa and the Middle East, their tracks, and GPS interference (see lib/aircraftCollector.ts).
     ctx.waitUntil(collectAircraft(env).catch((err) => console.error("[aircraft] collection failed", err)));
