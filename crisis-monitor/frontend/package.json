@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@maptiler/sdk": "5.0.0-rc.7",
     "@tiptap/extension-highlight": "^3.31.4",
     "@tiptap/extension-subscript": "^3.31.4",
     "@tiptap/extension-superscript": "^3.31.4",
