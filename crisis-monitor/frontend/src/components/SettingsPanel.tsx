@@ -513,6 +513,7 @@ function VehiclesCard() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<Awaited<ReturnType<typeof api.getTrackingLog>>["log"]>([]);
   const [showLog, setShowLog] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const load = () =>
     Promise.all([api.getVehicles().then((r) => setVehicles(r.vehicles)), api.getTrackingLog().then((r) => setLog(r.log))]).catch(() => undefined);
   useEffect(() => {
@@ -542,7 +543,8 @@ function VehiclesCard() {
       {vehicles.map((v) => {
         const fresh = v.last && Date.now() - Date.parse(v.last.at) < 10 * 60000;
         return (
-          <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 8 }}>
+          <div key={v.id} style={{ marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
             <span style={{ width: 12, height: 12, borderRadius: 6, background: v.color, flex: "none" }} />
             <span style={{ flex: 1 }}>
               <b>{v.name}</b>{" "}
@@ -550,6 +552,9 @@ function VehiclesCard() {
                 {v.last ? `${fresh ? "reporting" : "last seen"} ${ago(v.last.at)}${v.last.speedKmh !== null ? `, ${Math.round(v.last.speedKmh)} km/h` : ""}` : "no position yet"}
               </span>
             </span>
+            <button disabled={busy} onClick={() => setEditing(editing === v.id ? null : v.id)} aria-expanded={editing === v.id}>
+              Alerts{v.speedLimitKmh || v.zone || v.quietHours || v.silentMinutes ? " ●" : ""}
+            </button>
             <button
               disabled={busy}
               onClick={() =>
@@ -573,6 +578,8 @@ function VehiclesCard() {
             >
               Remove
             </button>
+          </div>
+          {editing === v.id && <VehicleRulesEditor vehicle={v} onSaved={() => void load()} />}
           </div>
         );
       })}
@@ -606,7 +613,7 @@ function VehiclesCard() {
             <li>
               Set <b>Server URL</b> to: <code style={{ wordBreak: "break-all" }}>{TRACKING_URL}</code> <button onClick={() => copy(TRACKING_URL)}>Copy</button>
             </li>
-            <li>Set <b>Location accuracy</b> to High, <b>Frequency</b> to 30 seconds, and <b>Distance</b> to 50 metres.</li>
+            <li>Set <b>Location accuracy</b> to <b>High</b>, <b>Frequency</b> to 10 seconds, <b>Distance</b> to 0 and <b>Angle</b> to 30, so the car's position is the phone's satellite fix, sent as it changes.</li>
             <li>Allow location <b>all the time</b>, and turn off battery saving for the app, so it keeps reporting with the screen off.</li>
             <li>Switch <b>Tracking</b> on. The vehicle appears on Live OSINT within a minute.</li>
           </ol>
@@ -637,6 +644,101 @@ function VehiclesCard() {
         )}
       </div>
       {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
+    </div>
+  );
+}
+
+/** One vehicle's alert rules: each pops up with a sound on Live OSINT when broken. */
+function VehicleRulesEditor({ vehicle, onSaved }: { vehicle: Vehicle; onSaved: () => void }) {
+  const [limit, setLimit] = useState(vehicle.speedLimitKmh ? String(vehicle.speedLimitKmh) : "");
+  const [zone, setZone] = useState(vehicle.zone);
+  const [radius, setRadius] = useState(String(vehicle.zone?.radiusM ?? 300));
+  const [quiet, setQuiet] = useState(vehicle.quietHours);
+  const [silent, setSilent] = useState(vehicle.silentMinutes ?? 0);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+  const precise = vehicle.last && (vehicle.last.accuracyM === null || vehicle.last.accuracyM <= 60);
+  async function save() {
+    setMsg(null);
+    try {
+      const r = Number(radius);
+      await api.updateVehicle(vehicle.id, {
+        speedLimitKmh: limit ? Number(limit) : null,
+        zone: zone ? { ...zone, radiusM: Number.isFinite(r) && r >= 50 ? r : 300 } : null,
+        quietHours: quiet,
+        silentMinutes: silent || null,
+      });
+      setMsg({ ok: true, text: "Saved. Broken rules now pop up with a sound on Live OSINT." });
+      onSaved();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Could not save." });
+    }
+  }
+  const row = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const, marginBottom: 8 };
+  return (
+    <div style={{ margin: "8px 0 4px 20px", padding: 12, borderRadius: 8, border: "1px solid var(--border, rgba(127,127,127,0.3))", fontSize: 12.5 }}>
+      <div style={row}>
+        <span style={{ width: 150 }}>Speed limit</span>
+        <input value={limit} onChange={(e) => setLimit(e.target.value.replace(/\D/g, ""))} placeholder="Off" style={{ width: 80 }} aria-label="Speed limit km/h" /> km/h
+      </div>
+      <div style={row}>
+        <span style={{ width: 150 }}>Safe zone</span>
+        {zone ? (
+          <>
+            <span style={{ opacity: 0.8 }}>
+              {zone.lat.toFixed(5)}, {zone.lng.toFixed(5)}
+            </span>
+            radius <input value={radius} onChange={(e) => setRadius(e.target.value.replace(/\D/g, ""))} style={{ width: 70 }} aria-label="Zone radius metres" /> m
+            <button onClick={() => setZone(null)}>Remove</button>
+          </>
+        ) : (
+          <button
+            disabled={!vehicle.last}
+            onClick={() => vehicle.last && setZone({ lat: vehicle.last.lat, lng: vehicle.last.lng, radiusM: Number(radius) || 300 })}
+            title={vehicle.last ? "" : "The vehicle has not reported yet"}
+          >
+            Centre on the car's position now
+          </button>
+        )}
+      </div>
+      {!zone && vehicle.last && !precise && <div style={{ fontSize: 11.5, color: "var(--negative, #f87171)", margin: "-4px 0 8px 158px" }}>The car's last position is rough (±{Math.round(vehicle.last.accuracyM ?? 0)} m). Set the zone once the phone has a satellite fix, outdoors.</div>}
+      <div style={row}>
+        <span style={{ width: 150 }}>Quiet hours (Nairobi)</span>
+        <select value={quiet ? quiet.from : -1} onChange={(e) => setQuiet(Number(e.target.value) < 0 ? null : { from: Number(e.target.value), to: quiet?.to ?? 5 })} aria-label="Quiet hours from">
+          <option value={-1}>Off</option>
+          {hours.map((h) => (
+            <option key={h} value={h}>
+              {hh(h)}
+            </option>
+          ))}
+        </select>
+        {quiet && (
+          <>
+            to
+            <select value={quiet.to} onChange={(e) => setQuiet({ ...quiet, to: Number(e.target.value) })} aria-label="Quiet hours to">
+              {hours.map((h) => (
+                <option key={h} value={h}>
+                  {hh(h)}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+      </div>
+      <div style={row}>
+        <span style={{ width: 150 }}>Not reporting for</span>
+        <select value={silent} onChange={(e) => setSilent(Number(e.target.value))} aria-label="Not reporting alert">
+          <option value={0}>Off</option>
+          {[15, 30, 60, 120, 360, 720, 1440].map((m) => (
+            <option key={m} value={m}>
+              {m < 60 ? `${m} minutes` : m < 1440 ? `${m / 60} hours` : "1 day"}
+            </option>
+          ))}
+        </select>
+      </div>
+      <button onClick={() => void save()}>Save alerts</button>
+      {msg && <div style={{ marginTop: 6, color: msg.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{msg.text}</div>}
     </div>
   );
 }
