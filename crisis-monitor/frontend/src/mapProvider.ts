@@ -48,3 +48,11 @@ export const maptilerRaster = (style: string, ext: "png" | "jpg" = "png") => `ht
 export const maptilerStyle = (style: string) => `https://api.maptiler.com/maps/${style}/style.json?key=${key ?? ""}`;
 /** MapTiler's elevation tiles (for 3D terrain). */
 export const maptilerTerrain = () => `https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.webp?key=${key ?? ""}`;
+
+/** The MapTiler SDK session of this page, set once the 3D globe (MapTiler's SDK map) exists. The flat map's MapTiler
+ *  tiles carry it too, as the SDK provides it for, so they count towards the same map session. */
+let sessionId: string | null = null;
+export const maptilerSession = () => sessionId;
+export function setMaptilerSession(id: string | null): void {
+  sessionId = id;
+}
