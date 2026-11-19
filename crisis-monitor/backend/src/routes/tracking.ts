@@ -37,7 +37,24 @@ async function ensureTables(db: D1Database) {
       speed_kmh REAL, heading REAL, accuracy_m REAL, altitude_m REAL, ignition INTEGER, battery REAL,
       PRIMARY KEY (vehicle_id, at)
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS vehicle_alerts (
+      id TEXT PRIMARY KEY, vehicle_id TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL,
+      at TEXT NOT NULL, lat REAL, lng REAL, acknowledged_at TEXT
+    )`),
   ]);
+  // Columns added after the first version (alert rules, the last fix's accuracy, the alert state).
+  const cols = new Set((await all<{ name: string }>(db, `PRAGMA table_info(vehicles)`)).map((c) => c.name));
+  const add: [string, string][] = [
+    ["last_accuracy", "REAL"],
+    ["zone_lat", "REAL"],
+    ["zone_lng", "REAL"],
+    ["zone_radius_m", "REAL"],
+    ["quiet_from", "INTEGER"],
+    ["quiet_to", "INTEGER"],
+    ["silent_minutes", "INTEGER"],
+    ["alert_state", "TEXT"],
+  ];
+  for (const [name, type] of add) if (!cols.has(name)) await run(db, `ALTER TABLE vehicles ADD COLUMN ${name} ${type}`);
   tablesReady = true;
 }
 
@@ -206,13 +223,24 @@ async function receive(c: { env: Env; req: { method: string; url: string; query:
       `INSERT OR REPLACE INTO vehicle_positions (vehicle_id, at, lat, lng, speed_kmh, heading, accuracy_m, altitude_m, ignition, battery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [v.id, f.at, f.lat, f.lng, f.speedKmh, f.heading, f.accuracy, f.altitude, f.ignition === null ? null : f.ignition ? 1 : 0, f.battery]
     );
-    // The latest position, unless this one is older (positions stored during a signal gap arrive late).
-    await run(
-      db,
-      `UPDATE vehicles SET last_at = ?, last_lat = ?, last_lng = ?, last_speed_kmh = ?, last_heading = COALESCE(?, last_heading), last_ignition = COALESCE(?, last_ignition), last_battery = COALESCE(?, last_battery)
-       WHERE id = ? AND (last_at IS NULL OR last_at <= ?)`,
-      [f.at, f.lat, f.lng, f.speedKmh, f.heading, f.ignition === null ? null : f.ignition ? 1 : 0, f.battery, v.id, f.at]
-    );
+    // The latest position, unless this one is older (positions stored during a signal gap arrive late). A rough fix
+    // (a phone indoors falling back to Wi-Fi or cell towers) does not move the car off a precise fix from the last
+    // five minutes: the car stays where it was precisely seen, and only the time it was heard from moves on.
+    const prev = await first<VehicleRow>(db, `SELECT * FROM vehicles WHERE id = ?`, [v.id]);
+    if (prev && (!prev.last_at || prev.last_at <= f.at)) {
+      const rough = f.accuracy !== null && f.accuracy > ROUGH_M;
+      const keepPrecise = rough && prev.last_at && prev.last_accuracy !== null && prev.last_accuracy <= ROUGH_M && Date.parse(f.at) - Date.parse(prev.last_at) < 5 * 60_000;
+      if (keepPrecise) {
+        await run(db, `UPDATE vehicles SET last_battery = COALESCE(?, last_battery) WHERE id = ?`, [f.battery, v.id]);
+      } else {
+        await run(
+          db,
+          `UPDATE vehicles SET last_at = ?, last_lat = ?, last_lng = ?, last_speed_kmh = ?, last_heading = COALESCE(?, last_heading), last_ignition = COALESCE(?, last_ignition), last_battery = COALESCE(?, last_battery), last_accuracy = ? WHERE id = ?`,
+          [f.at, f.lat, f.lng, f.speedKmh, f.heading, f.ignition === null ? null : f.ignition ? 1 : 0, f.battery, f.accuracy, v.id]
+        );
+      }
+      await checkRules(db, prev, f);
+    }
     saved++;
   }
   // An unknown token: refused, so a mistyped device id shows as an error in the app rather than silently vanishing.
@@ -222,6 +250,97 @@ async function receive(c: { env: Env; req: { method: string; url: string; query:
   }
   await logAttempt(db, `Saved ${saved} position${saved > 1 ? "s" : ""}`, { ...info, sample: "" });
   return { status: 200 as const, body: "OK" };
+}
+
+/** Beyond this many metres a fix is rough (Wi-Fi or cell towers rather than satellites). */
+const ROUGH_M = 60;
+
+const metres = (aLat: number, aLng: number, bLat: number, bLng: number) => {
+  const r = Math.PI / 180;
+  const x = Math.sin(((bLat - aLat) * r) / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(((bLng - aLng) * r) / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(x));
+};
+/** The hour in Nairobi (the alert rules' quiet hours are local time). */
+const nairobiHour = (iso: string) => Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Nairobi", hour: "numeric", hour12: false }).format(new Date(iso))) % 24;
+const inQuiet = (h: number, from: number, to: number) => (from === to ? false : from < to ? h >= from && h < to : h >= from || h < to);
+
+interface AlertState {
+  speeding?: boolean;
+  outside?: boolean;
+  quietMoving?: string; // the night (date) already alerted
+  silent?: boolean;
+}
+const stateOf = (v: VehicleRow): AlertState => {
+  try {
+    return v.alert_state ? (JSON.parse(v.alert_state) as AlertState) : {};
+  } catch {
+    return {};
+  }
+};
+
+async function raise(db: D1Database, v: VehicleRow, kind: string, severity: "alert" | "info", message: string, lat: number | null, lng: number | null, at: string) {
+  await run(db, `INSERT INTO vehicle_alerts (id, vehicle_id, kind, severity, message, at, lat, lng) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [crypto.randomUUID(), v.id, kind, severity, message, at, lat, lng]);
+  await run(db, `DELETE FROM vehicle_alerts WHERE at < ?`, [new Date(Date.now() - KEEP_DAYS * 864e5).toISOString()]);
+}
+
+/**
+ * A vehicle's alert rules against a new position: over its speed limit; outside its safe zone (left, then back);
+ * moving in its quiet hours (once a night); and reporting again after going silent. Each alert is raised once when
+ * the rule is broken, not on every report, and the zone only judges precise fixes (a rough one could put a parked
+ * car outside its own gate).
+ */
+export async function checkRules(db: D1Database, v: VehicleRow, f: Fix): Promise<void> {
+  const st = stateOf(v);
+  const was = JSON.stringify(st);
+  const kmh = f.speedKmh ?? 0;
+  if (st.silent) {
+    st.silent = false;
+    await raise(db, v, "silent", "info", `${v.name} is reporting again`, f.lat, f.lng, f.at);
+  }
+  if (v.speed_limit_kmh) {
+    if (!st.speeding && kmh > v.speed_limit_kmh) {
+      st.speeding = true;
+      await raise(db, v, "speed", "alert", `${v.name} is speeding: ${Math.round(kmh)} km/h, limit ${v.speed_limit_kmh} km/h`, f.lat, f.lng, f.at);
+    } else if (st.speeding && kmh < v.speed_limit_kmh - 5) st.speeding = false;
+  }
+  if (v.zone_lat !== null && v.zone_lng !== null && v.zone_radius_m && (f.accuracy === null || f.accuracy <= ROUGH_M)) {
+    const d = metres(v.zone_lat, v.zone_lng, f.lat, f.lng);
+    if (!st.outside && d > v.zone_radius_m) {
+      st.outside = true;
+      await raise(db, v, "zone", "alert", `${v.name} has left its safe zone (${Math.round(d)} m from the centre)`, f.lat, f.lng, f.at);
+    } else if (st.outside && d < v.zone_radius_m * 0.9) {
+      st.outside = false;
+      await raise(db, v, "zone", "info", `${v.name} is back inside its safe zone`, f.lat, f.lng, f.at);
+    }
+  }
+  if (v.quiet_from !== null && v.quiet_to !== null && kmh > 8 && inQuiet(nairobiHour(f.at), v.quiet_from, v.quiet_to)) {
+    const night = new Date(Date.parse(f.at) - 12 * 3600_000).toISOString().slice(0, 10);
+    if (st.quietMoving !== night) {
+      st.quietMoving = night;
+      const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+      await raise(db, v, "quiet", "alert", `${v.name} is moving in its quiet hours (${hh(v.quiet_from)}–${hh(v.quiet_to)}): ${Math.round(kmh)} km/h`, f.lat, f.lng, f.at);
+    }
+  }
+  if (JSON.stringify(st) !== was) await run(db, `UPDATE vehicles SET alert_state = ? WHERE id = ?`, [JSON.stringify(st), v.id]);
+}
+
+/** Vehicles silent for longer than their limit: one alert each (run every five minutes from the cron). */
+export async function checkSilentVehicles(db: D1Database): Promise<void> {
+  try {
+    await ensureTables(db);
+    const rows = await all<VehicleRow>(db, `SELECT * FROM vehicles WHERE silent_minutes IS NOT NULL AND last_at IS NOT NULL`);
+    for (const v of rows) {
+      const st = stateOf(v);
+      if (st.silent || !v.silent_minutes || !v.last_at) continue;
+      const mins = (Date.now() - Date.parse(v.last_at)) / 60000;
+      if (mins < v.silent_minutes) continue;
+      st.silent = true;
+      await raise(db, v, "silent", "alert", `${v.name} has not reported for ${Math.round(mins)} minutes`, v.last_lat, v.last_lng, nowIso());
+      await run(db, `UPDATE vehicles SET alert_state = ? WHERE id = ?`, [JSON.stringify(st), v.id]);
+    }
+  } catch {
+    /* tracking never set up */
+  }
 }
 
 trackingRouter.all("/osmand", async (c) => {
@@ -249,15 +368,30 @@ interface VehicleRow {
   last_heading: number | null;
   last_ignition: number | null;
   last_battery: number | null;
+  last_accuracy: number | null;
+  zone_lat: number | null;
+  zone_lng: number | null;
+  zone_radius_m: number | null;
+  quiet_from: number | null;
+  quiet_to: number | null;
+  silent_minutes: number | null;
+  alert_state: string | null;
 }
 const shape = (v: VehicleRow) => ({
   id: v.id,
   name: v.name,
   color: v.color,
   speedLimitKmh: v.speed_limit_kmh,
+  zone: v.zone_lat !== null && v.zone_lng !== null && v.zone_radius_m ? { lat: v.zone_lat, lng: v.zone_lng, radiusM: v.zone_radius_m } : null,
+  quietHours: v.quiet_from !== null && v.quiet_to !== null ? { from: v.quiet_from, to: v.quiet_to } : null,
+  silentMinutes: v.silent_minutes,
+  alerting: (() => {
+    const st = stateOf(v);
+    return !!(st.speeding || st.outside || st.silent);
+  })(),
   createdAt: v.created_at,
   last: v.last_at
-    ? { at: v.last_at, lat: v.last_lat, lng: v.last_lng, speedKmh: v.last_speed_kmh, heading: v.last_heading, ignition: v.last_ignition === null ? null : !!v.last_ignition, battery: v.last_battery }
+    ? { at: v.last_at, lat: v.last_lat, lng: v.last_lng, speedKmh: v.last_speed_kmh, heading: v.last_heading, ignition: v.last_ignition === null ? null : !!v.last_ignition, battery: v.last_battery, accuracyM: v.last_accuracy }
     : null,
 });
 
@@ -278,6 +412,9 @@ const vehicleSchema = z.object({
   name: z.string().trim().min(1).max(60),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).default("#f5a524"),
   speedLimitKmh: z.number().min(10).max(250).nullable().optional(),
+  zone: z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180), radiusM: z.number().min(50).max(500000) }).nullable().optional(),
+  quietHours: z.object({ from: z.number().int().min(0).max(23), to: z.number().int().min(0).max(23) }).nullable().optional(),
+  silentMinutes: z.number().int().min(5).max(10080).nullable().optional(),
 });
 
 authed.post("/vehicles", requireAdmin, async (c) => {
@@ -305,12 +442,32 @@ authed.patch("/vehicles/:id", requireAdmin, async (c) => {
   const parsed = vehicleSchema.partial().safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "Invalid vehicle" }, 400);
   const d = parsed.data;
-  await run(c.env.DB, `UPDATE vehicles SET name = COALESCE(?, name), color = COALESCE(?, color), speed_limit_kmh = ? WHERE id = ?`, [
-    d.name ?? null,
-    d.color ?? null,
-    d.speedLimitKmh === undefined ? row.speed_limit_kmh : d.speedLimitKmh,
-    row.id,
-  ]);
+  const keep = <T,>(next: T | undefined, current: T) => (next === undefined ? current : next);
+  const zone = d.zone === undefined ? (row.zone_lat !== null ? { lat: row.zone_lat, lng: row.zone_lng as number, radiusM: row.zone_radius_m as number } : null) : d.zone;
+  const quiet = d.quietHours === undefined ? (row.quiet_from !== null ? { from: row.quiet_from, to: row.quiet_to as number } : null) : d.quietHours;
+  // Changing a rule starts it afresh (no stale "already alerted" carried over).
+  const st = stateOf(row);
+  if (d.zone !== undefined) delete st.outside;
+  if (d.speedLimitKmh !== undefined) delete st.speeding;
+  if (d.quietHours !== undefined) delete st.quietMoving;
+  if (d.silentMinutes !== undefined) delete st.silent;
+  await run(
+    c.env.DB,
+    `UPDATE vehicles SET name = COALESCE(?, name), color = COALESCE(?, color), speed_limit_kmh = ?, zone_lat = ?, zone_lng = ?, zone_radius_m = ?, quiet_from = ?, quiet_to = ?, silent_minutes = ?, alert_state = ? WHERE id = ?`,
+    [
+      d.name ?? null,
+      d.color ?? null,
+      keep(d.speedLimitKmh, row.speed_limit_kmh),
+      zone?.lat ?? null,
+      zone?.lng ?? null,
+      zone?.radiusM ?? null,
+      quiet?.from ?? null,
+      quiet?.to ?? null,
+      keep(d.silentMinutes, row.silent_minutes),
+      JSON.stringify(st),
+      row.id,
+    ]
+  );
   const [updated] = await visible(c as never, row.id);
   return c.json({ vehicle: shape(updated) });
 });
@@ -339,15 +496,39 @@ authed.get("/vehicles/:id/track", async (c) => {
   const hours = Math.min(168, Math.max(0.25, Number(c.req.query("hours") ?? 6) || 6));
   const from = c.req.query("from") ?? new Date(Date.now() - hours * 3600_000).toISOString();
   const to = c.req.query("to") ?? new Date(Date.now() + 120_000).toISOString();
+  // The trail is drawn from precise fixes only (rough ones zigzag around a parked car).
   const points = await all<{ at: string; lat: number; lng: number; speed_kmh: number | null; heading: number | null; ignition: number | null }>(
     c.env.DB,
-    `SELECT at, lat, lng, speed_kmh, heading, ignition FROM vehicle_positions WHERE vehicle_id = ? AND at >= ? AND at <= ? ORDER BY at LIMIT 20000`,
-    [row.id, from, to]
+    `SELECT at, lat, lng, speed_kmh, heading, ignition FROM vehicle_positions WHERE vehicle_id = ? AND at >= ? AND at <= ? AND (accuracy_m IS NULL OR accuracy_m <= ?) ORDER BY at LIMIT 20000`,
+    [row.id, from, to, ROUGH_M]
   );
   return c.json({
     vehicle: shape(row),
     points: points.map((p) => ({ at: p.at, lat: p.lat, lng: p.lng, speedKmh: p.speed_kmh, heading: p.heading, ignition: p.ignition === null ? null : !!p.ignition })),
   });
+});
+
+/** Vehicle alerts for the vehicles this user may see: the open ones (not yet acknowledged), or all since `after`. */
+authed.get("/alerts", async (c) => {
+  await ensureTables(c.env.DB);
+  const ids = (await visible(c as never)).map((v) => v.id);
+  if (!ids.length) return c.json({ alerts: [] });
+  const after = c.req.query("after");
+  const rows = await all<{ id: string; vehicle_id: string; kind: string; severity: string; message: string; at: string; lat: number | null; lng: number | null; acknowledged_at: string | null }>(
+    c.env.DB,
+    `SELECT * FROM vehicle_alerts WHERE vehicle_id IN (${ids.map(() => "?").join(",")}) AND ${after ? "at > ?" : "acknowledged_at IS NULL"} ORDER BY at DESC LIMIT 50`,
+    [...ids, ...(after ? [after] : [])]
+  );
+  return c.json({
+    alerts: rows.map((r) => ({ id: r.id, vehicleId: r.vehicle_id, kind: r.kind, severity: r.severity, message: r.message, at: r.at, lat: r.lat, lng: r.lng, acknowledged: !!r.acknowledged_at })),
+  });
+});
+
+authed.post("/alerts/:id/ack", async (c) => {
+  await ensureTables(c.env.DB);
+  const ids = (await visible(c as never)).map((v) => v.id);
+  if (ids.length) await run(c.env.DB, `UPDATE vehicle_alerts SET acknowledged_at = ? WHERE id = ? AND vehicle_id IN (${ids.map(() => "?").join(",")})`, [nowIso(), c.req.param("id"), ...ids]);
+  return c.json({ ok: true });
 });
 
 /** The last reports received (for the Settings card), admins only. */
