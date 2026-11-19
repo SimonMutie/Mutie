@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, type MapTilerExtras } from "./api";
 
 /**
  * The MapTiler key for the paid basemaps, fetched once after sign-in (the admin sets it in Settings; it is kept in
@@ -12,10 +12,19 @@ const EVENT = "lens:map-provider";
 
 export const maptilerKey = () => key;
 
+let extras: MapTilerExtras = { customStyle: null, datasets: [] };
+export const maptilerExtras = () => extras;
+/** After the admin saves the custom style or datasets in Settings. */
+export function setMaptilerExtras(next: MapTilerExtras): void {
+  extras = next;
+  window.dispatchEvent(new Event(EVENT));
+}
+
 export async function loadMapProvider(): Promise<void> {
   try {
-    const r = await api.getMapProvider();
+    const [r, x] = await Promise.all([api.getMapProvider(), api.getMapExtras().catch(() => extras)]);
     key = r.maptiler || null;
+    extras = x;
   } catch {
     key = null;
   }
