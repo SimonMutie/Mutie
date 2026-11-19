@@ -11,7 +11,7 @@ import * as XLSX from "xlsx";
 import html2canvas from "html2canvas";
 import { api, type IncidentFilters, type IncidentItem } from "../api";
 import { basemapKeys, resolveBasemap } from "./mapConstants";
-import { useMapTilerKey } from "../mapProvider";
+import { useMapTilerKey, tileOptions } from "../mapProvider";
 import { BASEMAPS, type BasemapKey, IncidentMarker, type PopupAnnotation, totalCasualties, MonthQuickFilter } from "./IncidentsMap";
 import { HeatmapLayer, DEFAULT_HEATMAP_STYLE, incidentHeatPoints, type HeatmapStyle } from "./HeatmapLayer";
 import { HeatmapControls } from "./HeatmapControls";
@@ -273,7 +273,7 @@ export default function IncidentSearch() {
         <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom zoomControl={false}>
           <LeafletMapControls />
           <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
-          <TileLayer url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} />
+          <TileLayer key={BASEMAPS[basemap].url} url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} {...tileOptions(BASEMAPS[basemap].url)} />
 
           {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} style={heatmapStyle} />}
 
