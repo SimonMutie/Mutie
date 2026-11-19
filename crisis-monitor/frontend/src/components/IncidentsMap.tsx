@@ -517,17 +517,10 @@ function isPointNearShapeGeometry(lat: number, lng: number, geometry: GeoJSON.Fe
 }
 
 async function fetchRoadRoute(points: [number, number][]): Promise<{ geometry: [number, number][]; distanceKm: number; durationMin: number }> {
-  // OSRM's public demo server — free, no API key, but not meant for heavy/production
-  // traffic. A production deployment would want a self-hosted OSRM instance or a
-  // paid routing API (Mapbox/ORS/Google) instead.
-  const coordStr = points.map(([lat, lng]) => `${lng},${lat}`).join(";");
-  const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordStr}?overview=full&geometries=geojson`);
-  if (!res.ok) throw new Error(`Routing service returned ${res.status}`);
-  const data = await res.json();
-  if (data.code !== "Ok" || !data.routes?.[0]) throw new Error("No road route could be found through those points");
-  const route = data.routes[0];
-  const geometry: [number, number][] = route.geometry.coordinates.map(([lng, lat]: [number, number]) => [lat, lng]);
-  return { geometry, distanceKm: route.distance / 1000, durationMin: route.duration / 60 };
+  // Through the Lens's own server, which tries several OpenStreetMap routing servers in turn (backend lib/routing.ts).
+  const route = await api.getRoadRoute(points, "driving");
+  const geometry: [number, number][] = route.coordinates.map(([lng, lat]) => [lat, lng]);
+  return { geometry, distanceKm: route.distanceMeters / 1000, durationMin: route.durationSeconds / 60 };
 }
 
 function freehandRoute(points: [number, number][]): { geometry: [number, number][]; distanceKm: number } {
