@@ -46,9 +46,20 @@ async function sha256(text: string): Promise<string> {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** 24 letters and digits, with no dash or symbol, so double-clicking the token selects all of it. */
 function newToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
-  return "lens-" + btoa(String.fromCharCode(...bytes)).replace(/\+/g, "x").replace(/\//g, "y").replace(/=+$/, "");
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "x").replace(/\//g, "y").replace(/=+$/, "");
+}
+
+/** The vehicle for a device id. Earlier tokens began "lens-", which double-click copying leaves off: either works. */
+async function vehicleForToken(db: D1Database, token: string): Promise<{ id: string } | null> {
+  const t = token.trim();
+  for (const candidate of t.startsWith("lens-") ? [t, t.slice(5)] : [t, `lens-${t}`]) {
+    const v = await first<{ id: string }>(db, `SELECT id FROM vehicles WHERE token_hash = ?`, [await sha256(candidate)]);
+    if (v) return v;
+  }
+  return null;
 }
 
 /* ── Receiving positions (no sign-in: the token is the credential) ─────────── */
@@ -187,7 +198,7 @@ async function receive(c: { env: Env; req: { method: string; url: string; query:
   const byToken = new Map<string, { id: string } | null>();
   let saved = 0;
   for (const f of fixes) {
-    if (!byToken.has(f.token)) byToken.set(f.token, await first<{ id: string }>(db, `SELECT id FROM vehicles WHERE token_hash = ?`, [await sha256(f.token)]));
+    if (!byToken.has(f.token)) byToken.set(f.token, await vehicleForToken(db, f.token));
     const v = byToken.get(f.token);
     if (!v) continue;
     await run(
