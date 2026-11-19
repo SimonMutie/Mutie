@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { tileOptions } from "../../mapProvider";
 import LeafletMapControls from "../LeafletMapControls";
 import { CircleMarker, MapContainer, Popup, TileLayer, Tooltip, useMap } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
@@ -132,7 +133,7 @@ function FlatMap({ mode, points, fitKey }: { mode: Exclude<Mode, "3d">; points: 
   return (
     <MapContainer center={[4, 22]} zoom={3} minZoom={2} worldCopyJump scrollWheelZoom zoomControl={false} style={{ height: "100%", width: "100%", background: mode === "map" ? "#dfe5ec" : "#05070d" }}>
       <LeafletMapControls />
-      <TileLayer key={mode} url={tile.url} attribution={tile.attribution} />
+      <TileLayer key={`${mode}:${tile.url}`} url={tile.url} attribution={tile.attribution} {...tileOptions(tile.url)} />
       <KeepSized />
       <FitTo points={points} fitKey={fitKey} />
       <MarkerClusterGroup chunkedLoading maxClusterRadius={46} spiderfyOnMaxZoom showCoverageOnHover={false}>
