@@ -3,12 +3,33 @@ import { Circle, CircleMarker, Popup, useMap, useMapEvents } from "react-leaflet
 import { DomEvent } from "leaflet";
 import { parsePoint, toDecimal, toDms, toMgrs } from "./coords";
 import { elevationAt } from "./terrain";
+import { maptilerKey } from "../mapProvider";
 
 interface LatLngPoint { lat: number; lng: number }
 interface PhotonHit { name: string; detail: string; lat: number; lng: number }
 
-/** Place search through Photon (OpenStreetMap). Only the typed text is sent. Biased towards where the map is looking. */
+/** Place search: MapTiler's geocoding with the key (towns, villages, addresses, landmarks, coordinates), Photon
+ *  (OpenStreetMap) otherwise or if MapTiler fails. Only the typed text is sent. Biased towards where the map is looking. */
 async function searchPlaces(q: string, near: LatLngPoint): Promise<PhotonHit[]> {
+  const key = maptilerKey();
+  if (key) {
+    try {
+      const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(q)}.json?key=${key}&limit=6&proximity=${near.lng.toFixed(3)},${near.lat.toFixed(3)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = (await res.json()) as { features?: { center: [number, number]; text?: string; place_name?: string }[] };
+        const hits = (data.features ?? []).map((f) => {
+          const name = f.text ?? f.place_name ?? "Place";
+          const full = f.place_name ?? "";
+          const detail = full.startsWith(name) ? full.slice(name.length).replace(/^,\s*/, "") : full;
+          return { name, detail, lat: f.center[1], lng: f.center[0] };
+        });
+        if (hits.length) return hits;
+      }
+    } catch {
+      /* fall back to Photon */
+    }
+  }
   const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=5&lat=${near.lat.toFixed(3)}&lon=${near.lng.toFixed(3)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Search returned ${res.status}`);
