@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GeoJSONSource, Map as MapLibreMap, MapLayerMouseEvent } from "maplibre-gl";
 import { Popup as GlPopup } from "maplibre-gl";
-import { Marker, Polyline, Popup, Tooltip } from "react-leaflet";
+import { Circle, Marker, Polyline, Popup, Tooltip } from "react-leaflet";
 import { divIcon } from "leaflet";
 import { api, type Vehicle, type VehiclePoint } from "../api";
 
@@ -27,6 +27,26 @@ export function vehicleSummary(v: Vehicle): string {
   if (v.speedLimitKmh && v.last.speedKmh !== null && v.last.speedKmh > v.speedLimitKmh && !isStale(v)) parts.push(`OVER ${v.speedLimitKmh} km/h LIMIT`);
   return parts.join(" · ");
 }
+
+/** The exact reported position, with how precise the phone said it was. */
+export function vehiclePosition(v: Vehicle): string {
+  if (!v.last) return "";
+  const acc = v.last.accuracyM;
+  return `${v.last.lat.toFixed(6)}, ${v.last.lng.toFixed(6)}${acc !== null ? ` · precise to ±${Math.round(acc)} m${acc > 60 ? " (rough: no satellite fix)" : ""}` : ""}`;
+}
+
+/** A circle of `radiusM` metres as a polygon (for the globe, which has no metre circles). */
+export function circlePolygon(lat: number, lng: number, radiusM: number, steps = 72): [number, number][] {
+  const out: [number, number][] = [];
+  const dLat = radiusM / 111_320;
+  const dLng = radiusM / (111_320 * Math.cos((lat * Math.PI) / 180));
+  for (let i = 0; i <= steps; i++) {
+    const a = (i / steps) * 2 * Math.PI;
+    out.push([lng + dLng * Math.cos(a), lat + dLat * Math.sin(a)]);
+  }
+  return out;
+}
+const ALERT_RED = "#ff3b3b";
 
 /**
  * A car seen from above, nose up, in the vehicle's colour with a white outline: windscreen, roof, rear window,
@@ -97,7 +117,21 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
     const lines = vehicles
       .filter((v) => (tracks[v.id]?.length ?? 0) > 1)
       .map((v) => ({ type: "Feature" as const, properties: { color: colorOf(v) }, geometry: { type: "LineString" as const, coordinates: tracks[v.id].map((p) => [p.lng, p.lat]) } }));
-    return { points: { type: "FeatureCollection" as const, features: points }, lines: { type: "FeatureCollection" as const, features: lines } };
+    // Rings: each safe zone (dashed outline), how precise the latest fix is (faint disc), and a red ring on a vehicle
+    // breaking a rule.
+    const rings = vehicles.flatMap((v) => {
+      const out: { type: "Feature"; properties: { kind: string; color: string }; geometry: { type: "Polygon"; coordinates: [number, number][][] } }[] = [];
+      if (v.zone) out.push({ type: "Feature", properties: { kind: "zone", color: v.color }, geometry: { type: "Polygon", coordinates: [circlePolygon(v.zone.lat, v.zone.lng, v.zone.radiusM)] } });
+      if (v.last && v.last.accuracyM && v.last.accuracyM > 10) out.push({ type: "Feature", properties: { kind: "accuracy", color: colorOf(v) }, geometry: { type: "Polygon", coordinates: [circlePolygon(v.last.lat, v.last.lng, v.last.accuracyM)] } });
+      return out;
+    });
+    const alerting = vehicles.filter((v) => v.alerting && v.last).map((v) => ({ type: "Feature" as const, properties: {}, geometry: { type: "Point" as const, coordinates: [v.last!.lng, v.last!.lat] } }));
+    return {
+      points: { type: "FeatureCollection" as const, features: points },
+      lines: { type: "FeatureCollection" as const, features: lines },
+      rings: { type: "FeatureCollection" as const, features: rings },
+      alerting: { type: "FeatureCollection" as const, features: alerting },
+    };
   }, [vehicles, tracks]);
 
   // Layers added once, on top of everything (vehicles are what you are watching).
@@ -116,7 +150,12 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
     function draw() {
     if (!map) return;
     if (!map.getSource("lens-vehicles")) {
+      map.addSource("lens-vehicle-rings", { type: "geojson", data: data.rings as never });
+      map.addSource("lens-vehicle-alerting", { type: "geojson", data: data.alerting as never });
       map.addSource("lens-vehicle-trails", { type: "geojson", data: data.lines as never });
+      map.addLayer({ id: "lens-vehicle-accuracy", type: "fill", source: "lens-vehicle-rings", filter: ["==", ["get", "kind"], "accuracy"], paint: { "fill-color": ["get", "color"], "fill-opacity": 0.16, "fill-outline-color": ["get", "color"] } });
+      map.addLayer({ id: "lens-vehicle-zone", type: "line", source: "lens-vehicle-rings", filter: ["==", ["get", "kind"], "zone"], paint: { "line-color": ["get", "color"], "line-width": 2, "line-dasharray": [3, 2], "line-opacity": 0.9 } });
+      map.addLayer({ id: "lens-vehicle-alert-ring", type: "circle", source: "lens-vehicle-alerting", paint: { "circle-radius": 22, "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": ALERT_RED, "circle-stroke-width": 3 } });
       map.addSource("lens-vehicles", { type: "geojson", data: data.points as never });
       map.addLayer({ id: "lens-vehicle-trails", type: "line", source: "lens-vehicle-trails", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.75 } });
       map.addLayer({
@@ -137,7 +176,7 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
         const v = id ? byId.current[id] : undefined;
         if (!v || !v.last) return;
         popupRef.current?.remove();
-        popupRef.current = new GlPopup({ closeButton: true, offset: 14 }).setLngLat([v.last.lng, v.last.lat]).setHTML(`<b>${v.name.replace(/</g, "&lt;")}</b><br/>${vehicleSummary(v)}`).addTo(map);
+        popupRef.current = new GlPopup({ closeButton: true, offset: 14 }).setLngLat([v.last.lng, v.last.lat]).setHTML(`<b>${v.name.replace(/</g, "&lt;")}</b><br/>${vehicleSummary(v)}<br/><span style="opacity:.75">${vehiclePosition(v)}</span>`).addTo(map);
       };
       for (const l of ["lens-vehicles-car"]) {
         map.on("click", l, click);
@@ -147,9 +186,27 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
     } else {
       (map.getSource("lens-vehicles") as GeoJSONSource).setData(data.points as never);
       (map.getSource("lens-vehicle-trails") as GeoJSONSource).setData(data.lines as never);
+      (map.getSource("lens-vehicle-rings") as GeoJSONSource).setData(data.rings as never);
+      (map.getSource("lens-vehicle-alerting") as GeoJSONSource).setData(data.alerting as never);
     }
     }
   }, [map, data]);
+  // The red ring on a vehicle breaking a rule pulses.
+  const anyAlert = data.alerting.features.length > 0;
+  useEffect(() => {
+    if (!map || !anyAlert) return;
+    let raf = 0;
+    const tick = (t: number) => {
+      const k = (t % 1400) / 1400;
+      if (map.getLayer("lens-vehicle-alert-ring")) {
+        map.setPaintProperty("lens-vehicle-alert-ring", "circle-radius", 16 + 18 * k);
+        map.setPaintProperty("lens-vehicle-alert-ring", "circle-stroke-opacity", 1 - k);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [map, anyAlert]);
   return null;
 }
 
@@ -161,6 +218,12 @@ export function FlatVehicles({ vehicles, tracks }: { vehicles: Vehicle[]; tracks
       {vehicles.map((v) =>
         (tracks[v.id]?.length ?? 0) > 1 ? <Polyline key={`t-${v.id}`} positions={tracks[v.id].map((p) => [p.lat, p.lng] as [number, number])} pathOptions={{ color: colorOf(v), weight: 3, opacity: 0.75 }} interactive={false} /> : null
       )}
+      {vehicles.map((v) =>
+        v.zone ? <Circle key={`z-${v.id}`} center={[v.zone.lat, v.zone.lng]} radius={v.zone.radiusM} pathOptions={{ color: v.color, weight: 2, dashArray: "6 4", fill: false }} interactive={false} /> : null
+      )}
+      {vehicles.map((v) =>
+        v.last && v.last.accuracyM && v.last.accuracyM > 10 ? <Circle key={`a-${v.id}`} center={[v.last.lat, v.last.lng]} radius={v.last.accuracyM} pathOptions={{ color: colorOf(v), weight: 1, opacity: 0.6, fillColor: colorOf(v), fillOpacity: 0.16 }} interactive={false} /> : null
+      )}
       {vehicles
         .filter((v) => v.last)
         .map((v) => {
@@ -169,7 +232,7 @@ export function FlatVehicles({ vehicles, tracks }: { vehicles: Vehicle[]; tracks
               key={v.id}
               position={[v.last!.lat, v.last!.lng]}
               zIndexOffset={1000}
-              icon={divIcon({ className: "lens-vehicle-icon", html: carHtml(colorOf(v), v.last!.heading ?? 0), iconSize: [18, 32], iconAnchor: [9, 16] })}
+              icon={divIcon({ className: `lens-vehicle-icon${v.alerting ? " lens-vehicle-alerting" : ""}`, html: carHtml(colorOf(v), v.last!.heading ?? 0), iconSize: [18, 32], iconAnchor: [9, 16] })}
             >
               <Tooltip permanent direction="bottom" offset={[0, 16]} className="lens-vehicle-label">
                 {v.name}
@@ -178,6 +241,8 @@ export function FlatVehicles({ vehicles, tracks }: { vehicles: Vehicle[]; tracks
                 <b>{v.name}</b>
                 <br />
                 {vehicleSummary(v)}
+                <br />
+                <span style={{ opacity: 0.75 }}>{vehiclePosition(v)}</span>
               </Popup>
             </Marker>
           );
