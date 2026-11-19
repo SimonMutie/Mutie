@@ -1,5 +1,8 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
 import MapBrand, { brandMapImage } from "./MapBrand";
+import { roadRouteWithFallback } from "../maptilerServices";
+import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
+import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
 import { MarketsPanel } from "./MarketsPanel";
 import { EconomyPanel } from "./EconomyPanel";
 import { STANDING_HOTSPOTS } from "../standingHotspots";
@@ -34,6 +37,9 @@ import {
   CloudRain,
   Wind,
   Thermometer,
+  Eye,
+  Waves,
+  Trees,
   X,
   Cloud,
   WifiOff,
@@ -144,7 +150,7 @@ import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
 import AfrIntelPanel from "./AfrIntelPanel";
 import StrategicAnalysesPanel from "./StrategicAnalysesPanel";
-import { maptilerKey, useMapTilerKey, tileOptions } from "../mapProvider";
+import { maptilerExtras, maptilerKey, useMapTilerKey, tileOptions } from "../mapProvider";
 import { BASEMAP_IDS, basemapStyleId, liveBasemap, liveBasemaps, type BasemapId } from "../liveBasemaps";
 import type { AfrIntelRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
@@ -155,7 +161,7 @@ import { AIRCRAFT_LAYER_KEYS } from "./planeIcon";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
-import { divIcon } from "leaflet";
+import { circleMarker, divIcon } from "leaflet";
 import { dotRadius, DOT, warningIconUrl, WARNING_SIZE, type EscalationLevel } from "./mapSymbols";
 import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
@@ -1333,6 +1339,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [showDayNight, setShowDayNight] = useState(false);
   const [showBuildings, setShowBuildings] = useState(false);
   const [showTerrain, setShowTerrain] = useState(false);
+  // MapTiler overlays on the globe (sea-floor depth, land cover) and the admin's own MapTiler datasets (both views).
+  const [globeOverlays, setGlobeOverlays] = useState<GlobeOverlayState>({ seaDepth: false, landcover: false });
+  const [shownDatasets, setShownDatasets] = useState<string[]>([]);
+  const { key: liveMtKey } = useMapTilerKey();
+  const datasetsShown = useMemo(() => (liveMtKey ? maptilerExtras().datasets.filter((d) => shownDatasets.includes(d.id)) : []), [liveMtKey, shownDatasets]);
   // MapTiler Weather on the globe (GlobeWeather.tsx), and the globe's label language. The language is remembered.
   const [globeWeather, setGlobeWeather] = useState<GlobeWeatherKind | null>(null);
   const [labelLang, setLabelLangState] = useState<string>(() => {
@@ -2275,8 +2286,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     let cancelled = false;
     setRouteLoading(true);
     setRouteError(null);
-    api
-      .getLiveRoute(routeOrigin, routeDestination, routeMode)
+    // MapTiler's routing first (with the key), then the Lens's own route service.
+    roadRouteWithFallback([routeOrigin, routeDestination], routeMode, () => api.getLiveRoute(routeOrigin, routeDestination, routeMode))
       .then((result) => {
         if (cancelled) return;
         setRouteResult(result);
@@ -2613,6 +2624,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <FlatMap
             basemap={basemap}
             onReady={setFlatMap}
+            datasets={datasetsShown}
             points={flatMapPoints}
             sharedPaths={sharedPaths}
             territoryChanges={territoryChangePolygons}
@@ -2658,6 +2670,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 
         {mapMode === "3d" && <EditablePoints3D map={globeMap} items={editPoints} onMove={moveEditPoint} />}
         <MapBrand style={{ bottom: enabled["active-conflicts"] ? 40 : 10 }} />
+        <GlobeFocus map={globeMap} on={basemap === "lens"} />
+        <GlobeOverlays map={globeMap} state={globeOverlays} />
+        <GlobeDatasets map={globeMap} datasets={datasetsShown} />
         {globeWeather && <GlobeWeather map={globeMap} kind={globeWeather} visible={mapMode === "3d"} onClose={() => setGlobeWeather(null)} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
@@ -2781,6 +2796,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 }}
                 labelLang={labelLang}
                 onLabelLang={setLabelLang}
+                overlays={globeOverlays}
+                onOverlays={(o) => {
+                  setGlobeOverlays(o);
+                  if (o.seaDepth || o.landcover) setMapMode("3d");
+                }}
+                shownDatasets={shownDatasets}
+                onToggleDataset={(id) => setShownDatasets((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))}
                 onToggleNav={() => setShowNav((v) => !v)}
                 onToggleFirePanel={() => {
                   // The timeline needs the fire layer, so turning the panel on turns the layer on too.
@@ -3046,6 +3068,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
 function FlatMap({
   basemap,
   onReady,
+  datasets,
   points,
   sharedPaths,
   territoryChanges,
@@ -3087,6 +3110,8 @@ function FlatMap({
   onIncidentDeleted,
 }: {
   basemap: BasemapId;
+  /** The admin's MapTiler datasets to draw. */
+  datasets: MapTilerDataset[];
   /** Hands out the Leaflet map, so the view can be carried across when switching to the 3D globe. */
   onReady?: (map: LeafletMap) => void;
   points: GlobePoint[];
@@ -3199,6 +3224,10 @@ function FlatMap({
       <MapCompass />
       <TileLayer key={tile.leafletUrl} url={tile.leafletUrl} attribution={tile.attribution} {...tileOptions(tile.leafletUrl)} />
       {onReady && <FlatMapReady onReady={onReady} />}
+      {basemap === "lens" && <FlatLensFocus />}
+      {datasets.map((d) => (
+        <FlatDataset key={d.id} dataset={d} />
+      ))}
       <RegionFly region={regionView} seq={regionSeq} />
       <ViewPermalink date={imagery.key !== "none" ? imageryDay : fireDate ?? null} layer={imagery.key} />
       <MapSearchPanel>
@@ -3363,6 +3392,51 @@ function FlatMap({
   );
 }
 
+/** The Lens basemap's focus on the flat map: the world outside Africa and the Middle East dimmed, the region outlined. */
+function FlatLensFocus() {
+  const [focus, setFocus] = useState<LensFocus | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadLensFocus().then((f) => live && setFocus(f));
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (!focus) return null;
+  return (
+    <>
+      <GeoJSON data={focus.mask as never} interactive={false} style={{ stroke: false, fillColor: LENS_FOCUS_STYLE.maskColor, fillOpacity: LENS_FOCUS_STYLE.maskOpacity }} />
+      <GeoJSON data={focus.outline as never} interactive={false} style={{ color: LENS_FOCUS_STYLE.line, opacity: LENS_FOCUS_STYLE.lineOpacity, weight: 1.1 }} />
+    </>
+  );
+}
+
+/** One of the admin's MapTiler datasets on the flat map, with each feature's name on hover. */
+function FlatDataset({ dataset }: { dataset: MapTilerDataset }) {
+  const [fc, setFc] = useState<GeoJSON.FeatureCollection | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadDataset(dataset.id).then((d) => live && setFc(d), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [dataset.id]);
+  if (!fc) return null;
+  return (
+    <GeoJSON
+      key={dataset.color}
+      data={fc}
+      style={{ color: dataset.color, weight: 1.6, fillColor: dataset.color, fillOpacity: 0.22 }}
+      pointToLayer={(_f, latlng) => circleMarker(latlng, { radius: 4.5, color: "rgba(0,0,0,0.45)", weight: 1, fillColor: dataset.color, fillOpacity: 0.95 })}
+      onEachFeature={(f, layer) => {
+        const p = (f.properties ?? {}) as Record<string, unknown>;
+        const name = p.name ?? p.Name ?? p.title ?? p.label;
+        layer.bindTooltip(`${dataset.label}${name ? `: ${String(name)}` : ""}`, { sticky: true });
+      }}
+    />
+  );
+}
+
 /** Hands the Leaflet map out once it exists. */
 function FlatMapReady({ onReady }: { onReady: (map: LeafletMap) => void }) {
   const map = useMap();
@@ -3437,6 +3511,10 @@ function LayerPanel({
   onWeather,
   labelLang,
   onLabelLang,
+  overlays,
+  onOverlays,
+  shownDatasets,
+  onToggleDataset,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3485,6 +3563,10 @@ function LayerPanel({
   onWeather?: (w: GlobeWeatherKind | null) => void;
   labelLang?: string;
   onLabelLang?: (l: string) => void;
+  overlays?: GlobeOverlayState;
+  onOverlays?: (o: GlobeOverlayState) => void;
+  shownDatasets?: string[];
+  onToggleDataset?: (id: string) => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3564,7 +3646,7 @@ function LayerPanel({
             onToggleBuildings={onToggleBuildings!}
             onToggleTerrain={onToggleTerrain!}
           />
-          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} />}
+          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} overlays={overlays} onOverlays={onOverlays} shownDatasets={shownDatasets} onToggleDataset={onToggleDataset} />}
         </div>
       )}
     </div>
@@ -4155,6 +4237,10 @@ const VIEWS: { key: MapMode; label: string; hint: string; icon: LucideIcon }[] =
   { key: "2d", label: "Flat map", hint: "Imagery comparison, regions, analysis tools", icon: Square },
 ];
 const BASEMAP_ICON: Record<BasemapId, LucideIcon> = {
+  lens: Eye,
+  ocean: Waves,
+  landscape: Trees,
+  muted: Square,
   dark: Square,
   streets: MapIcon,
   "satellite-labels": Satellite,
@@ -4174,7 +4260,7 @@ const LABEL_LANGS: { key: string; label: string }[] = [
   { key: "am", label: "Amharic" },
   { key: "name", label: "Local names" },
 ];
-function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, weather, onWeather, labelLang, onLabelLang }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void; weather: GlobeWeatherKind | null; onWeather?: (w: GlobeWeatherKind | null) => void; labelLang?: string; onLabelLang?: (l: string) => void }) {
+function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, weather, onWeather, labelLang, onLabelLang, overlays, onOverlays, shownDatasets, onToggleDataset }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void; weather: GlobeWeatherKind | null; onWeather?: (w: GlobeWeatherKind | null) => void; labelLang?: string; onLabelLang?: (l: string) => void; overlays?: GlobeOverlayState; onOverlays?: (o: GlobeOverlayState) => void; shownDatasets?: string[]; onToggleDataset?: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { key: mtKey } = useMapTilerKey();
@@ -4188,7 +4274,7 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
   }, [open]);
   const view = VIEWS.find((t) => t.key === mode) ?? VIEWS[0];
   const bases = liveBasemaps();
-  const base = bases.find((b) => b.id === basemap) ?? bases[0];
+  const base = bases.find((b) => b.id === basemap) ?? bases.find((b) => b.id === "dark") ?? bases[0];
   const Icon = mode === "3d" ? Globe : BASEMAP_ICON[base.id];
   const row = (on: boolean, icon: LucideIcon, label: string, hint: string, onClick: () => void, key: string) => {
     const I = icon;
@@ -4242,6 +4328,25 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
                     onWeather(w.key);
                     setOpen(false);
                   }, `wx-${w.key}`)
+                )}
+              </div>
+            </div>
+          )}
+          {mtKey && overlays && onOverlays && (
+            <div style={{ marginTop: 10 }}>
+              {heading("Overlays · 3D globe")}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {row(overlays.seaDepth, Waves, "Sea-floor depth", "Depth bands and contours, metres", () => onOverlays({ ...overlays, seaDepth: !overlays.seaDepth }), "ov-depth")}
+                {row(overlays.landcover, Trees, "Land cover", "Forest, trees, scrub, grass, crops", () => onOverlays({ ...overlays, landcover: !overlays.landcover }), "ov-cover")}
+              </div>
+            </div>
+          )}
+          {mtKey && shownDatasets && onToggleDataset && maptilerExtras().datasets.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              {heading("Your MapTiler data")}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {maptilerExtras().datasets.map((d) =>
+                  row(shownDatasets.includes(d.id), Layers, d.label, shownDatasets.includes(d.id) ? "Shown on both views" : "Click to show", () => onToggleDataset(d.id), `ds-${d.id}`)
                 )}
               </div>
             </div>
@@ -4771,7 +4876,7 @@ function RoutePlannerPanel({
         />
       )}
       <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
-        Road routes from OpenStreetMap data, through several routing servers in turn, so one being down does not stop routing.
+        Road routes from MapTiler (with its key), otherwise from OpenStreetMap data through several routing servers in turn, so one being down does not stop routing.
       </div>
       {result && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
