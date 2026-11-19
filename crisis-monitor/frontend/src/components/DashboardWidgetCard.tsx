@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
+import MapBrand from "./MapBrand";
 import L from "leaflet";
 import { ACTOR_CATEGORIES, classifyIncident, pinSvg } from "./actorTheme";
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -4657,6 +4658,7 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
         {mode === "heatmap" ? <HeatmapLayer points={heat} style={{ gradient: "classic", radius: 16, blur: 14, max: Math.min(30, Math.max(1.5, heat.length / 120)), fade: 0.1 }} /> : <FastMarkers points={points} />}
         {list.length > 0 && !widget.mapView && <FitIncidents incidents={list} />}
         <LeafletMapControls wheelOnClick />
+        <MapBrand small style={{ left: 6, bottom: 6 }} />
         {onUpdate && (
           <>
             <MapViewLockButton locked={!!widget.mapView} onLock={(view) => onUpdate({ mapView: view })} onUnlock={() => onUpdate({ mapView: undefined })} />
