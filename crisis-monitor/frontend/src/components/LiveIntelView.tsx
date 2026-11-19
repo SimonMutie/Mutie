@@ -4507,7 +4507,7 @@ function RoutePlannerPanel({
         />
       )}
       <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
-        Routed via OSRM's free public demo server — fine for occasional use, not a guaranteed production service.
+        Road routes from OpenStreetMap data, through several routing servers in turn, so one being down does not stop routing.
       </div>
       {result && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 6, borderTop: "1px solid rgba(212,175,55,0.12)" }}>
