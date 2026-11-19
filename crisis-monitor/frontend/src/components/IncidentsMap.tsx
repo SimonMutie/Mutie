@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
+import MapBrand from "./MapBrand";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LeafletMapControls from "./LeafletMapControls";
 import { MapContainer, TileLayer, CircleMarker, Marker, Popup, Polyline, Polygon, GeoJSON as GeoJSONLayer, ZoomControl, ScaleControl, useMapEvents, useMap } from "react-leaflet";
@@ -2020,6 +2021,7 @@ export default function IncidentsMap({ incidents: initialIncidents, isAdmin, onN
         <TileLayer key={BASEMAPS[basemap].url} url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} {...tileOptions(BASEMAPS[basemap].url)} />
         <ClickCapture active={drafting} onClick={addDraftPoint} />
         <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
+        <MapBrand style={{ bottom: compassEnabled ? 86 : scaleEnabled ? 34 : 10 }} />
         <MapInstanceCapture onReady={setMapInstance} />
         {focusedRoute && <FitBounds positions={focusedRoute.geometry} />}
         {focusedShape && <FitBounds positions={shapeGeometryToPositions(focusedShape.geometry)} />}
