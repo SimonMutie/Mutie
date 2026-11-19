@@ -1,6 +1,7 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
 import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
+import { FlatVehicles, GlobeVehicles, useVehicles, vehicleSummary } from "./vehicles";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
 import { MarketsPanel } from "./MarketsPanel";
@@ -40,6 +41,7 @@ import {
   Eye,
   Waves,
   Trees,
+  Car,
   X,
   Cloud,
   WifiOff,
@@ -111,6 +113,8 @@ import {
   type LiveLayerFeature,
   type IssPosition,
   type RouteProfile,
+  type Vehicle,
+  type VehiclePoint,
   type RouteResult,
   type SpaceWeather,
   type CyberThreats,
@@ -1344,6 +1348,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [shownDatasets, setShownDatasets] = useState<string[]>([]);
   const { key: liveMtKey } = useMapTilerKey();
   const datasetsShown = useMemo(() => (liveMtKey ? maptilerExtras().datasets.filter((d) => shownDatasets.includes(d.id)) : []), [liveMtKey, shownDatasets]);
+  // Tracked vehicles (vehicles.tsx): shown by default, with their trail over the chosen hours.
+  const [showVehicles, setShowVehicles] = useState(true);
+  const [trailHours, setTrailHours] = useState(6);
+  const { vehicles, tracks: vehicleTracks } = useVehicles(showVehicles, trailHours);
   // MapTiler Weather on the globe (GlobeWeather.tsx), and the globe's label language. The language is remembered.
   const [globeWeather, setGlobeWeather] = useState<GlobeWeatherKind | null>(null);
   const [labelLang, setLabelLangState] = useState<string>(() => {
@@ -2625,6 +2633,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             basemap={basemap}
             onReady={setFlatMap}
             datasets={datasetsShown}
+            vehicles={vehicles}
+            vehicleTracks={vehicleTracks}
             points={flatMapPoints}
             sharedPaths={sharedPaths}
             territoryChanges={territoryChangePolygons}
@@ -2673,6 +2683,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeFocus map={globeMap} on={basemap === "lens"} />
         <GlobeOverlays map={globeMap} state={globeOverlays} />
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
+        <GlobeVehicles map={globeMap} vehicles={vehicles} tracks={vehicleTracks} />
         {globeWeather && <GlobeWeather map={globeMap} kind={globeWeather} visible={mapMode === "3d"} onClose={() => setGlobeWeather(null)} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
@@ -2800,6 +2811,16 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 onOverlays={(o) => {
                   setGlobeOverlays(o);
                   if (o.seaDepth || o.landcover) setMapMode("3d");
+                }}
+                vehicles={vehicles}
+                showVehicles={showVehicles}
+                onShowVehicles={setShowVehicles}
+                trailHours={trailHours}
+                onTrailHours={setTrailHours}
+                onLocateVehicle={(v) => {
+                  if (!v.last) return;
+                  if (mapMode === "3d") globeMap?.flyTo({ center: [v.last.lng, v.last.lat], zoom: Math.max(globeMap.getZoom(), 13) });
+                  else flatMap?.flyTo([v.last.lat, v.last.lng], Math.max(flatMap.getZoom(), 14));
                 }}
                 shownDatasets={shownDatasets}
                 onToggleDataset={(id) => setShownDatasets((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]))}
@@ -3069,6 +3090,8 @@ function FlatMap({
   basemap,
   onReady,
   datasets,
+  vehicles,
+  vehicleTracks,
   points,
   sharedPaths,
   territoryChanges,
@@ -3112,6 +3135,9 @@ function FlatMap({
   basemap: BasemapId;
   /** The admin's MapTiler datasets to draw. */
   datasets: MapTilerDataset[];
+  /** Tracked vehicles and their trails. */
+  vehicles: Vehicle[];
+  vehicleTracks: Record<string, VehiclePoint[]>;
   /** Hands out the Leaflet map, so the view can be carried across when switching to the 3D globe. */
   onReady?: (map: LeafletMap) => void;
   points: GlobePoint[];
@@ -3228,6 +3254,7 @@ function FlatMap({
       {datasets.map((d) => (
         <FlatDataset key={d.id} dataset={d} />
       ))}
+      <FlatVehicles vehicles={vehicles} tracks={vehicleTracks} />
       <RegionFly region={regionView} seq={regionSeq} />
       <ViewPermalink date={imagery.key !== "none" ? imageryDay : fireDate ?? null} layer={imagery.key} />
       <MapSearchPanel>
@@ -3515,6 +3542,12 @@ function LayerPanel({
   onOverlays,
   shownDatasets,
   onToggleDataset,
+  vehicles,
+  showVehicles,
+  onShowVehicles,
+  trailHours,
+  onTrailHours,
+  onLocateVehicle,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3567,6 +3600,12 @@ function LayerPanel({
   onOverlays?: (o: GlobeOverlayState) => void;
   shownDatasets?: string[];
   onToggleDataset?: (id: string) => void;
+  vehicles?: Vehicle[];
+  showVehicles?: boolean;
+  onShowVehicles?: (on: boolean) => void;
+  trailHours?: number;
+  onTrailHours?: (h: number) => void;
+  onLocateVehicle?: (v: Vehicle) => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3646,7 +3685,7 @@ function LayerPanel({
             onToggleBuildings={onToggleBuildings!}
             onToggleTerrain={onToggleTerrain!}
           />
-          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} overlays={overlays} onOverlays={onOverlays} shownDatasets={shownDatasets} onToggleDataset={onToggleDataset} />}
+          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} overlays={overlays} onOverlays={onOverlays} shownDatasets={shownDatasets} onToggleDataset={onToggleDataset} vehicles={vehicles} showVehicles={showVehicles} onShowVehicles={onShowVehicles} trailHours={trailHours} onTrailHours={onTrailHours} onLocateVehicle={onLocateVehicle} />}
         </div>
       )}
     </div>
@@ -4260,7 +4299,7 @@ const LABEL_LANGS: { key: string; label: string }[] = [
   { key: "am", label: "Amharic" },
   { key: "name", label: "Local names" },
 ];
-function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, weather, onWeather, labelLang, onLabelLang, overlays, onOverlays, shownDatasets, onToggleDataset }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void; weather: GlobeWeatherKind | null; onWeather?: (w: GlobeWeatherKind | null) => void; labelLang?: string; onLabelLang?: (l: string) => void; overlays?: GlobeOverlayState; onOverlays?: (o: GlobeOverlayState) => void; shownDatasets?: string[]; onToggleDataset?: (id: string) => void }) {
+function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, weather, onWeather, labelLang, onLabelLang, overlays, onOverlays, shownDatasets, onToggleDataset, vehicles, showVehicles, onShowVehicles, trailHours, onTrailHours, onLocateVehicle }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void; weather: GlobeWeatherKind | null; onWeather?: (w: GlobeWeatherKind | null) => void; labelLang?: string; onLabelLang?: (l: string) => void; overlays?: GlobeOverlayState; onOverlays?: (o: GlobeOverlayState) => void; shownDatasets?: string[]; onToggleDataset?: (id: string) => void; vehicles?: Vehicle[]; showVehicles?: boolean; onShowVehicles?: (on: boolean) => void; trailHours?: number; onTrailHours?: (h: number) => void; onLocateVehicle?: (v: Vehicle) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { key: mtKey } = useMapTilerKey();
@@ -4329,6 +4368,34 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
                     setOpen(false);
                   }, `wx-${w.key}`)
                 )}
+              </div>
+            </div>
+          )}
+          {onShowVehicles && (
+            <div style={{ marginTop: 10 }}>
+              {heading("Vehicles")}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {row(!!showVehicles, Car, "Show vehicles", "Live positions and trails, both views", () => onShowVehicles(!showVehicles), "veh-on")}
+                {showVehicles && onTrailHours && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: HUD.textMuted, padding: "2px 6px" }}>
+                    Trail
+                    <select value={trailHours} onChange={(e) => onTrailHours(Number(e.target.value))} style={{ background: "rgba(255,255,255,0.05)", color: HUD.textPrimary, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 6, fontFamily: "inherit", fontSize: 11 }} aria-label="Trail length">
+                      {[1, 6, 24, 72, 168].map((h) => (
+                        <option key={h} value={h} style={{ background: "#0b1220" }}>
+                          {h < 24 ? `${h} h` : `${h / 24} days`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {showVehicles &&
+                  (vehicles ?? []).map((v) =>
+                    row(false, Car, v.name, vehicleSummary(v), () => {
+                      onLocateVehicle?.(v);
+                      setOpen(false);
+                    }, `veh-${v.id}`)
+                  )}
+                {showVehicles && (vehicles ?? []).length === 0 && <div style={{ fontSize: 10.5, color: HUD.textMuted, padding: "2px 6px" }}>No vehicles yet. Add one in Settings, Vehicles.</div>}
               </div>
             </div>
           )}
