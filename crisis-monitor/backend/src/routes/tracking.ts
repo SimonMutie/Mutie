@@ -29,6 +29,7 @@ async function ensureTables(db: D1Database) {
       created_at TEXT NOT NULL,
       last_at TEXT, last_lat REAL, last_lng REAL, last_speed_kmh REAL, last_heading REAL, last_ignition INTEGER, last_battery REAL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS tracking_log (at TEXT NOT NULL, outcome TEXT NOT NULL, method TEXT, content_type TEXT, user_agent TEXT, device TEXT, sample TEXT)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS vehicle_positions (
       vehicle_id TEXT NOT NULL,
       at TEXT NOT NULL,
@@ -144,16 +145,45 @@ export function parseFixes(query: Record<string, string>, form: Record<string, u
 
 const validFix = (f: Fix) => Math.abs(f.lat) <= 90 && Math.abs(f.lng) <= 180 && !(f.lat === 0 && f.lng === 0);
 
-async function receive(c: { env: Env; req: { query: () => Record<string, string>; header: (n: string) => string | undefined; parseBody: () => Promise<Record<string, unknown>>; json: () => Promise<unknown> } }) {
+/** A device id shortened for the log, so the log never holds a usable token. */
+const masked = (t: string) => (t.length > 10 ? `${t.slice(0, 9)}…` : t ? "(short id)" : "(none)");
+
+/** Every attempt to report, with what went wrong, for the Settings card (the last 50 are kept). */
+async function logAttempt(db: D1Database, outcome: string, info: { method: string; type: string; ua: string; device: string; sample: string }) {
+  try {
+    await db.batch([
+      db.prepare(`INSERT INTO tracking_log (at, outcome, method, content_type, user_agent, device, sample) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(nowIso(), outcome, info.method, info.type.slice(0, 80), info.ua.slice(0, 120), info.device, info.sample.slice(0, 400)),
+      db.prepare(`DELETE FROM tracking_log WHERE rowid NOT IN (SELECT rowid FROM tracking_log ORDER BY at DESC LIMIT 50)`),
+    ]);
+  } catch {
+    /* the log is a help, never a reason to refuse a position */
+  }
+}
+
+async function receive(c: { env: Env; req: { method: string; url: string; query: () => Record<string, string>; header: (n: string) => string | undefined; text: () => Promise<string> } }) {
   const db = c.env.DB;
   await ensureTables(db);
   const type = c.req.header("content-type") ?? "";
+  const raw = c.req.method === "POST" ? await c.req.text().catch(() => "") : "";
   let form: Record<string, unknown> | null = null;
   let json: unknown = null;
-  if (type.includes("json")) json = await c.req.json().catch(() => null);
-  else if (type.includes("form")) form = await c.req.parseBody().catch(() => null);
-  const fixes = parseFixes(c.req.query(), form, json).filter(validFix).slice(0, 500);
-  if (!fixes.length) return { status: 400 as const, body: "No position in the request" };
+  const trimmed = raw.trim();
+  // By what the body is, not only what it says it is (some apps send JSON without saying so).
+  if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    try {
+      json = JSON.parse(trimmed);
+    } catch {
+      json = null;
+    }
+  } else if (trimmed.includes("=")) form = Object.fromEntries(new URLSearchParams(trimmed));
+  const query = c.req.query();
+  const fixes = parseFixes(query, form, json).filter(validFix).slice(0, 500);
+  const deviceOf = () => masked(String(query.id ?? form?.id ?? (json as Record<string, unknown> | null)?.device_id ?? ""));
+  const info = { method: c.req.method, type, ua: c.req.header("user-agent") ?? "", device: deviceOf(), sample: (new URL(c.req.url).search.replace(/id=[^&]+/, "id=…") + " " + raw.replace(/("device_id"\s*:\s*")[^"]+/, "$1…").replace(/(^|&)id=[^&]+/, "$1id=…")).trim() };
+  if (!fixes.length) {
+    await logAttempt(db, "No position found in the report", info);
+    return { status: 400 as const, body: "No position in the request" };
+  }
   const byToken = new Map<string, { id: string } | null>();
   let saved = 0;
   for (const f of fixes) {
@@ -175,7 +205,11 @@ async function receive(c: { env: Env; req: { query: () => Record<string, string>
     saved++;
   }
   // An unknown token: refused, so a mistyped device id shows as an error in the app rather than silently vanishing.
-  if (!saved) return { status: 401 as const, body: "Unknown device id" };
+  if (!saved) {
+    await logAttempt(db, "Unknown device id: the token does not match any vehicle", info);
+    return { status: 401 as const, body: "Unknown device id" };
+  }
+  await logAttempt(db, `Saved ${saved} position${saved > 1 ? "s" : ""}`, { ...info, sample: "" });
   return { status: 200 as const, body: "OK" };
 }
 
@@ -303,6 +337,13 @@ authed.get("/vehicles/:id/track", async (c) => {
     vehicle: shape(row),
     points: points.map((p) => ({ at: p.at, lat: p.lat, lng: p.lng, speedKmh: p.speed_kmh, heading: p.heading, ignition: p.ignition === null ? null : !!p.ignition })),
   });
+});
+
+/** The last reports received (for the Settings card), admins only. */
+authed.get("/log", requireAdmin, async (c) => {
+  await ensureTables(c.env.DB);
+  const rows = await all<{ at: string; outcome: string; method: string; content_type: string; user_agent: string; device: string; sample: string }>(c.env.DB, `SELECT * FROM tracking_log ORDER BY at DESC LIMIT 20`);
+  return c.json({ log: rows.map((r) => ({ at: r.at, outcome: r.outcome, method: r.method, contentType: r.content_type, userAgent: r.user_agent, device: r.device, sample: r.sample })) });
 });
 
 trackingRouter.route("/", authed);
