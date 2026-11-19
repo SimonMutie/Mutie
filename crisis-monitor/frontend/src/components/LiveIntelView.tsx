@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
+import MapBrand, { brandMapImage } from "./MapBrand";
 import { MarketsPanel } from "./MarketsPanel";
 import { EconomyPanel } from "./EconomyPanel";
 import { STANDING_HOTSPOTS } from "../standingHotspots";
@@ -1940,11 +1941,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     };
     if (mapMode === "3d" && globeMap) {
       globeMap.once("render", () => {
+        let raw: string;
         try {
-          download(globeMap.getCanvas().toDataURL("image/png"));
+          raw = globeMap.getCanvas().toDataURL("image/png");
         } catch {
           window.alert("The map image could not be saved (a basemap without image permissions is shown).");
+          return;
         }
+        brandMapImage(raw).then(download, () => download(raw));
       });
       globeMap.triggerRepaint();
       return;
@@ -1958,7 +1962,18 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     const size = flatMap.getSize();
     const w = Math.min(2048, Math.round(size.x / 2)), h = Math.min(2048, Math.round(size.y / 2));
     const style = basemapStyleId(basemap);
-    window.open(`https://api.maptiler.com/maps/${style}/static/${c.lng.toFixed(5)},${c.lat.toFixed(5)},${Math.max(0, flatMap.getZoom() - 1).toFixed(2)}/${w}x${h}@2x.png?key=${key}`, "_blank", "noopener");
+    const url = `https://api.maptiler.com/maps/${style}/static/${c.lng.toFixed(5)},${c.lat.toFixed(5)},${Math.max(0, flatMap.getZoom() - 1).toFixed(2)}/${w}x${h}@2x.png?key=${key}`;
+    // Fetched and branded like the globe's; opened as it is if that fails.
+    fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => new Promise<string>((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result));
+        fr.readAsDataURL(b);
+      }))
+      .then(brandMapImage)
+      .then(download)
+      .catch(() => window.open(url, "_blank", "noopener"));
   }, [mapMode, globeMap, flatMap, basemap]);
   // Keyboard shortcuts, as the reference platform has: F flights, E earthquakes, S satellites, D day/night, O opens AfrIntel, Esc closes the side panels.
   useEffect(() => {
@@ -2642,6 +2657,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         </div>
 
         {mapMode === "3d" && <EditablePoints3D map={globeMap} items={editPoints} onMove={moveEditPoint} />}
+        <MapBrand style={{ bottom: enabled["active-conflicts"] ? 40 : 10 }} />
         {globeWeather && <GlobeWeather map={globeMap} kind={globeWeather} visible={mapMode === "3d"} onClose={() => setGlobeWeather(null)} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
