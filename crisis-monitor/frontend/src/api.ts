@@ -2215,6 +2215,7 @@ export const api = {
   getMapExtras: () => req<MapTilerExtras>("/api/map-settings/provider/extras"),
   getVehicles: () => req<{ vehicles: Vehicle[] }>("/api/tracking/vehicles"),
   addVehicle: (v: { name: string; color: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle; token: string }>("/api/tracking/vehicles", { method: "POST", body: JSON.stringify(v) }),
+  getVehicleRecent: (id: string) => req<{ shown: Vehicle["last"]; points: { at: string; lat: number; lng: number; accuracyM: number | null; speedKmh: number | null }[] }>(`/api/tracking/vehicles/${id}/recent`),
   getVehicleAlerts: () => req<{ alerts: VehicleAlert[] }>("/api/tracking/alerts"),
   ackVehicleAlert: (id: string) => req<{ ok: boolean }>(`/api/tracking/alerts/${id}/ack`, { method: "POST" }),
   updateVehicle: (id: string, v: VehicleRulesUpdate) => req<{ vehicle: Vehicle }>(`/api/tracking/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(v) }),
