@@ -2213,6 +2213,12 @@ export const api = {
   getMapProvider: () => req<{ maptiler: string | null; fromEnv: boolean; updatedAt: string | null }>("/api/map-settings/provider"),
   setMapProvider: (maptiler: string | null) => req<{ ok: boolean }>("/api/map-settings/provider", { method: "PUT", body: JSON.stringify({ maptiler }) }),
   getMapExtras: () => req<MapTilerExtras>("/api/map-settings/provider/extras"),
+  getVehicles: () => req<{ vehicles: Vehicle[] }>("/api/tracking/vehicles"),
+  addVehicle: (v: { name: string; color: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle; token: string }>("/api/tracking/vehicles", { method: "POST", body: JSON.stringify(v) }),
+  updateVehicle: (id: string, v: { name?: string; color?: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle }>(`/api/tracking/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(v) }),
+  newVehicleToken: (id: string) => req<{ token: string }>(`/api/tracking/vehicles/${id}/token`, { method: "POST" }),
+  deleteVehicle: (id: string) => req<{ ok: boolean }>(`/api/tracking/vehicles/${id}`, { method: "DELETE" }),
+  getVehicleTrack: (id: string, hours: number) => req<{ vehicle: Vehicle; points: VehiclePoint[] }>(`/api/tracking/vehicles/${id}/track?hours=${hours}`),
   setMapExtras: (extras: MapTilerExtras) => req<MapTilerExtras>("/api/map-settings/provider/extras", { method: "PUT", body: JSON.stringify(extras) }),
   getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
   listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "analyses"; domain: AnalysisDomain } | { scope: "query"; queryId: string }) =>
@@ -2756,3 +2762,23 @@ export interface MapTilerExtras {
   customStyle: { id: string; label: string } | null;
   datasets: { id: string; label: string; color: string }[];
 }
+
+/** A tracked vehicle and its latest position (backend routes/tracking.ts). */
+export interface Vehicle {
+  id: string;
+  name: string;
+  color: string;
+  speedLimitKmh: number | null;
+  createdAt: string;
+  last: { at: string; lat: number; lng: number; speedKmh: number | null; heading: number | null; ignition: boolean | null; battery: number | null } | null;
+}
+export interface VehiclePoint {
+  at: string;
+  lat: number;
+  lng: number;
+  speedKmh: number | null;
+  heading: number | null;
+  ignition: boolean | null;
+}
+/** Where trackers send positions (the Traccar Client app's "Server URL"). */
+export const TRACKING_URL = `${API_URL}/api/tracking/osmand`;
