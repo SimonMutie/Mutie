@@ -511,7 +511,10 @@ function VehiclesCard() {
   const [shown, setShown] = useState<{ name: string; token: string } | null>(null);
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = () => api.getVehicles().then((r) => setVehicles(r.vehicles)).catch(() => undefined);
+  const [log, setLog] = useState<Awaited<ReturnType<typeof api.getTrackingLog>>["log"]>([]);
+  const [showLog, setShowLog] = useState(false);
+  const load = () =>
+    Promise.all([api.getVehicles().then((r) => setVehicles(r.vehicles)), api.getTrackingLog().then((r) => setLog(r.log))]).catch(() => undefined);
   useEffect(() => {
     void load();
     const t = window.setInterval(() => void load(), 15000);
@@ -612,6 +615,27 @@ function VehiclesCard() {
           </button>
         </div>
       )}
+      <div style={{ marginTop: 14 }}>
+        <button onClick={() => setShowLog((v) => !v)}>{showLog ? "Hide" : "Show"} reports received ({log.length})</button>
+        {showLog && (
+          <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.5 }}>
+            {log.length === 0 ? (
+              <div style={{ opacity: 0.75 }}>
+                Nothing has reached the Lens yet. Check the phone app's Server URL is exactly <code style={{ wordBreak: "break-all" }}>{TRACKING_URL}</code>, that Tracking is switched on, that location is allowed all the time, and that the phone has mobile data.
+              </div>
+            ) : (
+              log.map((l, i) => (
+                <div key={i} style={{ padding: "5px 0", borderTop: i ? "1px solid var(--border, rgba(127,127,127,0.2))" : undefined }}>
+                  <div>
+                    <b style={{ color: l.outcome.startsWith("Saved") ? "var(--positive)" : "var(--negative, #f87171)" }}>{l.outcome}</b> <span style={{ opacity: 0.65 }}>{ago(l.at)} · device {l.device}</span>
+                  </div>
+                  {l.sample && <code style={{ display: "block", opacity: 0.7, wordBreak: "break-all", fontSize: 11 }}>{l.method} {l.contentType} {l.sample}</code>}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
       {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
     </div>
   );
