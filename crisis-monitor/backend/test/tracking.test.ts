@@ -54,6 +54,7 @@ describe("the tracking routes", () => {
     const { vehicle, token } = (await made.json()) as { vehicle: { id: string }; token: string };
     // No sign-in needed to send a position; an unknown device id is refused.
     expect((await call(`/osmand?id=nope&lat=-1.29&lon=36.82`, { method: "POST" })).status).toBe(401);
+    expect(token).toMatch(/^[A-Za-z0-9]{24}$/);
     expect((await call(`/osmand?id=${token}&lat=-1.29&lon=36.82&speed=20&bearing=45`, { method: "POST" })).status).toBe(200);
     const body = { device_id: token, location: { timestamp: new Date(Date.now() + 1000).toISOString(), coords: { latitude: -1.3, longitude: 36.83, speed: 5, heading: 90 } } };
     expect((await call(`/osmand`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).status).toBe(200);
@@ -71,5 +72,22 @@ describe("the tracking routes", () => {
     expect(log.log[0].outcome).toMatch(/^Saved/);
     expect(log.log.some((l) => l.outcome.startsWith("Unknown device id"))).toBe(true);
     expect(JSON.stringify(log)).not.toContain(token);
+  });
+});
+
+describe("tokens from before the change", () => {
+  it("are accepted with or without their 'lens-' start", async () => {
+    const d1 = fakeD1();
+    d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, client_id TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);`);
+    const env = { DB: d1.DB, SESSION_SECRET: "s" } as unknown as Env;
+    // The module made its tables in the earlier test's database; this one gets them by hand.
+    d1.db.exec(`CREATE TABLE vehicles (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#f5a524', token_hash TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL, speed_limit_kmh REAL, created_at TEXT NOT NULL, last_at TEXT, last_lat REAL, last_lng REAL, last_speed_kmh REAL, last_heading REAL, last_ignition INTEGER, last_battery REAL);
+      CREATE TABLE vehicle_positions (vehicle_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lng REAL NOT NULL, speed_kmh REAL, heading REAL, accuracy_m REAL, altitude_m REAL, ignition INTEGER, battery REAL, PRIMARY KEY (vehicle_id, at));
+      CREATE TABLE tracking_log (at TEXT NOT NULL, outcome TEXT NOT NULL, method TEXT, content_type TEXT, user_agent TEXT, device TEXT, sample TEXT);`);
+    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lens-3hLnh92DQIT4B91dwcT3X69T")))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    d1.db.exec(`INSERT INTO vehicles (id, name, token_hash, owner_user_id, created_at) VALUES ('v', 'Car', '${hash}', 'a', '2026-01-01')`);
+    for (const id of ["3hLnh92DQIT4B91dwcT3X69T", "lens-3hLnh92DQIT4B91dwcT3X69T", " 3hLnh92DQIT4B91dwcT3X69T "]) {
+      expect((await trackingRouter.request(`/osmand?id=${encodeURIComponent(id)}&lat=-1.2339&lon=36.7136`, { method: "POST" }, env)).status).toBe(200);
+    }
   });
 });
