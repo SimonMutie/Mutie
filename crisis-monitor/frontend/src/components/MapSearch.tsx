@@ -41,6 +41,16 @@ async function searchPlaces(q: string, near: LatLngPoint): Promise<PhotonHit[]> 
   });
 }
 
+/** What is at a point (village, district, region, country), from MapTiler's reverse geocoding; null without the key. */
+async function placeAt(lat: number, lng: number): Promise<string | null> {
+  const key = maptilerKey();
+  if (!key) return null;
+  const res = await fetch(`https://api.maptiler.com/geocoding/${lng.toFixed(5)},${lat.toFixed(5)}.json?key=${key}&limit=1`);
+  if (!res.ok) return null;
+  const data = (await res.json()) as { features?: { place_name?: string }[] };
+  return data.features?.[0]?.place_name ?? null;
+}
+
 const box: CSSProperties = {
   position: "absolute",
   top: 10,
@@ -70,6 +80,7 @@ export function MapSearchPanel({ children }: { children?: ReactNode }) {
   const [status, setStatus] = useState("");
   const [copied, setCopied] = useState("");
   const [height, setHeight] = useState<number | null | undefined>(undefined);
+  const [place, setPlace] = useState<string | null | undefined>(undefined);
   const [rings, setRings] = useState<number[]>([]);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -86,6 +97,10 @@ export function MapSearchPanel({ children }: { children?: ReactNode }) {
     if (!pinned) return;
     let cancelled = false;
     elevationAt(pinned.lat, pinned.lng).then((h) => !cancelled && setHeight(h));
+    setPlace(undefined);
+    placeAt(pinned.lat, pinned.lng)
+      .then((p) => !cancelled && setPlace(p))
+      .catch(() => !cancelled && setPlace(null));
     return () => {
       cancelled = true;
     };
@@ -194,6 +209,7 @@ export function MapSearchPanel({ children }: { children?: ReactNode }) {
           <Popup>
             <div style={{ fontFamily: "monospace", fontSize: 12, color: "#0b1220" }}>
               <div><b>Pinned point</b></div>
+              {place !== null && <div style={{ fontWeight: 700 }}>{place === undefined ? "Finding the place…" : place}</div>}
               <div>{toDecimal(pinned.lat, pinned.lng)}</div>
               <div>{toDms(pinned.lat, pinned.lng)}</div>
               <div>{toMgrs(pinned.lat, pinned.lng)}</div>
