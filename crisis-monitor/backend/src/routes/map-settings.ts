@@ -186,3 +186,49 @@ mapSettingsRouter.put("/provider", requireAdmin, async (c) => {
   );
   return c.json({ ok: true });
 });
+
+/* ── MapTiler extras: the admin's own map style and datasets ───────────────── */
+
+/**
+ * Extra MapTiler content the admin has made in their MapTiler account: a custom map style (designed in MapTiler's
+ * style editor, used as the Lens basemap) and uploaded datasets (shown as layers on the maps). Only their ids and
+ * labels are kept here; MapTiler serves them with the key. Kept in the same table, as JSON, under 'maptiler-extras'.
+ */
+const extrasSchema = z.object({
+  customStyle: z
+    .object({ id: z.string().trim().regex(/^[A-Za-z0-9_-]{3,80}$/, "That does not look like a MapTiler map id."), label: z.string().trim().min(1).max(60) })
+    .nullable(),
+  datasets: z
+    .array(
+      z.object({
+        id: z.string().trim().regex(/^[A-Za-z0-9_-]{3,80}$/, "That does not look like a MapTiler dataset id."),
+        label: z.string().trim().min(1).max(60),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+      })
+    )
+    .max(30),
+});
+
+mapSettingsRouter.get("/provider/extras", async (c) => {
+  try {
+    await ensureProviderTable(c.env.DB);
+    const row = await first<{ api_key: string | null }>(c.env.DB, `SELECT api_key FROM map_provider_keys WHERE provider = 'maptiler-extras'`);
+    const parsed = row?.api_key ? extrasSchema.safeParse(JSON.parse(row.api_key)) : null;
+    return c.json(parsed?.success ? parsed.data : { customStyle: null, datasets: [] });
+  } catch {
+    return c.json({ customStyle: null, datasets: [] });
+  }
+});
+
+mapSettingsRouter.put("/provider/extras", requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsed = extrasSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "Invalid settings" }, 400);
+  await ensureProviderTable(c.env.DB);
+  await run(
+    c.env.DB,
+    `INSERT INTO map_provider_keys (provider, api_key, updated_at) VALUES ('maptiler-extras', ?, ?) ON CONFLICT(provider) DO UPDATE SET api_key = excluded.api_key, updated_at = excluded.updated_at`,
+    [JSON.stringify(parsed.data), nowIso()]
+  );
+  return c.json(parsed.data);
+});
