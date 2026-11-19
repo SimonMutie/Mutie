@@ -64,7 +64,7 @@ const dashboardPins = new Map<string, L.DivIcon>();
 function dashboardPin(color: string): L.DivIcon {
   let ic = dashboardPins.get(color);
   if (!ic) {
-    ic = L.divIcon({ html: pinSvg(color, 9), className: "incident-marker-icon", iconSize: [9, 12], iconAnchor: [4.5, 11], tooltipAnchor: [0, -12] });
+    ic = L.divIcon({ html: pinSvg(color, 12), className: "incident-marker-icon", iconSize: [12, 16], iconAnchor: [6, 15], tooltipAnchor: [0, -16] });
     dashboardPins.set(color, ic);
   }
   return ic;
