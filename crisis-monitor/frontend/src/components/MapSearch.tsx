@@ -4,28 +4,18 @@ import { DomEvent } from "leaflet";
 import { parsePoint, toDecimal, toDms, toMgrs } from "./coords";
 import { elevationAt } from "./terrain";
 import { maptilerKey } from "../mapProvider";
+import { maptilerPlaceAt, maptilerSearch } from "../maptilerServices";
 
 interface LatLngPoint { lat: number; lng: number }
 interface PhotonHit { name: string; detail: string; lat: number; lng: number }
 
-/** Place search: MapTiler's geocoding with the key (towns, villages, addresses, landmarks, coordinates), Photon
+/** Place search: MapTiler's (through its SDK: one search session per visit, results remembered) with the key, Photon
  *  (OpenStreetMap) otherwise or if MapTiler fails. Only the typed text is sent. Biased towards where the map is looking. */
 async function searchPlaces(q: string, near: LatLngPoint): Promise<PhotonHit[]> {
-  const key = maptilerKey();
-  if (key) {
+  if (maptilerKey()) {
     try {
-      const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(q)}.json?key=${key}&limit=6&proximity=${near.lng.toFixed(3)},${near.lat.toFixed(3)}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = (await res.json()) as { features?: { center: [number, number]; text?: string; place_name?: string }[] };
-        const hits = (data.features ?? []).map((f) => {
-          const name = f.text ?? f.place_name ?? "Place";
-          const full = f.place_name ?? "";
-          const detail = full.startsWith(name) ? full.slice(name.length).replace(/^,\s*/, "") : full;
-          return { name, detail, lat: f.center[1], lng: f.center[0] };
-        });
-        if (hits.length) return hits;
-      }
+      const hits = await maptilerSearch(q, near);
+      if (hits.length) return hits;
     } catch {
       /* fall back to Photon */
     }
@@ -41,14 +31,9 @@ async function searchPlaces(q: string, near: LatLngPoint): Promise<PhotonHit[]> 
   });
 }
 
-/** What is at a point (village, district, region, country), from MapTiler's reverse geocoding; null without the key. */
+/** What is at a point, from MapTiler (through its SDK, remembered); null without the key. */
 async function placeAt(lat: number, lng: number): Promise<string | null> {
-  const key = maptilerKey();
-  if (!key) return null;
-  const res = await fetch(`https://api.maptiler.com/geocoding/${lng.toFixed(5)},${lat.toFixed(5)}.json?key=${key}&limit=1`);
-  if (!res.ok) return null;
-  const data = (await res.json()) as { features?: { place_name?: string }[] };
-  return data.features?.[0]?.place_name ?? null;
+  return maptilerKey() ? maptilerPlaceAt(lat, lng) : null;
 }
 
 const box: CSSProperties = {
