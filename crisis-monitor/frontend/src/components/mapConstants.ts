@@ -1,4 +1,4 @@
-import { maptilerKey, maptilerRaster, MAPTILER_ATTRIBUTION } from "../mapProvider";
+import { maptilerKey, maptilerRaster, MAPTILER_ATTRIBUTION, maptilerExtras } from "../mapProvider";
 
 /** Basemap tile providers shared between IncidentsMap and MapDefaultsPanel.
  *  Lives in its own file specifically to avoid a circular import: the map
@@ -106,6 +106,34 @@ export const BASEMAPS = {
     },
     attribution: MAPTILER_ATTRIBUTION,
   },
+  mtLens: {
+    label: "Lens",
+    get url() {
+      return maptilerRaster(maptilerExtras().customStyle?.id ?? "backdrop-dark", "png");
+    },
+    attribution: MAPTILER_ATTRIBUTION,
+  },
+  mtOcean: {
+    label: "MapTiler Ocean (sea-floor depth)",
+    get url() {
+      return maptilerRaster("ocean", "png");
+    },
+    attribution: MAPTILER_ATTRIBUTION,
+  },
+  mtLandscape: {
+    label: "MapTiler Landscape (land cover)",
+    get url() {
+      return maptilerRaster("landscape", "png");
+    },
+    attribution: MAPTILER_ATTRIBUTION,
+  },
+  mtMuted: {
+    label: "MapTiler Muted dark",
+    get url() {
+      return maptilerRaster("backdrop-dark", "png");
+    },
+    attribution: MAPTILER_ATTRIBUTION,
+  },
   mtSatellite: {
     label: "MapTiler Satellite",
     get url() {
@@ -132,7 +160,7 @@ export const basemapKeys = (): BasemapKey[] => (Object.keys(BASEMAPS) as Basemap
  */
 export function resolveBasemap(k: string | null | undefined): BasemapKey {
   if (!k || !(k in BASEMAPS)) return defaultBasemap();
-  if (isMapTiler(k) && !maptilerKey()) return k === "mtSatellite" || k === "mtHybrid" ? "esriImagery" : k === "mtDark" || k === "mtDataDark" ? "dark" : "osm";
+  if (isMapTiler(k) && !maptilerKey()) return k === "mtSatellite" || k === "mtHybrid" ? "esriImagery" : k === "mtDark" || k === "mtDataDark" || k === "mtMuted" || k === "mtLens" ? "dark" : "osm";
   return k as BasemapKey;
 }
 /** The admin's platform default: the stock "osm" (never deliberately changed) counts as no choice. */
