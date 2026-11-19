@@ -43,7 +43,13 @@ export function useMapTilerKey(): { key: string | null; loaded: boolean } {
 export const MAPTILER_ATTRIBUTION = '<a href="https://www.maptiler.com/copyright/" target="_blank" rel="noreferrer">&copy; MapTiler</a> <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">&copy; OpenStreetMap contributors</a>';
 
 /** A raster tile address for a MapTiler map style; {r} gives sharper (@2x) tiles on high-density screens. */
-export const maptilerRaster = (style: string, ext: "png" | "jpg" = "png") => `https://api.maptiler.com/maps/${style}/256/{z}/{x}/{y}{r}.${ext}?key=${key ?? ""}`;
+export const maptilerRaster = (style: string, ext: "png" | "jpg" = "png") => `https://api.maptiler.com/maps/${style}/{z}/{x}/{y}{r}.${ext}?key=${key ?? ""}`;
+
+/** Leaflet options for a tile address: MapTiler's maps are fetched as 512-pixel tiles (one request where 256-pixel
+ *  tiles would take four, so a quarter of the requests for the same view), which Leaflet draws one zoom lower. */
+export function tileOptions(url: string): { tileSize?: number; zoomOffset?: number; minZoom?: number } {
+  return url.includes("api.maptiler.com/maps/") && !url.includes("/256/") ? { tileSize: 512, zoomOffset: -1, minZoom: 1 } : {};
+}
 /** A MapTiler vector style (for the 3D globe). */
 export const maptilerStyle = (style: string) => `https://api.maptiler.com/maps/${style}/style.json?key=${key ?? ""}`;
 /** MapTiler's elevation tiles (for 3D terrain). */
