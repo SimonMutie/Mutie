@@ -3,17 +3,18 @@ import type { Map as MapLibreMap } from "maplibre-gl";
 import { Pause, Play, X } from "lucide-react";
 
 /**
- * MapTiler Weather on the 3D globe: radar, precipitation, temperature, wind (moving particles) and pressure, from
+ * MapTiler Weather on the 3D globe: radar, precipitation, clouds, temperature, wind (moving particles) and pressure, from
  * MapTiler's global forecast model, animated over its forecast window (the past few hours to several days ahead).
  * Needs the MapTiler key (the globe is then MapTiler's SDK map, which the weather layers draw on). The weather
  * package is large, so it is only loaded when a weather layer is first turned on.
  */
 
-export type GlobeWeatherKind = "radar" | "precipitation" | "temperature" | "wind" | "pressure";
+export type GlobeWeatherKind = "radar" | "precipitation" | "clouds" | "temperature" | "wind" | "pressure";
 
 export const GLOBE_WEATHER: { key: GlobeWeatherKind; label: string; hint: string }[] = [
   { key: "radar", label: "Radar", hint: "Rain and storms, as radar would show them, worldwide" },
   { key: "precipitation", label: "Precipitation", hint: "Rain and snow, mm an hour" },
+  { key: "clouds", label: "Clouds", hint: "Cloud cover, as a grey veil, from the radar forecast" },
   { key: "temperature", label: "Temperature", hint: "Air temperature at 2 m, °C" },
   { key: "wind", label: "Wind", hint: "Moving wind particles, speed and direction" },
   { key: "pressure", label: "Pressure", hint: "Sea-level pressure, hPa, with isobars" },
@@ -49,6 +50,7 @@ function readout(kind: GlobeWeatherKind, v: Record<string, unknown> | null): str
       const p = n("value");
       return p === null ? "" : `${p.toFixed(1)} mm/h`;
     }
+    case "clouds":
     case "radar": {
       const r = n("value");
       return r === null ? "" : `${r.toFixed(0)} dBZ`;
@@ -92,7 +94,8 @@ export function GlobeWeather({ map, kind, visible, onClose }: { map: MapLibreMap
         if (cancelled) return;
         const id = `lens-weather-${kind}`;
         const opts = { id, opacity: kind === "temperature" || kind === "pressure" ? 0.6 : 0.85 };
-        const layer = (kind === "radar" ? new w.RadarLayer(opts) : kind === "precipitation" ? new w.PrecipitationLayer(opts) : kind === "temperature" ? new w.TemperatureLayer(opts) : kind === "wind" ? new w.WindLayer({ id }) : new w.PressureLayer(opts)) as unknown as WeatherLayer;
+        // Clouds: MapTiler's own recipe, the radar forecast drawn with its grey cloud colour ramp.
+        const layer = (kind === "clouds" ? new w.RadarLayer({ ...opts, opacity: 0.9, colorramp: w.ColorRamp.builtin.RADAR_CLOUD }) : kind === "radar" ? new w.RadarLayer(opts) : kind === "precipitation" ? new w.PrecipitationLayer(opts) : kind === "temperature" ? new w.TemperatureLayer(opts) : kind === "wind" ? new w.WindLayer({ id }) : new w.PressureLayer(opts)) as unknown as WeatherLayer;
         const before = (map.getStyle().layers ?? []).find((l) => l.id === "lens-heat-layer" || l.id === "lens-points-circle")?.id;
         map.addLayer(layer as never, before);
         added = layer;
