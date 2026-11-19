@@ -122,8 +122,9 @@ details[open] > summary::before {
   border: none !important;
   box-shadow: none !important;
 }
+/* No CSS shadow: a blurred filter softens small pins; the pin's own dark edge gives the contrast instead. */
 .incident-marker-icon svg {
-  filter: drop-shadow(0 1px 3px rgba(19, 23, 34, 0.4));
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {
