@@ -43,4 +43,15 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  build: {
+    // Built files live under a release folder. Renaming it gives every file a new address once, so no browser or
+    // cache can keep serving a stale "not found" for a file name from an earlier deploy.
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/r2/[name]-[hash].js",
+        chunkFileNames: "assets/r2/[name]-[hash].js",
+        assetFileNames: "assets/r2/[name]-[hash][extname]",
+      },
+    },
+  },
 });
