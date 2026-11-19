@@ -31,6 +31,9 @@ import {
   Activity,
   AlertTriangle,
   CloudRain,
+  Wind,
+  Thermometer,
+  X,
   Cloud,
   WifiOff,
   Crosshair,
@@ -135,11 +138,12 @@ import { IncidentPulseLayer, pulsesAsWaves, useIncidentPulses } from "./Incident
 import { ConnectivityLayer, ConnectivityPanel, useConnectivity } from "./Connectivity";
 import { RegionBar, HornOutlines, HotspotWaves, RegionFly, hotCellsFrom, type RegionView } from "./RegionControls";
 import { MapSearchPanel } from "./MapSearch";
+import { GLOBE_WEATHER, GlobeWeather, type GlobeWeatherKind } from "./GlobeWeather";
 import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
 import AfrIntelPanel from "./AfrIntelPanel";
 import StrategicAnalysesPanel from "./StrategicAnalysesPanel";
-import { maptilerKey, useMapTilerKey } from "../mapProvider";
+import { maptilerKey, useMapTilerKey, tileOptions } from "../mapProvider";
 import { BASEMAP_IDS, basemapStyleId, liveBasemap, liveBasemaps, type BasemapId } from "../liveBasemaps";
 import type { AfrIntelRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
@@ -1328,6 +1332,23 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [showDayNight, setShowDayNight] = useState(false);
   const [showBuildings, setShowBuildings] = useState(false);
   const [showTerrain, setShowTerrain] = useState(false);
+  // MapTiler Weather on the globe (GlobeWeather.tsx), and the globe's label language. The language is remembered.
+  const [globeWeather, setGlobeWeather] = useState<GlobeWeatherKind | null>(null);
+  const [labelLang, setLabelLangState] = useState<string>(() => {
+    try {
+      return localStorage.getItem("lens.labelLang") ?? "en";
+    } catch {
+      return "en";
+    }
+  });
+  const setLabelLang = (l: string) => {
+    setLabelLangState(l);
+    try {
+      localStorage.setItem("lens.labelLang", l);
+    } catch {
+      /* storage unavailable */
+    }
+  };
   // Map controls that start hidden and are switched on from the Display group: zoom and pan buttons, and the fire timeline.
   const [showNav, setShowNav] = useState(false);
   const [showFirePanel, setShowFirePanel] = useState(false);
@@ -1872,6 +1893,16 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, []);
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
+  // Label language: only MapTiler's SDK map (the globe with the key) can change it; its vector labels follow.
+  useEffect(() => {
+    const m = globeMap as unknown as { setLanguage?: (l: string) => void } | null;
+    if (!m?.setLanguage) return;
+    try {
+      m.setLanguage(labelLang);
+    } catch {
+      /* style not ready; the SDK applies it on load */
+    }
+  }, [globeMap, labelLang]);
   // Switching views: load the other view the first time, and carry the place across, so the map opens where the
   // last one was. MapLibre's zoom is one step below Leaflet's for the same scale (512 against 256 tiles).
   useEffect(() => {
@@ -2611,6 +2642,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         </div>
 
         {mapMode === "3d" && <EditablePoints3D map={globeMap} items={editPoints} onMove={moveEditPoint} />}
+        {globeWeather && <GlobeWeather map={globeMap} kind={globeWeather} visible={mapMode === "3d"} onClose={() => setGlobeWeather(null)} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
         {mapMode === "3d" && (
@@ -2726,6 +2758,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 basemap={basemap}
                 onBasemap={setBasemap}
                 onSaveImage={saveMapImage}
+                weather={globeWeather}
+                onWeather={(w) => {
+                  setGlobeWeather(w);
+                  if (w) setMapMode("3d");
+                }}
+                labelLang={labelLang}
+                onLabelLang={setLabelLang}
                 onToggleNav={() => setShowNav((v) => !v)}
                 onToggleFirePanel={() => {
                   // The timeline needs the fire layer, so turning the panel on turns the layer on too.
@@ -3142,7 +3181,7 @@ function FlatMap({
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump zoomControl={false} style={{ height: "100%", width: "100%", background: "#000308" }}>
       {showNav && <MapNavPad />}
       <MapCompass />
-      <TileLayer key={tile.leafletUrl} url={tile.leafletUrl} attribution={tile.attribution} />
+      <TileLayer key={tile.leafletUrl} url={tile.leafletUrl} attribution={tile.attribution} {...tileOptions(tile.leafletUrl)} />
       {onReady && <FlatMapReady onReady={onReady} />}
       <RegionFly region={regionView} seq={regionSeq} />
       <ViewPermalink date={imagery.key !== "none" ? imageryDay : fireDate ?? null} layer={imagery.key} />
@@ -3378,6 +3417,10 @@ function LayerPanel({
   basemap,
   onBasemap,
   onSaveImage,
+  weather,
+  onWeather,
+  labelLang,
+  onLabelLang,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3422,6 +3465,10 @@ function LayerPanel({
   basemap?: BasemapId;
   onBasemap?: (b: BasemapId) => void;
   onSaveImage?: () => void;
+  weather?: GlobeWeatherKind | null;
+  onWeather?: (w: GlobeWeatherKind | null) => void;
+  labelLang?: string;
+  onLabelLang?: (l: string) => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3501,7 +3548,7 @@ function LayerPanel({
             onToggleBuildings={onToggleBuildings!}
             onToggleTerrain={onToggleTerrain!}
           />
-          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} />}
+          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} />}
         </div>
       )}
     </div>
@@ -4102,10 +4149,19 @@ const BASEMAP_ICON: Record<BasemapId, LucideIcon> = {
   "data-light": Layers,
   toner: Layers,
 };
-function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void }) {
+const LABEL_LANGS: { key: string; label: string }[] = [
+  { key: "en", label: "English" },
+  { key: "fr", label: "French" },
+  { key: "ar", label: "Arabic" },
+  { key: "pt", label: "Portuguese" },
+  { key: "sw", label: "Swahili" },
+  { key: "am", label: "Amharic" },
+  { key: "name", label: "Local names" },
+];
+function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, weather, onWeather, labelLang, onLabelLang }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void; weather: GlobeWeatherKind | null; onWeather?: (w: GlobeWeatherKind | null) => void; labelLang?: string; onLabelLang?: (l: string) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  useMapTilerKey();
+  const { key: mtKey } = useMapTilerKey();
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -4160,6 +4216,37 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage }: 
               }, b.id)
             )}
           </div>
+          {mtKey && onWeather && (
+            <div style={{ marginTop: 10 }}>
+              {heading("Weather · 3D globe")}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {row(weather === null, X, "None", "No weather layer", () => onWeather(null), "wx-none")}
+                {GLOBE_WEATHER.map((w) =>
+                  row(weather === w.key, w.key === "wind" ? Wind : w.key === "temperature" ? Thermometer : CloudRain, w.label, w.hint, () => {
+                    onWeather(w.key);
+                    setOpen(false);
+                  }, `wx-${w.key}`)
+                )}
+              </div>
+            </div>
+          )}
+          {mtKey && onLabelLang && labelLang && basemap === "dark" && (
+            <div style={{ marginTop: 10 }}>
+              {heading("Labels · 3D globe")}
+              <select
+                value={labelLang}
+                onChange={(e) => onLabelLang(e.target.value)}
+                style={{ width: "100%", background: "rgba(255,255,255,0.05)", color: HUD.textPrimary, border: "1px solid rgba(255,255,255,0.14)", borderRadius: 6, padding: "5px 6px", fontFamily: "inherit", fontSize: 11 }}
+                aria-label="Label language"
+              >
+                {LABEL_LANGS.map((l) => (
+                  <option key={l.key} value={l.key} style={{ background: "#0b1220" }}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           {onSaveImage && (
             <div style={{ marginTop: 10 }}>
               {heading("Export")}
