@@ -4,7 +4,7 @@ import { EconomyPanel } from "./EconomyPanel";
 import { STANDING_HOTSPOTS } from "../standingHotspots";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MapCompass } from "./LeafletMapControls";
-import type { CircleMarker as LeafletCircleMarker } from "leaflet";
+import type { Map as LeafletMap, Marker as LeafletMarker } from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, GeoJSON, Marker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { StudioLayer } from "../studio/StudioLayer";
@@ -52,6 +52,7 @@ import {
   Megaphone,
   BellOff,
   Mountain,
+  Download,
   Navigation,
   Network,
   Newspaper,
@@ -90,7 +91,7 @@ import {
   type LucideIcon,
   BrainCircuit,
 } from "lucide-react";
-import Map3D, { Map3DDetailPanel, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
+import Map3D, { Map3DDetailPanel, type Map3DPath, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
 import EscalationHoverCard from "./EscalationHoverCard";
 import {
@@ -138,7 +139,8 @@ import TelegramPanel from "./TelegramPanel";
 import SituationPanel from "./SituationPanel";
 import AfrIntelPanel from "./AfrIntelPanel";
 import StrategicAnalysesPanel from "./StrategicAnalysesPanel";
-import { useMapTilerKey } from "../mapProvider";
+import { maptilerKey, useMapTilerKey } from "../mapProvider";
+import { BASEMAP_IDS, basemapStyleId, liveBasemap, liveBasemaps, type BasemapId } from "../liveBasemaps";
 import type { AfrIntelRun } from "../api";
 import LiveAlertsPanel from "./LiveAlertsPanel";
 import { WeatherTiles, useRainViewer } from "./WeatherTiles";
@@ -149,6 +151,7 @@ import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCo
 import { waveFeatures } from "./conflictWaves";
 import "./ConflictWaves.css";
 import { divIcon } from "leaflet";
+import { dotRadius, DOT, warningIconUrl, WARNING_SIZE, type EscalationLevel } from "./mapSymbols";
 import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
@@ -1085,7 +1088,8 @@ const INCIDENT_ALL_LIMIT = 250000;
 let myIncidentsLimit = INCIDENT_DEFAULT_LIMIT;
 
 type LayerState = { data: GlobePoint[] | null; loading: boolean; error: string | null };
-type MapMode = "3d" | "2d" | "map" | "sat";
+/** The view: the 3D globe or the flat map. The basemap (liveBasemaps.ts) is chosen separately and works with either. */
+type MapMode = "3d" | "2d";
 
 /** Which right-side tool panel is open, if any — at most one at a time, both
  *  because that's simpler state to reason about and because Drawing Tools
@@ -1243,7 +1247,30 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "ucdp-conflict-events": false,
     "firms-fires": false,
   });
-  const [mapMode, setMapMode] = useState<MapMode>(() => (readViewParams().at ? "sat" : "3d"));
+  const [mapMode, setMapMode] = useState<MapMode>(() => (readViewParams().at ? "2d" : "3d"));
+  // Each view is loaded the first time it is shown, then kept (see the map area below).
+  const [globeMounted, setGlobeMounted] = useState(mapMode === "3d");
+  const [flatMounted, setFlatMounted] = useState(mapMode !== "3d");
+  const [flatMap, setFlatMap] = useState<LeafletMap | null>(null);
+  const viewModeRef = useRef(mapMode);
+  // The basemap, the same for both views; a shared imagery link opens on satellite. Remembered.
+  const [basemap, setBasemapState] = useState<BasemapId>(() => {
+    if (readViewParams().at) return "satellite-labels";
+    try {
+      const saved = localStorage.getItem("lens.basemap") as BasemapId | null;
+      return saved && BASEMAP_IDS.includes(saved) ? saved : "dark";
+    } catch {
+      return "dark";
+    }
+  });
+  const setBasemap = (b: BasemapId) => {
+    setBasemapState(b);
+    try {
+      localStorage.setItem("lens.basemap", b);
+    } catch {
+      /* storage unavailable */
+    }
+  };
   // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
   const [leftOpen, setLeftOpen] = useState<boolean>(() => { try { return localStorage.getItem("lens.liveIntel.left") === "1"; } catch { return false; } });
   const [rightOpen, setRightOpen] = useState<boolean>(() => { if (initialTool) return true; try { return localStorage.getItem("lens.liveIntel.right") === "1"; } catch { return false; } });
@@ -1845,6 +1872,63 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, []);
   // The globe hands over its MapLibre map so the Studio can draw on it.
   const [globeMap, setGlobeMap] = useState<MapLibreMap | null>(null);
+  // Switching views: load the other view the first time, and carry the place across, so the map opens where the
+  // last one was. MapLibre's zoom is one step below Leaflet's for the same scale (512 against 256 tiles).
+  useEffect(() => {
+    const prev = viewModeRef.current;
+    viewModeRef.current = mapMode;
+    if (mapMode === "3d") setGlobeMounted(true);
+    else setFlatMounted(true);
+    if (prev === mapMode) return;
+    if (mapMode === "3d" && flatMap && globeMap) {
+      const c = flatMap.getCenter();
+      globeMap.jumpTo({ center: [c.lng, c.lat], zoom: Math.max(0, flatMap.getZoom() - 1) });
+      globeMap.resize();
+    } else if (mapMode !== "3d" && flatMap) {
+      requestAnimationFrame(() => {
+        flatMap.invalidateSize({ animate: false });
+        if (globeMap) {
+          const c = globeMap.getCenter();
+          flatMap.setView([Math.max(-85, Math.min(85, c.lat)), c.lng], Math.max(2, Math.round(globeMap.getZoom() + 1)), { animate: false });
+        }
+      });
+    }
+  }, [mapMode, flatMap, globeMap]);
+
+  // "Save map image": the 3D globe as drawn (Lens layers included), read from its canvas in the frame it is drawn;
+  // the flat map as a MapTiler static image of the same place and basemap (basemap only; needs the key).
+  const saveMapImage = useCallback(() => {
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    const download = (href: string) => {
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = `lens-map-${stamp}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+    if (mapMode === "3d" && globeMap) {
+      globeMap.once("render", () => {
+        try {
+          download(globeMap.getCanvas().toDataURL("image/png"));
+        } catch {
+          window.alert("The map image could not be saved (a basemap without image permissions is shown).");
+        }
+      });
+      globeMap.triggerRepaint();
+      return;
+    }
+    const key = maptilerKey();
+    if (!flatMap || !key) {
+      window.alert("Saving the flat map as an image needs the MapTiler key in Settings. The 3D globe can be saved without it.");
+      return;
+    }
+    const c = flatMap.getCenter();
+    const size = flatMap.getSize();
+    const w = Math.min(2048, Math.round(size.x / 2)), h = Math.min(2048, Math.round(size.y / 2));
+    const style = basemapStyleId(basemap);
+    window.open(`https://api.maptiler.com/maps/${style}/static/${c.lng.toFixed(5)},${c.lat.toFixed(5)},${Math.max(0, flatMap.getZoom() - 1).toFixed(2)}/${w}x${h}@2x.png?key=${key}`, "_blank", "noopener");
+  }, [mapMode, globeMap, flatMap, basemap]);
   // Keyboard shortcuts, as the reference platform has: F flights, E earthquakes, S satellites, D day/night, O opens AfrIntel, Esc closes the side panels.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2395,6 +2479,19 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     activeTool,
     savedRoutes,
   ]);
+  // The lines both views draw the same way (lanes, cables, AfrIntel links): the flat map draws its own draw, route and
+  // flight lines, so it takes only these.
+  const sharedPaths = useMemo(() => {
+    const lanes = enabled["maritime-lines"] ? maritimeLanes : [];
+    const cables = enabled["submarine-cables"] ? submarineCables : [];
+    const byId = new Map((afrIntelRun?.actors ?? []).map((x) => [x.id, x]));
+    const afrIntelLinks = (afrIntelRun?.links ?? []).flatMap((l) => {
+      const p = byId.get(l.from), q = byId.get(l.to);
+      if (!p || !q || p.lat == null || p.lng == null || q.lat == null || q.lng == null) return [];
+      return [{ points: [[p.lat, p.lng], [q.lat, q.lng]] as LatLng[], label: `${p.name} – ${q.name}: ${l.relation}`, color: "#22d3ee", width: 1.5 }];
+    });
+    return [...lanes, ...cables, ...afrIntelLinks];
+  }, [enabled, maritimeLanes, submarineCables, afrIntelRun]);
 
   // The in-progress area-drawing shape, as a closed ring — country borders
   // themselves no longer need to be built here at all now that the 3D view
@@ -2433,8 +2530,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         // The zoom pad keeps clear of the tool rail, and of a tool's own panel when one is open beside it.
         style={{ position: "relative", flex: 1, ["--lens-pad-left" as string]: leftOpen ? "284px" : "10px", ["--lens-pad-right" as string]: rightOpen ? (rightTool === "economy" ? "min(648px, 55%)" : rightTool && rightTool !== "analyses" ? "min(488px, 45%)" : "84px") : "12px" }}
       >
-        {mapMode === "3d" ? (
+        {/* Both views stay loaded once used, and switching only shows one and hides the other (carrying the view
+            across), so it is instant; the hidden globe pauses its animations. */}
+        <div style={{ position: "absolute", inset: 0, visibility: mapMode === "3d" ? "visible" : "hidden", pointerEvents: mapMode === "3d" ? "auto" : "none" }}>
+          {globeMounted && (
           <Map3D
+            basemap={basemap}
+            active={mapMode === "3d"}
             points={mapPoints}
             paths={globePaths}
             territoryChanges={territoryChangePolygons}
@@ -2458,10 +2560,16 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             showTerrain={showTerrain}
             showNav={showNav}
           />
-        ) : (
+          )}
+        </div>
+        <div style={{ position: "absolute", inset: 0, visibility: mapMode !== "3d" ? "visible" : "hidden", pointerEvents: mapMode !== "3d" ? "auto" : "none" }}>
+          {flatMounted && (
           <FlatMap
-            mode={mapMode}
+            basemap={basemap}
+            onReady={setFlatMap}
             points={flatMapPoints}
+            sharedPaths={sharedPaths}
+            territoryChanges={territoryChangePolygons}
             activeConflictMap={activeConflictMap}
             conflictWaveRows={conflictWaveRows}
             incidentPulses={incidentPulses}
@@ -2499,7 +2607,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             hiddenIncidents={hiddenIncidents}
             onIncidentDeleted={handleIncidentDeleted}
           />
-        )}
+          )}
+        </div>
 
         {mapMode === "3d" && <EditablePoints3D map={globeMap} items={editPoints} onMove={moveEditPoint} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
@@ -2614,6 +2723,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 firePanel={showFirePanel}
                 mapMode={mapMode}
                 onMapMode={setMapMode}
+                basemap={basemap}
+                onBasemap={setBasemap}
+                onSaveImage={saveMapImage}
                 onToggleNav={() => setShowNav((v) => !v)}
                 onToggleFirePanel={() => {
                   // The timeline needs the fire layer, so turning the panel on turns the layer on too.
@@ -2877,8 +2989,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
  *  both use street-style tiles (2D dark, Map light) — Sat uses satellite
  *  imagery, matching what the three style buttons mean on the reference platform itself. */
 function FlatMap({
-  mode,
+  basemap,
+  onReady,
   points,
+  sharedPaths,
+  territoryChanges,
   activeConflictMap,
   conflictWaveRows,
   incidentPulses,
@@ -2916,8 +3031,14 @@ function FlatMap({
   hiddenIncidents,
   onIncidentDeleted,
 }: {
-  mode: Exclude<MapMode, "3d">;
+  basemap: BasemapId;
+  /** Hands out the Leaflet map, so the view can be carried across when switching to the 3D globe. */
+  onReady?: (map: LeafletMap) => void;
   points: GlobePoint[];
+  /** Lanes, cables and AfrIntel links: drawn as on the 3D globe. */
+  sharedPaths?: Map3DPath[];
+  /** Reported territory changes: dashed amber areas, as on the 3D globe. */
+  territoryChanges?: Map3DTerritoryChange[];
   /** Active conflict countries with no alert, drawn above the alert shading. */
   activeConflictMap?: FeatureCollection | null;
   /** Rings at escalations getting worse. */
@@ -3009,9 +3130,9 @@ function FlatMap({
     () => (waves && fireCollection ? hotCellsFrom(fireCollection.features, !!fireCells, 5, 40) : []),
     [waves, fireCollection, fireCells]
   );
-  // MapTiler (sharper, richer) once the admin has set its key; the free maps otherwise.
-  const { key: mtKey } = useMapTilerKey();
-  const tile = mode === "sat" ? (mtKey ? BASEMAPS.mtHybrid : BASEMAPS.esriImagery) : mode === "map" ? (mtKey ? BASEMAPS.mtStreets : BASEMAPS.osm) : mtKey ? BASEMAPS.mtDark : BASEMAPS.dark;
+  // The chosen basemap (the same one the 3D globe shows): MapTiler's with the key, the free ones otherwise.
+  useMapTilerKey();
+  const tile = liveBasemap(basemap);
   const imageryDay = clampImageryDay(imagery.day ?? fireDate);
   const overlay = imageryTemplate(imagery.key, imageryDay);
   const lensTemplate = overlay && imagery.lensKm !== null ? imageryTemplate(imagery.key, compareDay(imagery.compare, imageryDay, imagery.compareChosen)) : null;
@@ -3021,7 +3142,8 @@ function FlatMap({
     <MapContainer center={[15, 20]} zoom={2} minZoom={2} worldCopyJump zoomControl={false} style={{ height: "100%", width: "100%", background: "#000308" }}>
       {showNav && <MapNavPad />}
       <MapCompass />
-      <TileLayer url={tile.url} attribution={tile.attribution} />
+      <TileLayer key={tile.leafletUrl} url={tile.leafletUrl} attribution={tile.attribution} />
+      {onReady && <FlatMapReady onReady={onReady} />}
       <RegionFly region={regionView} seq={regionSeq} />
       <ViewPermalink date={imagery.key !== "none" ? imageryDay : fireDate ?? null} layer={imagery.key} />
       <MapSearchPanel>
@@ -3057,6 +3179,16 @@ function FlatMap({
         />
       ))}
       {pulsesOn && incidentPulses && incidentPulses.length > 0 && <IncidentPulseLayer pulses={incidentPulses} />}
+      {(territoryChanges ?? []).map((t) => (
+        <Polygon key={t.id} positions={t.ring} pathOptions={{ color: "#ff9d4f", weight: 1.5, opacity: 0.75, dashArray: "4 4", fillColor: "#ff9d4f", fillOpacity: 0.12 }}>
+          <LeafletTooltip sticky>{t.title}</LeafletTooltip>
+        </Polygon>
+      ))}
+      {(sharedPaths ?? []).map((p, i) => (
+        <Polyline key={`${p.label}-${i}`} positions={p.points} pathOptions={{ color: p.color ?? "#3fd0ff", weight: p.width ?? 2, opacity: 0.9 }}>
+          <LeafletTooltip sticky>{p.label}</LeafletTooltip>
+        </Polyline>
+      ))}
       {onMapClick && <MapClickCapture onClick={onMapClick} />}
       {drawMode === "distance" && drawPoints && drawPoints.length >= 2 && (
         <Polyline positions={drawPoints} pathOptions={{ color: "#ffd23f", weight: 2 }} />
@@ -3082,19 +3214,30 @@ function FlatMap({
       <AircraftMarkers points={points.filter((p) => AIRCRAFT_LAYER_KEYS.has(p.layerKey))} selectedId={selectedAircraftId ?? null} onSelect={(id, title) => onAircraftClick?.(id, title)} />
       {points.filter((p) => !AIRCRAFT_LAYER_KEYS.has(p.layerKey)).map((p) =>
         p.escalationLevel && p.incident ? (
-          <EscalationFlatMarker key={`${p.layerKey}:${p.id}`} lat={p.lat} lng={p.lng} size={p.size} color={p.color} incident={p.incident} />
+          <EscalationFlatMarker key={`${p.layerKey}:${p.id}`} lat={p.lat} lng={p.lng} level={p.escalationLevel} incident={p.incident} />
+        ) : p.escalationLevel ? (
+          // An escalation without its incident record: the same triangle, opening Liveuamap's map of the country.
+          <Marker
+            key={`${p.layerKey}:${p.id}`}
+            position={[p.lat, p.lng]}
+            icon={warningMarkerIcon(p.escalationLevel)}
+            eventHandlers={{ click: () => openLiveuamap(liveuamapLink(p.countryCode, p.lat, p.lng, undefined)) }}
+          >
+            <LeafletTooltip direction="top">
+              <div style={{ fontFamily: "monospace", fontSize: 12 }}>
+                <b>{p.title}</b>
+                <br />
+                {p.subtitle}
+              </div>
+            </LeafletTooltip>
+          </Marker>
         ) : (
         <CircleMarker
           key={`${p.layerKey}:${p.id}`}
           center={[p.lat, p.lng]}
-          radius={3 + p.size * 18}
-          pathOptions={{ color: p.color, fillColor: p.color, fillOpacity: 0.6, weight: 1 }}
-          // Escalation markers open Liveuamap's map of that country, as they do on the 3D map.
-          eventHandlers={
-            p.escalationLevel
-              ? { click: () => openLiveuamap(liveuamapLink(p.incident?.countryCode ?? p.countryCode, p.lat, p.lng, p.incident?.geoPrecision)) }
-              : undefined
-          }
+          // The same dot as on the 3D globe (mapSymbols.ts).
+          radius={dotRadius(p.size)}
+          pathOptions={{ color: DOT.stroke, fillColor: p.color, fillOpacity: DOT.fillOpacity, weight: DOT.strokeWidth }}
         >
           <LeafletTooltip direction="top">
             <div style={{ fontFamily: "monospace", fontSize: 12 }}>
@@ -3165,6 +3308,13 @@ function FlatMap({
   );
 }
 
+/** Hands the Leaflet map out once it exists. */
+function FlatMapReady({ onReady }: { onReady: (map: LeafletMap) => void }) {
+  const map = useMap();
+  useEffect(() => onReady(map), [map, onReady]);
+  return null;
+}
+
 /** Zoom and pan buttons for the flat maps, bottom-right and away from the left panel. */
 function MapNavPad() {
   const map = useMap();
@@ -3225,6 +3375,9 @@ function LayerPanel({
   firePanel,
   mapMode,
   onMapMode,
+  basemap,
+  onBasemap,
+  onSaveImage,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3266,6 +3419,9 @@ function LayerPanel({
   /** The map type (3D globe, 2D, street map, satellite), chosen from its own rail button under Display. */
   mapMode?: MapMode;
   onMapMode?: (m: MapMode) => void;
+  basemap?: BasemapId;
+  onBasemap?: (b: BasemapId) => void;
+  onSaveImage?: () => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3345,7 +3501,7 @@ function LayerPanel({
             onToggleBuildings={onToggleBuildings!}
             onToggleTerrain={onToggleTerrain!}
           />
-          {mapMode && onMapMode && <MapTypeRailButton mode={mapMode} onChange={onMapMode} />}
+          {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} />}
         </div>
       )}
     </div>
@@ -3929,18 +4085,27 @@ function PanelToggle({ side, open, onClick }: { side: "left" | "right"; open: bo
   );
 }
 
-/** Left-rail button under Display for the map type. Clicking opens a small picker beside the rail (3D globe, 2D,
- *  street map, satellite); picking one, clicking the button again or clicking elsewhere closes it. The icon shows
- *  the current type. */
-const MAP_TYPES: { key: MapMode; label: string; hint: string; icon: LucideIcon }[] = [
-  { key: "3d", label: "3D Globe", hint: "Day/night, buildings and terrain", icon: Globe },
-  { key: "2d", label: "2D", hint: "Flat dark map", icon: Square },
-  { key: "map", label: "Map", hint: "Streets and place names", icon: MapIcon },
-  { key: "sat", label: "Satellite", hint: "Imagery", icon: Satellite },
+/** Left-rail button under Display for the map type. Clicking opens a picker beside the rail: the view (3D globe or
+ *  flat map) and the basemap (any of liveBasemaps(), in either view). Clicking elsewhere closes it. */
+const VIEWS: { key: MapMode; label: string; hint: string; icon: LucideIcon }[] = [
+  { key: "3d", label: "3D Globe", hint: "Globe, terrain, buildings, day/night", icon: Globe },
+  { key: "2d", label: "Flat map", hint: "Imagery comparison, regions, analysis tools", icon: Square },
 ];
-function MapTypeRailButton({ mode, onChange }: { mode: MapMode; onChange: (m: MapMode) => void }) {
+const BASEMAP_ICON: Record<BasemapId, LucideIcon> = {
+  dark: Square,
+  streets: MapIcon,
+  "satellite-labels": Satellite,
+  satellite: Satellite,
+  outdoor: Mountain,
+  topo: Mountain,
+  "data-dark": Layers,
+  "data-light": Layers,
+  toner: Layers,
+};
+function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage }: { mode: MapMode; onChange: (m: MapMode) => void; basemap: BasemapId; onBasemap: (b: BasemapId) => void; onSaveImage?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  useMapTilerKey();
   useEffect(() => {
     if (!open) return;
     const close = (e: MouseEvent) => {
@@ -3949,66 +4114,62 @@ function MapTypeRailButton({ mode, onChange }: { mode: MapMode; onChange: (m: Ma
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
-  const current = MAP_TYPES.find((t) => t.key === mode) ?? MAP_TYPES[0];
+  const view = VIEWS.find((t) => t.key === mode) ?? VIEWS[0];
+  const bases = liveBasemaps();
+  const base = bases.find((b) => b.id === basemap) ?? bases[0];
+  const Icon = mode === "3d" ? Globe : BASEMAP_ICON[base.id];
+  const row = (on: boolean, icon: LucideIcon, label: string, hint: string, onClick: () => void, key: string) => {
+    const I = icon;
+    return (
+      <button
+        key={key}
+        onClick={onClick}
+        aria-pressed={on}
+        style={{ display: "flex", alignItems: "center", gap: 8, background: on ? "rgba(212,175,55,0.14)" : "transparent", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "inherit", textAlign: "left", padding: "5px 6px" }}
+      >
+        <I size={14} color={on ? HUD.gold : HUD.textMuted} />
+        <span style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+          <span style={{ fontSize: 11, color: on ? HUD.gold : HUD.textPrimary, fontWeight: on ? 700 : 500 }}>{label}</span>
+          <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{hint}</span>
+        </span>
+      </button>
+    );
+  };
+  const heading = (t: string) => <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700, margin: "2px 0 6px" }}>{t}</div>;
   return (
     <div ref={ref} style={{ position: "relative", marginTop: 2 }}>
       <button
         onClick={() => setOpen((v) => !v)}
-        title={`Map type: ${current.label}`}
+        title={`Map: ${view.label}, ${base.label}`}
         aria-expanded={open}
-        style={{
-          position: "relative",
-          width: 42,
-          height: 38,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: open ? "rgba(212,175,55,0.14)" : "transparent",
-          border: "none",
-          borderRadius: 8,
-          cursor: "pointer",
-          transition: "background 0.15s",
-        }}
+        style={{ position: "relative", width: 42, height: 38, display: "flex", alignItems: "center", justifyContent: "center", background: open ? "rgba(212,175,55,0.14)" : "transparent", border: "none", borderRadius: 8, cursor: "pointer", transition: "background 0.15s" }}
       >
-        <current.icon size={17} color={open ? HUD.gold : HUD.textSecondary} strokeWidth={open ? 2.25 : 1.75} />
-        <span style={{ position: "absolute", bottom: 2, right: 3, fontSize: 7.5, fontWeight: 800, letterSpacing: "0.04em", color: HUD.gold }}>{mode === "sat" ? "SAT" : mode.toUpperCase()}</span>
+        <Icon size={17} color={open ? HUD.gold : HUD.textSecondary} strokeWidth={open ? 2.25 : 1.75} />
+        <span style={{ position: "absolute", bottom: 2, right: 3, fontSize: 7.5, fontWeight: 800, letterSpacing: "0.04em", color: HUD.gold }}>{mode === "3d" ? "3D" : "2D"}</span>
       </button>
       {open && (
-        <div style={{ ...glassPanel(), position: "absolute", left: "100%", bottom: 0, width: 210, padding: "10px 10px 10px 18px", zIndex: 600 }}>
-          <div style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700, marginBottom: 8 }}>Map type</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {MAP_TYPES.map((t) => {
-              const on = t.key === mode;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => {
-                    onChange(t.key);
-                    setOpen(false);
-                  }}
-                  aria-pressed={on}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    background: on ? "rgba(212,175,55,0.14)" : "transparent",
-                    border: "none",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    textAlign: "left",
-                    padding: "5px 6px",
-                  }}
-                >
-                  <t.icon size={14} color={on ? HUD.gold : HUD.textMuted} />
-                  <span style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-                    <span style={{ fontSize: 11, color: on ? HUD.gold : HUD.textPrimary, fontWeight: on ? 700 : 500 }}>{t.label}</span>
-                    <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{t.hint}</span>
-                  </span>
-                </button>
-              );
-            })}
+        <div style={{ ...glassPanel(), position: "absolute", left: "100%", bottom: 0, width: 230, maxHeight: "70vh", overflowY: "auto", padding: "10px 10px 10px 18px", zIndex: 600 }}>
+          {heading("View")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 10 }}>{VIEWS.map((t) => row(t.key === mode, t.icon, t.label, t.hint, () => onChange(t.key), t.key))}</div>
+          {heading("Basemap")}
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {bases.map((b) =>
+              row(b.id === base.id, BASEMAP_ICON[b.id], b.label, b.hint, () => {
+                onBasemap(b.id);
+                setOpen(false);
+              }, b.id)
+            )}
           </div>
+          {onSaveImage && (
+            <div style={{ marginTop: 10 }}>
+              {heading("Export")}
+              {row(false, Download, "Save map image", mode === "3d" ? "PNG of the globe as shown, with its layers" : "PNG of this place on this basemap", () => {
+                onSaveImage();
+                setOpen(false);
+              }, "save-image")}
+            </div>
+          )}
+          {bases.length < BASEMAP_IDS.length && <div style={{ fontSize: 9.5, color: HUD.textMuted, marginTop: 8, lineHeight: 1.4 }}>More basemaps (Outdoor, Topographic, Data, Toner) come with the MapTiler key in Settings.</div>}
         </div>
       )}
     </div>
@@ -5410,8 +5571,14 @@ function IncidentIntakeModal({
  * so a link can be reached. Clicking the marker itself opens Liveuamap's
  * map of that country, as it does on the 3D map.
  */
-function EscalationFlatMarker({ lat, lng, size, color, incident }: { lat: number; lng: number; size: number; color: string; incident: EscalationIncident }) {
-  const marker = useRef<LeafletCircleMarker>(null);
+/** The escalation triangle on the flat map: the same drawing and size as on the 3D globe (mapSymbols.ts). */
+function warningMarkerIcon(level: EscalationLevel) {
+  const h = WARNING_SIZE[level];
+  return divIcon({ className: "lens-warning-icon", html: `<img src="${warningIconUrl(level)}" width="${h}" height="${h}" alt="" style="display:block">`, iconSize: [h, h], iconAnchor: [h / 2, h], popupAnchor: [0, -h], tooltipAnchor: [0, -h] });
+}
+
+function EscalationFlatMarker({ lat, lng, level, incident }: { lat: number; lng: number; level: EscalationLevel; incident: EscalationIncident }) {
+  const marker = useRef<LeafletMarker>(null);
   const timer = useRef<number | undefined>(undefined);
   const stay = () => window.clearTimeout(timer.current);
   const closeSoon = () => {
@@ -5420,11 +5587,10 @@ function EscalationFlatMarker({ lat, lng, size, color, incident }: { lat: number
   };
   useEffect(() => stay, []);
   return (
-    <CircleMarker
+    <Marker
       ref={marker}
-      center={[lat, lng]}
-      radius={3 + size * 18}
-      pathOptions={{ color, fillColor: color, fillOpacity: 0.6, weight: 1 }}
+      position={[lat, lng]}
+      icon={warningMarkerIcon(level)}
       eventHandlers={{
         mouseover: () => {
           stay();
@@ -5443,6 +5609,6 @@ function EscalationFlatMarker({ lat, lng, size, color, incident }: { lat: number
           <EscalationHoverCard incident={incident} clickHint="CLICK THE MARKER TO OPEN LIVEUAMAP THERE" />
         </div>
       </LeafletPopup>
-    </CircleMarker>
+    </Marker>
   );
 }
