@@ -33,7 +33,7 @@ import { HeatmapLayer } from "./HeatmapLayer";
 import { FastMarkers, type FastPoint } from "./FastMarkers";
 import LeafletMapControls from "./LeafletMapControls";
 import { BASEMAPS, basemapKeys, resolveBasemap, type BasemapKey } from "./mapConstants";
-import { useMapTilerKey } from "../mapProvider";
+import { useMapTilerKey, tileOptions } from "../mapProvider";
 import VictimsWidget, { groupOfVictimRow } from "./VictimsWidget";
 import { ComposableMap, Geographies, Geography, Marker, ZoomableGroup } from "react-simple-maps";
 import { geoCentroid } from "d3-geo";
@@ -4653,7 +4653,7 @@ function WidgetMap({ widget, incidents, onUpdate, showFullControls }: { widget: 
         zoomSnap={0.25}
         preferCanvas
       >
-        <TileLayer key={key} url={base.url} attribution={base.attribution} maxZoom={19} />
+        <TileLayer key={`${key}:${base.url}`} url={base.url} attribution={base.attribution} maxZoom={19} {...tileOptions(base.url)} />
         {mode === "heatmap" ? <HeatmapLayer points={heat} style={{ gradient: "classic", radius: 16, blur: 14, max: Math.min(30, Math.max(1.5, heat.length / 120)), fade: 0.1 }} /> : <FastMarkers points={points} />}
         {list.length > 0 && !widget.mapView && <FitIncidents incidents={list} />}
         <LeafletMapControls wheelOnClick />
