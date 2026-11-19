@@ -185,3 +185,9 @@ details[open] > summary::before {
 @media (max-width: 760px) {
   .lens-view-shell { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; overflow-x: auto; overflow-y: auto; }
 }
+
+/* Tracked vehicles on the flat map (components/vehicles.tsx). */
+.lens-vehicle-icon { background: none; border: none; }
+.lens-vehicle-icon svg { display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)); }
+.leaflet-tooltip.lens-vehicle-label { background: rgba(5, 8, 15, 0.82); color: #fff; border: none; box-shadow: none; font-weight: 700; font-size: 11px; padding: 1px 6px; }
+.leaflet-tooltip.lens-vehicle-label::before { display: none; }
