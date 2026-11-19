@@ -6,7 +6,8 @@ import { divIcon } from "leaflet";
 import { api, type Vehicle, type VehiclePoint } from "../api";
 
 /**
- * Tracked vehicles on Live OSINT (positions from routes/tracking.ts): each vehicle as an arrow pointing its way,
+ * Tracked vehicles on Live OSINT (positions from routes/tracking.ts): each vehicle as a car seen from above, turned
+ * the way it is heading,
  * in its colour, with its name, and its trail over the chosen hours. Live: the list refreshes every 10 seconds,
  * the trails every 30. A vehicle not heard from in 10 minutes is drawn grey ("last seen").
  */
@@ -25,6 +26,24 @@ export function vehicleSummary(v: Vehicle): string {
   if (v.last.battery !== null) parts.push(`battery ${Math.round(v.last.battery)}%`);
   if (v.speedLimitKmh && v.last.speedKmh !== null && v.last.speedKmh > v.speedLimitKmh && !isStale(v)) parts.push(`OVER ${v.speedLimitKmh} km/h LIMIT`);
   return parts.join(" · ");
+}
+
+/**
+ * A car seen from above, nose up, in the vehicle's colour with a white outline: windscreen, roof, rear window,
+ * headlights and tail lights. Rotated on the map to the way the car is heading (or last headed, when parked).
+ * Drawn the same on both views.
+ */
+export function carSvg(color: string, w = 18, h = 32): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 36 64">
+  <rect x="4" y="2" width="28" height="60" rx="11" fill="${color}" stroke="#ffffff" stroke-width="3"/>
+  <path d="M9 19 L27 19 L24.5 28 L11.5 28 Z" fill="#0b1220" fill-opacity="0.85"/>
+  <rect x="11" y="29" width="14" height="15" rx="2.5" fill="#ffffff" fill-opacity="0.18"/>
+  <path d="M11.5 45 L24.5 45 L26 51 L10 51 Z" fill="#0b1220" fill-opacity="0.75"/>
+  <rect x="8" y="5" width="6" height="3.2" rx="1.4" fill="#fff6c2"/>
+  <rect x="22" y="5" width="6" height="3.2" rx="1.4" fill="#fff6c2"/>
+  <rect x="8" y="56.5" width="6" height="2.8" rx="1.2" fill="#ff4d4d"/>
+  <rect x="22" y="56.5" width="6" height="2.8" rx="1.2" fill="#ff4d4d"/>
+</svg>`;
 }
 
 export function useVehicles(on: boolean, hours: number) {
@@ -59,27 +78,13 @@ export function useVehicles(on: boolean, hours: number) {
   return { vehicles: on ? vehicles : [], tracks: on ? tracks : {} };
 }
 
-/** The arrow in a vehicle's colour with a white edge, drawn at twice its size for sharp screens. */
-function arrowImage(color: string): ImageData {
-  const s = 64;
-  const c = document.createElement("canvas");
-  c.width = c.height = s;
-  const ctx = c.getContext("2d")!;
-  ctx.beginPath();
-  ctx.moveTo(s / 2, 6);
-  ctx.lineTo(s - 12, s - 8);
-  ctx.lineTo(s / 2, s - 20);
-  ctx.lineTo(12, s - 8);
-  ctx.closePath();
-  ctx.lineJoin = "round";
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = "#ffffff";
-  ctx.stroke();
-  ctx.fillStyle = color;
-  ctx.fill();
-  return ctx.getImageData(0, 0, s, s);
+/** The car image for the globe, drawn at twice its size for sharp screens. */
+function carImage(color: string): Promise<HTMLImageElement> {
+  const img = new Image(36, 64);
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(carSvg(color, 36, 64))}`;
+  return img.decode().then(() => img);
 }
-const arrowName = (color: string) => `lens-vehicle-arrow-${color}`;
+const carName = (color: string) => `lens-vehicle-car-${color}`;
 
 export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | null; vehicles: Vehicle[]; tracks: Record<string, VehiclePoint[]> }) {
   const popupRef = useRef<GlPopup | null>(null);
@@ -98,24 +103,33 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
   // Layers added once, on top of everything (vehicles are what you are watching).
   useEffect(() => {
     if (!map) return;
-    for (const f of data.points.features) if (!map.hasImage(arrowName(f.properties.color))) map.addImage(arrowName(f.properties.color), arrowImage(f.properties.color), { pixelRatio: 2 });
+    let cancelled = false;
+    const colors = [...new Set(data.points.features.map((f) => f.properties.color))].filter((c) => !map.hasImage(carName(c)));
+    void Promise.all(colors.map((c) => carImage(c).then((img) => [c, img] as const))).then((imgs) => {
+      if (cancelled) return;
+      for (const [c, img] of imgs) if (!map.hasImage(carName(c))) map.addImage(carName(c), img, { pixelRatio: 2 });
+      draw();
+    });
+    return () => {
+      cancelled = true;
+    };
+    function draw() {
+    if (!map) return;
     if (!map.getSource("lens-vehicles")) {
       map.addSource("lens-vehicle-trails", { type: "geojson", data: data.lines as never });
       map.addSource("lens-vehicles", { type: "geojson", data: data.points as never });
       map.addLayer({ id: "lens-vehicle-trails", type: "line", source: "lens-vehicle-trails", layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "color"], "line-width": 3, "line-opacity": 0.75 } });
-      map.addLayer({ id: "lens-vehicles-dot", type: "circle", source: "lens-vehicles", filter: ["==", ["get", "moving"], 0], paint: { "circle-radius": 7, "circle-color": ["get", "color"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } });
       map.addLayer({
-        id: "lens-vehicles-arrow",
+        id: "lens-vehicles-car",
         type: "symbol",
         source: "lens-vehicles",
-        filter: ["==", ["get", "moving"], 1],
-        layout: { "icon-image": ["concat", "lens-vehicle-arrow-", ["get", "color"]], "icon-size": 0.85, "icon-rotate": ["get", "heading"], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true },
+        layout: { "icon-image": ["concat", "lens-vehicle-car-", ["get", "color"]], "icon-size": 1, "icon-rotate": ["get", "heading"], "icon-rotation-alignment": "map", "icon-allow-overlap": true, "icon-ignore-placement": true },
       });
       map.addLayer({
         id: "lens-vehicles-label",
         type: "symbol",
         source: "lens-vehicles",
-        layout: { "text-field": ["get", "name"], "text-size": 11.5, "text-offset": [0, 1.5], "text-anchor": "top", "text-allow-overlap": true, "text-font": ["Noto Sans Bold", "Open Sans Bold"] },
+        layout: { "text-field": ["get", "name"], "text-size": 11.5, "text-offset": [0, 1.9], "text-anchor": "top", "text-allow-overlap": true, "text-font": ["Noto Sans Bold", "Open Sans Bold"] },
         paint: { "text-color": "#ffffff", "text-halo-color": "#05080f", "text-halo-width": 1.5 },
       });
       const click = (e: MapLayerMouseEvent) => {
@@ -125,7 +139,7 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
         popupRef.current?.remove();
         popupRef.current = new GlPopup({ closeButton: true, offset: 14 }).setLngLat([v.last.lng, v.last.lat]).setHTML(`<b>${v.name.replace(/</g, "&lt;")}</b><br/>${vehicleSummary(v)}`).addTo(map);
       };
-      for (const l of ["lens-vehicles-dot", "lens-vehicles-arrow"]) {
+      for (const l of ["lens-vehicles-car"]) {
         map.on("click", l, click);
         map.on("mouseenter", l, () => (map.getCanvas().style.cursor = "pointer"));
         map.on("mouseleave", l, () => (map.getCanvas().style.cursor = ""));
@@ -134,14 +148,12 @@ export function GlobeVehicles({ map, vehicles, tracks }: { map: MapLibreMap | nu
       (map.getSource("lens-vehicles") as GeoJSONSource).setData(data.points as never);
       (map.getSource("lens-vehicle-trails") as GeoJSONSource).setData(data.lines as never);
     }
+    }
   }, [map, data]);
   return null;
 }
 
-const arrowSvg = (color: string, heading: number, moving: boolean) =>
-  moving
-    ? `<svg width="26" height="26" viewBox="0 0 64 64" style="transform:rotate(${heading}deg)"><path d="M32 6 L52 56 L32 44 L12 56 Z" fill="${color}" stroke="#fff" stroke-width="5" stroke-linejoin="round"/></svg>`
-    : `<svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="6.5" fill="${color}" stroke="#fff" stroke-width="2.5"/></svg>`;
+const carHtml = (color: string, heading: number) => `<div style="transform:rotate(${heading}deg);width:18px;height:32px">${carSvg(color)}</div>`;
 
 export function FlatVehicles({ vehicles, tracks }: { vehicles: Vehicle[]; tracks: Record<string, VehiclePoint[]> }) {
   return (
@@ -152,16 +164,14 @@ export function FlatVehicles({ vehicles, tracks }: { vehicles: Vehicle[]; tracks
       {vehicles
         .filter((v) => v.last)
         .map((v) => {
-          const moving = v.last!.heading !== null && (v.last!.speedKmh ?? 0) > 3;
-          const size = moving ? 26 : 18;
           return (
             <Marker
               key={v.id}
               position={[v.last!.lat, v.last!.lng]}
               zIndexOffset={1000}
-              icon={divIcon({ className: "lens-vehicle-icon", html: arrowSvg(colorOf(v), v.last!.heading ?? 0, moving), iconSize: [size, size], iconAnchor: [size / 2, size / 2] })}
+              icon={divIcon({ className: "lens-vehicle-icon", html: carHtml(colorOf(v), v.last!.heading ?? 0), iconSize: [18, 32], iconAnchor: [9, 16] })}
             >
-              <Tooltip permanent direction="bottom" offset={[0, 12]} className="lens-vehicle-label">
+              <Tooltip permanent direction="bottom" offset={[0, 16]} className="lens-vehicle-label">
                 {v.name}
               </Tooltip>
               <Popup>
