@@ -2218,6 +2218,7 @@ export const api = {
   updateVehicle: (id: string, v: { name?: string; color?: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle }>(`/api/tracking/vehicles/${id}`, { method: "PATCH", body: JSON.stringify(v) }),
   newVehicleToken: (id: string) => req<{ token: string }>(`/api/tracking/vehicles/${id}/token`, { method: "POST" }),
   deleteVehicle: (id: string) => req<{ ok: boolean }>(`/api/tracking/vehicles/${id}`, { method: "DELETE" }),
+  getTrackingLog: () => req<{ log: { at: string; outcome: string; method: string; contentType: string; userAgent: string; device: string; sample: string }[] }>("/api/tracking/log"),
   getVehicleTrack: (id: string, hours: number) => req<{ vehicle: Vehicle; points: VehiclePoint[] }>(`/api/tracking/vehicles/${id}/track?hours=${hours}`),
   setMapExtras: (extras: MapTilerExtras) => req<MapTilerExtras>("/api/map-settings/provider/extras", { method: "PUT", body: JSON.stringify(extras) }),
   getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
