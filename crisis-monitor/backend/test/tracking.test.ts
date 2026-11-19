@@ -123,3 +123,34 @@ describe("vehicle alerts", () => {
     expect(((await (await call("/alerts", { headers: admin })).json()) as { alerts: unknown[] }).alerts).toHaveLength(1);
   });
 });
+
+describe("placing a parked car", () => {
+  it("averages its wander and ignores impossible jumps", async () => {
+    const d1 = fakeD1();
+    d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, client_id TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);
+      INSERT INTO users (id, username) VALUES ('a', 'admin');
+      CREATE TABLE vehicles (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#f5a524', token_hash TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL, speed_limit_kmh REAL, created_at TEXT NOT NULL, last_at TEXT, last_lat REAL, last_lng REAL, last_speed_kmh REAL, last_heading REAL, last_ignition INTEGER, last_battery REAL, last_accuracy REAL, zone_lat REAL, zone_lng REAL, zone_radius_m REAL, quiet_from INTEGER, quiet_to INTEGER, silent_minutes INTEGER, alert_state TEXT);
+      CREATE TABLE vehicle_positions (vehicle_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lng REAL NOT NULL, speed_kmh REAL, heading REAL, accuracy_m REAL, altitude_m REAL, ignition INTEGER, battery REAL, PRIMARY KEY (vehicle_id, at));
+      CREATE TABLE tracking_log (at TEXT NOT NULL, outcome TEXT NOT NULL, method TEXT, content_type TEXT, user_agent TEXT, device TEXT, sample TEXT);
+      CREATE TABLE vehicle_alerts (id TEXT PRIMARY KEY, vehicle_id TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, lat REAL, lng REAL, acknowledged_at TEXT);`);
+    const env = { DB: d1.DB, SESSION_SECRET: "s" } as unknown as Env;
+    const admin = { Authorization: `Bearer ${await createSessionToken("a", "admin", "s")}`, "Content-Type": "application/json" };
+    const call = (path: string, init: RequestInit = {}) => trackingRouter.request(path, init, env);
+    const made = (await (await call("/vehicles", { method: "POST", headers: admin, body: JSON.stringify({ name: "Car" }) })).json()) as { vehicle: { id: string }; token: string };
+    let t = Date.now() - 120_000;
+    const send = (lat: number, lng: number, accuracy: number) => call(`/osmand?id=${made.token}&lat=${lat}&lon=${lng}&speed=0&accuracy=${accuracy}&timestamp=${Math.floor((t += 10_000) / 1000)}`, { method: "POST" });
+    // A parked car whose fixes wander about 10 m around -1.233900, 36.713600.
+    for (const [dLat, dLng] of [[0.00009, 0], [-0.00009, 0], [0, 0.00009], [0, -0.00009]]) await send(-1.2339 + dLat, 36.7136 + dLng, 6);
+    const last = async () => ((await (await call("/vehicles", { headers: admin })).json()) as { vehicles: { last: { lat: number; lng: number } }[] }).vehicles[0].last;
+    let p = await last();
+    expect(p.lat).toBeCloseTo(-1.2339, 4);
+    expect(p.lng).toBeCloseTo(36.7136, 4);
+    // A glitch 50 km away 10 seconds later is ignored.
+    await send(-1.68, 36.71, 5);
+    p = await last();
+    expect(p.lat).toBeCloseTo(-1.2339, 3);
+    // All 30 fixes as sent are there to check, the glitch included.
+    const recent = (await (await call(`/vehicles/${made.vehicle.id}/recent`, { headers: admin })).json()) as { points: unknown[] };
+    expect(recent.points).toHaveLength(5);
+  });
+});
