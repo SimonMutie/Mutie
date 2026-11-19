@@ -81,13 +81,45 @@ describe("tokens from before the change", () => {
     d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, client_id TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);`);
     const env = { DB: d1.DB, SESSION_SECRET: "s" } as unknown as Env;
     // The module made its tables in the earlier test's database; this one gets them by hand.
-    d1.db.exec(`CREATE TABLE vehicles (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#f5a524', token_hash TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL, speed_limit_kmh REAL, created_at TEXT NOT NULL, last_at TEXT, last_lat REAL, last_lng REAL, last_speed_kmh REAL, last_heading REAL, last_ignition INTEGER, last_battery REAL);
+    d1.db.exec(`CREATE TABLE vehicles (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#f5a524', token_hash TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL, speed_limit_kmh REAL, created_at TEXT NOT NULL, last_at TEXT, last_lat REAL, last_lng REAL, last_speed_kmh REAL, last_heading REAL, last_ignition INTEGER, last_battery REAL, last_accuracy REAL, zone_lat REAL, zone_lng REAL, zone_radius_m REAL, quiet_from INTEGER, quiet_to INTEGER, silent_minutes INTEGER, alert_state TEXT);
       CREATE TABLE vehicle_positions (vehicle_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lng REAL NOT NULL, speed_kmh REAL, heading REAL, accuracy_m REAL, altitude_m REAL, ignition INTEGER, battery REAL, PRIMARY KEY (vehicle_id, at));
-      CREATE TABLE tracking_log (at TEXT NOT NULL, outcome TEXT NOT NULL, method TEXT, content_type TEXT, user_agent TEXT, device TEXT, sample TEXT);`);
+      CREATE TABLE tracking_log (at TEXT NOT NULL, outcome TEXT NOT NULL, method TEXT, content_type TEXT, user_agent TEXT, device TEXT, sample TEXT);
+      CREATE TABLE vehicle_alerts (id TEXT PRIMARY KEY, vehicle_id TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, lat REAL, lng REAL, acknowledged_at TEXT);`);
     const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("lens-3hLnh92DQIT4B91dwcT3X69T")))].map((b) => b.toString(16).padStart(2, "0")).join("");
     d1.db.exec(`INSERT INTO vehicles (id, name, token_hash, owner_user_id, created_at) VALUES ('v', 'Car', '${hash}', 'a', '2026-01-01')`);
     for (const id of ["3hLnh92DQIT4B91dwcT3X69T", "lens-3hLnh92DQIT4B91dwcT3X69T", " 3hLnh92DQIT4B91dwcT3X69T "]) {
       expect((await trackingRouter.request(`/osmand?id=${encodeURIComponent(id)}&lat=-1.2339&lon=36.7136`, { method: "POST" }, env)).status).toBe(200);
     }
+  });
+});
+
+describe("vehicle alerts", () => {
+  it("raise once when a rule is broken, judge the zone on precise fixes only, and keep the car on its precise position", async () => {
+    const d1 = fakeD1();
+    d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, client_id TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);
+      INSERT INTO users (id, username) VALUES ('a', 'admin');
+      CREATE TABLE vehicles (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#f5a524', token_hash TEXT NOT NULL UNIQUE, owner_user_id TEXT NOT NULL, speed_limit_kmh REAL, created_at TEXT NOT NULL, last_at TEXT, last_lat REAL, last_lng REAL, last_speed_kmh REAL, last_heading REAL, last_ignition INTEGER, last_battery REAL, last_accuracy REAL, zone_lat REAL, zone_lng REAL, zone_radius_m REAL, quiet_from INTEGER, quiet_to INTEGER, silent_minutes INTEGER, alert_state TEXT);
+      CREATE TABLE vehicle_positions (vehicle_id TEXT NOT NULL, at TEXT NOT NULL, lat REAL NOT NULL, lng REAL NOT NULL, speed_kmh REAL, heading REAL, accuracy_m REAL, altitude_m REAL, ignition INTEGER, battery REAL, PRIMARY KEY (vehicle_id, at));
+      CREATE TABLE tracking_log (at TEXT NOT NULL, outcome TEXT NOT NULL, method TEXT, content_type TEXT, user_agent TEXT, device TEXT, sample TEXT);
+      CREATE TABLE vehicle_alerts (id TEXT PRIMARY KEY, vehicle_id TEXT NOT NULL, kind TEXT NOT NULL, severity TEXT NOT NULL, message TEXT NOT NULL, at TEXT NOT NULL, lat REAL, lng REAL, acknowledged_at TEXT);`);
+    const env = { DB: d1.DB, SESSION_SECRET: "s" } as unknown as Env;
+    const admin = { Authorization: `Bearer ${await createSessionToken("a", "admin", "s")}`, "Content-Type": "application/json" };
+    const call = (path: string, init: RequestInit = {}) => trackingRouter.request(path, init, env);
+    const made = (await (await call("/vehicles", { method: "POST", headers: admin, body: JSON.stringify({ name: "Car", speedLimitKmh: 80 }) })).json()) as { vehicle: { id: string }; token: string };
+    expect((await call(`/vehicles/${made.vehicle.id}`, { method: "PATCH", headers: admin, body: JSON.stringify({ zone: { lat: -1.2339, lng: 36.7136, radiusM: 300 } }) })).status).toBe(200);
+    let t = Date.now() - 600_000;
+    const send = (lat: number, lng: number, knots: number, accuracy: number) => call(`/osmand?id=${made.token}&lat=${lat}&lon=${lng}&speed=${knots}&accuracy=${accuracy}&timestamp=${Math.floor((t += 20_000) / 1000)}`, { method: "POST" });
+    await send(-1.2339, 36.7136, 0, 8); // home, precise
+    await send(-1.2400, 36.7300, 0, 900); // rough fix far away: neither moves the car nor counts as leaving the zone
+    let car = ((await (await call("/vehicles", { headers: admin })).json()) as { vehicles: { last: { lat: number; accuracyM: number } }[] }).vehicles[0];
+    expect(car.last.lat).toBeCloseTo(-1.2339, 4);
+    expect(car.last.accuracyM).toBe(8);
+    await send(-1.2500, 36.7300, 50, 6); // precise, 2.5 km away at 92.6 km/h: speeding and out of the zone
+    await send(-1.2510, 36.7310, 52, 6); // still both: no new alerts
+    const alerts = ((await (await call("/alerts", { headers: admin })).json()) as { alerts: { kind: string; message: string; id: string }[] }).alerts;
+    expect(alerts.map((a) => a.kind).sort()).toEqual(["speed", "zone"]);
+    expect(((await (await call("/vehicles", { headers: admin })).json()) as { vehicles: { alerting: boolean }[] }).vehicles[0].alerting).toBe(true);
+    await call(`/alerts/${alerts[0].id}/ack`, { method: "POST", headers: admin });
+    expect(((await (await call("/alerts", { headers: admin })).json()) as { alerts: unknown[] }).alerts).toHaveLength(1);
   });
 });
