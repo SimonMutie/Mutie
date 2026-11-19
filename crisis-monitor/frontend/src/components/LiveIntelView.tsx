@@ -2,6 +2,7 @@ import { exportAllowed, stampCanvas } from "../exportGuard";
 import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
+import VehicleAlertPopups from "./VehicleAlertPopups";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
 import { MarketsPanel } from "./MarketsPanel";
@@ -2684,6 +2685,15 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeOverlays map={globeMap} state={globeOverlays} />
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
         <GlobeVehicles map={globeMap} vehicles={vehicles} tracks={vehicleTracks} />
+        {/* Vehicle alerts pop up whether or not the vehicles are shown: a broken rule should never go unseen. */}
+        <VehicleAlertPopups
+          on
+          vehicles={vehicles}
+          onLocate={(lat, lng) => {
+            if (mapMode === "3d") globeMap?.flyTo({ center: [lng, lat], zoom: Math.max(globeMap.getZoom(), 15) });
+            else flatMap?.flyTo([lat, lng], Math.max(flatMap.getZoom(), 16));
+          }}
+        />
         {globeWeather && <GlobeWeather map={globeMap} kind={globeWeather} visible={mapMode === "3d"} onClose={() => setGlobeWeather(null)} />}
         {mapMode === "3d" && <Studio3D map={globeMap} shapes={savedShapes} active={activeTool === "shapes"} />}
 
