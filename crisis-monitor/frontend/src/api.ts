@@ -2508,6 +2508,9 @@ export const api = {
     req<RouteResult>(
       `/api/live-layers/route?from=${from[0]},${from[1]}&to=${to[0]},${to[1]}&mode=${mode}`
     ),
+  /** A road route through several [lat, lng] points (the incident map's road routes). */
+  getRoadRoute: (points: [number, number][], mode: RouteProfile = "driving") =>
+    req<RouteResult>(`/api/live-layers/route?points=${points.map(([lat, lng]) => `${lat},${lng}`).join(";")}&mode=${mode}`),
 
   // Global-status HUD feeds — not map layers, see globalStatus.ts for the
   // real sources behind each and why the reference platform's own Markets/Country-Risk
