@@ -1,13 +1,23 @@
+import { maptilerKey } from "../mapProvider";
+
 /**
- * Ground height from the open Terrarium elevation tiles (Mapzen's blend of SRTM, GMTED2010 and ETOPO1, hosted as an
+ * Ground height: MapTiler's elevation model (terrain-rgb-v2) with the key, otherwise the open Terrarium elevation tiles (Mapzen's blend of SRTM, GMTED2010 and ETOPO1, hosted as an
  * AWS open dataset; no key). Zoom 12 is about 30 to 38 m a pixel at these latitudes.
  */
 const ZOOM = 12;
 const SIZE = 256;
 const tiles = new Map<string, Promise<ImageData | null>>();
 
+/** Which tiles: MapTiler's (512 pixels, "mapbox" encoding) or Terrarium's (256 pixels). */
+function source(): { size: number; url: (x: number, y: number) => string; decode: (r: number, g: number, b: number) => number } {
+  const k = maptilerKey();
+  if (k) return { size: 512, url: (x, y) => `https://api.maptiler.com/tiles/terrain-rgb-v2/${ZOOM}/${x}/${y}.webp?key=${k}`, decode: (r, g, b) => -10000 + (r * 65536 + g * 256 + b) * 0.1 };
+  return { size: SIZE, url: (x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${ZOOM}/${x}/${y}.png`, decode: (r, g, b) => r * 256 + g + b / 256 - 32768 };
+}
+
 function loadTile(x: number, y: number): Promise<ImageData | null> {
-  const key = `${x}/${y}`;
+  const src = source();
+  const key = `${src.size}/${x}/${y}`;
   let hit = tiles.get(key);
   if (!hit) {
     hit = new Promise<ImageData | null>((resolve) => {
@@ -16,18 +26,18 @@ function loadTile(x: number, y: number): Promise<ImageData | null> {
       img.onload = () => {
         try {
           const canvas = document.createElement("canvas");
-          canvas.width = SIZE;
-          canvas.height = SIZE;
+          canvas.width = src.size;
+          canvas.height = src.size;
           const ctx = canvas.getContext("2d", { willReadFrequently: true });
           if (!ctx) return resolve(null);
           ctx.drawImage(img, 0, 0);
-          resolve(ctx.getImageData(0, 0, SIZE, SIZE));
+          resolve(ctx.getImageData(0, 0, src.size, src.size));
         } catch {
           resolve(null);
         }
       };
       img.onerror = () => resolve(null);
-      img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${ZOOM}/${x}/${y}.png`;
+      img.src = src.url(x, y);
     });
     tiles.set(key, hit);
     if (tiles.size > 200) tiles.delete(tiles.keys().next().value as string);
@@ -45,10 +55,12 @@ export async function elevationAt(lat: number, lng: number): Promise<number | nu
   const tx = Math.floor(fx), ty = Math.floor(fy);
   const data = await loadTile(((tx % n) + n) % n, ty);
   if (!data) return null;
-  const px = Math.min(SIZE - 1, Math.floor((fx - tx) * SIZE));
-  const py = Math.min(SIZE - 1, Math.floor((fy - ty) * SIZE));
-  const i = (py * SIZE + px) * 4;
-  return data.data[i] * 256 + data.data[i + 1] + data.data[i + 2] / 256 - 32768;
+  const src = source();
+  const size = data.width;
+  const px = Math.min(size - 1, Math.floor((fx - tx) * size));
+  const py = Math.min(size - 1, Math.floor((fy - ty) * size));
+  const i = (py * size + px) * 4;
+  return src.decode(data.data[i], data.data[i + 1], data.data[i + 2]);
 }
 
 const EARTH = 6_371_008.8;
