@@ -22,7 +22,8 @@ function planeIcon(color: string, heading: number, selected: boolean): DivIcon {
   const key = `${color}:${h}:${selected}`;
   let icon = iconCache.get(key);
   if (!icon) {
-    const size = selected ? 22 : 15;
+    // 16 px, the same as the 3D globe's planes.
+    const size = selected ? 22 : 16;
     icon = divIcon({
       className: "",
       iconSize: [size, size],
