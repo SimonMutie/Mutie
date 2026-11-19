@@ -159,6 +159,13 @@ app.get("/ws", async (c) => {
   return c.env.LIVE_FEED.get(id).fetch(c.req.raw);
 });
 
+// A tracker set up with only the server's address (without /api/tracking/osmand) reports to the root: take it there too.
+app.all("/", (c) => {
+  if (c.req.method !== "GET" && c.req.method !== "POST") return c.notFound();
+  const url = new URL(c.req.url);
+  return trackingRouter.fetch(new Request(new URL(`/osmand${url.search}`, url), c.req.raw), c.env, c.executionCtx);
+});
+
 app.notFound((c) => c.json({ error: "not found" }, 404));
 
 /** Splits the ~260-source list into Queues' max-100-messages-per-call
