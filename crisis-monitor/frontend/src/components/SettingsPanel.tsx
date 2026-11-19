@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, setToken, type AuthUser, type EscalationPipelineStatus } from "../api";
+import { api, setToken, type AuthUser, type EscalationPipelineStatus, type MapTilerExtras } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
-import { setMapTilerKey } from "../mapProvider";
+import { setMapTilerKey, setMaptilerExtras } from "../mapProvider";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled, introVoiceEnabled, setIntroVoiceEnabled } from "../intro";
 
 interface Props {
@@ -50,6 +50,7 @@ export default function SettingsPanel({ onBack, user }: Props) {
       <OpeningSequenceCard />
 
       {user.role === "admin" && <MapProviderCard />}
+      {user.role === "admin" && <MapTilerExtrasCard />}
 
       {user.role === "admin" && <AiUsageCard />}
     </div>
@@ -386,7 +387,7 @@ function MapProviderCard() {
     <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
       <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>Maps (MapTiler)</div>
       <div style={{ fontSize: 12.5, opacity: 0.75, marginBottom: 10, lineHeight: 1.5 }}>
-        With a MapTiler key, every map in the Lens uses MapTiler's basemaps: Streets, Dark, Data, Outdoor, Topographic, Satellite and Satellite with labels, and the 3D globe uses its dark style and terrain. In MapTiler, restrict the key to this site's address so it cannot be used anywhere else.
+        With a MapTiler key, every map in the Lens uses MapTiler's basemaps (Lens, Dark, Streets, Satellite, Outdoor, Topographic, Ocean, Landscape, Muted, Data, Toner), and the globe gets terrain, weather, sea-floor depth, land cover, place search and routing. In MapTiler, restrict the key to this site's address so it cannot be used anywhere else.
       </div>
       <div style={{ fontSize: 12.5, marginBottom: 10 }}>
         {masked ? (
@@ -408,6 +409,87 @@ function MapProviderCard() {
             Remove
           </button>
         )}
+      </div>
+      {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
+    </div>
+  );
+}
+
+/** The admin's own MapTiler content: a custom map style used as the "Lens" basemap, and uploaded datasets shown as
+ *  layers on Live OSINT. Both are made in the MapTiler account; only their ids are entered here. */
+function MapTilerExtrasCard() {
+  const [extras, setExtras] = useState<MapTilerExtras>({ customStyle: null, datasets: [] });
+  const [styleId, setStyleId] = useState("");
+  const [ds, setDs] = useState({ id: "", label: "", color: "#f5a524" });
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.getMapExtras().then((x) => {
+      setExtras(x);
+      setStyleId(x.customStyle?.id ?? "");
+    }).catch(() => undefined);
+  }, []);
+  async function save(next: MapTilerExtras, done: string) {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const saved = await api.setMapExtras(next);
+      setExtras(saved);
+      setMaptilerExtras(saved);
+      setStatus({ ok: true, text: done });
+    } catch (e) {
+      setStatus({ ok: false, text: e instanceof Error ? e.message : "Could not save." });
+    } finally {
+      setBusy(false);
+    }
+  }
+  /** The id part of a pasted MapTiler link or id. */
+  const idOf = (v: string) => v.trim().replace(/^.*\/(maps|data)\//, "").replace(/[/?#].*$/, "");
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>Your MapTiler map and data</div>
+      <div style={{ fontSize: 12.5, opacity: 0.75, marginBottom: 12, lineHeight: 1.5 }}>
+        Design your own map in MapTiler (Maps, New map, then style it) and paste its id or link here: it becomes the Lens basemap in Live OSINT. Upload your own layers (GeoJSON, KML, GPX or shapefile) in MapTiler's Data section and add each one here: they can then be shown on both views of Live OSINT.
+      </div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Lens basemap</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+        <input value={styleId} onChange={(e) => setStyleId(e.target.value)} placeholder="MapTiler map id or link" style={{ flex: "1 1 240px" }} aria-label="MapTiler map id" />
+        <button disabled={busy || !idOf(styleId)} onClick={() => void save({ ...extras, customStyle: { id: idOf(styleId), label: "Lens" } }, "Saved. Choose the Lens basemap in Live OSINT to see it (reload open pages).")}>
+          Save map
+        </button>
+        {extras.customStyle && (
+          <button disabled={busy} onClick={() => void save({ ...extras, customStyle: null }, "Removed. The Lens basemap is back to the built-in quiet dark map.")}>
+            Use built-in
+          </button>
+        )}
+      </div>
+      <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 14 }}>{extras.customStyle ? `In use: ${extras.customStyle.id}` : "None: the Lens basemap is a quiet dark map with Africa and the Middle East in focus."}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Datasets</div>
+      {extras.datasets.length === 0 && <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>None yet.</div>}
+      {extras.datasets.map((d) => (
+        <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 6 }}>
+          <span style={{ width: 12, height: 12, borderRadius: 3, background: d.color, flex: "none" }} />
+          <span style={{ flex: 1 }}>
+            {d.label} <span style={{ opacity: 0.6 }}>({d.id})</span>
+          </span>
+          <button disabled={busy} onClick={() => void save({ ...extras, datasets: extras.datasets.filter((x) => x.id !== d.id) }, `Removed ${d.label}.`)}>
+            Remove
+          </button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+        <input value={ds.label} onChange={(e) => setDs({ ...ds, label: e.target.value })} placeholder="Name (e.g. Field offices)" style={{ flex: "1 1 150px" }} aria-label="Dataset name" />
+        <input value={ds.id} onChange={(e) => setDs({ ...ds, id: e.target.value })} placeholder="Dataset id or link" style={{ flex: "1 1 180px" }} aria-label="Dataset id" />
+        <input type="color" value={ds.color} onChange={(e) => setDs({ ...ds, color: e.target.value })} aria-label="Colour" style={{ width: 40, padding: 0 }} />
+        <button
+          disabled={busy || !idOf(ds.id) || !ds.label.trim() || extras.datasets.some((x) => x.id === idOf(ds.id))}
+          onClick={() => {
+            const next = { ...extras, datasets: [...extras.datasets, { id: idOf(ds.id), label: ds.label.trim(), color: ds.color }] };
+            void save(next, `Added ${ds.label.trim()}. Show it from the map picker in Live OSINT (reload open pages).`).then(() => setDs({ id: "", label: "", color: "#f5a524" }));
+          }}
+        >
+          Add
+        </button>
       </div>
       {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
     </div>
