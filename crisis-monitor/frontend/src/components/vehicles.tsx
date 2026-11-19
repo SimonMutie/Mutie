@@ -32,7 +32,7 @@ export function vehicleSummary(v: Vehicle): string {
 export function vehiclePosition(v: Vehicle): string {
   if (!v.last) return "";
   const acc = v.last.accuracyM;
-  return `${v.last.lat.toFixed(6)}, ${v.last.lng.toFixed(6)}${acc !== null ? ` · precise to ±${Math.round(acc)} m${acc > 60 ? " (rough: no satellite fix)" : ""}` : ""}`;
+  return `${v.last.lat.toFixed(6)}, ${v.last.lng.toFixed(6)}${acc !== null ? ` · precise to ±${Math.round(acc)} m${acc > 30 ? " (rough: no satellite fix)" : ""}` : ""}`;
 }
 
 /** A circle of `radiusM` metres as a polygon (for the globe, which has no metre circles). */
