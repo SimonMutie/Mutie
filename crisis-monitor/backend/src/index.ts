@@ -21,7 +21,7 @@ import { customDashboardsRouter, publicDashboardsRouter } from "./routes/customD
 import { datasetsRouter } from "./routes/datasets";
 import { clientsRouter } from "./routes/clients";
 import { mapSettingsRouter } from "./routes/map-settings";
-import { trackingRouter, pruneVehiclePositions } from "./routes/tracking";
+import { trackingRouter, pruneVehiclePositions, checkSilentVehicles } from "./routes/tracking";
 import { liveLayersRouter } from "./routes/liveLayers";
 import { globalStatusRouter } from "./routes/globalStatus";
 import { socialListeningRouter } from "./routes/socialListening";
@@ -262,6 +262,9 @@ export default {
     // Alert subscriptions (lib/alertDelivery.ts) go out right after it, so a
     // newly flagged incident reaches email/Signal in the same tick.
     ctx.waitUntil(stageDailyIfDue(env, controller.scheduledTime).catch((err) => console.error("[staging] daily collection failed", err)));
+
+    // Tracked vehicles silent for longer than their limit raise an alert (routes/tracking.ts).
+    ctx.waitUntil(checkSilentVehicles(env.DB));
 
     // Vehicle positions older than 90 days removed, once a day (the 03:00 UTC tick).
     if (new Date(controller.scheduledTime).getUTCHours() === 3 && new Date(controller.scheduledTime).getUTCMinutes() < 5) {
