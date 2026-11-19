@@ -1,7 +1,7 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
 import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
-import { FlatVehicles, GlobeVehicles, useVehicles, vehicleSummary } from "./vehicles";
+import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
 import { MarketsPanel } from "./MarketsPanel";
@@ -3686,6 +3686,57 @@ function LayerPanel({
             onToggleTerrain={onToggleTerrain!}
           />
           {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} overlays={overlays} onOverlays={onOverlays} shownDatasets={shownDatasets} onToggleDataset={onToggleDataset} vehicles={vehicles} showVehicles={showVehicles} onShowVehicles={onShowVehicles} trailHours={trailHours} onTrailHours={onTrailHours} onLocateVehicle={onLocateVehicle} />}
+          {onShowVehicles && <VehiclesRailButton on={!!showVehicles} onToggle={() => onShowVehicles(!showVehicles)} vehicles={vehicles ?? []} onLocate={onLocateVehicle} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Left-rail toggle for car tracking: shows or hides the tracked vehicles on both views. The badge counts vehicles
+ *  reporting now; hovering lists them, and clicking a name flies to it. */
+function VehiclesRailButton({ on, onToggle, vehicles, onLocate }: { on: boolean; onToggle: () => void; vehicles: Vehicle[]; onLocate?: (v: Vehicle) => void }) {
+  const [hovered, setHovered] = useState(false);
+  const live = vehicles.filter((v) => !isStale(v)).length;
+  return (
+    <div style={{ position: "relative", marginTop: 2 }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <button
+        onClick={onToggle}
+        aria-pressed={on}
+        title={`Car tracking: ${on ? "on" : "off"}${on && vehicles.length ? `, ${live} of ${vehicles.length} reporting` : ""}`}
+        style={{ position: "relative", width: 42, height: 38, display: "flex", alignItems: "center", justifyContent: "center", background: on ? "rgba(212,175,55,0.14)" : "transparent", border: "none", borderRadius: 8, cursor: "pointer", transition: "background 0.15s" }}
+      >
+        <Car size={17} color={on ? HUD.gold : HUD.textMuted} strokeWidth={on ? 2.25 : 1.75} />
+        {on && live > 0 && (
+          <span style={{ position: "absolute", top: 3, right: 4, minWidth: 13, height: 13, borderRadius: 7, background: "#22c55e", color: "#04110a", fontSize: 8.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px" }}>{live}</span>
+        )}
+      </button>
+      {hovered && (
+        <div style={{ ...glassPanel(), position: "absolute", left: "100%", bottom: 0, width: 240, padding: "10px 10px 10px 18px", zIndex: 600 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 10.5, letterSpacing: "0.14em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 }}>Car tracking</span>
+            <button onClick={onToggle} style={{ background: on ? "rgba(212,175,55,0.18)" : "rgba(255,255,255,0.06)", color: on ? HUD.gold : HUD.textMuted, border: "none", borderRadius: 10, padding: "2px 9px", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{on ? "ON" : "OFF"}</button>
+          </div>
+          {!on ? (
+            <div style={{ fontSize: 10.5, color: HUD.textMuted, lineHeight: 1.4 }}>Off. Switch on to show your vehicles and their trails on the map.</div>
+          ) : vehicles.length === 0 ? (
+            <div style={{ fontSize: 10.5, color: HUD.textMuted, lineHeight: 1.4 }}>No vehicles yet. Add one in Settings, Vehicles.</div>
+          ) : (
+            vehicles.map((v) => (
+              <button
+                key={v.id}
+                onClick={() => onLocate?.(v)}
+                disabled={!on || !v.last}
+                style={{ display: "flex", alignItems: "flex-start", gap: 7, width: "100%", background: "transparent", border: "none", borderRadius: 6, padding: "4px 4px", cursor: on && v.last ? "pointer" : "default", textAlign: "left", fontFamily: "inherit" }}
+              >
+                <span style={{ width: 9, height: 9, borderRadius: 5, marginTop: 3, flex: "none", background: isStale(v) ? "#8a94a6" : v.color }} />
+                <span style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={{ fontSize: 11, color: HUD.textPrimary, fontWeight: 600 }}>{v.name}</span>
+                  <span style={{ fontSize: 9.5, color: HUD.textMuted }}>{vehicleSummary(v)}</span>
+                </span>
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>
