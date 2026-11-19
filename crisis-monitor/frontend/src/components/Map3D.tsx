@@ -6,7 +6,7 @@ import { NEUTRAL_COUNTRY } from "./worldCountries";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import MapNavPad from "./MapNavPad";
-import { Map as MapLibreMap, Popup, setWorkerUrl, type GeoJSONSource } from "maplibre-gl";
+import { Map as MapLibreMap, Popup, setWorkerUrl, type ExpressionSpecification, type GeoJSONSource } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./Map3D.css";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
@@ -15,6 +15,8 @@ import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
 import { pinSvg } from "./actorTheme";
 import EscalationHoverCard from "./EscalationHoverCard";
 import { maptilerKey, maptilerStyle, maptilerTerrain } from "../mapProvider";
+import { liveBasemap, type BasemapId } from "../liveBasemaps";
+import { DOT, drawWarningIcon, WARNING_COLOR, WARNING_SIZE } from "./mapSymbols";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
 // runtime (not a `new URL(..., import.meta.url)` pattern Vite's asset
@@ -146,6 +148,10 @@ interface Map3DProps {
   showTerrain: boolean;
   /** Show the zoom and pan buttons. */
   showNav?: boolean;
+  /** The basemap (liveBasemaps.ts): "dark" is the vector style; the others are drawn as imagery beneath every layer. */
+  basemap?: BasemapId;
+  /** False while another view is on screen: animations pause (the map is kept, so switching back is instant). */
+  active?: boolean;
 }
 
 /** Everything the detail panel (Map3DDetailPanel) needs to render a
@@ -197,35 +203,7 @@ const TERRAIN_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrariu
  * would be shipped as an asset rather than relying on a text character.
  */
 function buildWarningIconImageData(fillColor: string): ImageData {
-  const size = 64;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-
-  // Triangle body.
-  ctx.beginPath();
-  ctx.moveTo(size * 0.5, size * 0.06);
-  ctx.lineTo(size * 0.96, size * 0.92);
-  ctx.lineTo(size * 0.04, size * 0.92);
-  ctx.closePath();
-  ctx.fillStyle = fillColor;
-  ctx.fill();
-  ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(0,0,0,0.65)";
-  ctx.lineWidth = 3;
-  ctx.stroke();
-
-  // Exclamation mark: a stem + a dot, drawn as shapes rather than a text
-  // glyph so it stays crisp and centered regardless of font availability.
-  ctx.fillStyle = "#0b0b0b";
-  const stemWidth = size * 0.09;
-  ctx.fillRect(size / 2 - stemWidth / 2, size * 0.32, stemWidth, size * 0.28);
-  ctx.beginPath();
-  ctx.arc(size / 2, size * 0.74, stemWidth * 0.75, 0, Math.PI * 2);
-  ctx.fill();
-
-  return ctx.getImageData(0, 0, size, size);
+  return drawWarningIcon(fillColor).getContext("2d")!.getImageData(0, 0, 64, 64);
 }
 
 function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
@@ -363,7 +341,7 @@ function toGeoJsonHeat(points: [number, number, number][] | null | undefined): G
   };
 }
 
-export default function Map3D({ points, fitKey, paths, territoryChanges, activeConflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain, showNav }: Map3DProps) {
+export default function Map3D({ points, fitKey, paths, territoryChanges, activeConflictMap, conflictWaves, drawAreaRing, onMapClick, onMapReady, heatPoints, heatStyle, onFeatureSelect, showDayNight, showBuildings, showTerrain, showNav, basemap = "dark", active = true }: Map3DProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const readyRef = useRef(false);
@@ -383,6 +361,60 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
   const pointsRef = useRef(points);
   pointsRef.current = points;
   const hoverCleanupRef = useRef<(() => void) | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  // The vector style's own layers (captured at load, before the Lens's): hidden while an imagery basemap is shown.
+  const styleLayerIdsRef = useRef<string[]>([]);
+  const basemapRef = useRef(basemap);
+  basemapRef.current = basemap;
+  /** Shows the chosen basemap: the vector style for Dark, or that basemap's imagery (each loaded once, then toggled). */
+  const applyBasemapRef = useRef(() => {});
+  applyBasemapRef.current = () => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    const id = basemapRef.current ?? "dark";
+    const vector = id === "dark";
+    for (const lid of styleLayerIdsRef.current) if (map.getLayer(lid)) map.setLayoutProperty(lid, "visibility", vector ? "visible" : "none");
+    const layers = map.getStyle().layers ?? [];
+    for (const l of layers) if (l.id.startsWith("lens-basemap-")) map.setLayoutProperty(l.id, "visibility", l.id === `lens-basemap-${id}` ? "visible" : "none");
+    if (vector) return;
+    const lid = `lens-basemap-${id}`;
+    if (!map.getLayer(lid)) {
+      const b = liveBasemap(id);
+      map.addSource(lid, { type: "raster", tiles: b.glTiles, tileSize: b.glTileSize, attribution: b.attribution, maxzoom: 19 });
+      // Beneath every Lens layer, above the (hidden) style.
+      const firstLens = layers.find((l) => l.id.startsWith("lens-") && !l.id.startsWith("lens-basemap-"))?.id;
+      map.addLayer({ id: lid, type: "raster", source: lid, paint: { "raster-fade-duration": 0 } }, firstLens);
+    }
+  };
+
+  /** Relief with the terrain: hill shading from the elevation model, and, with the MapTiler key, contour lines with
+   *  their heights from zoom 10. Added the first time terrain is turned on, then shown or hidden; beneath the Lens's
+   *  layers and above the basemap. */
+  const showTerrainRef = useRef(showTerrain);
+  showTerrainRef.current = showTerrain;
+  const applyReliefRef = useRef(() => {});
+  applyReliefRef.current = () => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    const on = showTerrainRef.current;
+    if (on && !map.getLayer("lens-relief-hillshade")) {
+      const layers = map.getStyle().layers ?? [];
+      const firstLens = layers.find((l) => l.id.startsWith("lens-") && !l.id.startsWith("lens-basemap-"))?.id;
+      const key = maptilerKey();
+      if (key) map.addSource("lens-relief-dem", { type: "raster-dem", tiles: [maptilerTerrain()], tileSize: 512, encoding: "mapbox", maxzoom: 14 });
+      else map.addSource("lens-relief-dem", { type: "raster-dem", tiles: [TERRAIN_TILE_URL], tileSize: 256, encoding: "terrarium", maxzoom: 15 });
+      map.addLayer({ id: "lens-relief-hillshade", type: "hillshade", source: "lens-relief-dem", paint: { "hillshade-exaggeration": 0.45, "hillshade-shadow-color": "#05080f", "hillshade-highlight-color": "#9fb3c8", "hillshade-accent-color": "#1a2433" } }, firstLens);
+      if (key) {
+        map.addSource("lens-relief-contours", { type: "vector", url: `https://api.maptiler.com/tiles/contours-v2/tiles.json?key=${key}` });
+        const height = ["coalesce", ["get", "height"], ["get", "ele"]] as unknown as ExpressionSpecification;
+        const major = ["==", ["%", ["to-number", height], 500], 0] as unknown as ExpressionSpecification;
+        map.addLayer({ id: "lens-relief-contour-lines", type: "line", source: "lens-relief-contours", "source-layer": "contour", minzoom: 10, paint: { "line-color": "rgba(214,190,130,0.55)", "line-width": ["case", major, 1.1, 0.5] } }, firstLens);
+        map.addLayer({ id: "lens-relief-contour-labels", type: "symbol", source: "lens-relief-contours", "source-layer": "contour", minzoom: 12, filter: major, layout: { "symbol-placement": "line", "text-field": ["concat", ["to-string", height], " m"], "text-size": 10, "text-font": ["Noto Sans Regular"] }, paint: { "text-color": "#d6be82", "text-halo-color": "#05080f", "text-halo-width": 1.2 } }, firstLens);
+      }
+    }
+    for (const id of ["lens-relief-hillshade", "lens-relief-contour-lines", "lens-relief-contour-labels"]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
+  };
 
   // Framing the points (see `fitKey`).
   const fitKeyRef = useRef(fitKey);
@@ -430,6 +462,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     map.on("rotate", () => setBearing(map.getBearing()));
 
     map.on("load", () => {
+      styleLayerIdsRef.current = (map.getStyle().layers ?? []).map((l) => l.id);
       map.setProjection({ type: "globe" });
       // Without an explicit sky, the globe's rim has no atmosphere glow and
       // the void beyond it is just the page's own black background — the
@@ -437,9 +470,9 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // These are the same blue tones the old three-globe atmosphere used.
       map.setSky({ "sky-color": "#000308", "horizon-color": "#1a2a4d", "horizon-fog-blend": 0.6, "atmosphere-blend": 0.4 });
 
-      map.addImage("warning-icon-critical", buildWarningIconImageData("#ff3d3d"), { pixelRatio: 2 });
-      map.addImage("warning-icon-elevated", buildWarningIconImageData("#ff9d4f"), { pixelRatio: 2 });
-      map.addImage("warning-icon-watch", buildWarningIconImageData("#c9a227"), { pixelRatio: 2 });
+      map.addImage("warning-icon-critical", buildWarningIconImageData(WARNING_COLOR.critical), { pixelRatio: 2 });
+      map.addImage("warning-icon-elevated", buildWarningIconImageData(WARNING_COLOR.elevated), { pixelRatio: 2 });
+      map.addImage("warning-icon-watch", buildWarningIconImageData(WARNING_COLOR.watch), { pixelRatio: 2 });
 
       // The points already in hand, not an empty set: data that arrived
       // before the style finished loading would otherwise stay undrawn
@@ -457,10 +490,11 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         filter: ["all", ["!", ["has", "escalationLevel"]], ["!", ["has", "aircraft"]], ["!=", ["get", "layerKey"], "My Incidents"]],
         paint: {
           "circle-color": ["get", "color"],
+          // The same dot as the flat map's (mapSymbols.ts).
           "circle-radius": ["+", 3, ["*", ["get", "size"], 14]],
-          "circle-opacity": 0.9,
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "rgba(0,0,0,0.4)",
+          "circle-opacity": DOT.fillOpacity,
+          "circle-stroke-width": DOT.strokeWidth,
+          "circle-stroke-color": DOT.stroke,
         },
       });
 
@@ -474,7 +508,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         layout: {
           "icon-image": ["concat", "incident-pin-", ["get", "color"]],
           "icon-anchor": "bottom",
-          "icon-size": 0.4,
+          // 14 px, the same as the incident pins on the flat map.
+          "icon-size": 0.5,
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
         },
@@ -531,7 +566,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         filter: ["has", "escalationLevel"],
         layout: {
           "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-watch"],
-          "icon-size": ["match", ["get", "escalationLevel"], "critical", 0.6, "elevated", 0.48, 0.36],
+          // The 64-px drawing at pixel ratio 2 is 32 px; scaled to WARNING_SIZE (the flat map uses the same sizes).
+          "icon-size": ["match", ["get", "escalationLevel"], "critical", WARNING_SIZE.critical / 32, "elevated", WARNING_SIZE.elevated / 32, WARNING_SIZE.watch / 32],
           "icon-anchor": "bottom",
           "icon-allow-overlap": true,
           "icon-ignore-placement": true,
@@ -805,6 +841,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       }
 
       readyRef.current = true;
+      applyBasemapRef.current();
       fitRef.current();
       onReadyRef.current?.(map);
     });
@@ -880,6 +917,13 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     else map.once("load", apply);
   }, [activeConflictMap]);
 
+  useEffect(() => {
+    applyBasemapRef.current();
+  }, [basemap]);
+  useEffect(() => {
+    if (active) mapRef.current?.resize();
+  }, [active]);
+
   // Waves: two rings per escalation, offset half a cycle, each growing and fading. Reduced motion holds them still.
   useEffect(() => {
     const map = mapRef.current;
@@ -903,7 +947,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     };
     const frame = (now: number) => {
       const map = mapRef.current;
-      if (map) {
+      // Paused while the flat map is on screen.
+      if (map && activeRef.current) {
         const phase = ((now - start) % period) / period;
         setRing(map, "lens-conflict-waves-a", phase, !!reduce);
         setRing(map, "lens-conflict-waves-b", (phase + 0.5) % 1, !!reduce);
@@ -948,6 +993,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     } else {
       map.setTerrain(null);
     }
+    applyReliefRef.current();
   }, [showTerrain]);
 
   return (
