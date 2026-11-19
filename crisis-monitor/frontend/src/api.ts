@@ -2212,6 +2212,8 @@ export const api = {
 
   getMapProvider: () => req<{ maptiler: string | null; fromEnv: boolean; updatedAt: string | null }>("/api/map-settings/provider"),
   setMapProvider: (maptiler: string | null) => req<{ ok: boolean }>("/api/map-settings/provider", { method: "PUT", body: JSON.stringify({ maptiler }) }),
+  getMapExtras: () => req<MapTilerExtras>("/api/map-settings/provider/extras"),
+  setMapExtras: (extras: MapTilerExtras) => req<MapTilerExtras>("/api/map-settings/provider/extras", { method: "PUT", body: JSON.stringify(extras) }),
   getPushKey: () => req<{ publicKey: string }>("/api/alert-subscriptions/push-key"),
   listAlertSubscriptions: (target: { scope: "escalations" } | { scope: "analyses"; domain: AnalysisDomain } | { scope: "query"; queryId: string }) =>
     req<AlertSubscriptionList>(
@@ -2747,4 +2749,10 @@ export interface StagingScriptResult {
   log: { level: "info" | "warn" | "error"; text: string; row?: string }[];
   changes: { id: string; batch_date: string; status_from: string; status_to: string; changed_fields: string[]; row: Record<string, unknown>; source_url: string | null }[];
   error?: { line: number; message: string };
+}
+
+/** The admin's own MapTiler content: a custom map style (the Lens basemap) and uploaded datasets (map layers). */
+export interface MapTilerExtras {
+  customStyle: { id: string; label: string } | null;
+  datasets: { id: string; label: string; color: string }[];
 }
