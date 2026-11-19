@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, setToken, type AuthUser, type EscalationPipelineStatus, type MapTilerExtras } from "../api";
+import { api, setToken, type AuthUser, type EscalationPipelineStatus, type MapTilerExtras, type Vehicle, TRACKING_URL } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import { setMapTilerKey, setMaptilerExtras } from "../mapProvider";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled, introVoiceEnabled, setIntroVoiceEnabled } from "../intro";
@@ -51,6 +51,7 @@ export default function SettingsPanel({ onBack, user }: Props) {
 
       {user.role === "admin" && <MapProviderCard />}
       {user.role === "admin" && <MapTilerExtrasCard />}
+      {user.role === "admin" && <VehiclesCard />}
 
       {user.role === "admin" && <AiUsageCard />}
     </div>
@@ -491,6 +492,126 @@ function MapTilerExtrasCard() {
           Add
         </button>
       </div>
+      {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
+    </div>
+  );
+}
+
+const ago = (iso: string) => {
+  const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+};
+
+/** Vehicles tracked on Live OSINT: add one, get its token, and set up the phone or tracker that reports for it. */
+function VehiclesCard() {
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState("#22c55e");
+  const [limit, setLimit] = useState("");
+  const [shown, setShown] = useState<{ name: string; token: string } | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.getVehicles().then((r) => setVehicles(r.vehicles)).catch(() => undefined);
+  useEffect(() => {
+    void load();
+    const t = window.setInterval(() => void load(), 15000);
+    return () => window.clearInterval(t);
+  }, []);
+  async function act(fn: () => Promise<void>) {
+    setBusy(true);
+    setStatus(null);
+    try {
+      await fn();
+      await load();
+    } catch (e) {
+      setStatus({ ok: false, text: e instanceof Error ? e.message : "Could not save." });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const copy = (t: string) => void navigator.clipboard?.writeText(t);
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>Vehicles</div>
+      <div style={{ fontSize: 12.5, opacity: 0.75, marginBottom: 12, lineHeight: 1.5 }}>
+        Track vehicles on Live OSINT. Add a vehicle to get its secret token, then put the token in the phone app or tracker that rides in it. Positions are kept for 90 days and seen only by admins.
+      </div>
+      {vehicles.map((v) => {
+        const fresh = v.last && Date.now() - Date.parse(v.last.at) < 10 * 60000;
+        return (
+          <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, marginBottom: 8 }}>
+            <span style={{ width: 12, height: 12, borderRadius: 6, background: v.color, flex: "none" }} />
+            <span style={{ flex: 1 }}>
+              <b>{v.name}</b>{" "}
+              <span style={{ opacity: 0.7 }}>
+                {v.last ? `${fresh ? "reporting" : "last seen"} ${ago(v.last.at)}${v.last.speedKmh !== null ? `, ${Math.round(v.last.speedKmh)} km/h` : ""}` : "no position yet"}
+              </span>
+            </span>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  if (!window.confirm(`Make a new token for ${v.name}? The phone or tracker will stop reporting until you enter the new one.`)) return;
+                  const r = await api.newVehicleToken(v.id);
+                  setShown({ name: v.name, token: r.token });
+                })
+              }
+            >
+              New token
+            </button>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(async () => {
+                  if (!window.confirm(`Remove ${v.name} and all its positions?`)) return;
+                  await api.deleteVehicle(v.id);
+                })
+              }
+            >
+              Remove
+            </button>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vehicle name (e.g. Land Cruiser KDA 123X)" style={{ flex: "1 1 220px" }} aria-label="Vehicle name" />
+        <input value={limit} onChange={(e) => setLimit(e.target.value.replace(/\D/g, ""))} placeholder="Speed limit km/h" style={{ width: 120 }} aria-label="Speed limit" />
+        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} aria-label="Colour" style={{ width: 40, padding: 0 }} />
+        <button
+          disabled={busy || !name.trim()}
+          onClick={() =>
+            void act(async () => {
+              const r = await api.addVehicle({ name: name.trim(), color, speedLimitKmh: limit ? Number(limit) : null });
+              setShown({ name: r.vehicle.name, token: r.token });
+              setName("");
+              setLimit("");
+            })
+          }
+        >
+          Add vehicle
+        </button>
+      </div>
+      {shown && (
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 8, border: "1px solid var(--border, rgba(127,127,127,0.3))", fontSize: 12.5, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Set up the phone for {shown.name}</div>
+          <div style={{ color: "var(--negative, #f87171)", marginBottom: 8 }}>Copy the token now: it is shown only once.</div>
+          <ol style={{ margin: 0, paddingLeft: 18 }}>
+            <li>Install <b>Traccar Client</b> (free, Android or iPhone) on the phone that will ride in the vehicle.</li>
+            <li>
+              Set <b>Device identifier</b> to the token: <code style={{ wordBreak: "break-all" }}>{shown.token}</code> <button onClick={() => copy(shown.token)}>Copy</button>
+            </li>
+            <li>
+              Set <b>Server URL</b> to: <code style={{ wordBreak: "break-all" }}>{TRACKING_URL}</code> <button onClick={() => copy(TRACKING_URL)}>Copy</button>
+            </li>
+            <li>Set <b>Location accuracy</b> to High, <b>Frequency</b> to 30 seconds, and <b>Distance</b> to 50 metres.</li>
+            <li>Allow location <b>all the time</b>, and turn off battery saving for the app, so it keeps reporting with the screen off.</li>
+            <li>Switch <b>Tracking</b> on. The vehicle appears on Live OSINT within a minute.</li>
+          </ol>
+          <button style={{ marginTop: 8 }} onClick={() => setShown(null)}>
+            Done
+          </button>
+        </div>
+      )}
       {status && <div style={{ fontSize: 12.5, marginTop: 8, color: status.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{status.text}</div>}
     </div>
   );
