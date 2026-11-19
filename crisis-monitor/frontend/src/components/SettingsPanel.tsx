@@ -514,6 +514,7 @@ function VehiclesCard() {
   const [log, setLog] = useState<Awaited<ReturnType<typeof api.getTrackingLog>>["log"]>([]);
   const [showLog, setShowLog] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [positions, setPositions] = useState<string | null>(null);
   const load = () =>
     Promise.all([api.getVehicles().then((r) => setVehicles(r.vehicles)), api.getTrackingLog().then((r) => setLog(r.log))]).catch(() => undefined);
   useEffect(() => {
@@ -552,6 +553,9 @@ function VehiclesCard() {
                 {v.last ? `${fresh ? "reporting" : "last seen"} ${ago(v.last.at)}${v.last.speedKmh !== null ? `, ${Math.round(v.last.speedKmh)} km/h` : ""}` : "no position yet"}
               </span>
             </span>
+            <button disabled={busy} onClick={() => setPositions(positions === v.id ? null : v.id)} aria-expanded={positions === v.id}>
+              Positions
+            </button>
             <button disabled={busy} onClick={() => setEditing(editing === v.id ? null : v.id)} aria-expanded={editing === v.id}>
               Alerts{v.speedLimitKmh || v.zone || v.quietHours || v.silentMinutes ? " ●" : ""}
             </button>
@@ -580,6 +584,7 @@ function VehiclesCard() {
             </button>
           </div>
           {editing === v.id && <VehicleRulesEditor vehicle={v} onSaved={() => void load()} />}
+          {positions === v.id && <VehiclePositions vehicle={v} />}
           </div>
         );
       })}
@@ -739,6 +744,81 @@ function VehicleRulesEditor({ vehicle, onSaved }: { vehicle: Vehicle; onSaved: (
       </div>
       <button onClick={() => void save()}>Save alerts</button>
       {msg && <div style={{ marginTop: 6, color: msg.ok ? "var(--positive)" : "var(--negative, #f87171)" }}>{msg.text}</div>}
+    </div>
+  );
+}
+
+/** The last 30 fixes exactly as the phone sent them, with their precision and distance from where the car is drawn. */
+function VehiclePositions({ vehicle }: { vehicle: Vehicle }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.getVehicleRecent>> | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () => api.getVehicleRecent(vehicle.id).then((d) => live && setData(d)).catch(() => undefined);
+    void load();
+    const t = window.setInterval(load, 10000);
+    return () => {
+      live = false;
+      window.clearInterval(t);
+    };
+  }, [vehicle.id]);
+  const m = (aLat: number, aLng: number, bLat: number, bLng: number) => {
+    const r = Math.PI / 180;
+    const x = Math.sin(((bLat - aLat) * r) / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(((bLng - aLng) * r) / 2) ** 2;
+    return 2 * 6371000 * Math.asin(Math.sqrt(x));
+  };
+  if (!data) return <div style={{ margin: "8px 0 4px 20px", fontSize: 12 }}>Loading…</div>;
+  const shown = data.shown;
+  const rough = data.points.filter((p) => p.accuracyM !== null && p.accuracyM > 30).length;
+  const text = data.points.map((p) => `${p.at}\t${p.lat.toFixed(6)}\t${p.lng.toFixed(6)}\t±${p.accuracyM ?? "?"} m\t${p.speedKmh === null ? "" : Math.round(p.speedKmh) + " km/h"}`).join("\n");
+  return (
+    <div style={{ margin: "8px 0 4px 20px", padding: 12, borderRadius: 8, border: "1px solid var(--border, rgba(127,127,127,0.3))", fontSize: 12 }}>
+      {shown && (
+        <div style={{ marginBottom: 8 }}>
+          Drawn at <b>{shown.lat.toFixed(6)}, {shown.lng.toFixed(6)}</b>
+          {shown.accuracyM !== null ? ` (±${Math.round(shown.accuracyM)} m)` : ""}.{" "}
+          <a href={`https://www.google.com/maps?q=${shown.lat},${shown.lng}`} target="_blank" rel="noreferrer">
+            Check in Google Maps
+          </a>
+        </div>
+      )}
+      {data.points.length > 0 && (
+        <div style={{ marginBottom: 8, color: rough > data.points.length / 2 ? "var(--negative, #f87171)" : undefined }}>
+          {rough} of the last {data.points.length} fixes were rough (worse than ±30 m)
+          {rough > data.points.length / 2 ? ": the phone is not getting a satellite fix. Put it where it sees the sky (dashboard, by the windscreen) and set Location accuracy to High." : "."}
+        </div>
+      )}
+      <div style={{ maxHeight: 220, overflowY: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontVariantNumeric: "tabular-nums" }}>
+          <thead>
+            <tr style={{ textAlign: "left", opacity: 0.7 }}>
+              <th>Time</th>
+              <th>Position sent</th>
+              <th>Precision</th>
+              <th>Speed</th>
+              <th>From drawn</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.points.map((p) => {
+              const bad = p.accuracyM !== null && p.accuracyM > 30;
+              return (
+                <tr key={p.at} style={{ color: bad ? "var(--negative, #f87171)" : undefined }}>
+                  <td>{new Date(p.at).toLocaleTimeString()}</td>
+                  <td>
+                    {p.lat.toFixed(6)}, {p.lng.toFixed(6)}
+                  </td>
+                  <td>{p.accuracyM === null ? "not sent" : `±${Math.round(p.accuracyM)} m`}</td>
+                  <td>{p.speedKmh === null ? "" : `${Math.round(p.speedKmh)} km/h`}</td>
+                  <td>{shown ? `${Math.round(m(shown.lat, shown.lng, p.lat, p.lng))} m` : ""}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <button style={{ marginTop: 8 }} onClick={() => void navigator.clipboard?.writeText(text)}>
+        Copy these positions
+      </button>
     </div>
   );
 }
