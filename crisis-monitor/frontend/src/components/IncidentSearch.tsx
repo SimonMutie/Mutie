@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
+import MapBrand from "./MapBrand";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LeafletMapControls from "./LeafletMapControls";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
@@ -273,6 +274,7 @@ export default function IncidentSearch() {
         <MapContainer center={initialCenter} zoom={geoIncidents.length ? 6 : 2} style={{ width: "100%", height: "100%" }} scrollWheelZoom zoomControl={false}>
           <LeafletMapControls />
           <MapContainerRefCapture onReady={(el) => (mapContainerRef.current = el)} />
+          <MapBrand />
           <TileLayer key={BASEMAPS[basemap].url} url={BASEMAPS[basemap].url} attribution={BASEMAPS[basemap].attribution} maxZoom={19} {...tileOptions(BASEMAPS[basemap].url)} />
 
           {viewMode === "heatmap" && <HeatmapLayer points={heatmapPoints} style={heatmapStyle} />}
