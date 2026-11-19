@@ -191,3 +191,10 @@ details[open] > summary::before {
 .lens-vehicle-icon svg { display: block; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55)); }
 .leaflet-tooltip.lens-vehicle-label { background: rgba(5, 8, 15, 0.82); color: #fff; border: none; box-shadow: none; font-weight: 700; font-size: 11px; padding: 1px 6px; }
 .leaflet-tooltip.lens-vehicle-label::before { display: none; }
+/* A vehicle breaking an alert rule: a pulsing red ring around the car. */
+.lens-vehicle-alerting::after { content: ""; position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border: 3px solid #ff3b3b; border-radius: 50%; animation: lens-vehicle-pulse 1.4s ease-out infinite; pointer-events: none; }
+@keyframes lens-vehicle-pulse { from { transform: scale(0.8); opacity: 1; } to { transform: scale(2); opacity: 0; } }
+/* A new vehicle alert arrives with a shake and a red glow (components/VehicleAlertPopups.tsx). */
+.lens-vehicle-alert-pop { animation: lens-alert-in 0.5s ease-out, lens-alert-glow 1.6s ease-in-out infinite; }
+@keyframes lens-alert-in { 0% { transform: translateY(-12px) scale(0.96); opacity: 0; } 40% { transform: translateX(-6px); opacity: 1; } 60% { transform: translateX(6px); } 80% { transform: translateX(-3px); } 100% { transform: none; } }
+@keyframes lens-alert-glow { 0%, 100% { box-shadow: 0 8px 28px rgba(0,0,0,0.45), 0 0 0 0 rgba(255,59,59,0.5); } 50% { box-shadow: 0 8px 28px rgba(0,0,0,0.45), 0 0 0 6px rgba(255,59,59,0); } }
