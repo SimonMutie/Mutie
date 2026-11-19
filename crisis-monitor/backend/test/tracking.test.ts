@@ -65,5 +65,11 @@ describe("the tracking routes", () => {
     // Another user does not see it; signed-out requests are refused.
     expect(((await (await call("/vehicles", { headers: other })).json()) as { vehicles: unknown[] }).vehicles).toHaveLength(0);
     expect((await call("/vehicles", {})).status).toBe(401);
+    // JSON sent without saying so is still read, and every attempt is in the log without the full token.
+    expect((await call(`/osmand`, { method: "POST", body: JSON.stringify({ ...body, location: { ...body.location, timestamp: new Date(Date.now() + 2000).toISOString() } }) })).status).toBe(200);
+    const log = (await (await call("/log", { headers: admin })).json()) as { log: { outcome: string; sample: string }[] };
+    expect(log.log[0].outcome).toMatch(/^Saved/);
+    expect(log.log.some((l) => l.outcome.startsWith("Unknown device id"))).toBe(true);
+    expect(JSON.stringify(log)).not.toContain(token);
   });
 });
