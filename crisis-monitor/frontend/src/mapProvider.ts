@@ -62,3 +62,10 @@ export const maptilerSession = () => sessionId;
 export function setMaptilerSession(id: string | null): void {
   sessionId = id;
 }
+
+/** The signed-in client's own logo (a data or web address), shown beside the Lens mark on every map. Set at sign-in. */
+let clientLogo: string | null = null;
+export const mapClientLogo = () => clientLogo;
+export function setMapClientLogo(url: string | null | undefined): void {
+  clientLogo = url || null;
+}
