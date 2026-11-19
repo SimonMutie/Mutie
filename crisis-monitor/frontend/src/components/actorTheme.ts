@@ -51,6 +51,9 @@ export function pinSvg(color: string, width = 24, opts: { glyphD?: string | null
   const h = Math.round(width * (32 / 24));
   const head = opts.glyphD
     ? `<g transform="translate(6 5.2) scale(${12 / 24})"><path d="${opts.glyphD}" fill="#fff"/></g>`
-    : `<circle cx="12" cy="11.2" r="4.3" fill="#fff"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 24 32" style="opacity:${opts.opacity ?? 1};overflow:visible"><path d="M12 1.2C6.1 1.2 1.6 5.7 1.6 11.4 1.6 19.2 12 30.8 12 30.8s10.4-11.6 10.4-19.4C22.4 5.7 17.9 1.2 12 1.2z" fill="${color}" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/>${head}</svg>`;
+    : `<circle cx="12" cy="11.4" r="4.6" fill="#fff"/>`;
+  const d = "M12 1.4C6.2 1.4 1.8 5.8 1.8 11.4 1.8 19.1 12 30.6 12 30.6s10.2-11.5 10.2-19.2C22.2 5.8 17.8 1.4 12 1.4z";
+  // Sharp at any size: the outlines keep their pixel width whatever the pin's scale (non-scaling-stroke), a fine dark
+  // edge under a white rim separates the pin from light and dark maps alike, and nothing is blurred (no CSS shadow).
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 24 32" shape-rendering="geometricPrecision" style="opacity:${opts.opacity ?? 1};overflow:visible;display:block"><path d="${d}" fill="none" stroke="rgba(8,12,22,0.85)" stroke-width="3.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/><path d="${d}" fill="${color}" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>${head}</svg>`;
 }
