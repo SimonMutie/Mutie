@@ -39,7 +39,7 @@ interface Gate {
  * Regional Spotlight and due-diligence screening have their own checks in their routes.
  */
 export const SECTION_PATHS: [Section, RegExp][] = [
-  ["live_osint", /^\/api\/(live-layers|global-status|social-listening|listening-queries|map-routes|map-shapes|queries|events|query-insights)(\/|$)/],
+  ["live_osint", /^\/api\/(live-layers|global-status|social-listening|listening-queries|map-routes|map-shapes|control-maps|queries|events|query-insights)(\/|$)/],
   ["trends", /^\/api\/(incidents|incident-staging|custom-dashboards|datasets|analytics)(\/|$)/],
   ["afrintel", /^\/api\/afrintel(\/|$)/],
 ];
