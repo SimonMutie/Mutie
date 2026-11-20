@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import IntroOverlay from "./components/IntroOverlay";
 import ErrorBoundary from "./components/ErrorBoundary";
+import UpdateBanner from "./components/UpdateBanner";
 import "./theme.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -21,6 +22,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     >
       <App />
     </ErrorBoundary>
+    {/* Offers a reload when a new version goes live while the page is open. See UpdateBanner.tsx. */}
+    <UpdateBanner />
     {/* The opening sequence, over the app while it loads. See IntroOverlay.tsx. */}
     <IntroOverlay />
   </React.StrictMode>
