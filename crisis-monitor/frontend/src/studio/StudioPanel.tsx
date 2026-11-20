@@ -181,7 +181,9 @@ function ImportTab({ files, onDone }: { files: File[] | null; onDone: () => void
       const fit = fitLayerToSize(r.fc);
       setSize({ bytes: fit.bytes, simplified: fit.simplified });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not read those files.");
+      const m = e instanceof Error ? e.message : "";
+      // A page open from before the last update cannot load the file readers: say so plainly (UpdateBanner offers the reload).
+      setErr(/dynamically imported module|Importing a module script failed/i.test(m) ? "The Lens was updated while this page was open. Reload the page (Ctrl+Shift+R), then import again." : m || "Could not read those files.");
     } finally {
       setBusy(false);
     }
