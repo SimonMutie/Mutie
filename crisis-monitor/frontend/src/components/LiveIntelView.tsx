@@ -3,6 +3,7 @@ import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
 import VehicleAlertPopups from "./VehicleAlertPopups";
+import { ControlLegend, ControlMapsPanel, FlatControlLayers, GlobeControlLayers, useControlMaps, useOverlayUrls, type FlatControlProps } from "./controlMaps";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
 import { MarketsPanel } from "./MarketsPanel";
@@ -115,6 +116,7 @@ import {
   type IssPosition,
   type RouteProfile,
   type Vehicle,
+  type ControlArea,
   type VehiclePoint,
   type RouteResult,
   type SpaceWeather,
@@ -1349,6 +1351,50 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [shownDatasets, setShownDatasets] = useState<string[]>([]);
   const { key: liveMtKey } = useMapTilerKey();
   const datasetsShown = useMemo(() => (liveMtKey ? maptilerExtras().datasets.filter((d) => shownDatasets.includes(d.id)) : []), [liveMtKey, shownDatasets]);
+  // Territorial control maps (controlMaps.tsx): groups' areas, the images traced over, the legend, and what is being
+  // drawn, reshaped or lined up right now. Which groups are hidden, and whether the legend shows, are remembered.
+  const control = useControlMaps(true);
+  const [controlOpen, setControlOpen] = useState(false);
+  const readList = (k: string): string[] => {
+    try {
+      return JSON.parse(localStorage.getItem(k) ?? "[]") as string[];
+    } catch {
+      return [];
+    }
+  };
+  const [controlHidden, setControlHiddenState] = useState<string[]>(() => readList("lens.controlHidden"));
+  const toggleControlLayer = (id: string) =>
+    setControlHiddenState((h) => {
+      const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id];
+      try {
+        localStorage.setItem("lens.controlHidden", JSON.stringify(next));
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  const [controlLegend, setControlLegendState] = useState(() => {
+    try {
+      return localStorage.getItem("lens.controlLegend") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const setControlLegend = (on: boolean) => {
+    setControlLegendState(on);
+    try {
+      localStorage.setItem("lens.controlLegend", on ? "1" : "0");
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  const [shownOverlays, setShownOverlays] = useState<string[]>([]);
+  const overlayUrls = useOverlayUrls(control.overlays, shownOverlays);
+  const [controlDrawing, setControlDrawing] = useState(false);
+  const [controlPending, setControlPending] = useState<ControlArea["geometry"] | null>(null);
+  const [controlDetails, setControlDetails] = useState<ControlArea | null>(null);
+  const [controlShape, setControlShape] = useState<string | null>(null);
+  const [overlayAdjust, setOverlayAdjust] = useState<{ id: string; bounds: [[number, number], [number, number]] } | null>(null);
   // Tracked vehicles (vehicles.tsx): shown by default, with their trail over the chosen hours.
   const [showVehicles, setShowVehicles] = useState(true);
   const [trailHours, setTrailHours] = useState(6);
@@ -2636,6 +2682,36 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             datasets={datasetsShown}
             vehicles={vehicles}
             vehicleTracks={vehicleTracks}
+            control={{
+              layers: control.layers,
+              areas: control.areas,
+              hidden: controlHidden,
+              overlays: control.overlays,
+              overlayUrls,
+              shownOverlays,
+              adjusting: overlayAdjust,
+              onAdjust: (bounds) => setOverlayAdjust((a) => (a ? { ...a, bounds } : a)),
+              drawing: controlDrawing,
+              onDrawn: (g) => {
+                setControlPending(g);
+                setControlOpen(true);
+              },
+              onDrawCancel: () => setControlDrawing(false),
+              editingId: controlShape,
+              onEditDone: (g) => {
+                const id = controlShape;
+                setControlShape(null);
+                if (g && id) void api.updateControlArea(id, { geometry: g }).then(() => control.reload());
+                else void control.reload();
+              },
+              canEdit: isAdmin,
+              onAreaAction: (action, area) => {
+                setControlOpen(true);
+                if (action === "shape") setControlShape(area.id);
+                else if (action === "details") setControlDetails(area);
+                else if (window.confirm(`Delete this ${area.status} area${area.label ? ` (${area.label})` : ""}?`)) void api.deleteControlArea(area.id).then(() => control.reload());
+              },
+            }}
             points={flatMapPoints}
             sharedPaths={sharedPaths}
             territoryChanges={territoryChangePolygons}
@@ -2684,6 +2760,52 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeFocus map={globeMap} on={basemap === "lens"} />
         <GlobeOverlays map={globeMap} state={globeOverlays} />
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
+        <GlobeControlLayers map={globeMap} layers={control.layers} areas={control.areas} hidden={controlHidden} overlays={control.overlays} overlayUrls={overlayUrls} shownOverlays={shownOverlays} />
+        {controlLegend && <ControlLegend layers={control.layers} areas={control.areas} hidden={controlHidden} onToggle={toggleControlLayer} />}
+        {controlOpen && (
+          <ControlMapsPanel
+            canEdit={isAdmin}
+            data={control}
+            hidden={controlHidden}
+            onToggleLayer={toggleControlLayer}
+            legendOnMap={controlLegend}
+            onLegendOnMap={setControlLegend}
+            shownOverlays={shownOverlays}
+            onShownOverlays={setShownOverlays}
+            drawing={controlDrawing}
+            onDraw={(on) => {
+              // Drawing and lining up images happen on the flat map.
+              if (on) setMapMode("2d");
+              setControlDrawing(on);
+            }}
+            pending={controlPending}
+            onPendingDone={() => setControlPending(null)}
+            editingDetails={controlDetails}
+            onEditingDetailsDone={() => setControlDetails(null)}
+            editingShapeId={controlShape}
+            adjusting={overlayAdjust}
+            onAdjusting={(a) => {
+              if (a) setMapMode("2d");
+              setOverlayAdjust(a);
+            }}
+            viewBounds={() => {
+              if (mapMode !== "3d" && flatMap) {
+                const b = flatMap.getBounds();
+                return [[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]];
+              }
+              if (globeMap) {
+                const b = globeMap.getBounds();
+                return [[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]];
+              }
+              return null;
+            }}
+            onClose={() => {
+              setControlOpen(false);
+              setControlDrawing(false);
+              setOverlayAdjust(null);
+            }}
+          />
+        )}
         <GlobeVehicles map={globeMap} vehicles={vehicles} tracks={vehicleTracks} />
         {/* Vehicle alerts pop up whether or not the vehicles are shown: a broken rule should never go unseen. */}
         <VehicleAlertPopups
@@ -2827,6 +2949,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 onShowVehicles={setShowVehicles}
                 trailHours={trailHours}
                 onTrailHours={setTrailHours}
+                controlOpen={controlOpen}
+                onToggleControl={() => setControlOpen((v) => !v)}
                 onLocateVehicle={(v) => {
                   if (!v.last) return;
                   if (mapMode === "3d") globeMap?.flyTo({ center: [v.last.lng, v.last.lat], zoom: Math.max(globeMap.getZoom(), 13) });
@@ -3102,6 +3226,7 @@ function FlatMap({
   datasets,
   vehicles,
   vehicleTracks,
+  control,
   points,
   sharedPaths,
   territoryChanges,
@@ -3148,6 +3273,8 @@ function FlatMap({
   /** Tracked vehicles and their trails. */
   vehicles: Vehicle[];
   vehicleTracks: Record<string, VehiclePoint[]>;
+  /** Territorial control areas, images to trace over, and drawing (controlMaps.tsx). */
+  control: FlatControlProps;
   /** Hands out the Leaflet map, so the view can be carried across when switching to the 3D globe. */
   onReady?: (map: LeafletMap) => void;
   points: GlobePoint[];
@@ -3264,6 +3391,7 @@ function FlatMap({
       {datasets.map((d) => (
         <FlatDataset key={d.id} dataset={d} />
       ))}
+      <FlatControlLayers {...control} />
       <FlatVehicles vehicles={vehicles} tracks={vehicleTracks} />
       <RegionFly region={regionView} seq={regionSeq} />
       <ViewPermalink date={imagery.key !== "none" ? imageryDay : fireDate ?? null} layer={imagery.key} />
@@ -3558,6 +3686,8 @@ function LayerPanel({
   trailHours,
   onTrailHours,
   onLocateVehicle,
+  controlOpen,
+  onToggleControl,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3616,6 +3746,8 @@ function LayerPanel({
   trailHours?: number;
   onTrailHours?: (h: number) => void;
   onLocateVehicle?: (v: Vehicle) => void;
+  controlOpen?: boolean;
+  onToggleControl?: () => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3696,6 +3828,16 @@ function LayerPanel({
             onToggleTerrain={onToggleTerrain!}
           />
           {mapMode && onMapMode && basemap && onBasemap && <MapTypeRailButton mode={mapMode} onChange={onMapMode} basemap={basemap} onBasemap={onBasemap} onSaveImage={onSaveImage} weather={weather ?? null} onWeather={onWeather} labelLang={labelLang} onLabelLang={onLabelLang} overlays={overlays} onOverlays={onOverlays} shownDatasets={shownDatasets} onToggleDataset={onToggleDataset} vehicles={vehicles} showVehicles={showVehicles} onShowVehicles={onShowVehicles} trailHours={trailHours} onTrailHours={onTrailHours} onLocateVehicle={onLocateVehicle} />}
+          {onToggleControl && (
+            <button
+              onClick={onToggleControl}
+              aria-pressed={!!controlOpen}
+              title="Territorial control: armed groups' areas, legend, drawing"
+              style={{ width: 42, height: 38, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", background: controlOpen ? "rgba(212,175,55,0.14)" : "transparent", border: "none", borderRadius: 8, cursor: "pointer" }}
+            >
+              <Shield size={17} color={controlOpen ? HUD.gold : HUD.textMuted} strokeWidth={controlOpen ? 2.25 : 1.75} />
+            </button>
+          )}
           {onShowVehicles && <VehiclesRailButton on={!!showVehicles} onToggle={() => onShowVehicles(!showVehicles)} vehicles={vehicles ?? []} onLocate={onLocateVehicle} />}
         </div>
       )}
