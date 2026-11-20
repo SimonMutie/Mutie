@@ -2215,6 +2215,23 @@ export const api = {
   getMapExtras: () => req<MapTilerExtras>("/api/map-settings/provider/extras"),
   getVehicles: () => req<{ vehicles: Vehicle[] }>("/api/tracking/vehicles"),
   addVehicle: (v: { name: string; color: string; speedLimitKmh?: number | null }) => req<{ vehicle: Vehicle; token: string }>("/api/tracking/vehicles", { method: "POST", body: JSON.stringify(v) }),
+  getControlMaps: () => req<{ layers: ControlLayer[]; areas: ControlArea[] }>("/api/control-maps"),
+  addControlLayer: (l: { name: string; color: string; description?: string | null }) => req<{ layer: ControlLayer }>("/api/control-maps/layers", { method: "POST", body: JSON.stringify(l) }),
+  updateControlLayer: (id: string, l: { name?: string; color?: string; description?: string | null; sort?: number }) => req<{ layer: ControlLayer }>(`/api/control-maps/layers/${id}`, { method: "PATCH", body: JSON.stringify(l) }),
+  deleteControlLayer: (id: string) => req<{ ok: boolean }>(`/api/control-maps/layers/${id}`, { method: "DELETE" }),
+  addControlArea: (a: ControlAreaInput) => req<{ area: ControlArea }>("/api/control-maps/areas", { method: "POST", body: JSON.stringify(a) }),
+  updateControlArea: (id: string, a: Partial<ControlAreaInput>) => req<{ area: ControlArea }>(`/api/control-maps/areas/${id}`, { method: "PATCH", body: JSON.stringify(a) }),
+  deleteControlArea: (id: string) => req<{ ok: boolean }>(`/api/control-maps/areas/${id}`, { method: "DELETE" }),
+  getControlOverlays: () => req<{ overlays: ControlOverlay[] }>("/api/control-maps/overlays"),
+  addControlOverlay: (o: Omit<ControlOverlay, "id" | "updatedAt"> & { image: string }) => req<{ overlay: ControlOverlay }>("/api/control-maps/overlays", { method: "POST", body: JSON.stringify(o) }),
+  updateControlOverlay: (id: string, o: Partial<Omit<ControlOverlay, "id" | "updatedAt">>) => req<{ overlay: ControlOverlay }>(`/api/control-maps/overlays/${id}`, { method: "PATCH", body: JSON.stringify(o) }),
+  deleteControlOverlay: (id: string) => req<{ ok: boolean }>(`/api/control-maps/overlays/${id}`, { method: "DELETE" }),
+  /** An overlay's image as a local address the map can show (the image needs the sign-in, which an <img> cannot send). */
+  controlOverlayImage: async (id: string): Promise<string> => {
+    const res = await fetch(`${API_URL}/api/control-maps/overlays/${id}/image`, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
+    if (!res.ok) throw new Error(`Image returned ${res.status}`);
+    return URL.createObjectURL(await res.blob());
+  },
   getVehicleRecent: (id: string) => req<{ shown: Vehicle["last"]; points: { at: string; lat: number; lng: number; accuracyM: number | null; speedKmh: number | null }[] }>(`/api/tracking/vehicles/${id}/recent`),
   getVehicleAlerts: () => req<{ alerts: VehicleAlert[] }>("/api/tracking/alerts"),
   ackVehicleAlert: (id: string) => req<{ ok: boolean }>(`/api/tracking/alerts/${id}/ack`, { method: "POST" }),
@@ -2813,3 +2830,43 @@ export interface VehiclePoint {
 }
 /** Where trackers send positions (the Traccar Client app's "Server URL"). */
 export const TRACKING_URL = `${API_URL}/api/tracking/osmand`;
+
+/** Territorial control maps (backend routes/controlMaps.ts): a layer per armed group, areas drawn for each. */
+export type ControlStatus = "control" | "contested" | "influence" | "claimed";
+export interface ControlLayer {
+  id: string;
+  name: string;
+  color: string;
+  description: string | null;
+  sort: number;
+  updatedAt: string;
+}
+export interface ControlArea {
+  id: string;
+  layerId: string;
+  status: ControlStatus;
+  label: string | null;
+  notes: string | null;
+  asOf: string | null;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+  updatedAt: string;
+}
+export interface ControlAreaInput {
+  layerId: string;
+  status: ControlStatus;
+  label?: string | null;
+  notes?: string | null;
+  asOf?: string | null;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
+}
+/** An image (another map, a screenshot) placed on the map to trace over. */
+export interface ControlOverlay {
+  id: string;
+  name: string;
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+  opacity: number;
+  updatedAt: string;
+}
