@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, setToken, type AuthUser, type EscalationPipelineStatus, type MapTilerExtras, type Vehicle, TRACKING_URL } from "../api";
+import { api, setToken, type AiProvider, type AiSettingsView, type AuthUser, type EscalationPipelineStatus, type MapTilerExtras, type Vehicle, TRACKING_URL } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import { setMapTilerKey, setMaptilerExtras } from "../mapProvider";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled, introVoiceEnabled, setIntroVoiceEnabled } from "../intro";
@@ -53,6 +53,7 @@ export default function SettingsPanel({ onBack, user }: Props) {
       {user.role === "admin" && <MapTilerExtrasCard />}
       {user.role === "admin" && <VehiclesCard />}
 
+      {user.role === "admin" && <AiReadingCard />}
       {user.role === "admin" && <AiUsageCard />}
     </div>
   );
@@ -146,6 +147,140 @@ function OpeningSequenceCard() {
 /** Platform admin only: what the platform's AI use is today, what could
  *  cost money, and whether the article reading behind escalation alerts is
  *  actually running — so none of that needs the Cloudflare dashboard. */
+/** Platform admin: which AI reads for the Lens (Claude, Cloudflare's own AI, or Claude with Cloudflare as the
+ *  fallback), the Claude models, the Anthropic key, and each one's daily limit (backend lib/aiSettings.ts). */
+function AiReadingCard() {
+  const [v, setV] = useState<AiSettingsView | null>(null);
+  const [key, setKey] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [limit, setLimit] = useState("");
+  const [neurons, setNeurons] = useState("");
+  useEffect(() => {
+    api.getAiSettings().then(
+      (s) => {
+        setV(s);
+        setLimit(String(s.claudeDailyCalls));
+        setNeurons(s.cloudflareDailyNeurons === null ? "" : String(s.cloudflareDailyNeurons));
+      },
+      (e: Error) => setMsg({ ok: false, text: e.message })
+    );
+  }, []);
+  async function save(edit: Parameters<typeof api.setAiSettings>[0], done: string) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const s = await api.setAiSettings(edit);
+      setV(s);
+      setMsg({ ok: true, text: done });
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Could not save." });
+    } finally {
+      setBusy(false);
+    }
+  }
+  const choice = (p: AiProvider, title: string, text: string) => (
+    <label key={p} style={{ display: "flex", gap: 9, alignItems: "flex-start", padding: "7px 0", cursor: "pointer", fontSize: 13 }}>
+      <input type="radio" name="ai-provider" checked={v?.provider === p} disabled={busy} onChange={() => save({ provider: p }, "Saved. It applies from the next article read.")} style={{ marginTop: 3 }} />
+      <span>
+        <b>{title}</b>
+        <span style={{ display: "block", color: "var(--text-muted)", fontSize: 12.5 }}>{text}</span>
+      </span>
+    </label>
+  );
+  const modelSelect = (which: "coderModel" | "analystModel", label: string) => {
+    const cur = v?.[which] ?? "";
+    const known = v?.models.some((m) => m.id === cur);
+    return (
+      <label style={{ display: "grid", gap: 3, fontSize: 12.5 }}>
+        <span style={{ color: "var(--text-muted)" }}>{label}</span>
+        <select value={known ? cur : "__other"} disabled={busy || v?.modelsFromEnv} onChange={(e) => e.target.value !== "__other" && save({ [which]: e.target.value }, "Model saved.")}>
+          {v?.models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+          {!known && <option value="__other">{cur}</option>}
+        </select>
+      </label>
+    );
+  };
+  const u = v?.usage;
+  return (
+    <div className="panel" style={{ padding: "18px 20px", marginTop: 16, maxWidth: 560 }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600, marginBottom: 6 }}>AI reading</div>
+      <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 8 }}>
+        Which AI reads articles for escalation alerts, writes incident assessments and summaries. Claude reads more thoroughly; Cloudflare's own AI is the free fallback.
+      </div>
+      {!v && !msg && <div style={{ fontSize: 12.5, color: "var(--text-muted)" }}>Loading…</div>}
+      {v && (
+        <>
+          {choice("auto", "Automatic (recommended)", "Claude reads; if Claude is unavailable, fails or reaches today's limit, Cloudflare's AI carries on.")}
+          {choice("claude", "Claude only", "Only Claude reads. Reading pauses once today's Claude limit is reached.")}
+          {choice("cloudflare", "Cloudflare only", "Only Cloudflare's AI reads, within its daily allowance. Claude is never called.")}
+
+          <div style={{ fontSize: 13, fontWeight: 600, margin: "14px 0 6px" }}>Anthropic key (for Claude)</div>
+          <div style={{ fontSize: 12.5, color: v.keySet ? "var(--positive)" : "var(--text-muted)", marginBottom: 6 }}>
+            {v.keySet ? `Set (ends …${v.keyHint})${v.keyFromEnv ? ", as a Worker secret" : ""}.` : "Not set: Claude is not used until a key is added."}
+          </div>
+          {!v.keyFromEnv && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input type="password" value={key} onChange={(e) => setKey(e.target.value.trim())} placeholder="sk-ant-…" style={{ flex: "1 1 240px" }} aria-label="Anthropic API key" autoComplete="off" />
+              <button disabled={busy || !key} onClick={() => save({ anthropicKey: key }, "Key checked with Anthropic and saved.").then(() => setKey(""))}>
+                {v.keySet ? "Replace" : "Save"}
+              </button>
+              {v.keySet && (
+                <button disabled={busy} onClick={() => window.confirm("Remove the Anthropic key? Reading moves to Cloudflare's AI.") && save({ anthropicKey: null }, "Key removed.")}>
+                  Remove
+                </button>
+              )}
+            </div>
+          )}
+
+          <div style={{ fontSize: 13, fontWeight: 600, margin: "14px 0 6px" }}>Claude models</div>
+          <div style={{ display: "grid", gap: 8 }}>
+            {modelSelect("coderModel", "Reads each article")}
+            {modelSelect("analystModel", "Writes incident assessments and summaries")}
+          </div>
+          {v.modelsFromEnv && <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Set in the Worker's settings, which take precedence.</div>}
+
+          <div style={{ fontSize: 13, fontWeight: 600, margin: "14px 0 6px" }}>Daily limits</div>
+          <div style={{ display: "grid", gap: 8, fontSize: 12.5 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ flex: "1 1 220px", color: "var(--text-muted)" }}>Claude: most calls a day (about one per article read)</span>
+              <input type="number" min={0} value={limit} onChange={(e) => setLimit(e.target.value)} style={{ width: 100 }} />
+              <button disabled={busy || limit === String(v.claudeDailyCalls)} onClick={() => save({ claudeDailyCalls: Math.max(0, Math.round(Number(limit) || 0)) }, "Claude limit saved.")}>
+                Save
+              </button>
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ flex: "1 1 220px", color: "var(--text-muted)" }}>Cloudflare: daily allowance in neurons (blank for the free 10,000; above that Cloudflare bills)</span>
+              <input type="number" min={0} value={neurons} placeholder="free" onChange={(e) => setNeurons(e.target.value)} style={{ width: 100 }} />
+              <button
+                disabled={busy || neurons === (v.cloudflareDailyNeurons === null ? "" : String(v.cloudflareDailyNeurons))}
+                onClick={() => {
+                  const n = neurons.trim() === "" ? null : Math.max(0, Math.round(Number(neurons) || 0));
+                  if (n !== null && n > 10_000 && !window.confirm("Above 10,000 neurons a day, Cloudflare bills the extra. Save?")) return;
+                  void save({ cloudflareDailyNeurons: n }, "Cloudflare allowance saved.");
+                }}
+              >
+                Save
+              </button>
+            </label>
+          </div>
+
+          {u && (
+            <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              Today (UTC): Claude {u.claude.calls.toLocaleString()} of {u.claude.limit.toLocaleString()} calls, {(u.claude.inputTokens + u.claude.cacheReadTokens + u.claude.cacheWriteTokens).toLocaleString()} tokens in and {u.claude.outputTokens.toLocaleString()} out · Cloudflare {u.cloudflare.used.toLocaleString()} of {u.cloudflare.budget.toLocaleString()} neurons.
+            </div>
+          )}
+        </>
+      )}
+      {msg && <div style={{ fontSize: 12.5, marginTop: 8, color: msg.ok ? "var(--positive)" : "var(--critical)" }}>{msg.text}</div>}
+    </div>
+  );
+}
+
 function AiUsageCard() {
   const [status, setStatus] = useState<EscalationPipelineStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
