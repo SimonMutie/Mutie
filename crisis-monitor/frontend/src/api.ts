@@ -1220,6 +1220,8 @@ export interface AiSettingsView {
   modelsFromEnv: boolean;
   claudeDailyCalls: number;
   cloudflareDailyNeurons: number | null;
+  /** Extra headline words that let an article be read, one per line. */
+  extraKeywords: string;
   keySet: boolean;
   keyHint: string | null;
   keyFromEnv: boolean;
@@ -1233,6 +1235,7 @@ export interface AiSettingsEdit {
   analystModel?: string;
   claudeDailyCalls?: number;
   cloudflareDailyNeurons?: number | null;
+  extraKeywords?: string;
   anthropicKey?: string | null;
 }
 
