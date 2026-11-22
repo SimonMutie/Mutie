@@ -3422,6 +3422,8 @@ function FlatMap({
           key={w.id}
           position={[w.lat, w.lon]}
           interactive={false}
+          // Beneath the escalation markers, so their "!" stays on top.
+          zIndexOffset={-1000}
           icon={divIcon({
             className: "conflict-wave-icon",
             iconSize: [0, 0],
