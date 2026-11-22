@@ -15,6 +15,7 @@ import { api, type EscalationIncident } from "../api";
 import { HEATMAP_GRADIENTS, type HeatmapStyle } from "./HeatmapLayer";
 import { pinSvg } from "./actorTheme";
 import EscalationHoverCard from "./EscalationHoverCard";
+import { waveImage } from "./waveArt";
 import { maptilerKey, setMaptilerSession, maptilerStyle, maptilerTerrain } from "../mapProvider";
 import { liveBasemap, type BasemapId } from "../liveBasemaps";
 import { DOT, drawWarningIcon, WARNING_COLOR, WARNING_SIZE } from "./mapSymbols";
@@ -634,15 +635,24 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
           "line-opacity": ["match", ["get", "intensity"], 5, ACTIVE_INTENSITY_STYLE[1].lineOpacity, 6, ACTIVE_INTENSITY_STYLE[2].lineOpacity, 7, ACTIVE_INTENSITY_STYLE[3].lineOpacity, 8, ACTIVE_INTENSITY_STYLE[4].lineOpacity, 0],
         },
       });
+      // Escalation waves (waveArt.ts): an animated image per level, lying flat on the ground.
       map.addSource("lens-conflict-waves", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-      for (const id of ["lens-conflict-waves-a", "lens-conflict-waves-b"]) {
-        map.addLayer({
-          id,
-          type: "circle",
-          source: "lens-conflict-waves",
-          paint: { "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": INTENSITY_STYLE[4].line, "circle-stroke-width": 2, "circle-radius": 8, "circle-stroke-opacity": 0.9 },
-        });
+      for (const level of ["critical", "elevated", "watch"] as const) {
+        if (!map.hasImage(`lens-wave-${level}`)) map.addImage(`lens-wave-${level}`, waveImage(level, () => activeRef.current, () => map.triggerRepaint()) as never, { pixelRatio: 2 });
       }
+      map.addLayer({
+        id: "lens-conflict-waves",
+        type: "symbol",
+        source: "lens-conflict-waves",
+        layout: {
+          "icon-image": ["concat", "lens-wave-", ["coalesce", ["get", "level"], "critical"]],
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
+          "icon-pitch-alignment": "map",
+          "icon-rotation-alignment": "map",
+          "symbol-sort-key": ["match", ["get", "level"], "critical", 3, "elevated", 2, 1],
+        },
+      });
       map.addSource("lens-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "lens-territory-changes-fill",
@@ -948,7 +958,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     if (active) mapRef.current?.resize();
   }, [active]);
 
-  // Waves: two rings per escalation, offset half a cycle, each growing and fading. Reduced motion holds them still.
+  // Waves: the escalations' positions; the animation is the map image itself (waveArt.ts).
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -958,30 +968,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     else map.once("load", apply);
   }, [conflictWaves]);
 
-  useEffect(() => {
-    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const period = 2400;
-    const start = performance.now();
-    let raf = 0;
-    const setRing = (map: MapLibreMap, id: string, phase: number, still: boolean) => {
-      if (!map.getLayer(id)) return;
-      const scale = still ? 1 : 0.4 + 1.6 * phase;
-      map.setPaintProperty(id, "circle-radius", ["*", ["get", "r"], scale]);
-      map.setPaintProperty(id, "circle-stroke-opacity", still ? 0.6 : 0.9 * (1 - phase));
-    };
-    const frame = (now: number) => {
-      const map = mapRef.current;
-      // Paused while the flat map is on screen.
-      if (map && activeRef.current) {
-        const phase = ((now - start) % period) / period;
-        setRing(map, "lens-conflict-waves-a", phase, !!reduce);
-        setRing(map, "lens-conflict-waves-b", (phase + 0.5) % 1, !!reduce);
-      }
-      if (!reduce) raf = requestAnimationFrame(frame);
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, []);
+  // (The waves animate themselves: see waveImage in waveArt.ts.)
 
   useEffect(() => {
     const map = mapRef.current;
