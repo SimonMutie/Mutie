@@ -29,6 +29,7 @@ function view(env: Env, s: AiSettings) {
     analystModel: env.ESCALATION_ANALYST_MODEL || s.analystModel,
     modelsFromEnv: !!(env.ESCALATION_CODER_MODEL || env.ESCALATION_ANALYST_MODEL),
     claudeDailyCalls: s.claudeDailyCalls,
+    extraKeywords: s.extraKeywords,
     cloudflareDailyNeurons: s.cloudflareDailyNeurons,
     keySet: !!key,
     keyHint: key ? key.slice(-4) : null,
@@ -51,6 +52,7 @@ const schema = z.object({
   analystModel: modelId.optional(),
   claudeDailyCalls: z.number().int().min(0).max(100_000).optional(),
   cloudflareDailyNeurons: z.number().int().min(0).max(10_000_000).nullable().optional(),
+  extraKeywords: z.string().max(20_000).optional(),
   /** A new key, or null to remove the saved one. Left out: unchanged. */
   anthropicKey: z.string().trim().regex(/^sk-ant-[A-Za-z0-9_-]{20,}$/, "That does not look like an Anthropic API key (it starts with sk-ant-).").nullable().optional(),
 });
