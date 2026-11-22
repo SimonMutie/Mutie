@@ -20,15 +20,16 @@ describe("major events that name only a country", () => {
 });
 
 describe("opening paragraphs", () => {
-  it("returns the first three substantial paragraphs, never the rest of the article", () => {
+  it("returns the first four substantial paragraphs, never the rest of the article", () => {
     const text =
       "Short.\n\nThis is the opening paragraph that names the event and the toll in detail, long enough to count as the lead.\n\n" +
-      "The second paragraph gives the exact place where it happened.\n\nThe third paragraph says who is blamed for the attack.\n\n" +
+      "The second paragraph gives the exact place where it happened.\n\nThe third paragraph says who is blamed for the attack.\n\nThe fourth paragraph gives what officials said next.\n\n" +
       "The rest of the article goes on about reactions and background.";
     const out = openingParagraph(text);
     expect(out).toMatch(/^This is the opening paragraph/);
     expect(out).toMatch(/exact place/);
     expect(out).toMatch(/who is blamed/);
+    expect(out).toMatch(/officials said next/);
     expect(out).not.toMatch(/reactions/);
   });
   it("reads the place from paragraph two (Sudan Tribune, border airstrikes)", () => {
@@ -36,15 +37,17 @@ describe("opening paragraphs", () => {
       "PORT SUDAN – Sudan's army chief on Monday ordered a fact-finding committee into airstrikes that killed dozens of gold miners near the Egyptian border.\n\n" +
       "Warplanes struck gold prospecting sites in the Shamal al-Wadi area of far northern Red Sea State on Saturday, the second such incident in three months.\n\n" +
       "The strikes drew condemnation from political and armed groups.\n\n" +
+      "Witnesses said several vehicles were destroyed.\n\n" +
       "Sudan has been at war since April 2023.";
     const out = openingParagraph(text);
     expect(out).toMatch(/Shamal al-Wadi/);
     expect(out).toMatch(/condemnation/);
+    expect(out).toMatch(/vehicles were destroyed/);
     expect(out).not.toMatch(/April 2023/);
   });
   it("caps very long paragraphs", () => {
     expect(openingParagraph("word. ".repeat(500)).length).toBeLessThanOrEqual(1200);
-    expect(openingParagraph(`${"word. ".repeat(500)}\n\n${"more. ".repeat(500)}\n\n${"again. ".repeat(500)}\n\n${"never. ".repeat(500)}`).length).toBeLessThanOrEqual(3600);
+    expect(openingParagraph(`${"word. ".repeat(500)}\n\n${"more. ".repeat(500)}\n\n${"again. ".repeat(500)}\n\n${"fourth. ".repeat(500)}\n\n${"never. ".repeat(500)}`).length).toBeLessThanOrEqual(4800);
   });
 });
 
