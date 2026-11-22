@@ -1493,6 +1493,7 @@ export interface WatchZone {
   lat: number;
   lng: number;
   description: string;
+  bounds?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
   headlines: { title: string; url: string; source: string; published: string | null; telegram: boolean }[];
   headlineCount: number;
   incidents: { id: string; headline: string; level: string; place: string; lat: number; lon: number }[];
