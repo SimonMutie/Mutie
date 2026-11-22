@@ -5,7 +5,8 @@ import "leaflet-draw/dist/leaflet.draw.css";
 import { GeoJSON, Popup, Tooltip, useMap } from "react-leaflet";
 import { Popup as GlPopup, type ExpressionSpecification, type GeoJSONSource, type Map as MapLibreMap, type MapLayerMouseEvent } from "maplibre-gl";
 import type { MultiPolygon, Polygon } from "geojson";
-import { api, type WatchZone } from "../api";
+import { api, type WatchZone, type WatchZoneOverride } from "../api";
+import { joinShapes } from "../boundaryLibrary";
 import { buildWatchZoneAreas, labelPoint, ZONE_STYLE } from "../watchZoneAreas";
 import { firstDataLayer } from "./globeExtras";
 
@@ -15,6 +16,11 @@ import { firstDataLayer } from "./globeExtras";
  * capitals, and opening its details on click. Admins can also, from that click: reshape the boundary (drag its
  * corners), redraw it from scratch, change its colour, or put it back to the default. Edits are kept on the server
  * and seen by everyone.
+ *
+ * A zone can also be made of areas from the boundary library (BoundaryLibrary.tsx): states, districts, whole
+ * countries. Its area is then its own original area (unless dropped) joined with those, and each part can be dropped
+ * again from the zone's details. Zones can be renamed, re-rated, retired (standing ones, restorable) or deleted
+ * (ones made here).
  */
 
 export interface ZoneView {
@@ -22,6 +28,12 @@ export interface ZoneView {
   areas: Record<string, MultiPolygon>;
   colors: Record<string, string>;
   edited: Record<string, boolean>;
+  /** Each zone's edits, as kept on the server (areas added, original area dropped…). */
+  overrides: Record<string, WatchZoneOverride>;
+  /** Each zone's own area before any added areas: the default or a reshaped one; none once dropped. */
+  baseAreas: Record<string, MultiPolygon>;
+  /** Standing zones taken off the map, which can be brought back. */
+  retired: WatchZoneOverride[];
   reload: () => void;
 }
 
@@ -30,14 +42,21 @@ const toMulti = (g: Polygon | MultiPolygon): MultiPolygon => (g.type === "Polygo
 export function useWatchZoneAreas(on: boolean): ZoneView {
   const [zones, setZones] = useState<WatchZone[]>([]);
   const [built, setBuilt] = useState<Record<string, MultiPolygon>>({});
-  const [overrides, setOverrides] = useState<Record<string, { geometry: Polygon | MultiPolygon | null; color: string | null }>>({});
+  const [overrides, setOverrides] = useState<Record<string, WatchZoneOverride>>({});
+  const [areas, setAreas] = useState<Record<string, MultiPolygon>>({});
   const [tick, setTick] = useState(0);
   const reload = useCallback(() => setTick((t) => t + 1), []);
   useEffect(() => {
     if (!on) return;
+    const t = window.setInterval(() => setTick((x) => x + 1), 10 * 60_000);
+    return () => window.clearInterval(t);
+  }, [on]);
+  useEffect(() => {
+    if (!on) return;
     let live = true;
+    // After an edit, ask past the server's few-minute cache so the change shows at once.
     api
-      .getWatchZones()
+      .getWatchZones(tick ? Date.now() : undefined)
       .then(async (r) => {
         if (!live) return;
         setZones(r.zones);
@@ -45,51 +64,85 @@ export function useWatchZoneAreas(on: boolean): ZoneView {
         if (live) setBuilt(b);
       })
       .catch(() => undefined);
-    const t = window.setInterval(() => setTick((x) => x + 1), 10 * 60_000);
-    return () => {
-      live = false;
-      window.clearInterval(t);
-    };
-  }, [on]);
-  useEffect(() => {
-    if (!on) return;
-    let live = true;
     api
       .getWatchZoneOverrides()
-      .then((r) => live && setOverrides(Object.fromEntries(r.overrides.map((o) => [o.id, { geometry: o.geometry, color: o.color }]))))
+      .then((r) => live && setOverrides(Object.fromEntries(r.overrides.map((o) => [o.id, o]))))
       .catch(() => undefined);
     return () => {
       live = false;
     };
   }, [on, tick]);
-  const areas = useMemo(() => {
-    const out = { ...built };
-    for (const [id, o] of Object.entries(overrides)) if (o.geometry) out[id] = toMulti(o.geometry);
+  const baseAreas = useMemo(() => {
+    const out: Record<string, MultiPolygon> = {};
+    for (const z of zones) {
+      const o = overrides[z.id];
+      if (o?.baseDropped) continue;
+      const b = o?.geometry ? toMulti(o.geometry) : z.custom ? null : built[z.id];
+      if (b) out[z.id] = b;
+    }
     return out;
-  }, [built, overrides]);
+  }, [zones, built, overrides]);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      const out: Record<string, MultiPolygon> = {};
+      for (const z of zones) {
+        const base = baseAreas[z.id];
+        const units = overrides[z.id]?.unitsGeometry;
+        const a = base && units ? ((await joinShapes([...base.coordinates, ...units.coordinates])) ?? base) : (units ?? base ?? (z.custom ? built[z.id] : undefined));
+        if (a) out[z.id] = a;
+      }
+      if (live) setAreas(out);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [zones, baseAreas, overrides, built]);
   const colors = useMemo(() => Object.fromEntries(zones.map((z) => [z.id, overrides[z.id]?.color ?? ZONE_STYLE[z.severity].color])), [zones, overrides]);
   const edited = useMemo(() => Object.fromEntries(Object.entries(overrides).map(([id, o]) => [id, !!(o.geometry || o.color)])), [overrides]);
-  return { zones: on ? zones : [], areas, colors, edited, reload };
+  const retired = useMemo(() => Object.values(overrides).filter((o) => o.retired), [overrides]);
+  return { zones: on ? zones : [], areas, colors, edited, overrides, baseAreas, retired, reload };
 }
 
 /* ── Actions from a zone's details (both views send them the same way) ───────────────────────────────────────── */
 
-export type ZoneAction = { id: string; action: "shape" | "redraw" | "reset" | "color"; color?: string };
+export type ZoneAction = {
+  id: string;
+  action: "shape" | "redraw" | "reset" | "color" | "severity" | "rename" | "retire" | "delete" | "restore" | "drop-base" | "restore-base" | "drop-unit" | "add-areas";
+  color?: string;
+  severity?: WatchZone["severity"];
+  /** The area to drop (drop-unit). */
+  unit?: string;
+};
 /** Asks Live OSINT to act on a zone (it listens for "lens-zone-action"). */
 export const zoneAction = (a: ZoneAction) => window.dispatchEvent(new CustomEvent<ZoneAction>("lens-zone-action", { detail: a }));
 
 const SWATCHES = ["#ff3d3d", "#ff9500", "#ffd23f", "#22c55e", "#14b8a6", "#3b82f6", "#a855f7", "#ec4899", "#94a3b8"];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-function detailsHtml(z: WatchZone, color: string, canEdit: boolean, edited: boolean): string {
+function detailsHtml(z: WatchZone, color: string, canEdit: boolean, edited: boolean, o?: WatchZoneOverride, hasBase = true): string {
   const st = ZONE_STYLE[z.severity];
+  const units = o?.units ?? [];
   const latest = z.headlines[0];
   const act = (a: string, extra = "") => `window.dispatchEvent(new CustomEvent('lens-zone-action',{detail:{id:'${z.id}',action:'${a}'${extra}}}))`;
   const btn = "background:rgba(127,127,127,.15);border:1px solid rgba(127,127,127,.35);border-radius:6px;padding:3px 8px;font-size:11.5px;cursor:pointer;margin:2px 4px 2px 0";
+  const x = "background:none;border:none;color:#ff7a7a;cursor:pointer;font-size:11px;padding:0 0 0 6px";
+  // The zone's parts: its own area, and each area added from the boundary library, each of which can be dropped.
+  const parts = [
+    ...(hasBase ? [`<div style="display:flex;justify-content:space-between;gap:6px"><span>${z.custom ? "Drawn boundary" : o?.geometry ? "Original area (reshaped)" : "Original area"}</span>${canEdit && units.length ? `<button style="${x}" onclick="${act("drop-base")}">Drop</button>` : ""}</div>`] : []),
+    ...units.map((u) => `<div style="display:flex;justify-content:space-between;gap:6px"><span>${esc(u.name)} <span style="opacity:.6">${esc(u.iso)} ${esc(u.level)}</span></span>${canEdit ? `<button style="${x}" onclick="${act("drop-unit", `,unit:'${esc(u.key.replace(/'/g, ""))}'`)}">Drop</button>` : ""}</div>`),
+  ];
+  const partsHtml =
+    units.length || (canEdit && !hasBase)
+      ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(127,127,127,.3)"><div style="font-weight:700;font-size:11px;letter-spacing:.06em;margin-bottom:3px">AREAS IN THIS ZONE</div><div style="max-height:130px;overflow-y:auto">${parts.join("")}</div>${canEdit && !hasBase && !z.custom ? `<button style="${btn}" onclick="${act("restore-base")}">Bring back the original area</button>` : ""}</div>`
+      : "";
+  const sevBtn = (s: WatchZone["severity"]) => `<button style="${btn}${z.severity === s ? `;border-color:${ZONE_STYLE[s].color};color:${ZONE_STYLE[s].color};font-weight:700` : ""}" onclick="${act("severity", `,severity:'${s}'`)}">${ZONE_STYLE[s].label}</button>`;
   const tools = canEdit
     ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(127,127,127,.3)">
   <div style="font-weight:700;font-size:11px;letter-spacing:.06em;margin-bottom:4px">EDIT ZONE</div>
-  <button style="${btn}" onclick="${act("shape")}">Reshape boundary</button><button style="${btn}" onclick="${act("redraw")}">Redraw</button>${edited ? `<button style="${btn}" onclick="${act("reset")}">Reset to default</button>` : ""}
+  <button style="${btn};font-weight:700" onclick="${act("add-areas")}">+ Add areas (states, districts…)</button>
+  <div>${sevBtn("war")}${sevBtn("high")}${sevBtn("elevated")}</div>
+  <button style="${btn}" onclick="${act("shape")}">Reshape boundary</button><button style="${btn}" onclick="${act("redraw")}">Redraw</button>${edited && !z.custom ? `<button style="${btn}" onclick="${act("reset")}">Reset to default</button>` : ""}<button style="${btn}" onclick="${act("rename")}">Rename</button>${z.custom ? `<button style="${btn};color:#ff7a7a" onclick="${act("delete")}">Delete zone</button>` : `<button style="${btn};color:#ff7a7a" onclick="${act("retire")}">Retire zone</button>`}
   <div style="display:flex;gap:4px;align-items:center;margin-top:6px;flex-wrap:wrap">${SWATCHES.map((c) => `<button title="${c}" onclick="${act("color", `,color:'${c}'`)}" style="width:18px;height:18px;border-radius:4px;border:${c === color ? "2px solid #fff" : "1px solid rgba(0,0,0,.4)"};background:${c};cursor:pointer;padding:0"></button>`).join("")}<input type="color" value="${color}" title="Any colour" onchange="window.dispatchEvent(new CustomEvent('lens-zone-action',{detail:{id:'${z.id}',action:'color',color:this.value}}))" style="width:24px;height:20px;padding:0;border:none;background:none;cursor:pointer"></div>
 </div>`
     : "";
@@ -99,9 +152,13 @@ function detailsHtml(z: WatchZone, color: string, canEdit: boolean, edited: bool
   <div>${esc(z.description)}</div>
   <div style="margin-top:6px;opacity:.85">${z.headlineCount} recent report${z.headlineCount === 1 ? "" : "s"} · ${z.incidents.length} escalation incident${z.incidents.length === 1 ? "" : "s"} in the zone</div>
   ${latest ? `<div style="margin-top:6px">Latest: <a href="${esc(latest.url)}" target="_blank" rel="noreferrer">${esc(latest.title)}</a> <span style="opacity:.7">(${esc(latest.source)})</span></div>` : ""}
-  <div style="margin-top:6px;font-size:11px;opacity:.65">Severity is an Afrilens editorial rating of the standing situation, not a live measurement.</div>${tools}
+  <div style="margin-top:6px;font-size:11px;opacity:.65">Severity is an Afrilens editorial rating of the standing situation, not a live measurement.</div>${partsHtml}${tools}
 </div>`;
 }
+
+/** Opens a zone's details at a spot (from an area's popup in the boundary library, which sits on top of zones). */
+export const openZoneDetails = (id: string, lat: number, lng: number) => window.dispatchEvent(new CustomEvent("lens-zone-open", { detail: { id, lat, lng } }));
+const shownMap = (el: HTMLElement) => getComputedStyle(el).visibility !== "hidden" && el.offsetParent !== null;
 
 /** Close any open popup (the zone's details) without upsetting react-leaflet's own popup bookkeeping. */
 function closePopups(map: L.Map) {
@@ -118,6 +175,20 @@ function closePopups(map: L.Map) {
 
 export function FlatWatchZones({ view, canEdit, editing, onEdited }: { view: ZoneView; canEdit: boolean; editing: { id: string; mode: "shape" | "redraw" } | null; onEdited: (g: MultiPolygon | null) => void }) {
   const map = useMap();
+
+  const latest = useRef({ view, canEdit });
+  latest.current = { view, canEdit };
+  useEffect(() => {
+    const open = (e: Event) => {
+      const { id, lat, lng } = (e as CustomEvent<{ id: string; lat: number; lng: number }>).detail;
+      const { view: v, canEdit: ce } = latest.current;
+      const z = v.zones.find((x) => x.id === id);
+      if (!z || !shownMap(map.getContainer())) return;
+      L.popup({ maxWidth: 330 }).setLatLng([lat, lng]).setContent(detailsHtml(z, v.colors[z.id], ce, !!v.edited[z.id], v.overrides[z.id], !!v.baseAreas[z.id])).openOn(map);
+    };
+    window.addEventListener("lens-zone-open", open);
+    return () => window.removeEventListener("lens-zone-open", open);
+  }, [map]);
 
   // Reshape: an editable copy of the zone (one polygon per part) takes its place; drag its corners, then the floating
   // bar's Save/Cancel finish it ("lens-zone-edit-finish").
@@ -206,7 +277,7 @@ export function FlatWatchZones({ view, canEdit, editing, onEdited }: { view: Zon
             >
               <Tooltip sticky>{`${z.label} · ${st.label}`}</Tooltip>
               <Popup maxWidth={330}>
-                <div dangerouslySetInnerHTML={{ __html: detailsHtml(z, color, canEdit, !!view.edited[z.id]) }} />
+                <div dangerouslySetInnerHTML={{ __html: detailsHtml(z, color, canEdit, !!view.edited[z.id], view.overrides[z.id], !!view.baseAreas[z.id]) }} />
               </Popup>
             </GeoJSON>
           );
@@ -280,14 +351,24 @@ export function GlobeWatchZones({ map, view, canEdit }: { map: MapLibreMap | nul
         // Markers on top take their own clicks first.
         const above = map.queryRenderedFeatures(e.point).find((f) => f.layer.id.startsWith("lens-") && !f.layer.id.startsWith("lens-control-") && !f.layer.id.startsWith("lens-basemap-") && f.layer.type !== "fill");
         if (above) return;
+        // An area from the boundary library over the zone opens its own popup (with a link to the zone's details).
+        if (map.getLayer("lens-control-bounds-fill") && map.queryRenderedFeatures(e.point, { layers: ["lens-control-bounds-fill"] }).length) return;
         const { view: v, canEdit: ce } = ref.current;
         const z = v.zones.find((x) => x.id === (e.features?.[0]?.properties?.id as string));
         if (!z) return;
         popupRef.current?.remove();
-        popupRef.current = new GlPopup({ maxWidth: "330px" }).setLngLat(e.lngLat).setHTML(detailsHtml(z, v.colors[z.id], ce, !!v.edited[z.id])).addTo(map);
+        popupRef.current = new GlPopup({ maxWidth: "330px" }).setLngLat(e.lngLat).setHTML(detailsHtml(z, v.colors[z.id], ce, !!v.edited[z.id], v.overrides[z.id], !!v.baseAreas[z.id])).addTo(map);
       });
       // An action from the popup closes it.
       window.addEventListener("lens-zone-action", () => popupRef.current?.remove());
+      window.addEventListener("lens-zone-open", (ev) => {
+        const { id, lat, lng } = (ev as CustomEvent<{ id: string; lat: number; lng: number }>).detail;
+        const { view: v, canEdit: ce } = ref.current;
+        const z = v.zones.find((x) => x.id === id);
+        if (!z || !shownMap(map.getContainer())) return;
+        popupRef.current?.remove();
+        popupRef.current = new GlPopup({ maxWidth: "330px" }).setLngLat([lng, lat]).setHTML(detailsHtml(z, v.colors[z.id], ce, !!v.edited[z.id], v.overrides[z.id], !!v.baseAreas[z.id])).addTo(map);
+      });
     } else {
       (map.getSource("lens-zones") as GeoJSONSource).setData(data.areas as never);
       (map.getSource("lens-zone-labels") as GeoJSONSource).setData(data.labels as never);
