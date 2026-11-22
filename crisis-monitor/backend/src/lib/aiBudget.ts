@@ -1,4 +1,5 @@
 import type { Env } from "../bindings";
+import { aiSettingsNow } from "./aiSettings";
 
 /**
  * A hard daily ceiling on Workers AI use, so the platform cannot run up an
@@ -61,6 +62,9 @@ export function dailyNeuronBudget(env: Env, now = new Date()): number {
   // spent (by translation) before the platform started counting, so any
   // further call that day would have been billed.
   if (env.AI_BUDGET_NOT_BEFORE && usageDay(now) < env.AI_BUDGET_NOT_BEFORE) return 0;
+  // A daily allowance set by an admin in Settings (lib/aiSettings.ts) comes first.
+  const set = aiSettingsNow().cloudflareDailyNeurons;
+  if (set !== null && Number.isFinite(set) && set >= 0) return set;
   const raw = env.AI_DAILY_NEURON_BUDGET;
   if (raw === undefined || raw === null || String(raw).trim() === "") return DEFAULT_DAILY_NEURON_BUDGET;
   const n = Number(raw);
