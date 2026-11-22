@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import L from "leaflet";
 import { GeoJSON, useMap } from "react-leaflet";
 import { Popup as GlPopup, type GeoJSONSource, type Map as MapLibreMap, type MapLayerMouseEvent } from "maplibre-gl";
-import { Check, Download, Eye, EyeOff, Layers, Plus, Search, Trash2, X } from "lucide-react";
-import type { MultiPolygon, Position } from "geojson";
+import { Check, ChevronRight, Download, Eye, EyeOff, Layers, Plus, Search, Trash2, X } from "lucide-react";
+import type { MultiPolygon, Polygon, Position } from "geojson";
+import { numericToAlpha3 } from "i18n-iso-countries";
 import { api, type BoundaryCountry, type BoundaryLayer, type BoundaryUnit } from "../api";
 import { boundaryCatalogue, boundaryLayer, downloadGeoJson, extentOf, joinShapes, levelName, unitKey, unitsGeometry, WORLD } from "../boundaryLibrary";
 import { firstDataLayer } from "./globeExtras";
@@ -15,6 +16,9 @@ import type { ZoneAction, ZoneView } from "./WatchZoneAreas";
  * itself on hover; clicking one opens what can be done with it: download it, see the watch zones it falls in, and
  * (admins) make it part of a watch zone, or start a new zone from it. In "adding areas" mode, clicking areas adds them
  * to the chosen zone or drops them again, and the zone redraws itself at once.
+ *
+ * Every area drills down: a country to its states or provinces, a state to its districts, a district to its wards
+ * (as deep as the country publishes), each next level shown only inside the area clicked.
  *
  * Data: geoBoundaries (CC BY 4.0), fetched by the server on first use and kept there; countries of the world from
  * Natural Earth (Somalia includes Somaliland, as everywhere in the Lens).
@@ -28,6 +32,18 @@ export interface ShownLayer {
   canonical: string;
   color: string;
   visible: boolean;
+  /** Only the areas inside this one (an area's key), for a drilled-down level. */
+  parent?: string;
+}
+
+/** Where drilling into an area leads: the next level down, inside it. */
+export interface DrillTarget {
+  iso: string;
+  level: string;
+  country: string;
+  canonical: string;
+  parent?: string;
+  label: string;
 }
 
 export interface BoundaryLib {
@@ -35,6 +51,9 @@ export interface BoundaryLib {
   data: Record<string, BoundaryLayer>;
   status: Record<string, string>;
   add: (l: Omit<ShownLayer, "key" | "color" | "visible">) => void;
+  /** The next level down from an area (shown in layer `layerKey`), if the country has one. */
+  drillTarget: (unit: string, name: string, layerKey: string) => DrillTarget | null;
+  drill: (unit: string, name: string, layerKey: string) => void;
   update: (key: string, patch: Partial<ShownLayer>) => void;
   remove: (key: string) => void;
   /** The zone that clicking areas adds to (or drops from); none when just looking. */
@@ -60,6 +79,12 @@ export function useBoundaryLibrary(): BoundaryLib {
   const [status, setStatus] = useState<Record<string, string>>({});
   const [pickZone, setPickZone] = useState<string | null>(null);
   const focus = useRef<BoundaryLib["focus"]["current"]>(null);
+  const [catalogue, setCatalogue] = useState<BoundaryCountry[] | null>(null);
+  useEffect(() => {
+    boundaryCatalogue().then(setCatalogue, () => undefined);
+  }, []);
+  // A layer just added is gone to once its areas are in.
+  const goTo = useRef<string | null>(null);
   useEffect(() => {
     try {
       localStorage.setItem(STORE, JSON.stringify(shown));
@@ -72,32 +97,138 @@ export function useBoundaryLibrary(): BoundaryLib {
     for (const l of shown) {
       if (data[l.key] || status[l.key] === "loading") continue;
       setStatus((s) => ({ ...s, [l.key]: "loading" }));
-      boundaryLayer(l.iso, l.level).then(
+      (l.parent ? areasInside(l.iso, l.level, l.parent) : boundaryLayer(l.iso, l.level)).then(
         (d) => {
           setData((x) => ({ ...x, [l.key]: d }));
-          setStatus((s) => ({ ...s, [l.key]: "" }));
+          setStatus((s) => ({ ...s, [l.key]: d.features.length ? "" : "No areas of this level found inside it." }));
+          if (goTo.current === l.key && d.features.length) {
+            goTo.current = null;
+            const e = extentOf({ type: "MultiPolygon", coordinates: d.features.flatMap((f) => (f.geometry.type === "Polygon" ? [f.geometry.coordinates] : f.geometry.coordinates)) });
+            if (e) focus.current?.(e);
+          }
         },
         (e: Error) => setStatus((s) => ({ ...s, [l.key]: e.message || "Could not load" }))
       );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown]);
+  const [tick, setTick] = useState(0);
   const add = useCallback<BoundaryLib["add"]>((l) => {
-    const key = `${l.iso}:${l.level}`;
-    setShown((list) => (list.some((x) => x.key === key) ? list.map((x) => (x.key === key ? { ...x, visible: true } : x)) : [...list, { ...l, key, color: PALETTE[list.length % PALETTE.length], visible: true }]));
+    const key = `${l.iso}:${l.level}${l.parent ? `@${l.parent}` : ""}`;
     // Go to it once loaded (a whole-world layer stays where it is).
-    if (l.iso !== WORLD)
-      void boundaryLayer(l.iso, l.level).then((d) => {
-        const e = extentOf({ type: "MultiPolygon", coordinates: d.features.flatMap((f) => (f.geometry.type === "Polygon" ? [f.geometry.coordinates] : f.geometry.coordinates)) });
-        if (e) focus.current?.(e);
-      }, () => undefined);
+    if (l.iso !== WORLD) goTo.current = key;
+    setShown((list) => (list.some((x) => x.key === key) ? list.map((x) => (x.key === key ? { ...x, visible: true } : x)) : [...list, { ...l, key, color: PALETTE[list.length % PALETTE.length], visible: true }]));
+    setTick((t) => t + 1);
   }, []);
+  // Already loaded: go there now.
+  useEffect(() => {
+    const k = goTo.current;
+    const d = k ? data[k] : null;
+    if (!k || !d || !d.features.length) return;
+    goTo.current = null;
+    const e = extentOf({ type: "MultiPolygon", coordinates: d.features.flatMap((f) => (f.geometry.type === "Polygon" ? [f.geometry.coordinates] : f.geometry.coordinates)) });
+    if (e) focus.current?.(e);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick]);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const drillTarget = useCallback<BoundaryLib["drillTarget"]>(
+    (unit, name, layerKey) => {
+      if (!catalogue) return null;
+      const [iso, level, ...rest] = unit.split(":");
+      const id = rest.join(":");
+      const below = (c: BoundaryCountry, from: string) => c.levels.filter((l) => Number(l.level.slice(3)) > Number(from.slice(3))).sort((a, b) => a.level.localeCompare(b.level))[0];
+      if (iso === WORLD) {
+        // A country of the world: its first level down, from its own boundaries.
+        const a3 = /^\d+$/.test(id) ? numericToAlpha3(id) : catalogue.find((c) => c.name.toLowerCase() === name.toLowerCase())?.iso;
+        const c = a3 ? catalogue.find((x) => x.iso === a3) : undefined;
+        const n = c && below(c, "ADM0");
+        if (!c || !n) return null;
+        const canonical = levelName(n.level, n.canonical);
+        return { iso: c.iso, level: n.level, country: c.name, canonical, label: `${canonical} of ${c.name}` };
+      }
+      const c = catalogue.find((x) => x.iso === iso);
+      const n = c && below(c, level);
+      if (!c || !n) return null;
+      const canonical = levelName(n.level, n.canonical);
+      if (level === "ADM0") return { iso, level: n.level, country: c.name, canonical, label: `${canonical} of ${c.name}` };
+      const from = shownRef.current.find((x) => x.key === layerKey);
+      return { iso, level: n.level, country: `${from?.country ?? c.name} › ${name}`, canonical, parent: unit, label: `${canonical} in ${name}` };
+    },
+    [catalogue]
+  );
+  const drill = useCallback<BoundaryLib["drill"]>(
+    (unit, name, layerKey) => {
+      const t = drillTarget(unit, name, layerKey);
+      if (t) add({ iso: t.iso, level: t.level, country: t.country, canonical: t.canonical, parent: t.parent });
+    },
+    [drillTarget, add]
+  );
+  useEffect(() => {
+    const on = (e: Event) => {
+      const a = (e as CustomEvent<UnitAction>).detail;
+      if (a.action === "drill" && a.layerKey) drill(a.key, a.name ?? "", a.layerKey);
+    };
+    window.addEventListener("lens-unit-action", on);
+    return () => window.removeEventListener("lens-unit-action", on);
+  }, [drill]);
   const update = useCallback<BoundaryLib["update"]>((key, patch) => setShown((list) => list.map((x) => (x.key === key ? { ...x, ...patch } : x))), []);
   const remove = useCallback<BoundaryLib["remove"]>((key) => {
     setShown((list) => list.filter((x) => x.key !== key));
     setStatus((s) => ({ ...s, [key]: "" }));
   }, []);
-  return { shown, data, status, add, update, remove, pickZone, setPickZone, focus };
+  return { shown, data, status, add, drillTarget, drill, update, remove, pickZone, setPickZone, focus };
+}
+
+/* ── Drilling down: the areas of a level that lie inside one area of the level above ─────────────────────────── */
+
+/** A point surely inside a shape: the middle of the widest stretch across its largest part, halfway up. */
+function interiorPoint(g: Polygon | MultiPolygon): [number, number] | null {
+  const polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+  let best: Position[][] | null = null;
+  let bestSize = -1;
+  for (const p of polys) {
+    const xs = p[0].map((q) => q[0]), ys = p[0].map((q) => q[1]);
+    const size = (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+    if (size > bestSize) {
+      bestSize = size;
+      best = p;
+    }
+  }
+  if (!best) return null;
+  const ys = best[0].map((q) => q[1]);
+  const y = (Math.min(...ys) + Math.max(...ys)) / 2 + 1e-7;
+  const xs: number[] = [];
+  for (const ring of best)
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [x1, y1] = ring[j], [x2, y2] = ring[i];
+      if (y1 > y !== y2 > y) xs.push(x1 + ((y - y1) * (x2 - x1)) / (y2 - y1));
+    }
+  xs.sort((a, b) => a - b);
+  let w = -1, at: [number, number] | null = null;
+  for (let i = 0; i + 1 < xs.length; i += 2)
+    if (xs[i + 1] - xs[i] > w) {
+      w = xs[i + 1] - xs[i];
+      at = [(xs[i] + xs[i + 1]) / 2, y];
+    }
+  return at;
+}
+
+async function areasInside(iso: string, level: string, parent: string): Promise<BoundaryLayer> {
+  const [piso, plevel, ...rest] = parent.split(":");
+  const pid = rest.join(":");
+  const [all, up] = await Promise.all([boundaryLayer(iso, level), boundaryLayer(piso, plevel)]);
+  const pf = up.features.find((f) => f.properties.id === pid);
+  if (!pf) return { ...all, features: [] };
+  const area: MultiPolygon = pf.geometry.type === "Polygon" ? { type: "MultiPolygon", coordinates: [pf.geometry.coordinates] } : pf.geometry;
+  const e = extentOf(area)!;
+  return {
+    ...all,
+    features: all.features.filter((f) => {
+      const p = interiorPoint(f.geometry);
+      return !!p && p[0] >= e.minLng && p[0] <= e.maxLng && p[1] >= e.minLat && p[1] <= e.maxLat && inArea(p[0], p[1], area);
+    }),
+  };
 }
 
 /* ── What each area is in: zones it is part of (by choice) and zones it lies inside (by place) ─────────────────── */
@@ -130,10 +261,12 @@ const inArea = (lng: number, lat: number, a: MultiPolygon) => a.coordinates.some
 
 /* ── An area's popup ─────────────────────────────────────────────────────────────────────────────────────────── */
 
-export type UnitAction = { action: "add" | "remove" | "new" | "download"; key: string; zoneId?: string };
+export type UnitAction = { action: "add" | "remove" | "new" | "download" | "drill"; key: string; zoneId?: string; layerKey?: string; name?: string };
+/** Text inside a quoted JavaScript string in an onclick (names like Murang'a). */
+const js = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-function unitHtml(key: string, name: string, place: string, at: { lat: number; lng: number }, view: ZoneView, members: Member[], canEdit: boolean): string {
+function unitHtml(key: string, name: string, place: string, at: { lat: number; lng: number }, view: ZoneView, members: Member[], canEdit: boolean, drill: { label: string; layerKey: string } | null): string {
   const send = (a: string, extra = "") => `window.dispatchEvent(new CustomEvent('lens-unit-action',{detail:{action:'${a}',key:'${esc(key)}'${extra}}}))`;
   const btn = "background:rgba(127,127,127,.15);border:1px solid rgba(127,127,127,.35);border-radius:6px;padding:3px 8px;font-size:11.5px;cursor:pointer;margin:2px 4px 2px 0";
   const inside = view.zones.filter((z) => view.areas[z.id] && inArea(at.lng, at.lat, view.areas[z.id]));
@@ -142,6 +275,7 @@ function unitHtml(key: string, name: string, place: string, at: { lat: number; l
   return `<div style="max-width:290px;font-size:12.5px;line-height:1.45">
   <div style="font-weight:800">${esc(name)}</div>
   <div style="opacity:.75;margin-bottom:4px">${esc(place)}</div>
+  ${drill ? `<button style="${btn};font-weight:700;background:rgba(56,189,248,.18);border-color:rgba(56,189,248,.5)" onclick="${send("drill", `,layerKey:'${esc(js(drill.layerKey))}',name:'${esc(js(name))}'`)}">Show ${esc(drill.label)} &rsaquo;</button>` : ""}
   ${members.map((m) => `<div style="display:flex;align-items:center;gap:6px;margin-top:2px"><span style="width:9px;height:9px;border-radius:2px;background:${m.color}"></span><span style="flex:1">Part of <b>${esc(m.label)}</b></span>${canEdit ? `<button style="${btn};color:#ff7a7a" onclick="${send("remove", `,zoneId:'${m.id}'`)}">Drop</button>` : ""}</div>`).join("")}
   ${inside.filter((z) => !memberIds.has(z.id)).map((z) => `<div style="margin-top:2px">Inside <b style="color:${view.colors[z.id]}">${esc(z.label)}</b></div>`).join("")}
   ${inside.length || members.length ? `<div>${[...new Map([...inside.map((z) => [z.id, z.label] as const), ...members.map((m) => [m.id, m.label] as const)]).entries()].map(([id, label]) => `<button style="${btn}" onclick="window.dispatchEvent(new CustomEvent('lens-zone-open',{detail:{id:'${id}',lat:${at.lat},lng:${at.lng}}}))">${esc(label)} details</button>`).join("")}</div>` : ""}
@@ -158,7 +292,7 @@ function unitHtml(key: string, name: string, place: string, at: { lat: number; l
 </div>`;
 }
 
-const placeOf = (layer: BoundaryLayer, shown: ShownLayer) => (layer.iso === WORLD ? "Country" : `${levelName(layer.level, layer.canonical || shown.canonical).replace(/s$/, "")} · ${shown.country}`);
+const placeOf = (layer: BoundaryLayer, shown: ShownLayer) => (layer.iso === WORLD ? "Country" : `${shown.canonical.replace(/ies$/, "y").replace(/s$/, "")} · ${shown.country}`);
 
 /* ── Flat map ────────────────────────────────────────────────────────────────────────────────────────────────── */
 
@@ -224,7 +358,7 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
                   }
                   L.popup({ maxWidth: 310 })
                     .setLatLng(e.latlng)
-                    .setContent(unitHtml(key, name, placeOf(layer, l), { lat: e.latlng.lat, lng: e.latlng.lng }, c.view, c.members.get(key) ?? [], c.canEdit))
+                    .setContent(unitHtml(key, name, placeOf(layer, l), { lat: e.latlng.lat, lng: e.latlng.lng }, c.view, c.members.get(key) ?? [], c.canEdit, drillFor(c.lib, key, name, l.key)))
                     .openOn(map);
                 });
               }}
@@ -233,6 +367,11 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
         })}
     </>
   );
+}
+
+function drillFor(lib: BoundaryLib, key: string, name: string, layerKey: string) {
+  const t = lib.drillTarget(key, name, layerKey);
+  return t ? { label: t.label, layerKey } : null;
 }
 
 const unitAction = (a: UnitAction) => window.dispatchEvent(new CustomEvent<UnitAction>("lens-unit-action", { detail: a }));
@@ -290,14 +429,15 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
           unitAction({ action: isIn ? "remove" : "add", key, zoneId: c.lib.pickZone });
           return;
         }
-        const [iso, level] = key.split(":");
-        const l = c.lib.shown.find((x) => x.key === `${iso}:${level}`);
-        const layer = c.lib.data[`${iso}:${level}`];
+        const lk = e.features?.[0]?.properties?.layer as string | undefined;
+        const l = c.lib.shown.find((x) => x.key === lk);
+        const layer = lk ? c.lib.data[lk] : undefined;
         if (!l || !layer) return;
+        const nm = String(e.features?.[0]?.properties?.name ?? "Area");
         popup.current?.remove();
         popup.current = new GlPopup({ maxWidth: "310px" })
           .setLngLat(e.lngLat)
-          .setHTML(unitHtml(key, String(e.features?.[0]?.properties?.name ?? "Area"), placeOf(layer, l), { lat: e.lngLat.lat, lng: e.lngLat.lng }, c.view, c.members.get(key) ?? [], c.canEdit))
+          .setHTML(unitHtml(key, nm, placeOf(layer, l), { lat: e.lngLat.lat, lng: e.lngLat.lng }, c.view, c.members.get(key) ?? [], c.canEdit, drillFor(c.lib, key, nm, l.key)))
           .addTo(map);
       });
       for (const ev of ["lens-unit-action", "lens-zone-open"]) window.addEventListener(ev, () => popup.current?.remove());
@@ -469,6 +609,14 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
                           {f.properties.name}
                         </button>
                         {m && <span style={{ width: 8, height: 8, borderRadius: 2, background: m[0].color }} title={`Part of ${m.map((x) => x.label).join(", ")}`} />}
+                        {(() => {
+                          const t = lib.drillTarget(key, f.properties.name, l.key);
+                          return t ? (
+                            <button style={icon} onClick={() => lib.drill(key, f.properties.name, l.key)} title={`Show ${t.label}`}>
+                              <ChevronRight size={14} />
+                            </button>
+                          ) : null;
+                        })()}
                       </div>
                     );
                   })}
@@ -523,10 +671,20 @@ function compact(g: MultiPolygon | null): MultiPolygon | null {
   return coordinates.length ? { type: "MultiPolygon", coordinates } : null;
 }
 
+/** An area, from whichever shown layer of its level holds it (the whole level, or a drilled-down part). */
+function findArea(lib: BoundaryLib, iso: string, level: string, id: string) {
+  for (const d of Object.values(lib.data)) {
+    if (d.iso !== iso || d.level !== level) continue;
+    const f = d.features.find((x) => x.properties.id === id);
+    if (f) return f;
+  }
+  return null;
+}
+
 function unitFrom(key: string, lib: BoundaryLib): BoundaryUnit | null {
   const [iso, level, ...rest] = key.split(":");
   const id = rest.join(":");
-  const f = lib.data[`${iso}:${level}`]?.features.find((x) => x.properties.id === id);
+  const f = findArea(lib, iso, level, id);
   if (!f) return null;
   // The plain name: it also becomes one of the zone's news search terms.
   return { key, iso, level, id, name: f.properties.name };
@@ -569,8 +727,7 @@ export function useZoneComposer({ view, lib, isAdmin, say, openLibrary }: { view
       const unit = unitFrom(a.key, l);
       if (!unit) return;
       if (a.action === "download") {
-        const [iso, level] = a.key.split(":");
-        const f = l.data[`${iso}:${level}`]?.features.find((x) => x.properties.id === unit.id);
+        const f = findArea(l, unit.iso, unit.level, unit.id);
         if (f) downloadGeoJson(unit.name, { type: "FeatureCollection", features: [f] });
         return;
       }
