@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import L from "leaflet";
 import { GeoJSON, useMap } from "react-leaflet";
 import { Popup as GlPopup, type GeoJSONSource, type Map as MapLibreMap, type MapLayerMouseEvent } from "maplibre-gl";
-import { Check, ChevronRight, Download, Eye, EyeOff, Layers, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, Download, Eye, EyeOff, Layers, Pencil, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import type { MultiPolygon, Polygon, Position } from "geojson";
 import { numericToAlpha3 } from "i18n-iso-countries";
 import { api, type BoundaryCountry, type BoundaryLayer, type BoundaryUnit } from "../api";
@@ -16,6 +16,9 @@ import type { ZoneAction, ZoneView } from "./WatchZoneAreas";
  * itself on hover; clicking one opens what can be done with it: download it, see the watch zones it falls in, and
  * (admins) make it part of a watch zone, or start a new zone from it. In "adding areas" mode, clicking areas adds them
  * to the chosen zone or drops them again, and the zone redraws itself at once.
+ *
+ * Each layer and each area in it can be styled (fill and outline colour, outline width and dashes, fill strength),
+ * shown or hidden one by one, and reshaped by dragging its corners. These choices are kept in this browser.
  *
  * Every area drills down: a country to its states or provinces, a state to its districts, a district to its wards
  * (as deep as the country publishes), each next level shown only inside the area clicked.
@@ -34,6 +37,45 @@ export interface ShownLayer {
   visible: boolean;
   /** Only the areas inside this one (an area's key), for a drilled-down level. */
   parent?: string;
+  /** Outline width, fill strength (0–1) and dashed outline for the whole layer. */
+  weight?: number;
+  fillOpacity?: number;
+  dash?: boolean;
+  /** Areas hidden from the map, by area id. */
+  hidden?: string[];
+  /** Areas styled on their own, by area id. */
+  styles?: Record<string, AreaStyle>;
+  /** Areas reshaped by hand, by area id. */
+  shapes?: Record<string, MultiPolygon>;
+  /** Bumped on every change, so the map redraws the layer. */
+  rev?: number;
+}
+
+export interface AreaStyle {
+  fill?: string;
+  line?: string;
+  width?: number;
+  opacity?: number;
+  dash?: boolean;
+}
+
+/** How an area is drawn: its own style, else its watch zone's colour, else its layer's. */
+export function areaLook(l: ShownLayer, id: string, member: { color: string } | undefined, inTarget: boolean, picking: boolean) {
+  const own = l.styles?.[id];
+  const base = member?.color ?? l.color;
+  return {
+    line: own?.line ?? own?.fill ?? base,
+    fill: own?.fill ?? base,
+    width: own?.width ?? (member ? (inTarget ? 2.4 : 1.6) : (l.weight ?? 1)),
+    fillOpacity: own?.opacity ?? (member ? (inTarget ? 0.28 : 0.12) : Math.max(l.fillOpacity ?? 0.03, picking ? 0.06 : 0)),
+    dash: own?.dash ?? l.dash ?? false,
+  };
+}
+
+/** A layer's areas as drawn: hidden ones left out, reshaped ones in their new shape. */
+export function shownAreas(l: ShownLayer, layer: BoundaryLayer, skip?: string) {
+  const hidden = new Set(l.hidden ?? []);
+  return layer.features.filter((f) => !hidden.has(f.properties.id) && f.properties.id !== skip).map((f) => (l.shapes?.[f.properties.id] ? { ...f, geometry: l.shapes[f.properties.id] } : f));
 }
 
 /** Where drilling into an area leads: the next level down, inside it. */
@@ -55,6 +97,15 @@ export interface BoundaryLib {
   drillTarget: (unit: string, name: string, layerKey: string) => DrillTarget | null;
   drill: (unit: string, name: string, layerKey: string) => void;
   update: (key: string, patch: Partial<ShownLayer>) => void;
+  setAreaStyle: (layerKey: string, id: string, patch: Partial<AreaStyle> | null) => void;
+  setHidden: (layerKey: string, ids: string[] | "all" | "none", hidden: boolean) => void;
+  setShape: (layerKey: string, id: string, g: MultiPolygon | null) => void;
+  /** The area being reshaped on the flat map. */
+  editing: { layerKey: string; id: string; name: string } | null;
+  setEditing: (e: { layerKey: string; id: string; name: string } | null) => void;
+  /** An area the panel should open (from its popup's "More styling"). */
+  openArea: { layerKey: string; id: string } | null;
+  setOpenArea: (a: { layerKey: string; id: string } | null) => void;
   remove: (key: string) => void;
   /** The zone that clicking areas adds to (or drops from); none when just looking. */
   pickZone: string | null;
@@ -172,12 +223,65 @@ export function useBoundaryLibrary(): BoundaryLib {
     window.addEventListener("lens-unit-action", on);
     return () => window.removeEventListener("lens-unit-action", on);
   }, [drill]);
-  const update = useCallback<BoundaryLib["update"]>((key, patch) => setShown((list) => list.map((x) => (x.key === key ? { ...x, ...patch } : x))), []);
+  const update = useCallback<BoundaryLib["update"]>((key, patch) => setShown((list) => list.map((x) => (x.key === key ? { ...x, ...patch, rev: (x.rev ?? 0) + 1 } : x))), []);
+  const change = useCallback((key: string, fn: (l: ShownLayer) => Partial<ShownLayer>) => setShown((list) => list.map((x) => (x.key === key ? { ...x, ...fn(x), rev: (x.rev ?? 0) + 1 } : x))), []);
+  const setAreaStyle = useCallback<BoundaryLib["setAreaStyle"]>(
+    (key, id, patch) =>
+      change(key, (l) => {
+        const styles = { ...(l.styles ?? {}) };
+        if (patch === null) delete styles[id];
+        else styles[id] = { ...(styles[id] ?? {}), ...patch };
+        return { styles };
+      }),
+    [change]
+  );
+  const setShape = useCallback<BoundaryLib["setShape"]>(
+    (key, id, g) =>
+      change(key, (l) => {
+        const shapes = { ...(l.shapes ?? {}) };
+        if (g) shapes[id] = g;
+        else delete shapes[id];
+        return { shapes };
+      }),
+    [change]
+  );
+  const [editing, setEditing] = useState<BoundaryLib["editing"]>(null);
+  const [openArea, setOpenArea] = useState<BoundaryLib["openArea"]>(null);
   const remove = useCallback<BoundaryLib["remove"]>((key) => {
     setShown((list) => list.filter((x) => x.key !== key));
     setStatus((s) => ({ ...s, [key]: "" }));
   }, []);
-  return { shown, data, status, add, drillTarget, drill, update, remove, pickZone, setPickZone, focus };
+  const setHidden = useCallback<BoundaryLib["setHidden"]>(
+    (key, ids, hide) =>
+      change(key, (l) => {
+        if (ids === "none") return { hidden: [] };
+        if (ids === "all") return { hidden: (dataRef.current[key]?.features ?? []).map((f) => f.properties.id) };
+        const h = new Set(l.hidden ?? []);
+        for (const id of ids) (hide ? h.add(id) : h.delete(id));
+        return { hidden: [...h] };
+      }),
+    [change]
+  );
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  // Styling actions from an area's popup.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const a = (e as CustomEvent<UnitAction>).detail;
+      if (!a.layerKey) return;
+      const id = a.key.split(":").slice(2).join(":");
+      if (a.action === "style" && a.color) setAreaStyle(a.layerKey, id, { fill: a.color, line: a.color, opacity: Math.max(0.25, shownRef.current.find((x) => x.key === a.layerKey)?.styles?.[id]?.opacity ?? 0) });
+      else if (a.action === "hide") setHidden(a.layerKey, [id], true);
+      else if (a.action === "reset-style") {
+        setAreaStyle(a.layerKey, id, null);
+        setShape(a.layerKey, id, null);
+      } else if (a.action === "reshape") setEditing({ layerKey: a.layerKey, id, name: a.name ?? "Area" });
+      else if (a.action === "more") setOpenArea({ layerKey: a.layerKey, id });
+    };
+    window.addEventListener("lens-unit-action", on);
+    return () => window.removeEventListener("lens-unit-action", on);
+  }, [setAreaStyle, setHidden, setShape]);
+  return { shown, data, status, add, drillTarget, drill, update, setAreaStyle, setHidden, setShape, editing, setEditing, openArea, setOpenArea, remove, pickZone, setPickZone, focus };
 }
 
 /* ── Drilling down: the areas of a level that lie inside one area of the level above ─────────────────────────── */
@@ -261,13 +365,15 @@ const inArea = (lng: number, lat: number, a: MultiPolygon) => a.coordinates.some
 
 /* ── An area's popup ─────────────────────────────────────────────────────────────────────────────────────────── */
 
-export type UnitAction = { action: "add" | "remove" | "new" | "download" | "drill"; key: string; zoneId?: string; layerKey?: string; name?: string };
+export type UnitAction = { action: "add" | "remove" | "new" | "download" | "drill" | "style" | "hide" | "reset-style" | "reshape" | "more"; key: string; zoneId?: string; layerKey?: string; name?: string; color?: string };
 /** Text inside a quoted JavaScript string in an onclick (names like Murang'a). */
 const js = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-function unitHtml(key: string, name: string, place: string, at: { lat: number; lng: number }, view: ZoneView, members: Member[], canEdit: boolean, drill: { label: string; layerKey: string } | null): string {
-  const send = (a: string, extra = "") => `window.dispatchEvent(new CustomEvent('lens-unit-action',{detail:{action:'${a}',key:'${esc(key)}'${extra}}}))`;
+const SWATCHES = ["#ff3d3d", "#ff9500", "#ffd23f", "#22c55e", "#14b8a6", "#38bdf8", "#3b82f6", "#a855f7", "#ec4899", "#e2e8f0", "#64748b"];
+
+function unitHtml(key: string, name: string, place: string, at: { lat: number; lng: number }, view: ZoneView, members: Member[], canEdit: boolean, drill: { label: string; layerKey: string } | null, styling: { layerKey: string; color: string; custom: boolean }): string {
+  const send = (a: string, extra = "") => `window.dispatchEvent(new CustomEvent('lens-unit-action',{detail:{action:'${a}',key:'${esc(js(key))}'${extra}}}))`;
   const btn = "background:rgba(127,127,127,.15);border:1px solid rgba(127,127,127,.35);border-radius:6px;padding:3px 8px;font-size:11.5px;cursor:pointer;margin:2px 4px 2px 0";
   const inside = view.zones.filter((z) => view.areas[z.id] && inArea(at.lng, at.lat, view.areas[z.id]));
   const memberIds = new Set(members.map((m) => m.id));
@@ -288,6 +394,11 @@ function unitHtml(key: string, name: string, place: string, at: { lat: number; l
 </div>`
       : ""
   }
+  <div style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(127,127,127,.3)">
+  <div style="font-weight:700;font-size:11px;letter-spacing:.06em;margin-bottom:4px">THIS AREA ON THE MAP</div>
+  <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center">${SWATCHES.map((c) => `<button title="${c}" onclick="${send("style", `,layerKey:'${esc(js(styling.layerKey))}',color:'${c}'`)}" style="width:17px;height:17px;border-radius:4px;border:${c === styling.color ? "2px solid #fff" : "1px solid rgba(0,0,0,.4)"};background:${c};cursor:pointer;padding:0"></button>`).join("")}<input type="color" value="${styling.color}" title="Any colour" onchange="window.dispatchEvent(new CustomEvent('lens-unit-action',{detail:{action:'style',key:'${esc(js(key))}',layerKey:'${esc(js(styling.layerKey))}',color:this.value}}))" style="width:22px;height:19px;padding:0;border:none;background:none;cursor:pointer"></div>
+  <div style="margin-top:3px"><button style="${btn}" onclick="${send("more", `,layerKey:'${esc(js(styling.layerKey))}'`)}">More styling…</button><button style="${btn}" onclick="${send("reshape", `,layerKey:'${esc(js(styling.layerKey))}',name:'${esc(js(name))}'`)}">Reshape boundary</button><button style="${btn}" onclick="${send("hide", `,layerKey:'${esc(js(styling.layerKey))}'`)}">Hide</button>${styling.custom ? `<button style="${btn}" onclick="${send("reset-style", `,layerKey:'${esc(js(styling.layerKey))}'`)}">Reset</button>` : ""}</div>
+  </div>
   <div style="margin-top:6px"><button style="${btn}" onclick="${send("download")}">Download (GeoJSON)</button></div>
 </div>`;
 }
@@ -323,6 +434,49 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
       window.removeEventListener("lens-unit-action", close);
     };
   }, [map]);
+  // Reshaping one area: an editable copy stands in for it; the floating bar's Save/Cancel finish it.
+  const editingId = lib.editing ? `${lib.editing.layerKey}|${lib.editing.id}` : null;
+  useEffect(() => {
+    const ed = ctx.current.lib.editing;
+    if (!ed) return;
+    const l = ctx.current.lib.shown.find((x) => x.key === ed.layerKey);
+    const layer = ctx.current.lib.data[ed.layerKey];
+    const f = layer?.features.find((x) => x.properties.id === ed.id);
+    if (!l || !f) return;
+    map.closePopup();
+    const g = l.shapes?.[ed.id] ?? (f.geometry.type === "Polygon" ? { type: "MultiPolygon" as const, coordinates: [f.geometry.coordinates] } : f.geometry);
+    const look = areaLook(l, ed.id, undefined, false, false);
+    const thin = (ring: Position[]) => {
+      const pts = ring.slice(0, -1).map(([x, y]) => map.latLngToLayerPoint(L.latLng(y, x)));
+      return L.LineUtil.simplify(pts, 4).map((pt) => map.layerPointToLatLng(pt));
+    };
+    const polys = g.coordinates
+      .filter((poly) => thin(poly[0]).length >= 3)
+      .map((poly) => {
+        const p = L.polygon(poly.map(thin).filter((r) => r.length >= 3), { color: look.line, weight: 2, fillColor: look.fill, fillOpacity: 0.2, pane: "lens-bounds" }) as L.Polygon & { editing?: { enable(): void; disable(): void } };
+        p.addTo(map);
+        p.editing?.enable();
+        return p;
+      });
+    const finish = (e: Event) => {
+      if ((e as CustomEvent<boolean>).detail) {
+        const coords = polys.flatMap((p) => {
+          const pg = p.toGeoJSON().geometry as Polygon | MultiPolygon;
+          return pg.type === "Polygon" ? [pg.coordinates] : pg.coordinates;
+        });
+        ctx.current.lib.setShape(ed.layerKey, ed.id, { type: "MultiPolygon", coordinates: coords });
+      }
+      ctx.current.lib.setEditing(null);
+    };
+    window.addEventListener("lens-zone-edit-finish", finish);
+    return () => {
+      window.removeEventListener("lens-zone-edit-finish", finish);
+      polys.forEach((p) => {
+        p.editing?.disable();
+        p.remove();
+      });
+    };
+  }, [editingId, map]);
   const memberSig = useMemo(() => [...members.entries()].map(([k, m]) => `${k}=${m.map((x) => x.color).join()}`).join("|"), [members]);
   return (
     <>
@@ -332,16 +486,14 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
           const layer = lib.data[l.key];
           return (
             <GeoJSON
-              key={`${l.key}:${l.color}:${memberSig.length}:${memberSig.slice(0, 64)}:${lib.pickZone ?? ""}`}
+              key={`${l.key}:${l.color}:${l.rev ?? 0}:${memberSig.length}:${memberSig.slice(0, 64)}:${lib.pickZone ?? ""}:${editingId ?? ""}`}
               pane="lens-bounds"
-              data={layer as never}
+              data={{ ...layer, features: shownAreas(l, layer, lib.editing?.layerKey === l.key ? lib.editing.id : undefined) } as never}
               style={(f) => {
-                const k = unitKey(layer.iso, layer.level, String(f?.properties?.id));
-                const m = members.get(k);
-                const target = lib.pickZone && m?.some((x) => x.id === lib.pickZone);
-                return m
-                  ? { color: m[0].color, weight: target ? 2.4 : 1.6, opacity: 0.95, fillColor: m[0].color, fillOpacity: target ? 0.28 : 0.12 }
-                  : { color: l.color, weight: 1, opacity: 0.85, fillColor: l.color, fillOpacity: lib.pickZone ? 0.06 : 0.03 };
+                const id = String(f?.properties?.id);
+                const m = members.get(unitKey(layer.iso, layer.level, id));
+                const look = areaLook(l, id, m?.[0], !!(lib.pickZone && m?.some((x) => x.id === lib.pickZone)), !!lib.pickZone);
+                return { color: look.line, weight: look.width, opacity: 0.95, fillColor: look.fill, fillOpacity: look.fillOpacity, dashArray: look.dash ? "6 4" : undefined };
               }}
               onEachFeature={(f, lyr) => {
                 const id = String(f.properties?.id);
@@ -358,7 +510,7 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
                   }
                   L.popup({ maxWidth: 310 })
                     .setLatLng(e.latlng)
-                    .setContent(unitHtml(key, name, placeOf(layer, l), { lat: e.latlng.lat, lng: e.latlng.lng }, c.view, c.members.get(key) ?? [], c.canEdit, drillFor(c.lib, key, name, l.key)))
+                    .setContent(unitHtml(key, name, placeOf(layer, l), { lat: e.latlng.lat, lng: e.latlng.lng }, c.view, c.members.get(key) ?? [], c.canEdit, drillFor(c.lib, key, name, l.key), stylingFor(c.lib.shown.find((x) => x.key === l.key) ?? l, id, c.members.get(key)?.[0])))
                     .openOn(map);
                 });
               }}
@@ -367,6 +519,10 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
         })}
     </>
   );
+}
+
+function stylingFor(l: ShownLayer, id: string, member: Member | undefined) {
+  return { layerKey: l.key, color: areaLook(l, id, member, false, false).fill, custom: !!(l.styles?.[id] || l.shapes?.[id]) };
 }
 
 function drillFor(lib: BoundaryLib, key: string, name: string, layerKey: string) {
@@ -387,11 +543,11 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
       .filter((l) => l.visible && lib.data[l.key])
       .flatMap((l) => {
         const layer = lib.data[l.key];
-        return layer.features.map((f) => {
+        return shownAreas(l, layer).map((f) => {
           const key = unitKey(layer.iso, layer.level, f.properties.id);
           const m = members.get(key);
-          const target = !!(lib.pickZone && m?.some((x) => x.id === lib.pickZone));
-          return { type: "Feature" as const, properties: { key, layer: l.key, name: f.properties.name, color: m ? m[0].color : l.color, fill: m ? (target ? 0.28 : 0.12) : lib.pickZone ? 0.06 : 0.03, width: m ? (target ? 2.4 : 1.6) : 1 }, geometry: f.geometry };
+          const look = areaLook(l, f.properties.id, m?.[0], !!(lib.pickZone && m?.some((x) => x.id === lib.pickZone)), !!lib.pickZone);
+          return { type: "Feature" as const, properties: { key, layer: l.key, name: f.properties.name, color: look.fill, line: look.line, fill: look.fillOpacity, width: look.width, dash: look.dash ? 1 : 0 }, geometry: f.geometry };
         });
       });
     return { type: "FeatureCollection" as const, features };
@@ -403,7 +559,8 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
       const before = firstDataLayer(map);
       map.addSource("lens-bounds", { type: "geojson", data: data as never });
       map.addLayer({ id: "lens-control-bounds-fill", type: "fill", source: "lens-bounds", paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "fill"] } }, before);
-      map.addLayer({ id: "lens-control-bounds-line", type: "line", source: "lens-bounds", paint: { "line-color": ["get", "color"], "line-width": ["get", "width"], "line-opacity": 0.9 } }, before);
+      map.addLayer({ id: "lens-control-bounds-line", type: "line", source: "lens-bounds", filter: ["!=", ["get", "dash"], 1], paint: { "line-color": ["get", "line"], "line-width": ["get", "width"], "line-opacity": 0.9 } }, before);
+      map.addLayer({ id: "lens-control-bounds-line-dash", type: "line", source: "lens-bounds", filter: ["==", ["get", "dash"], 1], paint: { "line-color": ["get", "line"], "line-width": ["get", "width"], "line-opacity": 0.9, "line-dasharray": [3, 2] } }, before);
       map.addLayer(
         {
           id: "lens-control-bounds-label",
@@ -437,7 +594,7 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
         popup.current?.remove();
         popup.current = new GlPopup({ maxWidth: "310px" })
           .setLngLat(e.lngLat)
-          .setHTML(unitHtml(key, nm, placeOf(layer, l), { lat: e.lngLat.lat, lng: e.lngLat.lng }, c.view, c.members.get(key) ?? [], c.canEdit, drillFor(c.lib, key, nm, l.key)))
+          .setHTML(unitHtml(key, nm, placeOf(layer, l), { lat: e.lngLat.lat, lng: e.lngLat.lng }, c.view, c.members.get(key) ?? [], c.canEdit, drillFor(c.lib, key, nm, l.key), stylingFor(l, key.split(":").slice(2).join(":"), c.members.get(key)?.[0])))
           .addTo(map);
       });
       for (const ev of ["lens-unit-action", "lens-zone-open"]) window.addEventListener(ev, () => popup.current?.remove());
@@ -453,6 +610,58 @@ const gold: CSSProperties = { ...small, background: "rgba(212,175,55,0.2)", bord
 const icon: CSSProperties = { background: "none", border: "none", color: "#cbd5e1", cursor: "pointer", padding: 0, display: "flex" };
 const input: CSSProperties = { width: "100%", boxSizing: "border-box", fontSize: 12, padding: "6px 8px 6px 26px", borderRadius: 7, border: "1px solid rgba(255,255,255,0.15)", background: "rgba(255,255,255,0.05)", color: "#e6edf7", fontFamily: "inherit", outline: "none" };
 
+/** One area's own look: fill and outline colour, outline width, fill strength, dashes; reshape; back to default. */
+function AreaStyler({ lib, l, id, name, member }: { lib: BoundaryLib; l: ShownLayer; id: string; name: string; member?: Member }) {
+  const look = areaLook(l, id, member, false, false);
+  const set = (p: Partial<AreaStyle>) => lib.setAreaStyle(l.key, id, p);
+  const row: CSSProperties = { display: "flex", alignItems: "center", gap: 6, fontSize: 11 };
+  return (
+    <div style={{ margin: "2px 0 6px 22px", padding: 7, borderRadius: 7, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", display: "grid", gap: 5 }}>
+      <div style={row}>
+        <span style={{ width: 52 }}>Fill</span>
+        <input type="color" value={look.fill} onChange={(e) => set({ fill: e.target.value })} style={{ width: 22, height: 18, padding: 0, border: "none", background: "none" }} />
+        <input type="range" min={0} max={0.9} step={0.05} value={look.fillOpacity} onChange={(e) => set({ opacity: Number(e.target.value) })} style={{ flex: 1 }} title="Fill strength" />
+      </div>
+      <div style={row}>
+        <span style={{ width: 52 }}>Outline</span>
+        <input type="color" value={look.line} onChange={(e) => set({ line: e.target.value })} style={{ width: 22, height: 18, padding: 0, border: "none", background: "none" }} />
+        <input type="range" min={0} max={6} step={0.5} value={look.width} onChange={(e) => set({ width: Number(e.target.value) })} style={{ flex: 1 }} title="Outline width" />
+        <label style={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <input type="checkbox" checked={look.dash} onChange={(e) => set({ dash: e.target.checked })} /> Dashed
+        </label>
+      </div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <button style={small} onClick={() => lib.setEditing({ layerKey: l.key, id, name })} title="Drag the corners of its boundary on the flat map">
+          <Pencil size={11} /> Reshape boundary
+        </button>
+        {(l.styles?.[id] || l.shapes?.[id]) && (
+          <button
+            style={small}
+            onClick={() => {
+              lib.setAreaStyle(l.key, id, null);
+              lib.setShape(l.key, id, null);
+            }}
+          >
+            <RotateCcw size={11} /> Reset
+          </button>
+        )}
+      </div>
+      {l.shapes?.[id] && <div style={{ fontSize: 10.5, opacity: 0.7 }}>Boundary reshaped by hand.</div>}
+    </div>
+  );
+}
+
+/** A layer as drawn, with each area's colours as simplestyle properties (read by most GIS tools). */
+function styledCollection(l: ShownLayer, layer: BoundaryLayer) {
+  return {
+    type: "FeatureCollection",
+    features: shownAreas(l, layer).map((f) => {
+      const look = areaLook(l, f.properties.id, undefined, false, false);
+      return { ...f, properties: { ...f.properties, fill: look.fill, "fill-opacity": look.fillOpacity, stroke: look.line, "stroke-width": look.width } };
+    }),
+  };
+}
+
 export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: BoundaryLib; view: ZoneView; canEdit: boolean; onClose: () => void }) {
   const [countries, setCountries] = useState<BoundaryCountry[] | null>(null);
   const [catErr, setCatErr] = useState("");
@@ -460,6 +669,20 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
   const [picked, setPicked] = useState<BoundaryCountry | null>(null);
   const [openLayer, setOpenLayer] = useState<string | null>(null);
   const [uq, setUq] = useState("");
+  const [openUnit, setOpenUnit] = useState<string | null>(null);
+  // "More styling…" from an area's popup: open its layer and its styling here.
+  useEffect(() => {
+    const a = lib.openArea;
+    if (!a) return;
+    const layer = lib.data[a.layerKey];
+    const f = layer?.features.find((x) => x.properties.id === a.id);
+    setOpenLayer(a.layerKey);
+    if (layer && f) {
+      setUq(f.properties.name);
+      setOpenUnit(unitKey(layer.iso, layer.level, a.id));
+    }
+    lib.setOpenArea(null);
+  }, [lib.openArea, lib]);
   useEffect(() => {
     boundaryCatalogue().then(setCountries, (e: Error) => setCatErr(e.message || "Could not load the list of countries."));
   }, []);
@@ -566,6 +789,7 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
         const open = openLayer === l.key;
         const t = uq.trim().toLowerCase();
         const units = open && layer ? layer.features.filter((f) => !t || f.properties.name.toLowerCase().includes(t)).slice(0, 200) : [];
+        const hiddenSet = new Set(l.hidden ?? []);
         return (
           <div key={l.key} style={{ marginBottom: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -574,10 +798,10 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
               </button>
               <input type="color" value={l.color} onChange={(e) => lib.update(l.key, { color: e.target.value })} title="Colour" style={{ width: 18, height: 16, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
               <button onClick={() => setOpenLayer(open ? null : l.key)} style={{ ...icon, flex: 1, textAlign: "left", color: "#e6edf7", fontWeight: 600, opacity: l.visible ? 1 : 0.5, fontSize: 12, display: "block" }} title="List its areas">
-                {l.country} · {l.canonical} {layer && <span style={{ opacity: 0.55, fontWeight: 400 }}>({layer.features.length})</span>}
+                {l.country} · {l.canonical} {layer && <span style={{ opacity: 0.55, fontWeight: 400 }}>({layer.features.length - (l.hidden?.length ?? 0)}{l.hidden?.length ? ` of ${layer.features.length}` : ""})</span>}
               </button>
               {layer && (
-                <button onClick={() => downloadGeoJson(`${l.country}-${l.canonical}`, layer)} style={icon} title="Download (GeoJSON)">
+                <button onClick={() => downloadGeoJson(`${l.country}-${l.canonical}`, styledCollection(l, layer))} style={icon} title="Download as shown (GeoJSON, with colours)">
                   <Download size={13} />
                 </button>
               )}
@@ -589,6 +813,28 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
             {st && st !== "loading" && <div style={{ color: "#ff9a9a", marginLeft: 21 }}>{st}</div>}
             {open && layer && (
               <div style={{ margin: "5px 0 0 21px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 8px", alignItems: "center", marginBottom: 6, fontSize: 11 }}>
+                  <span>Outline</span>
+                  <input type="range" min={0.5} max={5} step={0.5} value={l.weight ?? 1} onChange={(e) => lib.update(l.key, { weight: Number(e.target.value) })} />
+                  <span>Fill</span>
+                  <input type="range" min={0} max={0.7} step={0.03} value={l.fillOpacity ?? 0.03} onChange={(e) => lib.update(l.key, { fillOpacity: Number(e.target.value) })} />
+                </div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, marginRight: 4 }}>
+                    <input type="checkbox" checked={!!l.dash} onChange={(e) => lib.update(l.key, { dash: e.target.checked })} /> Dashed
+                  </label>
+                  <button style={small} onClick={() => lib.setHidden(l.key, "none", false)}>
+                    Select all
+                  </button>
+                  <button style={small} onClick={() => lib.setHidden(l.key, "all", true)}>
+                    Unselect all
+                  </button>
+                  {(l.styles && Object.keys(l.styles).length > 0) || (l.shapes && Object.keys(l.shapes).length > 0) ? (
+                    <button style={small} onClick={() => lib.update(l.key, { styles: {}, shapes: {} })} title="Put every area back to the layer's colour and the official boundary">
+                      <RotateCcw size={11} /> Reset areas
+                    </button>
+                  ) : null}
+                </div>
                 <input value={uq} onChange={(e) => setUq(e.target.value)} placeholder="Find an area…" style={{ ...input, padding: "4px 7px" }} />
                 <div style={{ maxHeight: 190, overflowY: "auto", marginTop: 4 }}>
                   {units.map((f) => {
@@ -596,8 +842,14 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
                     const m = members.get(key);
                     const inTarget = !!(lib.pickZone && m?.some((x) => x.id === lib.pickZone));
                     return (
-                      <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
-                        {canEdit && lib.pickZone && <input type="checkbox" checked={inTarget} onChange={() => unitAction({ action: inTarget ? "remove" : "add", key, zoneId: lib.pickZone! })} title={inTarget ? "Drop from the zone" : "Add to the zone"} />}
+                      <div key={key}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
+                        {canEdit && lib.pickZone ? (
+                          <input type="checkbox" checked={inTarget} onChange={() => unitAction({ action: inTarget ? "remove" : "add", key, zoneId: lib.pickZone! })} title={inTarget ? "Drop from the zone" : "Add to the zone"} />
+                        ) : (
+                          <input type="checkbox" checked={!hiddenSet.has(f.properties.id)} onChange={(e) => lib.setHidden(l.key, [f.properties.id], !e.target.checked)} title={hiddenSet.has(f.properties.id) ? "Show on the map" : "Hide from the map"} />
+                        )}
+                        <input type="color" value={areaLook(l, f.properties.id, m?.[0], false, false).fill} onChange={(e) => lib.setAreaStyle(l.key, f.properties.id, { fill: e.target.value, line: e.target.value, opacity: Math.max(0.25, l.styles?.[f.properties.id]?.opacity ?? 0) })} title="Colour" style={{ width: 16, height: 14, padding: 0, border: "none", background: "none", cursor: "pointer", flex: "none" }} />
                         <button
                           style={{ ...icon, flex: 1, textAlign: "left", color: "#e6edf7", fontSize: 11.5, display: "block" }}
                           onClick={() => {
@@ -609,6 +861,9 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
                           {f.properties.name}
                         </button>
                         {m && <span style={{ width: 8, height: 8, borderRadius: 2, background: m[0].color }} title={`Part of ${m.map((x) => x.label).join(", ")}`} />}
+                        <button style={icon} onClick={() => setOpenUnit(openUnit === key ? null : key)} title="Style and boundary">
+                          <Pencil size={12} color={l.styles?.[f.properties.id] || l.shapes?.[f.properties.id] ? "#f3d77a" : undefined} />
+                        </button>
                         {(() => {
                           const t = lib.drillTarget(key, f.properties.name, l.key);
                           return t ? (
@@ -617,6 +872,8 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
                             </button>
                           ) : null;
                         })()}
+                      </div>
+                      {openUnit === key && <AreaStyler lib={lib} l={l} id={f.properties.id} name={f.properties.name} member={m?.[0]} />}
                       </div>
                     );
                   })}
@@ -681,6 +938,15 @@ function findArea(lib: BoundaryLib, iso: string, level: string, id: string) {
   return null;
 }
 
+/** An area's hand-made shape, if it was reshaped in a layer of its level. */
+function editedShape(lib: BoundaryLib, u: BoundaryUnit): MultiPolygon | undefined {
+  for (const l of lib.shown) {
+    const d = lib.data[l.key];
+    if (d && d.iso === u.iso && d.level === u.level && l.shapes?.[u.id]) return l.shapes[u.id];
+  }
+  return undefined;
+}
+
 function unitFrom(key: string, lib: BoundaryLib): BoundaryUnit | null {
   const [iso, level, ...rest] = key.split(":");
   const id = rest.join(":");
@@ -716,7 +982,7 @@ export function useZoneComposer({ view, lib, isAdmin, say, openLibrary }: { view
         return;
       }
       say("Redrawing the zone…");
-      const ug = compact(await unitsGeometry(units));
+      const ug = compact(await unitsGeometry(units, (u) => editedShape(ref.current.lib, u)));
       const whole = base && ug ? await joinShapes([...base.coordinates, ...ug.coordinates]) : (ug ?? base);
       await api.setWatchZoneOverride(zoneId, { units, unitsGeometry: ug, bounds: extentOf(whole ?? null) }).then(() => done(`${z.label}: ${units.length} added area${units.length === 1 ? "" : "s"}.`), fail);
     };
@@ -742,7 +1008,7 @@ export function useZoneComposer({ view, lib, isAdmin, say, openLibrary }: { view
         if (!label?.trim()) return;
         void (async () => {
           say("Making the zone…");
-          const ug = compact(await unitsGeometry([unit]));
+          const ug = compact(await unitsGeometry([unit], (u) => editedShape(ref.current.lib, u)));
           const bounds = extentOf(ug);
           if (!ug || !bounds) throw new Error("Could not read that area's shape.");
           const r = await api.createWatchZone({ label: label.trim(), severity: "elevated", units: [unit], unitsGeometry: ug, bounds });
