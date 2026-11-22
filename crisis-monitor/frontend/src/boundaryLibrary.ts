@@ -51,11 +51,17 @@ async function worldCountries(): Promise<BoundaryLayer> {
 
 export const unitKey = (iso: string, level: string, id: string) => `${iso}:${level}:${id}`;
 
-/** The shape of each of these areas, joined into one. */
-export async function unitsGeometry(units: BoundaryUnit[]): Promise<MultiPolygon | null> {
+/** The shape of each of these areas, joined into one (an area reshaped by hand in its new shape). */
+export async function unitsGeometry(units: BoundaryUnit[], shapeOf?: (u: BoundaryUnit) => MultiPolygon | undefined): Promise<MultiPolygon | null> {
   if (!units.length) return null;
   const parts: Position[][][] = [];
   for (const u of units) {
+    // An area reshaped by hand counts in its new shape.
+    const own = shapeOf?.(u);
+    if (own) {
+      parts.push(...own.coordinates);
+      continue;
+    }
     const layer = await boundaryLayer(u.iso, u.level);
     const f = layer.features.find((x) => x.properties.id === u.id);
     if (!f) continue;
