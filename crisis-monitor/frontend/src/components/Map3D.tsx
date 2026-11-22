@@ -1339,7 +1339,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
             [{s.n}] {s.title || s.domain}
             <span className="lens-incident-source-meta">
               {s.domain} · {publishedAt(s.publishedAt)}
-              {s.textBasis === "feed_summary" ? " · summary only" : s.textBasis === "headline" ? " · headline only" : ""}
+              {s.textBasis === "feed_summary" ? " · summary only" : s.textBasis === "headline" ? " · headline only" : s.textBasis === "opening" ? " · first paragraphs" : ""}
             </span>
           </a>
         ))}
