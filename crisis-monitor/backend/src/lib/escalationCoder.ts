@@ -41,7 +41,7 @@ export interface ArticleForCoding {
   text: string;
   /** "headline": only the headline and the opening of the feed summary,
    *  read by the rule-based first pass (lib/headlineCoder.ts). */
-  textBasis: "full_text" | "feed_summary" | "headline";
+  textBasis: "full_text" | "opening" | "feed_summary" | "headline";
   publishedAt: string | null;
   domain: string;
 }
@@ -247,7 +247,7 @@ export function buildCoderUserMessage(a: ArticleForCoding, now: Date): string {
     `Today's date: ${now.toISOString().slice(0, 10)}\n` +
     `Article published: ${a.publishedAt ? a.publishedAt.slice(0, 10) : "unknown"}\n` +
     `Publisher: ${a.domain} (the publisher's location is NOT evidence of where the event happened)\n` +
-    `Text available: ${a.textBasis === "full_text" ? "full article body" : "feed summary only — the full page could not be read"}\n` +
+    `Text available: ${a.textBasis === "full_text" ? "full article body" : a.textBasis === "opening" ? "the article's first three paragraphs only (the rest was not read)" : "feed summary only — the full page could not be read"}\n` +
     `Headline: ${a.title}\n\n` +
     `ARTICLE TEXT\n"""\n${a.text}\n"""`
   );
