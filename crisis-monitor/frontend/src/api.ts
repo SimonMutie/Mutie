@@ -1494,6 +1494,8 @@ export interface WatchZone {
   lng: number;
   description: string;
   bounds?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
+  /** Made by an admin from boundary areas. */
+  custom?: boolean;
   headlines: { title: string; url: string; source: string; published: string | null; telegram: boolean }[];
   headlineCount: number;
   incidents: { id: string; headline: string; level: string; place: string; lat: number; lon: number }[];
@@ -2487,9 +2489,15 @@ export const api = {
   getSituationEvents: (days = 7) => req<{ events: SituationEvent[]; days: number; fetchedAt: string }>(`/api/live-layers/situation-events?days=${days}`),
   getAircraftTrack: (hex: string, hours = 24) => req<AircraftTrack>(`/api/live-layers/aircraft-track/${hex}?hours=${hours}`),
   getWatchZoneOverrides: () => req<{ overrides: WatchZoneOverride[] }>("/api/live-layers/watch-zones/overrides"),
-  setWatchZoneOverride: (id: string, o: { geometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon | null; color?: string | null }) =>
+  setWatchZoneOverride: (id: string, o: WatchZoneEdit) =>
     req<{ ok: boolean }>(`/api/live-layers/watch-zones/${id}/override`, { method: "PUT", body: JSON.stringify(o) }),
-  getWatchZones: () => req<{ zones: WatchZone[]; basis: string; fetchedAt: string }>("/api/live-layers/watch-zones"),
+  /** `v` asks past the five-minute cache (after an edit, so it shows at once). */
+  getWatchZones: (v?: number) => req<{ zones: WatchZone[]; basis: string; fetchedAt: string }>(`/api/live-layers/watch-zones${v ? `?v=${v}` : ""}`),
+  createWatchZone: (z: { label: string; severity: WatchZone["severity"]; description?: string | null; units: BoundaryUnit[]; unitsGeometry: GeoJSON.MultiPolygon; bounds: NonNullable<WatchZone["bounds"]>; color?: string | null }) =>
+    req<{ ok: boolean; id: string }>("/api/live-layers/watch-zones/custom", { method: "POST", body: JSON.stringify(z) }),
+  deleteWatchZone: (id: string) => req<{ ok: boolean }>(`/api/live-layers/watch-zones/${id}`, { method: "DELETE" }),
+  getBoundaryCatalogue: () => req<{ countries: BoundaryCountry[]; source: string }>("/api/boundaries/catalogue"),
+  getBoundaryLayer: (iso: string, level: string) => req<BoundaryLayer>(`/api/boundaries/${iso}/${level}`),
   getCloudflareRadar: () => req<CloudflareRadarData>("/api/live-layers/cloudflare-radar"),
   afrIntelCreateRun: (question: string, material: string, worlds: number, periods: number) => req<AfrIntelRun>("/api/afrintel/runs", { method: "POST", body: JSON.stringify({ question, material, worlds, periods }) }),
   afrIntelListRuns: () => req<{ runs: { id: string; question: string; stage: string; created_at: string; updated_at: string }[] }>("/api/afrintel/runs"),
@@ -2880,5 +2888,51 @@ export interface WatchZoneOverride {
   id: string;
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
   color: string | null;
+  label: string | null;
+  severity: WatchZone["severity"] | null;
+  description: string | null;
+  /** Boundary areas added to the zone, and their combined shape. */
+  units: BoundaryUnit[];
+  unitsGeometry: GeoJSON.MultiPolygon | null;
+  /** The zone's original area is no longer part of it. */
+  baseDropped: boolean;
+  retired: boolean;
+  custom: boolean;
+  bounds: WatchZone["bounds"] | null;
   updatedAt: string;
+}
+export interface WatchZoneEdit {
+  geometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
+  color?: string | null;
+  label?: string | null;
+  severity?: WatchZone["severity"] | null;
+  description?: string | null;
+  units?: BoundaryUnit[] | null;
+  unitsGeometry?: GeoJSON.MultiPolygon | null;
+  baseDropped?: boolean;
+  retired?: boolean;
+  bounds?: WatchZone["bounds"] | null;
+}
+
+/** The administrative boundary library (backend routes/boundaries.ts, from geoBoundaries). */
+export interface BoundaryCountry {
+  iso: string;
+  name: string;
+  levels: { level: string; canonical: string; units: number }[];
+}
+export interface BoundaryLayer {
+  type: "FeatureCollection";
+  iso: string;
+  level: string;
+  canonical: string;
+  license: string;
+  features: { type: "Feature"; properties: { id: string; name: string; iso: string; level: string }; geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon }[];
+}
+/** One area from the library: a country, a state, a district… */
+export interface BoundaryUnit {
+  key: string;
+  iso: string;
+  level: string;
+  id: string;
+  name: string;
 }
