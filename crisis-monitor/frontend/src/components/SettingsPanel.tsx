@@ -156,12 +156,14 @@ function AiReadingCard() {
   const [busy, setBusy] = useState(false);
   const [limit, setLimit] = useState("");
   const [neurons, setNeurons] = useState("");
+  const [words, setWords] = useState("");
   useEffect(() => {
     api.getAiSettings().then(
       (s) => {
         setV(s);
         setLimit(String(s.claudeDailyCalls));
         setNeurons(s.cloudflareDailyNeurons === null ? "" : String(s.cloudflareDailyNeurons));
+        setWords(s.extraKeywords ?? "");
       },
       (e: Error) => setMsg({ ok: false, text: e.message })
     );
@@ -268,6 +270,15 @@ function AiReadingCard() {
               </button>
             </label>
           </div>
+
+          <div style={{ fontSize: 13, fontWeight: 600, margin: "14px 0 6px" }}>Headline words</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 6 }}>
+            Only articles whose headline is about conflict, security, crime, intercommunal violence or killing are read (their first three paragraphs). The built-in word lists cover English, French, Portuguese, Arabic, Amharic, Tigrinya, Oromo, Somali, Swahili, Hausa, Kinyarwanda and Lingala. Add any word or phrase that should also let a headline through, one per line; each also matches longer words that start with it.
+          </div>
+          <textarea value={words} onChange={(e) => setWords(e.target.value)} rows={4} placeholder={"e.g.\nboda boda\nwananchi wavamia"} style={{ width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12.5 }} />
+          <button disabled={busy || words === (v.extraKeywords ?? "")} onClick={() => save({ extraKeywords: words }, "Headline words saved; they apply from the next run.")} style={{ marginTop: 6 }}>
+            Save words
+          </button>
 
           {u && (
             <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
