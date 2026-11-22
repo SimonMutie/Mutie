@@ -1202,6 +1202,40 @@ export interface EscalationAuditEntry {
   reports: { country: string; location: string | null; geoPrecision: string; geoMethod: string; eventDate: string; indicators: string[]; confidence: string; incidentId: string | null; notes: string[] }[];
 }
 
+export type AiProvider = "auto" | "claude" | "cloudflare";
+export interface ClaudeUsage {
+  day: string;
+  calls: number;
+  limit: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+/** Settings → AI reading (admins). The key itself is never sent to the browser. */
+export interface AiSettingsView {
+  provider: AiProvider;
+  coderModel: string;
+  analystModel: string;
+  modelsFromEnv: boolean;
+  claudeDailyCalls: number;
+  cloudflareDailyNeurons: number | null;
+  keySet: boolean;
+  keyHint: string | null;
+  keyFromEnv: boolean;
+  updatedAt: string | null;
+  models: { id: string; name: string }[];
+  usage: { claude: ClaudeUsage; cloudflare: { used: number; calls: number; budget: number; freeAllowance: number } };
+}
+export interface AiSettingsEdit {
+  provider?: AiProvider;
+  coderModel?: string;
+  analystModel?: string;
+  claudeDailyCalls?: number;
+  cloudflareDailyNeurons?: number | null;
+  anthropicKey?: string | null;
+}
+
 export interface EscalationPipelineStatus {
   provider: { provider: "anthropic" | "workers-ai"; coderModel: string; analystModel: string };
   enabled: boolean;
@@ -1209,6 +1243,9 @@ export interface EscalationPipelineStatus {
    *  ceiling sits below Cloudflare's free allowance, so reaching it costs nothing. */
   ai?: { day: string; used: number; calls: number; budget: number; freeAllowance: number; remaining: number };
   paidModelKeySet?: boolean;
+  /** Today's Claude calls against its daily limit, and which AI is chosen to read (Settings → AI reading). */
+  claude?: ClaudeUsage;
+  aiProvider?: AiProvider;
   translationEnabled?: boolean;
   lastRun: Record<string, unknown> | null;
   last24h: { status: string; count: number }[];
@@ -2534,6 +2571,8 @@ export const api = {
   },
   // Pipeline health: which model is coding, what the last tick did, and
   // what was read / rejected (and why) in the last 24 hours.
+  getAiSettings: () => req<AiSettingsView>("/api/ai-settings"),
+  setAiSettings: (e: AiSettingsEdit) => req<AiSettingsView>("/api/ai-settings", { method: "PUT", body: JSON.stringify(e) }),
   getEscalationStatus: () => req<EscalationPipelineStatus>("/api/live-layers/conflict-escalation/status"),
   // Approximate circles around flagged incidents that include a territorial
   // change, siege or blockade — see TerritoryChangeFeature's own doc comment
