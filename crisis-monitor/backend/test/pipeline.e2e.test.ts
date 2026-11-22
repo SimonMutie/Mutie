@@ -169,7 +169,7 @@ const FIXTURES: Fixture[] = recent<Fixture[]>([
   {
     // A model that mis-attributes: says Kenya, but nothing in the text supports any indicator there.
     url: "https://kenyan-daily.example/opinion/security-outlook",
-    title: "Opinion: what the Somalia drawdown means for Kenya",
+    title: "Opinion: Kenya's security outlook as the Somalia drawdown nears",
     sourceCountry: "KE",
     body: pad("As the African Union mission draws down, Kenya faces hard choices about its border posture. Analysts argue that Nairobi should invest in county-level policing rather than forward bases, and warn that clashes could follow if the transition is rushed."),
     coding: {
