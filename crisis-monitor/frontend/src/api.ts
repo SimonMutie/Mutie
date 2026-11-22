@@ -1265,7 +1265,8 @@ export interface EscalationSource {
   title: string | null;
   domain: string;
   publishedAt: string | null;
-  /** "full_text" when the whole article was read; "feed_summary" when only
+  /** "opening" when its first three paragraphs were read (the usual reading); "full_text" for older readings of
+   *  the whole article; "feed_summary" when only
    *  the feed's teaser could be; "headline" when only its headline has been
    *  matched by the rule-based first pass so far. */
   textBasis: string | null;
