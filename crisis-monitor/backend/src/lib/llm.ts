@@ -1,10 +1,13 @@
 import type { Env } from "../bindings";
 import { dailyNeuronBudget, estimateNeurons, neuronsFor, reserveNeurons, settleNeurons } from "./aiBudget";
+import { aiSettingsNow, anthropicKey, claudeEnabled, cloudflareEnabled, DEFAULT_CLAUDE_MODEL, loadAiSettings, recordClaudeTokens, reserveClaudeCall } from "./aiSettings";
 
 /**
- * One structured-output model call, with a provider fallback chain.
+ * One structured-output model call, with a provider fallback chain. Which providers are used is set by an admin
+ * in Settings (lib/aiSettings.ts): automatic (Claude, then Cloudflare), Claude only, or Cloudflare only.
  *
- *   1. Anthropic Messages API, when ANTHROPIC_API_KEY is set. The response
+ *   1. Anthropic Messages API, when a key is set (ANTHROPIC_API_KEY or the one saved in Settings) and today's Claude
+ *      call limit is not reached. The response
  *      is forced through a tool call whose input_schema is the JSON schema
  *      the caller wants, so the result is always a parsed object, never
  *      free text to be scraped.
@@ -22,7 +25,7 @@ import { dailyNeuronBudget, estimateNeurons, neuronsFor, reserveNeurons, settleN
  * retry rather than guessing).
  */
 
-export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001";
+export const DEFAULT_ANTHROPIC_MODEL = DEFAULT_CLAUDE_MODEL;
 export const WORKERS_AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const ANTHROPIC_TIMEOUT_MS = 45_000;
 const WORKERS_AI_TIMEOUT_MS = 45_000;
@@ -48,8 +51,9 @@ export interface StructuredResult<T> {
 }
 
 function anthropicModelsFor(env: Env, role: "coder" | "analyst"): string[] {
-  const coder = env.ESCALATION_CODER_MODEL || DEFAULT_ANTHROPIC_MODEL;
-  const analyst = env.ESCALATION_ANALYST_MODEL || coder;
+  const s = aiSettingsNow();
+  const coder = env.ESCALATION_CODER_MODEL || s.coderModel || DEFAULT_ANTHROPIC_MODEL;
+  const analyst = env.ESCALATION_ANALYST_MODEL || s.analystModel || coder;
   // If a configured analyst model is rejected (wrong ID, no access), fall
   // back to the coder model before leaving Anthropic altogether.
   return role === "analyst" ? [...new Set([analyst, coder])] : [coder];
@@ -61,7 +65,7 @@ async function callAnthropic<T>(env: Env, model: string, call: StructuredCall): 
     signal: AbortSignal.timeout(ANTHROPIC_TIMEOUT_MS),
     headers: {
       "content-type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY!,
+      "x-api-key": anthropicKey(env)!,
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
@@ -81,7 +85,8 @@ async function callAnthropic<T>(env: Env, model: string, call: StructuredCall): 
     noteModelError(`anthropic ${model}`, `HTTP ${res.status}: ${body.slice(0, 240)}`);
     return null;
   }
-  const data = (await res.json()) as { content?: Array<{ type?: string; name?: string; input?: unknown }>; stop_reason?: string };
+  const data = (await res.json()) as { content?: Array<{ type?: string; name?: string; input?: unknown }>; stop_reason?: string; usage?: Parameters<typeof recordClaudeTokens>[1] };
+  await recordClaudeTokens(env, data.usage);
   const block = data.content?.find((b) => b.type === "tool_use" && b.name === call.toolName);
   if (!block?.input || typeof block.input !== "object") {
     console.error(`[llm] Anthropic ${model} returned no tool_use block (stop_reason=${data.stop_reason})`);
@@ -163,6 +168,8 @@ function parseWorkersAiResponse<T>(response: unknown): T | null {
  *  be left with only their fallback summary. */
 export const CODER_BUDGET_SHARE = 0.85;
 
+export const CLAUDE_LIMIT_REACHED = "today's Claude call limit is reached; it resets at 00:00 UTC";
+
 export const AI_BUDGET_REACHED = "today's free AI allowance is used up; reading resumes when it resets at 00:00 UTC";
 
 /** One budgeted Workers AI call. Returns the parsed object, or null with
@@ -219,8 +226,14 @@ async function callWorkersAi<T>(env: Env, call: StructuredCall): Promise<T | nul
 }
 
 export async function callStructured<T>(env: Env, call: StructuredCall): Promise<StructuredResult<T> | null> {
-  if (env.ANTHROPIC_API_KEY) {
+  await loadAiSettings(env);
+  if (claudeEnabled(env)) {
     for (const model of anthropicModelsFor(env, call.role)) {
+      // Each attempt counts against today's Claude limit; at the limit, Claude is skipped for the rest of the day.
+      if (!(await reserveClaudeCall(env))) {
+        noteModelError("anthropic", CLAUDE_LIMIT_REACHED);
+        break;
+      }
       try {
         const data = await callAnthropic<T>(env, model, call);
         if (data) return { data, provider: "anthropic", model };
@@ -229,6 +242,7 @@ export async function callStructured<T>(env: Env, call: StructuredCall): Promise
       }
     }
   }
+  if (!cloudflareEnabled()) return null;
   const data = await callWorkersAi<T>(env, call);
   if (data) return { data, provider: "workers-ai", model: WORKERS_AI_MODEL };
   return null;
@@ -237,7 +251,7 @@ export async function callStructured<T>(env: Env, call: StructuredCall): Promise
 /** Which provider the pipeline will use right now — surfaced by the status
  *  endpoint so "why do summaries read weakly" has a visible answer. */
 export function describeProvider(env: Env): { provider: "anthropic" | "workers-ai"; coderModel: string; analystModel: string } {
-  if (env.ANTHROPIC_API_KEY) {
+  if (claudeEnabled(env)) {
     return { provider: "anthropic", coderModel: anthropicModelsFor(env, "coder")[0], analystModel: anthropicModelsFor(env, "analyst")[0] };
   }
   return { provider: "workers-ai", coderModel: WORKERS_AI_MODEL, analystModel: WORKERS_AI_MODEL };
