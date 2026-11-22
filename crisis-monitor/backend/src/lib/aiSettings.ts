@@ -25,6 +25,8 @@ export interface AiSettings {
   claudeDailyCalls: number;
   cloudflareDailyNeurons: number | null;
   anthropicKey: string | null;
+  /** Extra headline words that let an article through the headline gate (lib/titleGate.ts), one per line. */
+  extraKeywords: string;
   updatedAt: string | null;
 }
 
@@ -39,6 +41,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   claudeDailyCalls: DEFAULT_CLAUDE_DAILY_CALLS,
   cloudflareDailyNeurons: null,
   anthropicKey: null,
+  extraKeywords: "",
   updatedAt: null,
 };
 
@@ -55,6 +58,8 @@ function ensureTables(env: Env): Promise<void> {
       `CREATE TABLE IF NOT EXISTS claude_usage_daily (day TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0)`
     ),
   ])
+    // Added later: kept in its own step, as it fails harmlessly once the column exists.
+    .then(() => env.DB.prepare(`ALTER TABLE ai_settings ADD COLUMN extra_keywords TEXT`).run().catch(() => undefined))
     .then(() => undefined)
     .catch((err) => {
       ready = null;
@@ -70,6 +75,7 @@ interface Row {
   claude_daily_calls: number | null;
   cloudflare_daily_neurons: number | null;
   anthropic_key: string | null;
+  extra_keywords?: string | null;
   updated_at: string | null;
 }
 
@@ -83,6 +89,7 @@ function fromRow(r: Row | null): AiSettings {
     claudeDailyCalls: r.claude_daily_calls ?? DEFAULT_CLAUDE_DAILY_CALLS,
     cloudflareDailyNeurons: r.cloudflare_daily_neurons,
     anthropicKey: r.anthropic_key || null,
+    extraKeywords: r.extra_keywords ?? "",
     updatedAt: r.updated_at,
   };
 }
@@ -112,13 +119,13 @@ export async function saveAiSettings(env: Env, next: Partial<Omit<AiSettings, "u
   const cur = await loadAiSettings(env, true);
   const s: AiSettings = { ...cur, ...next, updatedAt: new Date().toISOString() };
   await env.DB.prepare(
-    `INSERT INTO ai_settings (id, provider, coder_model, analyst_model, claude_daily_calls, cloudflare_daily_neurons, anthropic_key, updated_at)
-     VALUES ('default', ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO ai_settings (id, provider, coder_model, analyst_model, claude_daily_calls, cloudflare_daily_neurons, anthropic_key, extra_keywords, updated_at)
+     VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET provider = excluded.provider, coder_model = excluded.coder_model, analyst_model = excluded.analyst_model,
        claude_daily_calls = excluded.claude_daily_calls, cloudflare_daily_neurons = excluded.cloudflare_daily_neurons,
-       anthropic_key = excluded.anthropic_key, updated_at = excluded.updated_at`
+       anthropic_key = excluded.anthropic_key, extra_keywords = excluded.extra_keywords, updated_at = excluded.updated_at`
   )
-    .bind(s.provider, s.coderModel, s.analystModel, s.claudeDailyCalls, s.cloudflareDailyNeurons, s.anthropicKey, s.updatedAt)
+    .bind(s.provider, s.coderModel, s.analystModel, s.claudeDailyCalls, s.cloudflareDailyNeurons, s.anthropicKey, s.extraKeywords, s.updatedAt)
     .run();
   cached = { at: Date.now(), settings: s };
   return s;
