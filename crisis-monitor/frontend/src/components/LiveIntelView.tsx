@@ -3,7 +3,7 @@ import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
 import VehicleAlertPopups from "./VehicleAlertPopups";
-import { FlatWatchZones, GlobeWatchZones, useWatchZoneAreas } from "./WatchZoneAreas";
+import { FlatWatchZones, GlobeWatchZones, useWatchZoneAreas, ZoneEditBar, type ZoneAction, type ZoneView } from "./WatchZoneAreas";
 import { ControlLegend, ControlMapsPanel, FlatControlLayers, GlobeControlLayers, useControlMaps, useOverlayUrls, type FlatControlProps } from "./controlMaps";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
@@ -2551,6 +2551,39 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints]
   );
   const watchZones = useWatchZoneAreas(!!enabled["watch-zones"]);
+  // Editing a watch zone (admins): reshape or redraw its boundary on the flat map, change its colour, or reset it.
+  const [zoneEdit, setZoneEdit] = useState<{ id: string; mode: "shape" | "redraw" } | null>(null);
+  const [zoneMsg, setZoneMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isAdmin) return;
+    const onAction = (e: Event) => {
+      const a = (e as CustomEvent<ZoneAction>).detail;
+      if (a.action === "shape" || a.action === "redraw") {
+        setMapMode("2d");
+        setZoneEdit({ id: a.id, mode: a.action });
+      } else if (a.action === "color" && a.color) {
+        void api.setWatchZoneOverride(a.id, { color: a.color }).then(watchZones.reload, (err: Error) => setZoneMsg(err.message));
+      } else if (a.action === "reset") {
+        if (!window.confirm("Put this zone's boundary and colour back to the default?")) return;
+        void api.setWatchZoneOverride(a.id, { geometry: null, color: null }).then(watchZones.reload, (err: Error) => setZoneMsg(err.message));
+      }
+    };
+    window.addEventListener("lens-zone-action", onAction);
+    return () => window.removeEventListener("lens-zone-action", onAction);
+  }, [isAdmin, watchZones.reload]);
+  const onZoneEdited = (g: GeoJSON.MultiPolygon | null) => {
+    const id = zoneEdit?.id;
+    setZoneEdit(null);
+    if (!g || !id) return;
+    void api.setWatchZoneOverride(id, { geometry: g }).then(
+      () => {
+        watchZones.reload();
+        setZoneMsg("Zone boundary saved.");
+        window.setTimeout(() => setZoneMsg(null), 4000);
+      },
+      (err: Error) => setZoneMsg(err.message)
+    );
+  };
   // Flat map renders "My Incidents" through the rich IncidentMarker/heatmap
   // layer below instead of a generic colored dot — drop the generic version
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
@@ -2690,6 +2723,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             vehicles={vehicles}
             vehicleTracks={vehicleTracks}
             watchZones={watchZones}
+            zoneEdit={zoneEdit}
+            onZoneEdited={onZoneEdited}
+            canEditZones={isAdmin}
             control={{
               layers: control.layers,
               areas: control.areas,
@@ -2768,7 +2804,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeFocus map={globeMap} on={basemap === "lens"} />
         <GlobeOverlays map={globeMap} state={globeOverlays} />
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
-        <GlobeWatchZones map={globeMap} zones={watchZones.zones} areas={watchZones.areas} />
+        <GlobeWatchZones map={globeMap} view={watchZones} canEdit={isAdmin} />
+        {zoneEdit && <ZoneEditBar label={watchZones.zones.find((z) => z.id === zoneEdit.id)?.label ?? "Zone"} mode={zoneEdit.mode} />}
+        {zoneMsg && (
+          <div onClick={() => setZoneMsg(null)} style={{ position: "absolute", top: 64, left: "50%", transform: "translateX(-50%)", zIndex: 700, padding: "7px 12px", borderRadius: 8, background: "rgba(6,10,18,0.94)", border: "1px solid rgba(255,255,255,0.15)", color: "#e6edf7", fontSize: 12.5, cursor: "pointer" }}>
+            {zoneMsg}
+          </div>
+        )}
         <GlobeControlLayers map={globeMap} layers={control.layers} areas={control.areas} hidden={controlHidden} overlays={control.overlays} overlayUrls={overlayUrls} shownOverlays={shownOverlays} />
         {controlLegend && <ControlLegend layers={control.layers} areas={control.areas} hidden={controlHidden} onToggle={toggleControlLayer} />}
         {controlOpen && (
@@ -3236,6 +3278,9 @@ function FlatMap({
   vehicles,
   vehicleTracks,
   watchZones,
+  zoneEdit,
+  onZoneEdited,
+  canEditZones,
   control,
   points,
   sharedPaths,
@@ -3285,8 +3330,11 @@ function FlatMap({
   vehicleTracks: Record<string, VehiclePoint[]>;
   /** Territorial control areas, images to trace over, and drawing (controlMaps.tsx). */
   control: FlatControlProps;
-  /** Watch zones as areas (WatchZoneAreas.tsx). */
-  watchZones: ReturnType<typeof useWatchZoneAreas>;
+  /** Watch zones as areas (WatchZoneAreas.tsx), and editing one. */
+  watchZones: ZoneView;
+  zoneEdit: { id: string; mode: "shape" | "redraw" } | null;
+  onZoneEdited: (g: GeoJSON.MultiPolygon | null) => void;
+  canEditZones: boolean;
   /** Hands out the Leaflet map, so the view can be carried across when switching to the 3D globe. */
   onReady?: (map: LeafletMap) => void;
   points: GlobePoint[];
@@ -3403,7 +3451,7 @@ function FlatMap({
       {datasets.map((d) => (
         <FlatDataset key={d.id} dataset={d} />
       ))}
-      <FlatWatchZones zones={watchZones.zones} areas={watchZones.areas} />
+      <FlatWatchZones view={watchZones} canEdit={canEditZones} editing={zoneEdit} onEdited={onZoneEdited} />
       <FlatControlLayers {...control} />
       <FlatVehicles vehicles={vehicles} tracks={vehicleTracks} />
       <RegionFly region={regionView} seq={regionSeq} />
