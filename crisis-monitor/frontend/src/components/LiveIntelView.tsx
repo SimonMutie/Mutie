@@ -1219,7 +1219,8 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
 }
 
 export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, onNewQuery, onEditQuery, initialTool = null, canAfrIntel = true, isAdmin = false }: LiveIntelViewProps) {
-  // Every layer starts off at login except the escalation icons; the hotspot pulses and waves are on too (see FlatMap).
+  // The map opens on the 3D globe with conflict escalation, the watch zones and the escalation waves (always on) shown;
+  // every other layer starts off. The hotspot pulses and waves are on too (see FlatMap).
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     earthquakes: false,
     "active-fires": false,
@@ -1249,7 +1250,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     "humanitarian-events": false,
     "political-events": false,
     "gps-interference": false,
-    "watch-zones": false,
+    "watch-zones": true,
     "rain-radar": false,
     "live-clouds": false,
     "cf-outages": false,
