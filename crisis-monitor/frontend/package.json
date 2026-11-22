@@ -36,6 +36,7 @@
     "docx": "^9.10.0",
     "gif.js": "^0.2.0",
     "html2canvas": "^1.4.1",
+    "i18n-iso-countries": "^7.14.0",
     "jspdf": "^4.2.1",
     "jszip": "^3.10.2",
     "leaflet": "^1.9.4",
