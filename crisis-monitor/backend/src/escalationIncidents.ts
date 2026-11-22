@@ -1,4 +1,5 @@
 import { all, first, run, nowIso } from "./db";
+import { anthropicKey, getClaudeUsage, loadAiSettings, type ClaudeUsage } from "./lib/aiSettings";
 import { newId } from "./ids";
 import type { Env } from "./bindings";
 import { toGdeltTimestamp } from "./connectors/gdeltBulk";
@@ -78,6 +79,15 @@ export function freeAllowancePacing(ai: Pick<AiUsage, "used" | "budget">, now = 
   const minutesIntoDay = now.getUTCHours() * 60 + now.getUTCMinutes();
   const allowedByNow = coderBudget * Math.min(1, (minutesIntoDay + PACING_HEAD_START_MINUTES) / 1440);
   return { articles: Math.max(0, Math.floor((allowedByNow - ai.used) / TYPICAL_NEURONS_PER_ARTICLE)), reached: false };
+}
+/** How many articles this tick may read on Claude: today's call limit (less a share kept for assessments and
+ *  summaries) spread over the day, as for the free allowance. */
+export function claudePacing(u: Pick<ClaudeUsage, "calls" | "limit">, now = new Date()): { articles: number; reached: boolean } {
+  const coderLimit = u.limit * CODER_BUDGET_SHARE;
+  if (u.calls + 1 > coderLimit) return { articles: 0, reached: true };
+  const minutesIntoDay = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const allowedByNow = coderLimit * Math.min(1, (minutesIntoDay + PACING_HEAD_START_MINUTES) / 1440);
+  return { articles: Math.max(0, Math.floor(allowedByNow - u.calls)), reached: false };
 }
 const CODING_CONCURRENCY = 3;
 const SYNTHESES_PER_TICK = 4;
@@ -1463,8 +1473,20 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     // any article is fetched, so a spent allowance costs nothing further —
     // not even the downloads. Reading resumes by itself after 00:00 UTC.
     // It is also paced through the day (freeAllowancePacing).
+    // On Claude, reading is paced the same way against today's Claude call limit (lib/aiSettings.ts); when that is
+    // reached and the provider is automatic, reading carries on with Cloudflare's allowance.
     let paceLimit = Number.POSITIVE_INFINITY;
-    if (describeProvider(env).provider === "workers-ai") {
+    const settings = await loadAiSettings(env);
+    let onCloudflare = describeProvider(env).provider === "workers-ai";
+    if (!onCloudflare) {
+      const pace = claudePacing(await getClaudeUsage(env));
+      if (pace.reached && settings.provider === "auto") onCloudflare = true;
+      else {
+        aiBudgetReached = pace.reached;
+        paceLimit = pace.articles;
+      }
+    }
+    if (onCloudflare) {
       const pace = freeAllowancePacing(await getAiUsage(env));
       aiBudgetReached = pace.reached;
       paceLimit = pace.articles;
@@ -1803,6 +1825,9 @@ export interface PipelineStatus {
   enabled: boolean;
   /** Today's Workers AI use against the platform's own daily ceiling. */
   ai: AiUsage;
+  /** Today's Claude calls and tokens against the daily call limit, and which providers are chosen (lib/aiSettings.ts). */
+  claude: ClaudeUsage;
+  aiProvider: "auto" | "claude" | "cloudflare";
   /** Whether a paid model key is configured, and whether translation is on —
    *  the two things, besides the ceiling being raised, that could cost money. */
   paidModelKeySet: boolean;
@@ -1837,7 +1862,9 @@ export async function getPipelineStatus(env: Env): Promise<PipelineStatus> {
     provider: describeProvider(env),
     enabled: (env.ESCALATION_PIPELINE_ENABLED ?? "true") !== "false",
     ai,
-    paidModelKeySet: !!env.ANTHROPIC_API_KEY,
+    paidModelKeySet: !!anthropicKey(env),
+    claude: await getClaudeUsage(env),
+    aiProvider: (await loadAiSettings(env)).provider,
     translationEnabled: (env.TRANSLATION_ENABLED ?? "false") === "true",
     lastRun: parseJson<Record<string, unknown> | null>(lastRun, null),
     last24h: byStatus,
