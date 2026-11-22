@@ -3,6 +3,7 @@ import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
 import VehicleAlertPopups from "./VehicleAlertPopups";
+import { FlatWatchZones, GlobeWatchZones, useWatchZoneAreas } from "./WatchZoneAreas";
 import { ControlLegend, ControlMapsPanel, FlatControlLayers, GlobeControlLayers, useControlMaps, useOverlayUrls, type FlatControlProps } from "./controlMaps";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
@@ -2544,7 +2545,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     }
     return out;
   }, [afrIntelMarks, afrIntelRun]);
-  const mapPoints = useMemo(() => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...afrIntelPoints], [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints]);
+  // Watch zones are drawn as areas (WatchZoneAreas.tsx), not as dots: their points stay for the lists only.
+  const mapPoints = useMemo(
+    () => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...afrIntelPoints].filter((p) => p.layerKey !== "Watch Zones"),
+    [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints]
+  );
+  const watchZones = useWatchZoneAreas(!!enabled["watch-zones"]);
   // Flat map renders "My Incidents" through the rich IncidentMarker/heatmap
   // layer below instead of a generic colored dot — drop the generic version
   // here so the same incidents don't appear twice on the 2D/map/sat modes.
@@ -2683,6 +2689,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             datasets={datasetsShown}
             vehicles={vehicles}
             vehicleTracks={vehicleTracks}
+            watchZones={watchZones}
             control={{
               layers: control.layers,
               areas: control.areas,
@@ -2761,6 +2768,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeFocus map={globeMap} on={basemap === "lens"} />
         <GlobeOverlays map={globeMap} state={globeOverlays} />
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
+        <GlobeWatchZones map={globeMap} zones={watchZones.zones} areas={watchZones.areas} />
         <GlobeControlLayers map={globeMap} layers={control.layers} areas={control.areas} hidden={controlHidden} overlays={control.overlays} overlayUrls={overlayUrls} shownOverlays={shownOverlays} />
         {controlLegend && <ControlLegend layers={control.layers} areas={control.areas} hidden={controlHidden} onToggle={toggleControlLayer} />}
         {controlOpen && (
@@ -3227,6 +3235,7 @@ function FlatMap({
   datasets,
   vehicles,
   vehicleTracks,
+  watchZones,
   control,
   points,
   sharedPaths,
@@ -3276,6 +3285,8 @@ function FlatMap({
   vehicleTracks: Record<string, VehiclePoint[]>;
   /** Territorial control areas, images to trace over, and drawing (controlMaps.tsx). */
   control: FlatControlProps;
+  /** Watch zones as areas (WatchZoneAreas.tsx). */
+  watchZones: ReturnType<typeof useWatchZoneAreas>;
   /** Hands out the Leaflet map, so the view can be carried across when switching to the 3D globe. */
   onReady?: (map: LeafletMap) => void;
   points: GlobePoint[];
@@ -3392,6 +3403,7 @@ function FlatMap({
       {datasets.map((d) => (
         <FlatDataset key={d.id} dataset={d} />
       ))}
+      <FlatWatchZones zones={watchZones.zones} areas={watchZones.areas} />
       <FlatControlLayers {...control} />
       <FlatVehicles vehicles={vehicles} tracks={vehicleTracks} />
       <RegionFly region={regionView} seq={regionSeq} />
