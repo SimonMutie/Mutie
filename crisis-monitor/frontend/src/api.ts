@@ -2486,6 +2486,9 @@ export const api = {
   getTelegramChannels: () => req<{ channels: TelegramChannelStatus[]; fetchedAt: string }>("/api/live-layers/telegram-channels"),
   getSituationEvents: (days = 7) => req<{ events: SituationEvent[]; days: number; fetchedAt: string }>(`/api/live-layers/situation-events?days=${days}`),
   getAircraftTrack: (hex: string, hours = 24) => req<AircraftTrack>(`/api/live-layers/aircraft-track/${hex}?hours=${hours}`),
+  getWatchZoneOverrides: () => req<{ overrides: WatchZoneOverride[] }>("/api/live-layers/watch-zones/overrides"),
+  setWatchZoneOverride: (id: string, o: { geometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon | null; color?: string | null }) =>
+    req<{ ok: boolean }>(`/api/live-layers/watch-zones/${id}/override`, { method: "PUT", body: JSON.stringify(o) }),
   getWatchZones: () => req<{ zones: WatchZone[]; basis: string; fetchedAt: string }>("/api/live-layers/watch-zones"),
   getCloudflareRadar: () => req<CloudflareRadarData>("/api/live-layers/cloudflare-radar"),
   afrIntelCreateRun: (question: string, material: string, worlds: number, periods: number) => req<AfrIntelRun>("/api/afrintel/runs", { method: "POST", body: JSON.stringify({ question, material, worlds, periods }) }),
@@ -2869,5 +2872,13 @@ export interface ControlOverlay {
   east: number;
   west: number;
   opacity: number;
+  updatedAt: string;
+}
+
+/** An admin's own boundary and/or colour for a watch zone. */
+export interface WatchZoneOverride {
+  id: string;
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
+  color: string | null;
   updatedAt: string;
 }
