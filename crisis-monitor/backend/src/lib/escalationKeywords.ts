@@ -340,7 +340,7 @@ export function matchesNativeLexicon(text: string): boolean {
 const CANDIDATE_LEXICON_RX = new RegExp(
   [
     // English
-    "\\b(?:kill(?:ed|s|ing)?|dead\\b|deaths?|attack(?:ed|s|ers?)?|clash(?:es|ed)?|fighting|battle|troops?|soldiers?|army|military|militia|rebels?|insurgen|jihadis|gunmen|bandits?|bomb|blast|explosion|air\\s?strikes?|strikes?|drones?|shell(?:ed|ing)|artillery|offensive|seiz(?:ed|es|ure)|captur|siege|besieg|blockade|ceasefire|truce|coup|mutin|massacre|ambush|raid(?:ed|s)?|abduct|kidnap|displac|fighters|armed|gunfire|shooting|shot dead|terror|hostilit|paramilitar|warplanes?|incursion|overr[au]n|retak|recaptur)",
+    "\\b(?:kill(?:ed|s|ing)?|dead\\b|deaths?|attack(?:ed|s|ers?)?|clash(?:es|ed)?|fighting|battle|troops?|soldiers?|army|military|militia|rebels?|insurgen|jihadis|gunmen|bandits?|bomb|blast|explosion|air\\s?strikes?|strikes?|drones?|shell(?:ed|ing)|artillery|offensive|seiz(?:ed|es|ure)|captur|siege|besieg|blockade|ceasefire|truce|coups?\\b|mutin|massacre|ambush|raid(?:ed|s)?|abduct|kidnap|displac|fighters|armed|gunfire|shooting|shot dead|terror|hostilit|paramilitar|warplanes?|incursion|overr[au]n|retak|recaptur)",
     // French
     "\\b(?:tu[ée]e?s?\\b|morts?\\b|attaqu|affrontement|combats?|arm[ée]e|soldats?|militaires?|milice|rebelles?|djihadis|terroris|bombe|frappes?|obus|si[èe]ge|blocus|cessez-le-feu|coup d['’ ][ée]tat|mutinerie|embuscade|enl[èe]vement|d[ée]plac[ée]s|assaillants?|hommes arm[ée]s|bombard|tirs)",
     // Portuguese
