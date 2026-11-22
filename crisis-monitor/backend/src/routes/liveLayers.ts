@@ -3,7 +3,9 @@ import { Hono } from "hono";
 import { twoline2satrec, propagate, gstime, eciToGeodetic, degreesLong, degreesLat } from "satellite.js";
 import { Reader as MmdbReader, type CountryResponse } from "mmdb-lib";
 import { Buffer } from "node:buffer";
-import { requireAuth, type AuthedVariables } from "../middleware";
+import { requireAuth, requireAdmin, type AuthedVariables } from "../middleware";
+import { z as zod } from "zod";
+import { all as dbAll, run as dbRun, nowIso as dbNow } from "../db";
 import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
@@ -662,6 +664,48 @@ liveLayersRouter.get("/situation-events", async (c) => {
 
 /** GPS interference squares from aircraft accuracy reports; see lib/gpsInterference.ts. */
 liveLayersRouter.get("/gps-interference", async (c) => cachedJson(c.req.raw, async () => ({ ...(await gpsInterference(c.env.DB)), fetchedAt: new Date().toISOString() }), 300));
+
+/* ── Watch zone edits: an admin's own boundary and colour for a zone (not cached: an edit shows at once) ───────── */
+
+let zoneEditsReady = false;
+async function ensureZoneEdits(db: D1Database) {
+  if (zoneEditsReady) return;
+  await dbRun(db, `CREATE TABLE IF NOT EXISTS watch_zone_overrides (zone_id TEXT PRIMARY KEY, geometry TEXT, color TEXT, updated_by TEXT, updated_at TEXT NOT NULL)`);
+  zoneEditsReady = true;
+}
+const zoneRing = zod.array(zod.array(zod.number()).min(2).max(3)).min(4).max(50000);
+const zoneEditSchema = zod.object({
+  geometry: zod
+    .union([zod.object({ type: zod.literal("Polygon"), coordinates: zod.array(zoneRing).min(1).max(500) }), zod.object({ type: zod.literal("MultiPolygon"), coordinates: zod.array(zod.array(zoneRing).min(1)).min(1).max(500) })])
+    .nullable()
+    .optional(),
+  color: zod.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+});
+
+liveLayersRouter.get("/watch-zones/overrides", async (c) => {
+  await ensureZoneEdits(c.env.DB);
+  const rows = await dbAll<{ zone_id: string; geometry: string | null; color: string | null; updated_at: string }>(c.env.DB, `SELECT * FROM watch_zone_overrides`);
+  return c.json({ overrides: rows.map((r) => ({ id: r.zone_id, geometry: r.geometry ? JSON.parse(r.geometry) : null, color: r.color, updatedAt: r.updated_at })) });
+});
+
+/** Set or clear a zone's boundary and/or colour (null clears that part; clearing both returns the zone to its default). */
+liveLayersRouter.put("/watch-zones/:id/override", requireAdmin, async (c) => {
+  await ensureZoneEdits(c.env.DB);
+  const p = zoneEditSchema.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: p.error.issues[0]?.message ?? "Invalid edit" }, 400);
+  const id = c.req.param("id");
+  const cur = (await dbAll<{ geometry: string | null; color: string | null }>(c.env.DB, `SELECT geometry, color FROM watch_zone_overrides WHERE zone_id = ?`, [id]))[0];
+  const geometry = p.data.geometry === undefined ? (cur?.geometry ?? null) : p.data.geometry ? JSON.stringify(p.data.geometry) : null;
+  const color = p.data.color === undefined ? (cur?.color ?? null) : p.data.color;
+  if (!geometry && !color) await dbRun(c.env.DB, `DELETE FROM watch_zone_overrides WHERE zone_id = ?`, [id]);
+  else
+    await dbRun(
+      c.env.DB,
+      `INSERT INTO watch_zone_overrides (zone_id, geometry, color, updated_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(zone_id) DO UPDATE SET geometry = excluded.geometry, color = excluded.color, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      [id, geometry, color, c.get("userId"), dbNow()]
+    );
+  return c.json({ ok: true, id, geometry: geometry ? JSON.parse(geometry) : null, color });
+});
 
 /** Watch zones: standing warnings over Africa and Middle East theatres, with the headlines and Telegram posts that name
  *  them and the escalation incidents inside them (lib/watchZones.ts). */
