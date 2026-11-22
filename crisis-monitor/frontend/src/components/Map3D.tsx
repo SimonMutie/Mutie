@@ -653,6 +653,8 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
           "symbol-sort-key": ["match", ["get", "level"], "critical", 3, "elevated", 2, 1],
         },
       });
+      // Beneath every marker, so the warning triangles (and their "!") stay on top.
+      if (map.getLayer("lens-points-circle")) map.moveLayer("lens-conflict-waves", "lens-points-circle");
       map.addSource("lens-territory-changes", { type: "geojson", data: toGeoJsonTerritoryChanges([]) });
       map.addLayer({
         id: "lens-territory-changes-fill",
