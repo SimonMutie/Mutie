@@ -2586,6 +2586,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     setEnabled((prev) => (prev["watch-zones"] ? prev : { ...prev, "watch-zones": true }));
   }, []);
   useZoneComposer({ view: watchZones, lib: boundaryLib, isAdmin, say, openLibrary });
+  // Reshaping an area from the library happens on the flat map; "More styling…" opens the library.
+  useEffect(() => {
+    if (boundaryLib.editing) setMapMode("2d");
+  }, [boundaryLib.editing]);
+  useEffect(() => {
+    if (boundaryLib.openArea && !libraryOpen) openLibrary();
+  }, [boundaryLib.openArea, libraryOpen, openLibrary]);
   boundaryLib.focus.current = (b) => {
     if (mapMode === "3d") globeMap?.fitBounds([[b.minLng, b.minLat], [b.maxLng, b.maxLat]], { padding: 50, maxZoom: 9 });
     else flatMap?.fitBounds([[b.minLat, b.minLng], [b.maxLat, b.maxLng]], { padding: [40, 40], maxZoom: 10 });
@@ -2841,6 +2848,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
         {zoneEdit && <ZoneEditBar label={watchZones.zones.find((z) => z.id === zoneEdit.id)?.label ?? "Zone"} mode={zoneEdit.mode} />}
+        {!zoneEdit && boundaryLib.editing && <ZoneEditBar label={boundaryLib.editing.name} mode="shape" />}
         {zoneMsg && (
           <div onClick={() => setZoneMsg(null)} style={{ position: "absolute", top: 64, left: "50%", transform: "translateX(-50%)", zIndex: 700, padding: "7px 12px", borderRadius: 8, background: "rgba(6,10,18,0.94)", border: "1px solid rgba(255,255,255,0.15)", color: "#e6edf7", fontSize: 12.5, cursor: "pointer" }}>
             {zoneMsg}
