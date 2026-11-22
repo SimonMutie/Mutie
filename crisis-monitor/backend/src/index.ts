@@ -1,4 +1,6 @@
 import { collectStrategicAnalyses } from "./lib/strategicAnalysis";
+import { aiSettingsRouter } from "./routes/aiSettings";
+import { loadAiSettings } from "./lib/aiSettings";
 
 /** The schedule (wrangler.toml) that runs Strategic Analyses on its own. */
 const STRATEGIC_ANALYSES_CRON = "2-59/5 * * * *";
@@ -65,6 +67,11 @@ export { AfricaWireActor } from "./durableObjects/africaWireActor";
 const app = new Hono<{ Bindings: Env }>();
 
 app.use("*", cors());
+// The admin's AI choices (lib/aiSettings.ts), refreshed at most once a minute, so every route sees them.
+app.use("*", async (c, next) => {
+  await loadAiSettings(c.env).catch(() => undefined);
+  await next();
+});
 
 // Adds any column a hand-run migration was meant to add but did not (see
 // lib/schemaHeal.ts). Checked once per isolate, before any route runs.
@@ -136,6 +143,7 @@ app.route("/api/map-settings", mapSettingsRouter);
 app.route("/api/tracking", trackingRouter);
 app.route("/api/control-maps", controlMapsRouter);
 app.route("/api/boundaries", boundariesRouter);
+app.route("/api/ai-settings", aiSettingsRouter);
 app.route("/api/live-layers", liveLayersRouter);
 app.route("/api/afrintel", afrIntelRouter);
 app.route("/api/global-status", globalStatusRouter);
@@ -212,6 +220,7 @@ export default {
   queue: processAfricaWireQueueBatch,
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    await loadAiSettings(env).catch(() => undefined);
     // Strategic Analyses runs on its own schedule (wrangler.toml), alone, with the whole per-run request budget.
     if (controller.cron === STRATEGIC_ANALYSES_CRON) {
       await collectStrategicAnalyses(env)
