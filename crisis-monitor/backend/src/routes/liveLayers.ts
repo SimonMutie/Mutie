@@ -23,7 +23,7 @@ import { africaChannelStatus, buildOsintFeed, type OsintAlertItem, fetchWireArti
 import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsHistory";
 import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
-import { buildZones } from "../lib/watchZones";
+import { buildZones, composeZones } from "../lib/watchZones";
 import { readRadar } from "../lib/cloudflareRadar";
 import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCollector";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
@@ -671,6 +671,12 @@ let zoneEditsReady = false;
 async function ensureZoneEdits(db: D1Database) {
   if (zoneEditsReady) return;
   await dbRun(db, `CREATE TABLE IF NOT EXISTS watch_zone_overrides (zone_id TEXT PRIMARY KEY, geometry TEXT, color TEXT, updated_by TEXT, updated_at TEXT NOT NULL)`);
+  // Added later: the zone's own name, severity and description; the boundary areas added to it (and their combined
+  // shape); whether its original area was dropped; whether it is retired; whether an admin made it; its extent.
+  const cols = new Set((await dbAll<{ name: string }>(db, `PRAGMA table_info(watch_zone_overrides)`)).map((r) => r.name));
+  for (const [name, type] of [["label", "TEXT"], ["severity", "TEXT"], ["description", "TEXT"], ["units", "TEXT"], ["units_geometry", "TEXT"], ["base_dropped", "INTEGER"], ["retired", "INTEGER"], ["custom", "INTEGER"], ["bounds", "TEXT"]] as const) {
+    if (!cols.has(name)) await dbRun(db, `ALTER TABLE watch_zone_overrides ADD COLUMN ${name} ${type}`);
+  }
   zoneEditsReady = true;
 }
 const zoneRing = zod.array(zod.array(zod.number()).min(2).max(3)).min(4).max(50000);
@@ -680,12 +686,59 @@ const zoneEditSchema = zod.object({
     .nullable()
     .optional(),
   color: zod.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+  label: zod.string().trim().min(1).max(80).nullable().optional(),
+  severity: zod.enum(["war", "high", "elevated"]).nullable().optional(),
+  description: zod.string().trim().max(800).nullable().optional(),
+  /** Boundary areas in the zone: { key, iso, level, id, name } each. */
+  units: zod.array(zod.object({ key: zod.string().max(120), iso: zod.string().max(8), level: zod.string().max(8), id: zod.string().max(80), name: zod.string().max(120) })).max(400).nullable().optional(),
+  unitsGeometry: zod.object({ type: zod.literal("MultiPolygon"), coordinates: zod.array(zod.array(zoneRing).min(1)).max(3000) }).nullable().optional(),
+  baseDropped: zod.boolean().optional(),
+  retired: zod.boolean().optional(),
+  bounds: zod.object({ minLat: zod.number(), maxLat: zod.number(), minLng: zod.number(), maxLng: zod.number() }).nullable().optional(),
+});
+
+interface ZoneEditDbRow {
+  zone_id: string;
+  geometry: string | null;
+  color: string | null;
+  label: string | null;
+  severity: string | null;
+  description: string | null;
+  units: string | null;
+  units_geometry: string | null;
+  base_dropped: number | null;
+  retired: number | null;
+  custom: number | null;
+  bounds: string | null;
+  updated_at: string;
+}
+const parseJson = <T,>(v: string | null): T | null => {
+  try {
+    return v ? (JSON.parse(v) as T) : null;
+  } catch {
+    return null;
+  }
+};
+const shapeZoneEdit = (r: ZoneEditDbRow) => ({
+  id: r.zone_id,
+  geometry: parseJson(r.geometry),
+  color: r.color,
+  label: r.label,
+  severity: r.severity,
+  description: r.description,
+  units: parseJson(r.units) ?? [],
+  unitsGeometry: parseJson(r.units_geometry),
+  baseDropped: !!r.base_dropped,
+  retired: !!r.retired,
+  custom: !!r.custom,
+  bounds: parseJson(r.bounds),
+  updatedAt: r.updated_at,
 });
 
 liveLayersRouter.get("/watch-zones/overrides", async (c) => {
   await ensureZoneEdits(c.env.DB);
-  const rows = await dbAll<{ zone_id: string; geometry: string | null; color: string | null; updated_at: string }>(c.env.DB, `SELECT * FROM watch_zone_overrides`);
-  return c.json({ overrides: rows.map((r) => ({ id: r.zone_id, geometry: r.geometry ? JSON.parse(r.geometry) : null, color: r.color, updatedAt: r.updated_at })) });
+  const rows = await dbAll<ZoneEditDbRow>(c.env.DB, `SELECT * FROM watch_zone_overrides`);
+  return c.json({ overrides: rows.map(shapeZoneEdit) });
 });
 
 /** Set or clear a zone's boundary and/or colour (null clears that part; clearing both returns the zone to its default). */
@@ -693,18 +746,59 @@ liveLayersRouter.put("/watch-zones/:id/override", requireAdmin, async (c) => {
   await ensureZoneEdits(c.env.DB);
   const p = zoneEditSchema.safeParse(await c.req.json().catch(() => null));
   if (!p.success) return c.json({ error: p.error.issues[0]?.message ?? "Invalid edit" }, 400);
-  const id = c.req.param("id");
-  const cur = (await dbAll<{ geometry: string | null; color: string | null }>(c.env.DB, `SELECT geometry, color FROM watch_zone_overrides WHERE zone_id = ?`, [id]))[0];
-  const geometry = p.data.geometry === undefined ? (cur?.geometry ?? null) : p.data.geometry ? JSON.stringify(p.data.geometry) : null;
-  const color = p.data.color === undefined ? (cur?.color ?? null) : p.data.color;
-  if (!geometry && !color) await dbRun(c.env.DB, `DELETE FROM watch_zone_overrides WHERE zone_id = ?`, [id]);
+  const id = c.req.param("id") ?? "";
+  const cur = (await dbAll<ZoneEditDbRow>(c.env.DB, `SELECT * FROM watch_zone_overrides WHERE zone_id = ?`, [id]))[0];
+  if (id.startsWith("custom-") && !cur) return c.json({ error: "No such zone" }, 404);
+  const d = p.data;
+  // Each field: unchanged when left out, cleared with null, set otherwise.
+  const pick = <T,>(v: T | null | undefined, old: string | null, enc: (x: T) => string = (x) => String(x)) => (v === undefined ? old : v === null ? null : enc(v));
+  const next = {
+    geometry: pick(d.geometry, cur?.geometry ?? null, (x) => JSON.stringify(x)),
+    color: pick(d.color, cur?.color ?? null),
+    label: pick(d.label, cur?.label ?? null),
+    severity: pick(d.severity, cur?.severity ?? null),
+    description: pick(d.description, cur?.description ?? null),
+    units: pick(d.units, cur?.units ?? null, (x) => JSON.stringify(x)),
+    units_geometry: pick(d.unitsGeometry, cur?.units_geometry ?? null, (x) => JSON.stringify(x)),
+    base_dropped: d.baseDropped === undefined ? (cur?.base_dropped ?? 0) : d.baseDropped ? 1 : 0,
+    retired: d.retired === undefined ? (cur?.retired ?? 0) : d.retired ? 1 : 0,
+    custom: cur?.custom ?? 0,
+    bounds: pick(d.bounds, cur?.bounds ?? null, (x) => JSON.stringify(x)),
+  };
+  const empty = !next.custom && !next.geometry && !next.color && !next.label && !next.severity && !next.description && !next.units && !next.units_geometry && !next.base_dropped && !next.retired && !next.bounds;
+  if (empty) await dbRun(c.env.DB, `DELETE FROM watch_zone_overrides WHERE zone_id = ?`, [id]);
   else
     await dbRun(
       c.env.DB,
-      `INSERT INTO watch_zone_overrides (zone_id, geometry, color, updated_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(zone_id) DO UPDATE SET geometry = excluded.geometry, color = excluded.color, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-      [id, geometry, color, c.get("userId"), dbNow()]
+      `INSERT INTO watch_zone_overrides (zone_id, geometry, color, label, severity, description, units, units_geometry, base_dropped, retired, custom, bounds, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(zone_id) DO UPDATE SET geometry = excluded.geometry, color = excluded.color, label = excluded.label, severity = excluded.severity, description = excluded.description, units = excluded.units, units_geometry = excluded.units_geometry, base_dropped = excluded.base_dropped, retired = excluded.retired, bounds = excluded.bounds, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      [id, next.geometry, next.color, next.label, next.severity, next.description, next.units, next.units_geometry, next.base_dropped, next.retired, next.custom, next.bounds, c.get("userId"), dbNow()]
     );
-  return c.json({ ok: true, id, geometry: geometry ? JSON.parse(geometry) : null, color });
+  return c.json({ ok: true, id, geometry: next.geometry ? JSON.parse(next.geometry) : null, color: next.color });
+});
+
+/** A new zone made from boundary areas (or a drawn shape). */
+liveLayersRouter.post("/watch-zones/custom", requireAdmin, async (c) => {
+  await ensureZoneEdits(c.env.DB);
+  const p = zoneEditSchema.extend({ label: zod.string().trim().min(1).max(80), bounds: zod.object({ minLat: zod.number(), maxLat: zod.number(), minLng: zod.number(), maxLng: zod.number() }) }).safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: p.error.issues[0]?.message ?? "Invalid zone" }, 400);
+  const d = p.data;
+  const id = `custom-${crypto.randomUUID().slice(0, 8)}`;
+  await dbRun(
+    c.env.DB,
+    `INSERT INTO watch_zone_overrides (zone_id, geometry, color, label, severity, description, units, units_geometry, base_dropped, retired, custom, bounds, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 1, ?, ?, ?)`,
+    [id, d.geometry ? JSON.stringify(d.geometry) : null, d.color ?? null, d.label.toUpperCase(), d.severity ?? "elevated", d.description ?? null, d.units ? JSON.stringify(d.units) : null, d.unitsGeometry ? JSON.stringify(d.unitsGeometry) : null, JSON.stringify(d.bounds), c.get("userId"), dbNow()]
+  );
+  return c.json({ ok: true, id }, 201);
+});
+
+/** Delete a zone an admin made (standing zones are retired instead, and can be brought back). */
+liveLayersRouter.delete("/watch-zones/:id", requireAdmin, async (c) => {
+  await ensureZoneEdits(c.env.DB);
+  const id = c.req.param("id") ?? "";
+  if (!id.startsWith("custom-")) return c.json({ error: "Standing zones are retired, not deleted." }, 400);
+  await dbRun(c.env.DB, `DELETE FROM watch_zone_overrides WHERE zone_id = ?`, [id]);
+  return c.json({ ok: true });
 });
 
 /** Watch zones: standing warnings over Africa and Middle East theatres, with the headlines and Telegram posts that name
@@ -722,8 +816,10 @@ liveLayersRouter.get("/watch-zones", async (c) =>
         ...wire.map((w) => ({ title: w.title, text: w.description, link: w.link, source: w.domain, published: w.published, telegram: false })),
         ...telegram.map((t) => ({ title: t.title.replace(/ \(Telegram: [^)]*\)$/, ""), text: t.text, link: t.link, source: `${t.channel} (Telegram)`, published: t.published, telegram: true })),
       ];
+      await ensureZoneEdits(c.env.DB);
+      const edits = await dbAll<ZoneEditDbRow>(c.env.DB, `SELECT * FROM watch_zone_overrides`).catch(() => [] as ZoneEditDbRow[]);
       return {
-        zones: buildZones(items, incidents),
+        zones: buildZones(items, incidents, composeZones(edits)),
         basis: "Zones and their severity are an Afrilens editorial rating of the standing situation, not a live measurement. Headlines are matched by the places they name; incidents are the Lens's own escalation incidents inside each zone.",
         fetchedAt: new Date().toISOString(),
       };
