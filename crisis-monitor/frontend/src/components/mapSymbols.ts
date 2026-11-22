@@ -28,10 +28,13 @@ export function drawWarningIcon(fillColor: string): HTMLCanvasElement {
   ctx.lineWidth = 3;
   ctx.stroke();
   ctx.fillStyle = "#0b0b0b";
-  const stem = size * 0.09;
-  ctx.fillRect(size / 2 - stem / 2, size * 0.32, stem, size * 0.28);
+  // The "!": a little larger and bolder than before, with a rounded stem, so it reads at a glance.
+  const stem = size * 0.12;
   ctx.beginPath();
-  ctx.arc(size / 2, size * 0.74, stem * 0.75, 0, Math.PI * 2);
+  ctx.roundRect(size / 2 - stem / 2, size * 0.29, stem, size * 0.35, stem / 2.5);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(size / 2, size * 0.775, stem * 0.68, 0, Math.PI * 2);
   ctx.fill();
   return canvas;
 }
