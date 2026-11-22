@@ -1,4 +1,5 @@
 import { all, first, run, nowIso } from "./db";
+import { gateText, titleIsRelevant } from "./lib/titleGate";
 import { anthropicKey, getClaudeUsage, loadAiSettings, type ClaudeUsage } from "./lib/aiSettings";
 import { newId } from "./ids";
 import type { Env } from "./bindings";
@@ -441,6 +442,8 @@ interface ProcessStats {
   priority?: number;
   /** Reports stored this tick by the headline first pass. */
   headlineCoded: number;
+  /** Candidates passed over unread because their headline is off-topic (lib/titleGate.ts). */
+  headlineSkipped: number;
 }
 
 async function claimArticle(env: Env, c: Candidate): Promise<boolean> {
@@ -605,15 +608,13 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
   }
 }
 
-/** The opening of an article — its first two paragraphs: enough for where and
- *  what. Used for major events the headline names only by country, so the
- *  reading is cheap and fast. Two, not one, because the lead often gives the
- *  who and the toll while the exact place comes in the second paragraph
- *  ("…killed miners near the Egyptian border." / "Warplanes struck sites in the
- *  Shamal al-Wadi area of far northern Red Sea State…"). */
-export const OPENING_PARAGRAPHS = 2;
+/** What is read of an article: its first three paragraphs, never more. The lead gives the who and the toll, the
+ *  second and third usually the exact place and the circumstances ("…killed miners near the Egyptian border." /
+ *  "Warplanes struck sites in the Shamal al-Wadi area of far northern Red Sea State…"). Only articles whose headline
+ *  passes the gate (lib/titleGate.ts) are read at all. */
+export const OPENING_PARAGRAPHS = 3;
 const OPENING_PARA_CHARS = 1200;
-const OPENING_MAX_CHARS = 2400;
+const OPENING_MAX_CHARS = 3600;
 
 function capParagraph(p: string, max: number): string {
   if (p.length <= max) return p;
@@ -663,18 +664,25 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
   try {
     // A Telegram post has no page behind it: its own text is all there is.
     const page = c.origin === "telegram" ? null : await readArticle(c.url);
+    // The headline gate: only headlines about conflict, security, crime, intercommunal violence or killing are read.
+    // (Most candidates are passed over before this, unfetched; this catches those whose headline is only known
+    // from the page, such as GDELT's.) An article the headline pass already coded passed it then.
+    const gate = gateText({ title: c.title ?? page?.title ?? null, feedText: c.feedText });
+    if (!firstPass && gate && !titleIsRelevant(gate)) {
+      stats.rejected++;
+      await finish("rejected", { reason: "headline_not_relevant", note: "The headline is not about conflict, security, crime, intercommunal violence or killing; not read.", title: c.title ?? page?.title ?? null, publishedAt: page?.publishedAt ?? c.publishedAt });
+      return;
+    }
+    void opening; // every reading is now the opening paragraphs
     let article: ArticleForCoding | null = null;
     if (page) {
-      // A major event read for location only: the opening two paragraphs, which are
-      // coded at the reduced confidence of partial text.
-      article = opening
-        ? { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "feed_summary", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain }
-        : { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
+      // Only the first three paragraphs are read and coded, never the whole article.
+      article = { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "opening", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
     } else if (c.feedText && c.feedText.length >= (c.origin === "telegram" ? 80 : 200)) {
       // (A Telegram post is short by nature, so less text is asked of it; it is still coded at reduced confidence.)
       // The page could not be read; the feed's own summary is long enough to
-      // code from, at reduced confidence (see verifyCoding).
-      article = { url: c.url, title: c.title ?? "(untitled)", text: c.feedText, textBasis: "feed_summary", publishedAt: c.publishedAt, domain: c.domain };
+      // code from, at reduced confidence (see verifyCoding). Held to the same length as three paragraphs.
+      article = { url: c.url, title: c.title ?? "(untitled)", text: c.feedText.slice(0, OPENING_MAX_CHARS), textBasis: "feed_summary", publishedAt: c.publishedAt, domain: c.domain };
     }
     if (!article) {
       stats.unreadable++;
@@ -1461,7 +1469,7 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
   if (lock && Date.now() - Number(lock) < LOCK_TTL_MS) return;
   await setState(env, "lock", String(Date.now()));
 
-  const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, modelFailures: 0, headlineCoded: 0, candidates: 0, fresh: 0 };
+  const stats: ProcessStats & { candidates: number; fresh: number } = { coded: 0, rejected: 0, unreadable: 0, errors: 0, reports: 0, modelFailures: 0, headlineCoded: 0, headlineSkipped: 0, candidates: 0, fresh: 0 };
   let aiBudgetReached = false;
   try {
     await retireLegacyAlerts(env);
@@ -1524,7 +1532,21 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
         // outage or an empty credit balance must not permanently discard the
         // news of that period.
         const decided = new Set(rows.filter((r) => !(r.status === "error" && (r.attempts < MAX_ATTEMPTS || r.rejection_reason === "model_unavailable")) && !awaitingFullReading.has(r.id)).map((r) => r.id));
-        const freshOf = (list: Candidate[]) => list.filter((c) => !decided.has(c.id) && !awaitingFullReading.has(c.id));
+        // Passed over unfetched: candidates whose headline (or, for a post, its opening) is not about conflict,
+        // security, crime, intercommunal violence or killing (lib/titleGate.ts). Untitled ones are fetched and
+        // judged by the page's own headline.
+        const offTopic = new Set<string>();
+        const freshOf = (list: Candidate[]) =>
+          list.filter((c) => {
+            if (decided.has(c.id) || awaitingFullReading.has(c.id)) return false;
+            const g = gateText(c);
+            if (g && !titleIsRelevant(g)) {
+              offTopic.add(c.id);
+              stats.headlineSkipped = offTopic.size;
+              return false;
+            }
+            return true;
+          });
 
         // First-pass articles are read first within their share of the tick,
         // those behind a marker already on the map before the rest: the
