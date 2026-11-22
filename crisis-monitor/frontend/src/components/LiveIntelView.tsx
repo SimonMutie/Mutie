@@ -4,6 +4,7 @@ import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
 import VehicleAlertPopups from "./VehicleAlertPopups";
 import { FlatWatchZones, GlobeWatchZones, useWatchZoneAreas, ZoneEditBar, type ZoneAction, type ZoneView } from "./WatchZoneAreas";
+import { BoundaryLibraryPanel, FlatBoundaryLayers, GlobeBoundaryLayers, useBoundaryLibrary, useZoneComposer, type BoundaryLib } from "./BoundaryLibrary";
 import { ControlLegend, ControlMapsPanel, FlatControlLayers, GlobeControlLayers, useControlMaps, useOverlayUrls, type FlatControlProps } from "./controlMaps";
 import { GlobeDatasets, GlobeFocus, GlobeOverlays, loadDataset, type GlobeOverlayState, type MapTilerDataset } from "./globeExtras";
 import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
@@ -2571,11 +2572,32 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     window.addEventListener("lens-zone-action", onAction);
     return () => window.removeEventListener("lens-zone-action", onAction);
   }, [isAdmin, watchZones.reload]);
+  // The boundary library (BoundaryLibrary.tsx): administrative areas as layers, and watch zones built from them.
+  const boundaryLib = useBoundaryLibrary();
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const say = useCallback((m: string) => {
+    setZoneMsg(m);
+    window.clearTimeout((say as unknown as { t?: number }).t);
+    (say as unknown as { t?: number }).t = window.setTimeout(() => setZoneMsg(null), 5000);
+  }, []);
+  const openLibrary = useCallback(() => {
+    setLibraryOpen(true);
+    setControlOpen(false);
+    setEnabled((prev) => (prev["watch-zones"] ? prev : { ...prev, "watch-zones": true }));
+  }, []);
+  useZoneComposer({ view: watchZones, lib: boundaryLib, isAdmin, say, openLibrary });
+  boundaryLib.focus.current = (b) => {
+    if (mapMode === "3d") globeMap?.fitBounds([[b.minLng, b.minLat], [b.maxLng, b.maxLat]], { padding: 50, maxZoom: 9 });
+    else flatMap?.fitBounds([[b.minLat, b.minLng], [b.maxLat, b.maxLng]], { padding: [40, 40], maxZoom: 10 });
+  };
   const onZoneEdited = (g: GeoJSON.MultiPolygon | null) => {
     const id = zoneEdit?.id;
     setZoneEdit(null);
     if (!g || !id) return;
-    void api.setWatchZoneOverride(id, { geometry: g }).then(
+    // A zone made of areas becomes one hand-drawn boundary once reshaped.
+    const hasUnits = !!watchZones.overrides[id]?.units.length;
+    if (hasUnits && !window.confirm("Save the reshaped boundary? The zone's added areas become part of this one drawn boundary and are no longer listed separately.")) return;
+    void api.setWatchZoneOverride(id, hasUnits ? { geometry: g, baseDropped: false, units: [], unitsGeometry: null } : { geometry: g }).then(
       () => {
         watchZones.reload();
         setZoneMsg("Zone boundary saved.");
@@ -2723,6 +2745,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             vehicles={vehicles}
             vehicleTracks={vehicleTracks}
             watchZones={watchZones}
+            boundaryLib={boundaryLib}
             zoneEdit={zoneEdit}
             onZoneEdited={onZoneEdited}
             canEditZones={isAdmin}
@@ -2805,6 +2828,18 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeOverlays map={globeMap} state={globeOverlays} />
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
         <GlobeWatchZones map={globeMap} view={watchZones} canEdit={isAdmin} />
+        <GlobeBoundaryLayers map={globeMap} lib={boundaryLib} view={watchZones} canEdit={isAdmin} />
+        {libraryOpen && (
+          <BoundaryLibraryPanel
+            lib={boundaryLib}
+            view={watchZones}
+            canEdit={isAdmin}
+            onClose={() => {
+              setLibraryOpen(false);
+              boundaryLib.setPickZone(null);
+            }}
+          />
+        )}
         {zoneEdit && <ZoneEditBar label={watchZones.zones.find((z) => z.id === zoneEdit.id)?.label ?? "Zone"} mode={zoneEdit.mode} />}
         {zoneMsg && (
           <div onClick={() => setZoneMsg(null)} style={{ position: "absolute", top: 64, left: "50%", transform: "translateX(-50%)", zIndex: 700, padding: "7px 12px", borderRadius: 8, background: "rgba(6,10,18,0.94)", border: "1px solid rgba(255,255,255,0.15)", color: "#e6edf7", fontSize: 12.5, cursor: "pointer" }}>
@@ -3001,7 +3036,18 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
                 trailHours={trailHours}
                 onTrailHours={setTrailHours}
                 controlOpen={controlOpen}
-                onToggleControl={() => setControlOpen((v) => !v)}
+                onToggleControl={() => {
+                  setControlOpen((v) => !v);
+                  setLibraryOpen(false);
+                  boundaryLib.setPickZone(null);
+                }}
+                libraryOpen={libraryOpen}
+                onToggleLibrary={() => {
+                  if (libraryOpen) {
+                    setLibraryOpen(false);
+                    boundaryLib.setPickZone(null);
+                  } else openLibrary();
+                }}
                 onLocateVehicle={(v) => {
                   if (!v.last) return;
                   if (mapMode === "3d") globeMap?.flyTo({ center: [v.last.lng, v.last.lat], zoom: Math.max(globeMap.getZoom(), 13) });
@@ -3278,6 +3324,7 @@ function FlatMap({
   vehicles,
   vehicleTracks,
   watchZones,
+  boundaryLib,
   zoneEdit,
   onZoneEdited,
   canEditZones,
@@ -3332,6 +3379,7 @@ function FlatMap({
   control: FlatControlProps;
   /** Watch zones as areas (WatchZoneAreas.tsx), and editing one. */
   watchZones: ZoneView;
+  boundaryLib: BoundaryLib;
   zoneEdit: { id: string; mode: "shape" | "redraw" } | null;
   onZoneEdited: (g: GeoJSON.MultiPolygon | null) => void;
   canEditZones: boolean;
@@ -3452,6 +3500,7 @@ function FlatMap({
         <FlatDataset key={d.id} dataset={d} />
       ))}
       <FlatWatchZones view={watchZones} canEdit={canEditZones} editing={zoneEdit} onEdited={onZoneEdited} />
+      <FlatBoundaryLayers lib={boundaryLib} view={watchZones} canEdit={canEditZones} />
       <FlatControlLayers {...control} />
       <FlatVehicles vehicles={vehicles} tracks={vehicleTracks} />
       <RegionFly region={regionView} seq={regionSeq} />
@@ -3763,6 +3812,8 @@ function LayerPanel({
   onLocateVehicle,
   controlOpen,
   onToggleControl,
+  libraryOpen,
+  onToggleLibrary,
   onToggleNav,
   onToggleFirePanel,
   dayNight,
@@ -3823,6 +3874,8 @@ function LayerPanel({
   onLocateVehicle?: (v: Vehicle) => void;
   controlOpen?: boolean;
   onToggleControl?: () => void;
+  libraryOpen?: boolean;
+  onToggleLibrary?: () => void;
   onToggleNav?: () => void;
   onToggleFirePanel?: () => void;
   dayNight?: boolean;
@@ -3911,6 +3964,16 @@ function LayerPanel({
               style={{ width: 42, height: 38, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", background: controlOpen ? "rgba(212,175,55,0.14)" : "transparent", border: "none", borderRadius: 8, cursor: "pointer" }}
             >
               <Shield size={17} color={controlOpen ? HUD.gold : HUD.textMuted} strokeWidth={controlOpen ? 2.25 : 1.75} />
+            </button>
+          )}
+          {onToggleLibrary && (
+            <button
+              onClick={onToggleLibrary}
+              aria-pressed={!!libraryOpen}
+              title="Boundary library: countries, states, districts as layers; build watch zones from them"
+              style={{ width: 42, height: 38, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", background: libraryOpen ? "rgba(212,175,55,0.14)" : "transparent", border: "none", borderRadius: 8, cursor: "pointer" }}
+            >
+              <Landmark size={17} color={libraryOpen ? HUD.gold : HUD.textMuted} strokeWidth={libraryOpen ? 2.25 : 1.75} />
             </button>
           )}
           {onShowVehicles && <VehiclesRailButton on={!!showVehicles} onToggle={() => onShowVehicles(!showVehicles)} vehicles={vehicles ?? []} onLocate={onLocateVehicle} />}
