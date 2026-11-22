@@ -46,7 +46,7 @@ export const WATCH_ZONES: WatchZone[] = [
  * The zone a headline is about, or null. Every word of one of a zone's queries has to appear as a whole word:
  * a bare substring test let "war" match "warning". Ported from the reference platform's matchZone.
  */
-export function matchZone(text: string): WatchZone | null {
+export function matchZone(text: string, zones: WatchZone[] = WATCH_ZONES): WatchZone | null {
   const words = new Set<string>();
   for (const w of text.toLowerCase().match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? []) {
     words.add(w);
@@ -54,9 +54,11 @@ export function matchZone(text: string): WatchZone | null {
     if (w.length > 3 && w.endsWith("s")) words.add(w.slice(0, -1));
   }
   // The more specific zone wins where two match (the Red Sea before Yemen, Gaza before the rest).
-  const order = ["red-sea", "gaza", "lebanon", "south-sudan", "mozambique", ...WATCH_ZONES.map((z) => z.id)];
+  // Zones the admin built from districts or states come first: they are the most specific of all.
+  const order = [...zones.filter((z) => z.id.startsWith("custom-")).map((z) => z.id), "red-sea", "gaza", "lebanon", "south-sudan", "mozambique", ...zones.map((z) => z.id)];
   for (const id of order) {
-    const zone = WATCH_ZONES.find((z) => z.id === id)!;
+    const zone = zones.find((z) => z.id === id);
+    if (!zone) continue;
     if (zone.queries.some((q) => q.toLowerCase().split(" ").every((term) => words.has(term)))) return zone;
   }
   return null;
@@ -89,22 +91,90 @@ export interface WatchZoneView {
   headlines: ZoneHeadline[];
   headlineCount: number;
   incidents: ZoneIncident[];
+  /** Made by an admin from boundary areas (not one of the standing zones). */
+  custom?: boolean;
+  bounds?: WatchZone["bounds"];
+}
+
+/** An admin's changes to the zones (routes/liveLayers.ts, table watch_zone_overrides). */
+export interface ZoneEditRow {
+  zone_id: string;
+  label: string | null;
+  severity: string | null;
+  description: string | null;
+  units: string | null;
+  bounds: string | null;
+  retired: number | null;
+  custom: number | null;
+}
+
+/**
+ * The zones as they stand: the standing ones with any edits (name, severity, description, extent) and without the
+ * retired ones, plus the zones admins made from boundary areas. A made zone's reports are matched by the names of
+ * its areas (a district, a state) and its own name.
+ */
+export function composeZones(rows: ZoneEditRow[]): WatchZone[] {
+  const byId = new Map(rows.map((r) => [r.zone_id, r]));
+  const parseBounds = (b: string | null) => {
+    try {
+      return b ? (JSON.parse(b) as WatchZone["bounds"]) : null;
+    } catch {
+      return null;
+    }
+  };
+  const sev = (v: string | null, d: ZoneSeverity): ZoneSeverity => (v === "war" || v === "high" || v === "elevated" ? v : d);
+  const unitNames = (r: ZoneEditRow | undefined) => {
+    try {
+      return r?.units ? (JSON.parse(r.units) as { name: string }[]).map((u) => u.name.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").replace(/\s+/g, " ").trim()).filter((n) => n.length > 2) : [];
+    } catch {
+      return [];
+    }
+  };
+  const standing = WATCH_ZONES.filter((z) => !byId.get(z.id)?.retired).map((z) => {
+    const r = byId.get(z.id);
+    if (!r) return z;
+    return { ...z, label: r.label ?? z.label, severity: sev(r.severity, z.severity), description: r.description ?? z.description, bounds: parseBounds(r.bounds) ?? z.bounds, queries: [...z.queries, ...unitNames(r)] };
+  });
+  const made = rows
+    .filter((r) => r.custom && !r.retired)
+    .flatMap((r): WatchZone[] => {
+      const b = parseBounds(r.bounds);
+      if (!b) return [];
+      const label = r.label ?? "WATCH ZONE";
+      return [
+        {
+          id: r.zone_id,
+          label,
+          severity: sev(r.severity, "elevated"),
+          lat: (b.minLat + b.maxLat) / 2,
+          lng: (b.minLng + b.maxLng) / 2,
+          description: r.description ?? "",
+          queries: [...new Set([...unitNames(r), label.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, " ").replace(/\s+/g, " ").trim()])].filter(Boolean),
+          bounds: b,
+        },
+      ];
+    });
+  return [...standing, ...made];
 }
 
 const inside = (b: WatchZone["bounds"], lat: number, lon: number) => lat >= b.minLat && lat <= b.maxLat && lon >= b.minLng && lon <= b.maxLng;
 
-export function buildZones(items: { title: string; text: string; link: string; source: string; published: string | null; telegram: boolean }[], incidents: { id: string; headline: string | null; level: string; locationLabel: string | null; countryName: string; lat: number; lon: number }[]): WatchZoneView[] {
+export function buildZones(
+  items: { title: string; text: string; link: string; source: string; published: string | null; telegram: boolean }[],
+  incidents: { id: string; headline: string | null; level: string; locationLabel: string | null; countryName: string; lat: number; lon: number }[],
+  zones: WatchZone[] = WATCH_ZONES
+): WatchZoneView[] {
   const byZone = new Map<string, ZoneHeadline[]>();
   const seen = new Set<string>();
   for (const it of items) {
-    const zone = matchZone(`${it.title} ${it.text.slice(0, 400)}`);
+    const zone = matchZone(`${it.title} ${it.text.slice(0, 400)}`, zones);
     if (!zone) continue;
     const key = it.title.slice(0, 150).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     (byZone.get(zone.id) ?? byZone.set(zone.id, []).get(zone.id)!).push({ title: it.title.slice(0, 200), url: it.link, source: it.source, published: it.published, telegram: it.telegram });
   }
-  return WATCH_ZONES.map((z) => {
+  return zones.map((z) => {
     const heads = (byZone.get(z.id) ?? []).sort((a, b) => (b.published ?? "").localeCompare(a.published ?? ""));
     return {
       id: z.id,
@@ -115,6 +185,7 @@ export function buildZones(items: { title: string; text: string; link: string; s
       description: z.description,
       // The zone's box, which the map uses to cut a sub-national zone out of its country (frontend watchZoneAreas.ts).
       bounds: z.bounds,
+      custom: z.id.startsWith("custom-") || undefined,
       headlines: heads.slice(0, 25),
       headlineCount: heads.length,
       incidents: incidents
