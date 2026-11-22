@@ -1,5 +1,6 @@
 /**
- * The escalation wave, drawn the same on both map views: a glowing core and three rings rolling outward one after
+ * The escalation wave, drawn the same on both map views, beneath the escalation's marker: a soft glow and three rings
+ * rolling outward one after
  * another, each slowing as it spreads, thinning and fading, with a faint shockwave glow behind it. Coloured and
  * sized by the escalation's level. The 3D globe draws it on a canvas (an animated map image); the flat map uses the
  * CSS version in ConflictWaves.css, built from the same numbers.
@@ -21,7 +22,8 @@ const easeOut = (p: number) => 1 - Math.pow(1 - p, 3);
 export function drawWave(ctx: CanvasRenderingContext2D, cx: number, cy: number, level: WaveLevel, t: number, scale = 1) {
   const { rgb, radius } = WAVE_LOOK[level];
   const R = radius * scale;
-  const core = Math.max(3.5, R * 0.16);
+  // Rings start just outside the marker drawn on top (the warning triangle is about 20 px across).
+  const core = Math.max(9 * scale, R * 0.26);
   for (let i = 0; i < WAVE_RINGS; i++) {
     const p = (t + i / WAVE_RINGS) % 1;
     const r = core + (R - core) * easeOut(p);
@@ -41,21 +43,14 @@ export function drawWave(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
   }
-  // The core: a halo, then a bright dot with a white rim.
-  const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, core * 2.6);
-  halo.addColorStop(0, `rgba(${rgb}, 0.55)`);
+  // A soft glow at the centre, behind the escalation's own marker (the warning triangle marks the spot: no dot here).
+  const halo = ctx.createRadialGradient(cx, cy, core * 0.6, cx, cy, core * 2.2);
+  halo.addColorStop(0, `rgba(${rgb}, 0.22)`);
   halo.addColorStop(1, `rgba(${rgb}, 0)`);
   ctx.fillStyle = halo;
   ctx.beginPath();
-  ctx.arc(cx, cy, core * 2.6, 0, Math.PI * 2);
+  ctx.arc(cx, cy, core * 2.2, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = `rgb(${rgb})`;
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-  ctx.lineWidth = 1.6 * scale;
-  ctx.beginPath();
-  ctx.arc(cx, cy, core, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
 }
 
 /**
