@@ -167,6 +167,7 @@ import { AircraftMarkers } from "./AircraftMarkers";
 import { AIRCRAFT_LAYER_KEYS } from "./planeIcon";
 import { activeCountryFeatures, countryPathStyle, countryShadingKey, loadWorldCountries } from "./worldCountries";
 import { waveFeatures } from "./conflictWaves";
+import { animateWaveCanvases, waveCanvasHtml, type WaveLevel } from "./waveArt";
 import "./ConflictWaves.css";
 import { circleMarker, divIcon } from "leaflet";
 import { dotRadius, DOT, warningIconUrl, WARNING_SIZE, type EscalationLevel } from "./mapSymbols";
@@ -3415,6 +3416,7 @@ function FlatMap({
           onEachFeature={(f, layer) => layer.bindTooltip(String((f.properties as { label?: string }).label ?? ""), { sticky: true })}
         />
       )}
+      <WaveLoop count={(conflictWaveRows ?? []).length} />
       {(conflictWaveRows ?? []).map((w) => (
         <Marker
           key={w.id}
@@ -3423,7 +3425,7 @@ function FlatMap({
           icon={divIcon({
             className: "conflict-wave-icon",
             iconSize: [0, 0],
-            html: `<span class="conflict-wave conflict-wave--${w.level}"></span><span class="conflict-wave conflict-wave--${w.level} conflict-wave--late"></span>`,
+            html: waveCanvasHtml(w.level as WaveLevel),
           })}
         />
       ))}
@@ -3600,6 +3602,17 @@ function FlatDataset({ dataset }: { dataset: MapTilerDataset }) {
       }}
     />
   );
+}
+
+/** Keeps the flat map's wave animation running while there are waves (waveArt.ts). */
+function WaveLoop({ count }: { count: number }) {
+  useEffect(() => {
+    if (!count) return;
+    // After the markers are in the page.
+    const t = window.setTimeout(animateWaveCanvases, 0);
+    return () => window.clearTimeout(t);
+  }, [count]);
+  return null;
 }
 
 /** Hands the Leaflet map out once it exists. */
