@@ -3,14 +3,16 @@
 .incident-pulse-ring {
   position: absolute; left: 0; top: 0; border-radius: 50%;
   width: var(--pulse-size); height: var(--pulse-size);
-  border: 2px solid var(--pulse-color);
+  border: 2.5px solid var(--pulse-color);
+  background: radial-gradient(circle, transparent 55%, color-mix(in srgb, var(--pulse-color) 30%, transparent) 100%);
   opacity: 0; pointer-events: none;
-  transform: translate(-50%, -50%) scale(0.3);
-  animation: incident-pulse 2.6s ease-out infinite;
+  transform: translate(-50%, -50%) scale(0.2);
+  animation: incident-pulse 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+  will-change: transform, opacity;
 }
 .incident-pulse--claim .incident-pulse-ring { border-style: dashed; }
-.incident-pulse-ring--late { animation-delay: 0.87s; }
-.incident-pulse-ring--later { animation-delay: 1.74s; }
+.incident-pulse-ring--late { animation-delay: -0.93s; }
+.incident-pulse-ring--later { animation-delay: -1.87s; }
 .incident-pulse-core {
   position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%;
   transform: translate(-50%, -50%);
@@ -18,8 +20,9 @@
 }
 .incident-pulse--claim .incident-pulse-core { background: #0b1220; border: 2px dashed var(--pulse-color); }
 @keyframes incident-pulse {
-  0% { transform: translate(-50%, -50%) scale(0.3); opacity: 0.95; }
-  100% { transform: translate(-50%, -50%) scale(1.5); opacity: 0; }
+  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 1; border-width: 3px; }
+  70% { opacity: 0.35; }
+  100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; border-width: 0.8px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .incident-pulse-ring { animation: none; opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
