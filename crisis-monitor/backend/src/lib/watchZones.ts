@@ -113,6 +113,8 @@ export function buildZones(items: { title: string; text: string; link: string; s
       lat: z.lat,
       lng: z.lng,
       description: z.description,
+      // The zone's box, which the map uses to cut a sub-national zone out of its country (frontend watchZoneAreas.ts).
+      bounds: z.bounds,
       headlines: heads.slice(0, 25),
       headlineCount: heads.length,
       incidents: incidents
