@@ -1,4 +1,5 @@
 import type { Env } from "../bindings";
+import { anthropicKey } from "./aiSettings";
 import { first, run, nowIso } from "../db";
 import { callStructured } from "./llm";
 import { dailyNeuronBudget, usageDay } from "./aiBudget";
@@ -216,7 +217,7 @@ RULES
 export async function writeAiSummary(env: Env, queryId: string, queryName: string, day: string, tz: number, items: DayItem[], itemCount: number): Promise<AiSummaryState> {
   await ensureTable(env);
   if (items.length < 3) return { status: "unavailable", reason: "There are too few items on this day to summarise; they are listed below." };
-  if (!env.ANTHROPIC_API_KEY && dailyNeuronBudget(env) <= 0) return { status: "unavailable", reason: "AI use is switched off on this platform at the moment." };
+  if (!anthropicKey(env) && dailyNeuronBudget(env) <= 0) return { status: "unavailable", reason: "AI use is switched off on this platform at the moment." };
 
   // A daily count of its own, so that paging through many days cannot spend
   // the allowance the escalation reader depends on.
