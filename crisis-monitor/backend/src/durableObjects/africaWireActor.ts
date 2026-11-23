@@ -6,6 +6,7 @@ import { parseRSSItems, hashId, scoreRisk } from "../lib/osintFeed";
 import { evaluate, parseBooleanQuery, type ParsedQuery } from "../booleanQuery";
 import { detectNonEnglish, translateToEnglish } from "../lib/translate";
 import { isCandidateText, candidatePriority } from "../lib/escalationKeywords";
+import { titleIsRelevant } from "../lib/titleGate";
 
 /**
  * Crawls the ~260 African country/pan-African/institutional homepages in
@@ -228,7 +229,8 @@ export class AfricaWireActor implements DurableObject {
         const published = Date.parse(it.published);
         if (!Number.isFinite(published) || published < cutoff) continue;
         const text = `${it.title} ${it.description} ${it.riskTextEn ?? ""}`;
-        if (!isCandidateText(text)) continue;
+        // The same headline gate the pipeline applies (lib/titleGate.ts): every language the Lens reads.
+        if (!isCandidateText(text) && !titleIsRelevant(text)) continue;
         out.push({
           id: it.id,
           title: it.title,
