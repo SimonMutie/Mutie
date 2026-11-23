@@ -90,6 +90,10 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "AddisstandardEng", name: "Addis Standard", lean: "Ethiopian independent newsroom", bloc: "regional", africa: true, seen: true },
   { handle: "AddisstandardAmh", name: "Addis Standard Amharic", lean: "Ethiopian independent newsroom, Amharic", bloc: "regional", africa: true, lang: "am", seen: true },
   { handle: "AddisstandardAO", name: "Addis Standard Afaan Oromoo", lean: "Ethiopian independent newsroom, Afaan Oromoo", bloc: "regional", africa: true, lang: "om", seen: true },
+  // Found by search on 2026-11-23, each with a public preview page that day.
+  { handle: "borkena", name: "Borkena", lean: "Ethiopian news site, Amharic and English", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "EthiopiaInsight", name: "Ethiopia Insight", lean: "Ethiopian independent news and analysis", bloc: "independent", africa: true, seen: true },
+  { handle: "ByteTikvah", name: "Byte Tikvah", lean: "Unofficial English translations of Tikvah-Ethiopia's posts", bloc: "independent", africa: true, seen: true },
   { handle: "garoweonline", name: "Garowe Online", lean: "Puntland-based newsroom", bloc: "regional", africa: true, seen: true },
   { handle: "TheSomaliDigest", name: "The Somali Digest", lean: "Somali news in English", bloc: "independent", africa: true, seen: true },
   { handle: "congonet24", name: "Congonet 24", lean: "DR Congo news aggregator, French", bloc: "regional", africa: true, lang: "fr", seen: true },
@@ -104,8 +108,8 @@ const TELEGRAM_CHANNELS: Feed[] = [
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick, each is read about every fifteen minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 6;
+/** Africa channels read by the pipeline on one tick. With a five-minute tick and about fifty channels, each is read about every twenty-five minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 10;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
