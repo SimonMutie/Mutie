@@ -1268,7 +1268,7 @@ export interface EscalationSource {
   title: string | null;
   domain: string;
   publishedAt: string | null;
-  /** "opening" when its first four paragraphs were read (the usual reading); "full_text" for older readings of
+  /** "opening" when its first seven paragraphs were read (the usual reading); "full_text" for older readings of
    *  the whole article; "feed_summary" when only
    *  the feed's teaser could be; "headline" when only its headline has been
    *  matched by the rule-based first pass so far. */
@@ -2607,6 +2607,7 @@ export const api = {
   // numbers were rebuilt rather than copied.
   getSpaceWeather: () => req<SpaceWeather>("/api/global-status/space-weather"),
   getCyberThreats: () => req<CyberThreats>("/api/global-status/cyber-threats"),
+  dismissIncident: (id: string) => req<{ ok: boolean }>(`/api/live-layers/conflict-escalation/incidents/${encodeURIComponent(id)}/dismiss`, { method: "POST" }),
   getIncidentMap: (id: string) => req<{ svg: string; caption: string; province: string | null }>(`/api/live-layers/conflict-escalation/incidents/${encodeURIComponent(id)}/map`),
   getConflictZones: () => req<ConflictZones>("/api/live-layers/conflict-zones"),
   getActiveConflicts: () => req<ActiveConflicts>("/api/live-layers/active-conflicts"),
