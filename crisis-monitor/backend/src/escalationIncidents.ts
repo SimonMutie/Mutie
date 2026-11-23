@@ -694,8 +694,9 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     void opening; // every reading is now the opening paragraphs
     let article: ArticleForCoding | null = null;
     if (page) {
-      // Only the first seven paragraphs are read and coded, never the whole article.
-      article = { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "opening", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
+      // The whole article is read (up to the reader's length limit), so every event in it, and its date, place and
+      // actors, come from the paragraphs that report them.
+      article = { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: page.text, textBasis: "full_text", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
     } else if (c.feedText && c.feedText.length >= (c.origin === "telegram" ? 80 : 200)) {
       // (A Telegram post is short by nature, so less text is asked of it; it is still coded at reduced confidence.)
       // The page could not be read; the feed's own summary is long enough to
@@ -1178,6 +1179,33 @@ const CAPITALS: Record<string, string> = { SD: "khartoum", ET: "addis ababa", EG
  * so the AI reads them once more on the normal reading path — the opening
  * paragraphs for major events — and the corrected rules apply.
  */
+/** Once per change of rules: every report behind an incident on the map, and every report of the last week, is
+ *  cleared with its article, so the article is read again, in full, under the current rules (place and date from the
+ *  body, channel names never places, claims folded into the attack, old events dropped) when it is next among the
+ *  candidates. Incidents left without reports are taken off the map. Nothing has to be removed by hand. */
+const RECHECK_KEY = "recheck_2026_11_23";
+export async function recheckUnderNewRules(env: Env): Promise<number> {
+  if ((await getState(env, RECHECK_KEY)) === "1") return 0;
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const rows = await all<{ article_id: string }>(
+    env.DB,
+    `SELECT DISTINCT r.article_id FROM escalation_reports r
+     LEFT JOIN escalation_incidents i ON i.id = r.incident_id
+     WHERE i.status = 'active' OR r.created_at >= ?`,
+    [since]
+  );
+  for (let i = 0; i < rows.length; i += 50) {
+    const ids = rows.slice(i, i + 50).map((r) => r.article_id);
+    const marks = ids.map(() => "?").join(",");
+    await run(env.DB, `DELETE FROM escalation_reports WHERE article_id IN (${marks})`, ids);
+    await run(env.DB, `DELETE FROM escalation_articles WHERE id IN (${marks})`, ids);
+  }
+  await run(env.DB, `UPDATE escalation_incidents SET status = 'dismissed', updated_at = ? WHERE status = 'active' AND NOT EXISTS (SELECT 1 FROM escalation_reports r WHERE r.incident_id = escalation_incidents.id)`, [nowIso()]);
+  await setState(env, RECHECK_KEY, "1");
+  console.log(`[escalation] re-reading ${rows.length} article(s) under the current rules`);
+  return rows.length;
+}
+
 export async function correctStoredCountries(env: Env): Promise<number> {
   if ((await getState(env, COUNTRY_CORRECTION_KEY)) === "1") return 0;
   const since = new Date(Date.now() - 3 * 86_400_000).toISOString();
@@ -1189,7 +1217,7 @@ export async function correctStoredCountries(env: Env): Promise<number> {
   const articles = new Set<string>();
   for (const r of rows) {
     const titleNorm = normalizeName(r.title ?? "");
-    const titleCountry = locateText(r.title)?.countryCode ?? null;
+    const titleCountry = locateText((r.title ?? "").replace(/\s*\(Telegram:[^)]*\)\s*$/, ""))?.countryCode ?? null;
     const placeInTitle = !!r.place && titleNorm.includes(normalizeName(r.place));
     const wrongCountry = !!titleCountry && titleCountry !== r.country_code && !placeInTitle;
     const unnamedCapital = !!r.place && !placeInTitle && CAPITALS[r.country_code] === normalizeName(r.place);
@@ -1512,6 +1540,8 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
     // It is also paced through the day (freeAllowancePacing).
     // On Claude, reading is paced the same way against today's Claude call limit (lib/aiSettings.ts); when that is
     // reached and the provider is automatic, reading carries on with Cloudflare's allowance.
+    // Before anything is read: clear what was stored under older rules, once, so it is read again (see below).
+    await recheckUnderNewRules(env).catch((err) => console.error("[escalation] recheck failed", err));
     let paceLimit = Number.POSITIVE_INFINITY;
     const settings = await loadAiSettings(env);
     let onCloudflare = describeProvider(env).provider === "workers-ai";
