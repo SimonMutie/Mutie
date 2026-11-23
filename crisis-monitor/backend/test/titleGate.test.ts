@@ -108,3 +108,13 @@ describe("Ethiopian and Eritrean items", () => {
       expect(titleIsRelevant(t), t).toBe(true);
   });
 });
+
+import { firstParagraphs } from "../src/lib/titleGate";
+describe("Telegram posts are judged by their first two paragraphs", () => {
+  it("skips tag lines and stops after two paragraphs", () => {
+    const text = "#Tikvah #Ethiopia\nየዛሬ ዜና\nበምዕራብ ጎጃም ዞን በተፈጸመ ጥቃት 12 ሰዎች ተገደሉ።\nሌላ መረጃ";
+    expect(firstParagraphs(text, 2)).toBe("የዛሬ ዜና በምዕራብ ጎጃም ዞን በተፈጸመ ጥቃት 12 ሰዎች ተገደሉ።");
+    expect(titleIsRelevant(gateText({ title: "#Tikvah (Telegram: Tikvah-Ethiopia)", feedText: text, origin: "telegram" }))).toBe(true);
+    expect(titleIsRelevant(gateText({ title: "x", feedText: "Weather today\nPrices rise\nGunmen kill 5 in Gondar", origin: "telegram" }))).toBe(false);
+  });
+});
