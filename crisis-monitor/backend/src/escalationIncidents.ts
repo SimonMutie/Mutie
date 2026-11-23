@@ -626,13 +626,13 @@ async function runHeadlinePass(env: Env, candidates: Candidate[], onRecord: Map<
   }
 }
 
-/** What is read of an article: its first four paragraphs, never more. The lead gives the who and the toll, the
- *  second to fourth usually the exact place, the circumstances and who is blamed ("…killed miners near the Egyptian border." /
+/** What is read of an article: its first seven paragraphs, never more. The lead gives the who and the toll, the
+ *  next ones the exact place, the date, the method, who is blamed and who claimed it ("…killed miners near the Egyptian border." /
  *  "Warplanes struck sites in the Shamal al-Wadi area of far northern Red Sea State…"). Only articles whose headline
  *  passes the gate (lib/titleGate.ts) are read at all. */
-export const OPENING_PARAGRAPHS = 4;
+export const OPENING_PARAGRAPHS = 7;
 const OPENING_PARA_CHARS = 1200;
-const OPENING_MAX_CHARS = 4800;
+const OPENING_MAX_CHARS = 8400;
 
 function capParagraph(p: string, max: number): string {
   if (p.length <= max) return p;
@@ -694,12 +694,12 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     void opening; // every reading is now the opening paragraphs
     let article: ArticleForCoding | null = null;
     if (page) {
-      // Only the first four paragraphs are read and coded, never the whole article.
+      // Only the first seven paragraphs are read and coded, never the whole article.
       article = { url: c.url, title: c.title ?? page.title ?? "(untitled)", text: openingParagraph(page.text), textBasis: "opening", publishedAt: page.publishedAt ?? c.publishedAt, domain: c.domain };
     } else if (c.feedText && c.feedText.length >= (c.origin === "telegram" ? 80 : 200)) {
       // (A Telegram post is short by nature, so less text is asked of it; it is still coded at reduced confidence.)
       // The page could not be read; the feed's own summary is long enough to
-      // code from, at reduced confidence (see verifyCoding). Held to the same length as four paragraphs.
+      // code from, at reduced confidence (see verifyCoding). Held to the same length as seven paragraphs.
       article = { url: c.url, title: c.title ?? "(untitled)", text: c.feedText.slice(0, OPENING_MAX_CHARS), textBasis: "feed_summary", publishedAt: c.publishedAt, domain: c.domain };
     }
     if (!article) {
@@ -1797,6 +1797,14 @@ export async function getIncidentHistoryPoints(env: Env, days: number): Promise<
      WHERE headline IS NOT NULL AND geo_precision IN ('place','approximate','region') AND COALESCE(last_event_date, substr(updated_at, 1, 10)) >= ?`,
     [since]
   );
+}
+
+/** An admin takes a wrongly placed or out-of-date incident off the map. It is kept, marked "dismissed": it no
+ *  longer shows, raises nothing, and new reports form a new incident rather than reviving it. */
+export async function dismissIncident(env: Env, id: string): Promise<boolean> {
+  await ensureTables(env);
+  const r = await env.DB.prepare("UPDATE escalation_incidents SET status = 'dismissed', updated_at = ? WHERE id = ? AND status != 'dismissed'").bind(nowIso(), id).run();
+  return (r.meta?.changes ?? 0) > 0;
 }
 
 export async function getIncident(env: Env, id: string): Promise<IncidentView | null> {
