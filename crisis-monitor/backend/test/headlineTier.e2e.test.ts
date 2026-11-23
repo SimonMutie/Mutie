@@ -226,7 +226,7 @@ describe("headline first pass, once a model can read the articles", () => {
     expect(mekelle.preliminary).toBe(false);
     expect(mekelle.analystWritten).toBe(true);
     expect(mekelle.fatalitiesMax).toBe(9);
-    expect(mekelle.sources.map((s) => s.textBasis).sort()).toEqual(["headline", "opening"]);
+    expect(mekelle.sources.map((s) => s.textBasis).sort()).toEqual(["full_text", "headline"]);
     expect(mekelle.caveats ?? "").not.toMatch(/Preliminary/);
 
     // El Fasher and Zamfara: their pages could not be opened, so the headline reading stands.
