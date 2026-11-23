@@ -91,7 +91,7 @@ const STEMS: Record<string, string[]> = {
     "dagaal", "weerar", "dilay", "dileen", "la dilay", "dhimash", "dhaawac", "qarax", "ciidam", "duqeyn", "xasuuq", "colaad", "amni", "nabadgelyo", "argagixis",
     "burcad", "afduub", "barakac", "isku dhac", "shabaab", "maleeshiyaad",
   ],
-  oromo: ["lola$", "waraana", "haleel", "ajjeef", "ajjeech", "loltoota", "buqqa", "nageenya", "miidhaa", "lubbuu", "hidhame", "ukkaamf", "shanee"],
+  oromo: ["rasaas", "ajjeefam", "ajjeesan", "ajjeese", "lolli", "humnoota", "poolisii", "hidhaman", "waraanni", "weerara", "lola$", "waraana", "haleel", "ajjeef", "ajjeech", "loltoota", "buqqa", "nageenya", "miidhaa", "lubbuu", "hidhame", "ukkaamf", "shanee"],
   kinyarwanda_kirundi: ["intambara", "abishwe", "yishwe", "bishwe", "kwica", "umutekano", "abarwanyi", "ibitero", "igitero", "impunzi", "inyeshyamba"],
   lingala: ["bitumba", "etumba", "babomi", "koboma", "basoda", "mobulu", "bayibi", "banyokoli", "kobunda"],
 };
@@ -106,6 +106,10 @@ const NON_LATIN = [
   // Amharic and Tigrinya (Ge'ez script)
   "ጦርነት", "ውጊያ", "ጥቃት", "ግጭት", "ተገደ", "ተገድ", "ግድያ", "ሞቱ", "ሞት", "ቆሰሉ", "ቁስለኛ", "ታጣቂ", "ሽፍታ", "ዘረፋ", "ወንጀል", "ጸጥታ", "ፀጥታ", "ሁከት", "ብጥብጥ",
   "ታገቱ", "እገታ", "ፍንዳታ", "ድሮን", "ሰራዊት", "ሠራዊት", "መከላከያ", "ተፈናቀ", "መፈናቀ", "ፋኖ", "ሸኔ", "ውግእ", "መጥቃዕቲ", "ተቐቲ", "ዕጥቀ",
+  "ተኩስ", "ጦር", "ወታደር", "ሚሊሻ", "ታጣቂዎች", "ታፍነ", "ዕገታ", "ቦምብ", "ፖሊስ", "እስር", "ስደተኛ", "ተዋጊ", "አማፂ", "አማጺ",
+  "ሕወሓት", "ህወሓት", "ኦነግ", "ኮማንድ ፖስት", "አስቸኳይ ጊዜ", "ሰዓት እላፊ",
+  // Tigrinya
+  "ኲናት", "ኩናት", "ተቐቲሎም", "ተቐቲሉ", "ሞይቶም", "ቆሲሎም", "ደብዳብ", "ምትኳስ", "ኣጽዋር", "ተጋደልቲ", "ዝተፈናቐሉ",
 ];
 
 const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[ -]/g, "[\\s-]*").replace(/['’]/g, "['’]?");
@@ -140,7 +144,9 @@ export function titleIsRelevant(title: string | null | undefined): boolean {
   return STEM_RE.test(t) || NON_LATIN.some((w) => t.includes(w)) || isCandidateText(t) || candidatePriority(t) > 0 || !!extraWords()?.test(t);
 }
 
-/** What a Telegram post or other untitled item is judged by: its own title, else the start of its text. */
+/** What an item is judged by: its headline and the start of its text (a feed's summary, or a post's opening).
+ *  The text counts too because many headlines say little ("Ethiopia News: …"), and a Telegram post's "headline"
+ *  is only its first line, often a tag or a date, with the event in the lines below. */
 export function gateText(c: { title?: string | null; feedText?: string | null }): string {
-  return (c.title || (c.feedText ?? "").slice(0, 280)).trim();
+  return `${c.title ?? ""} ${(c.feedText ?? "").slice(0, 400)}`.trim();
 }
