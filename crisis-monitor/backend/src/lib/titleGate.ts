@@ -147,6 +147,16 @@ export function titleIsRelevant(title: string | null | undefined): boolean {
 /** What an item is judged by: its headline and the start of its text (a feed's summary, or a post's opening).
  *  The text counts too because many headlines say little ("Ethiopia News: …"), and a Telegram post's "headline"
  *  is only its first line, often a tag or a date, with the event in the lines below. */
-export function gateText(c: { title?: string | null; feedText?: string | null }): string {
+export function gateText(c: { title?: string | null; feedText?: string | null; origin?: string }): string {
+  if (c.origin === "telegram") return `${c.title ?? ""} ${firstParagraphs(c.feedText ?? "", 2)}`.trim();
   return `${c.title ?? ""} ${(c.feedText ?? "").slice(0, 400)}`.trim();
+}
+
+/** A post's first `n` paragraphs (lines with text; a tag-only line such as "#Tikvah" does not count as one). */
+export function firstParagraphs(text: string, n: number): string {
+  const paras = text
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0 && !/^(?:[#@][\p{L}\p{N}_]+\s*)+$/u.test(p));
+  return paras.slice(0, n).join(" ").slice(0, 1200);
 }
