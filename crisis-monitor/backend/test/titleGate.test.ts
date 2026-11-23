@@ -95,3 +95,16 @@ describe("sharing reading slots by country", () => {
     expect(order.slice(0, 2).sort()).toEqual(["1", "4"]);
   });
 });
+
+import { gateText } from "../src/lib/titleGate";
+describe("Ethiopian and Eritrean items", () => {
+  it("judges a post by its text, not only its first line", () => {
+    const post = { title: "#Tikvah (Telegram: Tikvah-Ethiopia)", feedText: "#Tikvah\nበምዕራብ ጎጃም ዞን በተፈጸመ ጥቃት 12 ሰዎች ተገደሉ።" };
+    expect(titleIsRelevant(post.title)).toBe(false);
+    expect(titleIsRelevant(gateText(post))).toBe(true);
+  });
+  it("passes Tigrinya, Afaan Oromoo and Amharic reports", () => {
+    for (const t of ["ኲናት ኣብ ምብራቕ ትግራይ", "ሰራዊት ኤርትራ ተቐቲሎም", "Godina Wallagga Lixaa keessatti namoonni 10 ajjeefaman", "Rasaasa humnoota mootummaan", "በአማራ ክልል ተኩስ", "ታጣቂዎች ሰዎችን አፈኑ"])
+      expect(titleIsRelevant(t), t).toBe(true);
+  });
+});
