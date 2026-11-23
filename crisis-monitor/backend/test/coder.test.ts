@@ -89,6 +89,24 @@ describe("verifyCoding", () => {
     expect(verifyCoding(coding(event({ event_date: "2026-09-10", indicators: ind })), article(TIGRAY), NOW).rejectionReason).toBe("retrospective");
   });
 
+  it("drops an old event re-published recently, and an undated one with no publication date", () => {
+    const ind = [{ id: "air_or_drone_strike", quote: "carried out a drone strike near Mekelle" }];
+    // Published long ago and dated then: more than a week before today.
+    expect(verifyCoding(coding(event({ event_date: "2026-08-01", indicators: ind })), article(TIGRAY, { publishedAt: "2026-08-02T08:00:00Z" }), NOW).rejectionReason).toBe("retrospective");
+    // Neither the event nor the article dated: nothing shows it is recent.
+    expect(verifyCoding(coding(event({ event_date: null, indicators: ind })), article(TIGRAY, { publishedAt: null }), NOW).rejectionReason).toBe("retrospective");
+  });
+
+  it("never takes a Telegram channel's name for the place", () => {
+    const text = "Gunmen attacked a police post in Kenya's Mandera county on Thursday, killing three officers, police said.";
+    const out = verifyCoding(
+      coding(event({ country: "Kenya", country_iso2: "KE", place: "Mandera", indicators: [{ id: "attack_on_security_forces", quote: "Gunmen attacked a police post in Kenya's Mandera county" }] })),
+      article(text, { title: "ታጣቂዎች (Telegram: Tikvah-Ethiopia)" }),
+      NOW
+    );
+    expect(out.reports[0].countryCode).toBe("KE");
+  });
+
   it("accepts a place written in another script when the model also gives its Latin name", () => {
     const text = "قصفت قوات الدعم السريع مدينة الفاشر بالمدفعية الثقيلة يوم الخميس، ما أسفر عن مقتل تسعة مدنيين بحسب لجان المقاومة في السودان.";
     const out = verifyCoding(
