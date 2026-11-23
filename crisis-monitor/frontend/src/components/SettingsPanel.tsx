@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, setToken, type AiProvider, type AiSettingsView, type AuthUser, type EscalationPipelineStatus, type MapTilerExtras, type Vehicle, TRACKING_URL } from "../api";
+import { api, setToken, type AiProvider, type AiSettingsView, type AuthUser, type EscalationAuditEntry, type EscalationPipelineStatus, type MapTilerExtras, type Vehicle, TRACKING_URL } from "../api";
 import AlertDeliveryPanel from "./AlertDeliveryPanel";
 import { setMapTilerKey, setMaptilerExtras } from "../mapProvider";
 import { REPLAY_EVENT, introSoundEnabled, setIntroSoundEnabled, introVoiceEnabled, setIntroVoiceEnabled } from "../intro";
@@ -172,6 +172,13 @@ function AiReadingCard() {
         run.lastModelError ? `Model error: ${run.lastModelError}` : "",
         run.aiBudgetReached ? "Today's AI limit is reached." : "",
         `Claude today: ${r.claude.calls} of ${r.claude.limit} calls.`,
+        run.byCountry
+          ? `By country this round: ${Object.entries(run.byCountry)
+              .sort((a, b) => b[1].waiting + b[1].skipped - (a[1].waiting + a[1].skipped))
+              .slice(0, 8)
+              .map(([k, c]) => `${k === "?" ? "unplaced" : k} ${c.read} read / ${c.waiting} waiting / ${c.skipped} passed over`)
+              .join("; ")}.`
+          : "",
       ]
         .filter(Boolean)
         .join(" ");
@@ -312,6 +319,7 @@ function AiReadingCard() {
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Runs a reading round straight away (otherwise every five minutes).</span>
           </div>
           {collect && <div style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5, color: collect.ok ? "var(--positive)" : "var(--critical)" }}>{collect.text}</div>}
+          <CountryCheck />
 
           {u && (
             <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
@@ -321,6 +329,64 @@ function AiReadingCard() {
         </>
       )}
       {msg && <div style={{ fontSize: 12.5, marginTop: 8, color: msg.ok ? "var(--positive)" : "var(--critical)" }}>{msg.text}</div>}
+    </div>
+  );
+}
+
+/** Why a country shows nothing: every article about it the pipeline has decided on, newest first, with the reason. */
+function CountryCheck() {
+  const [country, setCountry] = useState("Ethiopia");
+  const [items, setItems] = useState<EscalationAuditEntry[] | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function check() {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.getEscalationAudit({ country, limit: 60 });
+      setItems(r.items);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Could not check.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  const counts = items ? items.reduce<Record<string, number>>((m, i) => ((m[i.status] = (m[i.status] ?? 0) + 1), m), {}) : null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Check a country</div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input value={country} onChange={(e) => setCountry(e.target.value)} style={{ flex: 1 }} aria-label="Country" />
+        <button disabled={busy || !country.trim()} onClick={check}>
+          {busy ? "Checking…" : "Check"}
+        </button>
+      </div>
+      {err && <div style={{ fontSize: 12.5, color: "var(--critical)", marginTop: 6 }}>{err}</div>}
+      {items && (
+        <div style={{ marginTop: 8, fontSize: 12.5 }}>
+          <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>
+            {items.length === 0
+              ? `Nothing about ${country} has been read yet.`
+              : `Last ${items.length} read: ${Object.entries(counts!)
+                  .map(([k, n]) => `${n} ${k === "coded" ? "with events" : k}`)
+                  .join(", ")}.`}
+          </div>
+          <div style={{ maxHeight: 320, overflowY: "auto", display: "grid", gap: 6 }}>
+            {items.map((i) => (
+              <div key={i.url + i.processedAt} style={{ borderLeft: `3px solid ${i.status === "coded" ? "var(--positive)" : i.status === "rejected" ? "var(--warning, #c9a227)" : "var(--critical)"}`, paddingLeft: 8 }}>
+                <a href={i.url} target="_blank" rel="noreferrer" style={{ color: "var(--text)" }}>
+                  {i.title || i.url}
+                </a>
+                <div style={{ color: "var(--text-muted)", fontSize: 11.5 }}>
+                  {i.domain} · {new Date(i.processedAt).toLocaleString()} · <b>{i.status === "coded" ? `coded: ${i.reports.map((r) => `${r.location ?? r.country} (${r.indicators.join(", ")})`).join("; ")}` : i.status}</b>
+                  {i.rejectionReason ? ` · ${i.rejectionReason.replace(/_/g, " ")}` : ""}
+                  {i.rejectionNote ? ` — ${i.rejectionNote}` : ""}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
