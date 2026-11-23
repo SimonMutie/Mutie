@@ -83,3 +83,15 @@ describe("the headline gate", () => {
     expect(titleIsRelevant("Boda boda riders block highway in Kakamega")).toBe(true);
   });
 });
+
+import { candidateCountry, shareByCountry } from "../src/escalationIncidents";
+describe("sharing reading slots by country", () => {
+  it("lets Ethiopia in between a run of Sudan stories", () => {
+    const c = (id: string, title: string) => ({ id, url: id, domain: "x", origin: "africa-wire" as const, title, feedText: null, publishedAt: null, priority: 1 });
+    const list = [c("1", "RSF shells El Fasher"), c("2", "Clashes in Khartoum"), c("3", "Drone strike in Kordofan"), c("4", "Fano fighters attack Gondar in Amhara"), c("5", "በአማራ ክልል ግጭት")];
+    expect(candidateCountry(list[3])).toBe("ET");
+    expect(candidateCountry(list[4])).toBe("ET");
+    const order = shareByCountry(list).map((x) => x.id);
+    expect(order.slice(0, 2).sort()).toEqual(["1", "4"]);
+  });
+});
