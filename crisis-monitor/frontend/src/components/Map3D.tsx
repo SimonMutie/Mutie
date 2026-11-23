@@ -1,5 +1,6 @@
 import { AIRCRAFT_LAYER_KEYS, planeSvg } from "./planeIcon";
 import { EscalationMap } from "./EscalationMap";
+import { viewerIsAdmin } from "../viewer";
 import type { FeatureCollection } from "geojson";
 import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 import { NEUTRAL_COUNTRY } from "./worldCountries";
@@ -1240,6 +1241,31 @@ const shortDate = (iso: string | null) => (iso ? new Date(iso.length === 10 ? `$
  *  what it means (analyst text, cited), then exactly why it is flagged —
  *  the criteria met, each indicator with the quote that establishes it,
  *  and the sources. */
+/** Admin: take a wrongly placed or out-of-date incident off the map. */
+function DismissIncident({ id }: { id: string }) {
+  const [state, setState] = useState<"" | "busy" | "done" | string>("");
+  if (state === "done") return <div style={{ marginTop: 8, fontSize: 12, color: "#86efac" }}>Removed from the map. It disappears on the next refresh.</div>;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <button
+        disabled={state === "busy"}
+        onClick={() => {
+          if (!window.confirm("Remove this incident from the map? Use this for one that is wrongly placed or out of date.")) return;
+          setState("busy");
+          api.dismissIncident(id).then(
+            () => setState("done"),
+            (e: Error) => setState(e.message)
+          );
+        }}
+        style={{ background: "rgba(255,80,80,0.12)", border: "1px solid rgba(255,80,80,0.45)", color: "#fca5a5", borderRadius: 6, padding: "3px 9px", fontSize: 11.5, cursor: "pointer" }}
+      >
+        {state === "busy" ? "Removing…" : "Remove from map (wrong place or old)"}
+      </button>
+      {state && state !== "busy" && <div style={{ fontSize: 11.5, color: "#fca5a5", marginTop: 4 }}>{state}</div>}
+    </div>
+  );
+}
+
 function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) {
   const where = incident.locationLabel ? `${incident.locationLabel}, ${incident.countryName}` : incident.countryName;
   const dates = incident.firstEventDate && incident.lastEventDate && incident.firstEventDate !== incident.lastEventDate
@@ -1253,6 +1279,7 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
       <div className={`lens-incident-precision lens-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
       {incident.preliminary && <div className="lens-incident-preliminary">PRELIMINARY · FROM HEADLINES · NOT YET READ IN FULL</div>}
       <EscalationMap incidentId={incident.id} />
+      {viewerIsAdmin() && <DismissIncident id={incident.id} />}
       <a className="lens-popup-link" href={liveuamap.url} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8 }}>
         [ OPEN {liveuamap.mapName.toUpperCase()} ON LIVEUAMAP ↗ ]
       </a>
