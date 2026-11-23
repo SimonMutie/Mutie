@@ -59,6 +59,7 @@ import type { EscalationCandidate } from "./durableObjects/africaWireActor";
  */
 
 const DEFAULT_ARTICLES_PER_TICK = 12;
+const CLAUDE_ARTICLES_PER_TICK = 25;
 /** On the free Workers AI allowance. What reserving one article's reading
  *  takes (worst case: a full-length article and a full-length answer), and
  *  what one typically ends up costing — used to pace reading over the day. */
@@ -1613,16 +1614,19 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
         const lists = [priorityList, upgrades, shareByCountry(freshOf(africaWire)), shareByCountry(freshOf(wireFeeds)), freshOf(gdelt), shareByCountry(freshOf(telegram))];
         stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
-        const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
+        // On Claude each round reads up to 25 (still paced against the day's limit), so new reports are reached within
+        // a round or two of appearing; on Cloudflare's allowance, 12.
+        const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || (onCloudflare ? DEFAULT_ARTICLES_PER_TICK : CLAUDE_ARTICLES_PER_TICK))));
+        const concurrency = CODING_CONCURRENCY;
         const batch = pickBatch(lists, perTick);
         for (const c of new Map(lists.flat().map((c) => [c.id, c])).values()) tally(c, "waiting");
         for (const c of batch) tally(c, "read");
         stats.byCountry = byCountry;
         const geocodeBudget: GeocodeBudget = { remaining: GEOCODER_CALLS_PER_TICK };
 
-        for (let i = 0; i < batch.length; i += CODING_CONCURRENCY) {
+        for (let i = 0; i < batch.length; i += concurrency) {
           const failuresBefore = stats.modelFailures;
-          const chunk = batch.slice(i, i + CODING_CONCURRENCY);
+          const chunk = batch.slice(i, i + concurrency);
           await Promise.all(
             chunk.map(async (c) => {
               if (await claimArticle(env, c)) await processCandidate(env, c, geocodeBudget, stats, priorityOpening.has(c.id));
