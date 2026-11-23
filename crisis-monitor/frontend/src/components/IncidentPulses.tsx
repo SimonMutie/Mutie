@@ -27,18 +27,29 @@ export function useIncidentPulses(): IncidentPulse[] {
   return pulses;
 }
 
-export function IncidentPulseLayer({ pulses }: { pulses: IncidentPulse[] }) {
+/** Within about 3 km: the pulse is at an escalation marker. */
+const SAME_SPOT_DEG = 0.03;
+
+/**
+ * Pulses lie beneath every marker. Where a pulse falls on an escalation marker (the usual case for a serious
+ * incident), it is drawn as rings only, with no centre dot: the dot used to sit on top of the warning triangle and
+ * hide most of it, leaving a misshapen dark shape. The marker's own card then tells the story.
+ */
+export function IncidentPulseLayer({ pulses, markers = [] }: { pulses: IncidentPulse[]; markers?: { lat: number; lng: number }[] }) {
   return (
     <>
-      {pulses.map((p) => (
+      {pulses.map((p) => {
+        const onMarker = markers.some((m) => Math.abs(m.lat - p.lat) < SAME_SPOT_DEG && Math.abs(m.lng - p.lon) < SAME_SPOT_DEG);
+        return (
         <Marker
-          key={p.id}
+          key={`${p.id}:${onMarker ? "rings" : "dot"}`}
           position={[p.lat, p.lon]}
-          zIndexOffset={p.kind === "impact" ? 900 : 800}
+          zIndexOffset={p.kind === "impact" ? -900 : -950}
+          interactive={!onMarker}
           icon={divIcon({
             className: "incident-pulse-icon",
             iconSize: [0, 0],
-            html: `<span class="incident-pulse${p.confirmed ? "" : " incident-pulse--claim"}" style="--pulse-size:${SIZE[p.size]}px;--pulse-color:${COLOR[p.kind]}"><span class="incident-pulse-ring"></span><span class="incident-pulse-ring incident-pulse-ring--late"></span><span class="incident-pulse-ring incident-pulse-ring--later"></span><span class="incident-pulse-core"></span></span>`,
+            html: `<span class="incident-pulse${p.confirmed ? "" : " incident-pulse--claim"}" style="--pulse-size:${SIZE[p.size]}px;--pulse-color:${COLOR[p.kind]}"><span class="incident-pulse-ring"></span><span class="incident-pulse-ring incident-pulse-ring--late"></span><span class="incident-pulse-ring incident-pulse-ring--later"></span>${onMarker ? "" : '<span class="incident-pulse-core"></span>'}</span>`,
           })}
         >
           <Tooltip direction="top" offset={[0, -8]}>
@@ -54,7 +65,8 @@ export function IncidentPulseLayer({ pulses }: { pulses: IncidentPulse[] }) {
             </div>
           </Tooltip>
         </Marker>
-      ))}
+        );
+      })}
     </>
   );
 }
