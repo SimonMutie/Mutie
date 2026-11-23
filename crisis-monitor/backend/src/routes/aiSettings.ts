@@ -4,6 +4,7 @@ import { requireAdmin, requireAuth, type AuthedVariables } from "../middleware";
 import type { Env } from "../bindings";
 import { getClaudeUsage, loadAiSettings, saveAiSettings, type AiSettings } from "../lib/aiSettings";
 import { getAiUsage } from "../lib/aiBudget";
+import { lastEscalationRun, runEscalationPipeline } from "../escalationIncidents";
 
 /**
  * Settings → AI reading (admins): which AI reads for the platform (Claude, Cloudflare's own AI, or Claude with
@@ -55,6 +56,16 @@ const schema = z.object({
   extraKeywords: z.string().max(20_000).optional(),
   /** A new key, or null to remove the saved one. Left out: unchanged. */
   anthropicKey: z.string().trim().regex(/^sk-ant-[A-Za-z0-9_-]{20,}$/, "That does not look like an Anthropic API key (it starts with sk-ant-).").nullable().optional(),
+});
+
+/** Collect now: runs one escalation reading round straight away (otherwise every five minutes) and reports it. */
+aiSettingsRouter.post("/collect-now", async (c) => {
+  const before = await lastEscalationRun(c.env);
+  await loadAiSettings(c.env, true);
+  await runEscalationPipeline(c.env);
+  const run = await lastEscalationRun(c.env);
+  const ran = !!run && run.at !== before?.at;
+  return c.json({ ran, run, claude: await getClaudeUsage(c.env), note: ran ? null : "A round was already running; its results show in a minute." });
 });
 
 aiSettingsRouter.put("/", async (c) => {
