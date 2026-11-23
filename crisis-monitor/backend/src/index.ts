@@ -4,6 +4,9 @@ import { loadAiSettings } from "./lib/aiSettings";
 
 /** The schedule (wrangler.toml) that runs Strategic Analyses on its own. */
 const STRATEGIC_ANALYSES_CRON = "2-59/5 * * * *";
+/** The escalation reading pipeline's own schedule (wrangler.toml): a run of its own, so the other collectors can
+ *  never use up its time or requests. */
+const ESCALATION_CRON = "1-59/5 * * * *";
 import { advanceFactsBackfill } from "./lib/incidentFacts";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -228,6 +231,12 @@ export default {
         .catch((err) => console.error("[analyses] collection failed", err));
       return;
     }
+    if (controller.cron === ESCALATION_CRON) {
+      await ensureSchema(env);
+      await runEscalationPipeline(env).catch((err) => console.error("[escalation] pipeline tick failed", err));
+      await dispatchAlertSubscriptions(env).catch((err) => console.error("[alerts] dispatch failed", err));
+      return;
+    }
     await ensureSchema(env);
     // Safety net independent of HTTP traffic: re-kick the actors' alarms here too.
     ctx.waitUntil(bootstrapActors(env).catch((err) => console.error("[cron] bootstrap failed", err)));
@@ -297,12 +306,7 @@ export default {
     );
     ctx.waitUntil(refreshStaleLists(env).catch((err) => console.error("[dd] list refresh failed", err)));
 
-    ctx.waitUntil(
-      runEscalationPipeline(env)
-        .catch((err) => console.error("[escalation] pipeline tick failed", err))
-        .then(() => dispatchAlertSubscriptions(env))
-        .catch((err) => console.error("[alerts] dispatch failed", err))
-    );
+    // (The escalation pipeline and alert delivery run on their own schedule: ESCALATION_CRON above.)
 
     // The watch on each monitoring query (see queryWatch.ts): its last 24
     // hours against its own usual day, and a coverage-surge alert when the
