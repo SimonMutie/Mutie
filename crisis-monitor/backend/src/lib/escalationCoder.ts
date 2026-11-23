@@ -222,7 +222,11 @@ RULES
    If such a piece does contain a specific new armed event with its own place and date, code that event only, from the passage that reports it.
    A first report of an attack that rests on survivors' or witnesses' accounts ("strikes killed at least 200, according to three survivors") IS a report of a new event — code it, with medium confidence if the toll or the attacker is unverified. Likewise a story whose news is an inquiry, condemnation or reaction to a specific attack of the last few days still codes that attack when it states its place, date and toll. A standing situation is never an indicator by itself: "the city has been under siege since May" is background; "shelling killed nine in the city on Monday" is an event.
 
-3. LOCATION is where the event physically happened — never the dateline at the start of a wire story ("DUBAI, Oct 12 (Reuters) -", "BEIRUT (AP) —", "RIYADH:"), which is only where the reporter filed from; never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa and the Middle East (Syria, Iraq, Iran, Israel, Palestine/Gaza/West Bank, Lebanon, Jordan, Yemen, Saudi Arabia, Oman, UAE, Kuwait, Qatar, Bahrain, Turkey), reject with outside_africa. Use the country the event happened in; for the Gaza Strip and West Bank use Palestine.
+3. LOCATION is where the event physically happened — never the dateline at the start of a wire story ("DUBAI, Oct 12 (Reuters) -", "BEIRUT (AP) —", "RIYADH:"), which is only where the reporter filed from; never where the newspaper is based, where an official made a statement, where a force comes from, or another country mentioned in passing. If Kenyan troops are attacked in Somalia, the event is in Somalia. If an Ethiopian-based outlet reports fighting in Sudan, the event is in Sudan. A Telegram channel's or outlet's name ("Tikvah-Ethiopia", "Addis Standard", "Sudan Tribune") is the publisher, never the place: an Ethiopian channel reporting an Israeli strike on Lebanon reports an event in Lebanon. If the article does not name a place, leave place null — do not supply one from general knowledge. If the event is outside Africa and the Middle East (Syria, Iraq, Iran, Israel, Palestine/Gaza/West Bank, Lebanon, Jordan, Yemen, Saudi Arabia, Oman, UAE, Kuwait, Qatar, Bahrain, Turkey), reject with outside_africa. Use the country the event happened in; for the Gaza Strip and West Bank use Palestine.
+
+3a. CLAIMS, CONFIRMATIONS AND FOLLOW-UPS. A claim of responsibility, an admission, a confirmation, a new toll or new details about an attack that already happened are part of THAT attack. Code the original attack: its place (where it physically happened, e.g. off the Libyan coast — not the claimant's country), its date (when it happened — not the date of the claim), and the claimant among its actors. Never code the claim, the statement or the press conference as an event of its own at the claimant's location.
+
+3b. DATES. event_date is the day the event itself happened, resolved from the text ("on Sunday", "last night") against the publication date. Not the day it was reported, claimed, confirmed or commemorated. If the article recalls an older event — an anniversary, a commemoration, a trial, an investigation, a report or a re-circulated story about a massacre or attack from weeks, months or years ago — that event is background: set novelty to "background", whatever its toll. If the article gives no indication of when the event happened, set event_date to null; do not assume it was today.
 
 4. Every indicator needs a QUOTE copied character-for-character from the article, in its original language, that on its own establishes the indicator. If you cannot quote it, do not code it. Code only what is reported as having happened; do not code an indicator from a figurative use ("a clash of views", "under siege from critics"), from a denial, or from a hypothetical.
 
@@ -232,7 +236,7 @@ RULES
 
 7. If one article reports events in different places or on different days, return them as separate events (at most 3 — the most serious). A weekly round-up with no new event of its own is rejected as commentary_or_analysis.
 
-8. what_happened and significance must be specific to this article: name the actors, the place, the date, the numbers. Never write a generic sentence that could describe any conflict. Write them in English whatever the article's language.
+8. what_happened must answer, in one or two sentences, all of: WHO (the named attacker and the named target or victims), WHAT (the event and its toll), WHERE (the place, district and region), WHEN (the date) and HOW (the weapon or method: drone strike, airstrike, shelling, ambush, IED, gunmen on motorbikes, arson…). Leave out only what the article does not say, never invent it. significance must be specific to this article. Never write a generic sentence that could describe any conflict. Write them in English whatever the article's language.
 
 9. If the text is cut off, paywalled, or only a teaser, code only what is actually there and lower confidence accordingly; if there is not enough to code, reject as unreadable.
 
@@ -247,7 +251,7 @@ export function buildCoderUserMessage(a: ArticleForCoding, now: Date): string {
     `Today's date: ${now.toISOString().slice(0, 10)}\n` +
     `Article published: ${a.publishedAt ? a.publishedAt.slice(0, 10) : "unknown"}\n` +
     `Publisher: ${a.domain} (the publisher's location is NOT evidence of where the event happened)\n` +
-    `Text available: ${a.textBasis === "full_text" ? "full article body" : a.textBasis === "opening" ? "the article's first four paragraphs only (the rest was not read)" : "feed summary only — the full page could not be read"}\n` +
+    `Text available: ${a.textBasis === "full_text" ? "full article body" : a.textBasis === "opening" ? "the article's first seven paragraphs only (the rest was not read)" : "feed summary only — the full page could not be read"}\n` +
     `Headline: ${a.title}\n\n` +
     `ARTICLE TEXT\n"""\n${a.text}\n"""`
   );
@@ -495,8 +499,11 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
     //     different country, and the event's place is not named in the
     //     headline, the headline's country wins (the place is then dropped
     //     rather than kept from the wrong country).
-    const titleCountry = locateText(article.title)?.countryCode ?? null;
-    const titleNorm = normalizeForMatch(article.title ?? "");
+    // A Telegram post's title ends with its channel's name ("… (Telegram: Tikvah-Ethiopia)"): the publisher, never
+    // the place, so it is left out here. Otherwise an Amharic post on an Israeli strike in Lebanon was put in Ethiopia.
+    const headline = (article.title ?? "").replace(/\s*\(Telegram:[^)]*\)\s*$/, "");
+    const titleCountry = locateText(headline)?.countryCode ?? null;
+    const titleNorm = normalizeForMatch(headline);
     if (titleCountry && titleCountry !== countryCode && !textNamesCountry(titleNorm, countryCode)) {
       const placeInTitle = !!place && titleNorm.includes(normalizeForMatch(place));
       if (!placeInTitle) {
@@ -560,6 +567,17 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
     }
     if (anchor.getTime() - eventDay.getTime() > MAX_EVENT_AGE_DAYS_AT_PUBLICATION * 86_400_000) {
       dropReasons.push(`retrospective: event dated ${eventDay.toISOString().slice(0, 10)}`);
+      continue;
+    }
+    // Old news is not news: an event more than a week before today (an old article, or an old massacre re-posted)
+    // is dropped whatever its publication date says.
+    if (now.getTime() - eventDay.getTime() > MAX_EVENT_AGE_DAYS_AT_PUBLICATION * 86_400_000) {
+      dropReasons.push(`retrospective: event dated ${eventDay.toISOString().slice(0, 10)}, more than a week ago`);
+      continue;
+    }
+    // With no date in the text and no publication date, nothing shows the event is recent.
+    if (!stated && !publishedDay) {
+      dropReasons.push("retrospective: neither the event nor the article is dated");
       continue;
     }
 
@@ -663,6 +681,7 @@ How to write:
 - Specific to this incident. Name the actors, the place, the dates and the figures. A sentence that could be pasted into any other conflict's summary is a failure.
 - Interpretative and forward-looking, not a chronology. After stating what happened, say what it indicates and what it changes — and keep that judgement tied to what the reports actually show. Where the reports support only a limited inference, make the limited inference.
 - Attribute contested or single-party claims ("according to the RSF", "local officials said"). Where sources disagree on figures, give the range and say so.
+- Cover who, what, where, when and how: the attacker and the target, the event and its toll, the exact place, the date, and the weapon or method. Fold any claim of responsibility, admission or later confirmation into the account of the attack itself (who claimed it, when, and whether it is corroborated); it is not a separate event.
 - Cite the reports inline by their number, like [1] or [2][3], after the claims they support.
 - Do not restate the alert level or the criteria; the reader sees those separately.
 - Do not hedge with stock phrases ("the situation remains fluid", "it remains to be seen").`;
