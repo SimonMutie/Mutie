@@ -157,6 +157,31 @@ function AiReadingCard() {
   const [limit, setLimit] = useState("");
   const [neurons, setNeurons] = useState("");
   const [words, setWords] = useState("");
+  const [collect, setCollect] = useState<{ busy: boolean; text: string; ok: boolean } | null>(null);
+  async function collectNow() {
+    setCollect({ busy: true, text: "Collecting… this takes up to a minute or two.", ok: true });
+    try {
+      const r = await api.collectNow();
+      const run = r.run;
+      if (!run) return setCollect({ busy: false, text: "No round has run yet.", ok: false });
+      const read = run.coded + run.rejected;
+      const who = run.provider === "anthropic" ? `Claude (${run.coderModel})` : "Cloudflare's AI";
+      const text = [
+        r.note ?? `Read ${read} article${read === 1 ? "" : "s"} with ${who}: ${run.coded} with reportable events (${run.reports} reports), ${run.rejected} not reportable.`,
+        typeof run.headlineSkipped === "number" ? `${run.headlineSkipped} passed over by headline; ${run.fresh} new candidates in the feeds.` : "",
+        run.lastModelError ? `Model error: ${run.lastModelError}` : "",
+        run.aiBudgetReached ? "Today's AI limit is reached." : "",
+        `Claude today: ${r.claude.calls} of ${r.claude.limit} calls.`,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      setCollect({ busy: false, text, ok: !run.lastModelError });
+      const s = await api.getAiSettings();
+      setV(s);
+    } catch (e) {
+      setCollect({ busy: false, text: e instanceof Error ? e.message : "Could not collect.", ok: false });
+    }
+  }
   useEffect(() => {
     api.getAiSettings().then(
       (s) => {
@@ -279,6 +304,14 @@ function AiReadingCard() {
           <button disabled={busy || words === (v.extraKeywords ?? "")} onClick={() => save({ extraKeywords: words }, "Headline words saved; they apply from the next run.")} style={{ marginTop: 6 }}>
             Save words
           </button>
+
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button disabled={busy || collect?.busy} onClick={collectNow} style={{ fontWeight: 600 }}>
+              {collect?.busy ? "Collecting…" : "Collect now"}
+            </button>
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Runs a reading round straight away (otherwise every five minutes).</span>
+          </div>
+          {collect && <div style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5, color: collect.ok ? "var(--positive)" : "var(--critical)" }}>{collect.text}</div>}
 
           {u && (
             <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
