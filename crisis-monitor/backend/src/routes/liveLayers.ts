@@ -10,7 +10,7 @@ import type { Env } from "../bindings";
 import { REAL_SHIPPING_LANES } from "../data/maritimeLanes";
 import { COUNTRY_CENTROIDS as GDELT_SOURCE_COUNTRY_CENTROIDS } from "../connectors/gdelt";
 import { queryBulkEvents, TONE_OVERRIDE_THRESHOLD, type BulkEventPoint } from "../connectors/gdeltBulk";
-import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getSituationEvents, getTrendInputs, getIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
+import { getFlaggedIncidents, getMapIncidents, getIncidentHistoryPoints, getSituationEvents, getTrendInputs, getIncident, dismissIncident, getAuditLog, getPipelineStatus, type IncidentView } from "../escalationIncidents";
 import { isGeocodeContradictedBySlug } from "../lib/gdeltGeoSanity";
 import { countryName, resolveCountryCode } from "../lib/africaGeo";
 import { roadRoute, type RoadRoute, type RouteMode } from "../lib/routing";
@@ -518,6 +518,12 @@ liveLayersRouter.get("/conflict-escalation/audit", async (c) => {
     limit: Number(c.req.query("limit")) || 100,
   });
   return c.json({ items, fetchedAt: new Date().toISOString() });
+});
+
+/** Admin: take an incident off the map (wrongly placed, out of date). */
+liveLayersRouter.post("/conflict-escalation/incidents/:id/dismiss", requireAdmin, async (c) => {
+  const ok = await dismissIncident(c.env, c.req.param("id") ?? "");
+  return ok ? c.json({ ok: true }) : c.json({ error: "Incident not found or already removed." }, 404);
 });
 
 liveLayersRouter.get("/conflict-escalation/incidents/:id", async (c) => {
