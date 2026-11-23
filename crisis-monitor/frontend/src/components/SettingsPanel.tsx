@@ -305,7 +305,7 @@ function AiReadingCard() {
 
           <div style={{ fontSize: 13, fontWeight: 600, margin: "14px 0 6px" }}>Headline words</div>
           <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 6 }}>
-            Only articles whose headline is about conflict, security, crime, intercommunal violence or killing are read (their first seven paragraphs). The built-in word lists cover English, French, Portuguese, Arabic, Amharic, Tigrinya, Oromo, Somali, Swahili, Hausa, Kinyarwanda and Lingala. Add any word or phrase that should also let a headline through, one per line; each also matches longer words that start with it.
+            Only articles whose headline is about conflict, security, crime, intercommunal violence or killing are read in full. The built-in word lists cover English, French, Portuguese, Arabic, Amharic, Tigrinya, Oromo, Somali, Swahili, Hausa, Kinyarwanda and Lingala. Add any word or phrase that should also let a headline through, one per line; each also matches longer words that start with it.
           </div>
           <textarea value={words} onChange={(e) => setWords(e.target.value)} rows={4} placeholder={"e.g.\nboda boda\nwananchi wavamia"} style={{ width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12.5 }} />
           <button disabled={busy || words === (v.extraKeywords ?? "")} onClick={() => save({ extraKeywords: words }, "Headline words saved; they apply from the next run.")} style={{ marginTop: 6 }}>
@@ -447,7 +447,7 @@ function AiUsageCard() {
           <div style={{ fontSize: 13.5, fontWeight: 600, margin: "18px 0 6px" }}>Article reading for escalation alerts</div>
           {row("Last run", lastRunAge === null ? "Never" : lastRunAge <= 1 ? "Just now" : `${lastRunAge} minutes ago`, lastRunAge !== null && lastRunAge <= 15 ? "ok" : "warn")}
           {status.headlineTierEnabled !== false && row("Picked up from headlines, last 24 hours", `${status.headline24h ?? 0} reports (no AI used)`)}
-          {row("Read (first seven paragraphs), last 24 hours", `${count("coded") + count("rejected")} articles (${count("coded")} with reportable events)`)}
+          {row("Read in full, last 24 hours", `${count("coded") + count("rejected")} articles (${count("coded")} with reportable events)`)}
           {typeof (lastRun as { headlineSkipped?: number } | null | undefined)?.headlineSkipped === "number" && row("Passed over by headline, last run", `${(lastRun as { headlineSkipped: number }).headlineSkipped} (not about conflict, security, crime or violence; not read)`)}
           {row("Could not be opened", String(count("unreadable")))}
           {row("Failed", String(count("error")), count("error") > 0 ? "warn" : undefined)}
