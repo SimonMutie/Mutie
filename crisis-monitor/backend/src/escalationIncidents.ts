@@ -371,6 +371,21 @@ async function gatherGdelt(env: Env): Promise<Candidate[]> {
   }
 }
 
+/** Which country a candidate is about, from its headline and text: the place it names, else Ge'ez script (Amharic
+ *  or Tigrinya) as Ethiopia, else unknown. Used only to share reading slots fairly, never as its location. */
+export function candidateCountry(c: Pick<Candidate, "title" | "feedText">): string {
+  const text = `${c.title ?? ""} ${c.feedText ?? ""}`.slice(0, 1500);
+  const at = locateText(text);
+  if (at) return at.countryCode;
+  if (/[\u1200-\u137F]/.test(text)) return "ET";
+  return "?";
+}
+
+/** A list reordered to take one candidate per country in turn, keeping each country's own order. */
+export function shareByCountry(list: Candidate[]): Candidate[] {
+  return interleaveByKey(list, candidateCountry, list.length);
+}
+
 /** Takes up to `n` items, one per key in turn (each key's items in their existing order), so that no one key can
  *  take every place. */
 export function interleaveByKey<T>(items: T[], key: (t: T) => string, n: number): T[] {
@@ -1584,7 +1599,10 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
         const priorityOpening = new Set(headlineFresh.filter((c) => c.title && isMajorUnlocated({ title: c.title, feedText: c.feedText, publishedAt: c.publishedAt }, new Date())).map((c) => c.id));
         const priorityList = headlineFresh.filter((c) => priorityOpening.has(c.id));
         stats.priority = priorityList.length;
-        const lists = [priorityList, upgrades, freshOf(africaWire), freshOf(wireFeeds), freshOf(gdelt), freshOf(telegram)];
+        // Each list takes its turn country by country (GDELT is already shared out that way), so the most reported
+        // wars cannot take every reading slot: without this, Sudan and Congo stories filled each round and
+        // Ethiopia's (often in Amharic, on Telegram, last in line) were rarely reached.
+        const lists = [priorityList, upgrades, shareByCountry(freshOf(africaWire)), shareByCountry(freshOf(wireFeeds)), freshOf(gdelt), shareByCountry(freshOf(telegram))];
         stats.fresh = new Set(lists.flat().map((c) => c.id)).size;
 
         const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
