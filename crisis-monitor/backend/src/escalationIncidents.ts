@@ -459,6 +459,8 @@ interface ProcessStats {
   headlineCoded: number;
   /** Candidates passed over unread because their headline is off-topic (lib/titleGate.ts). */
   headlineSkipped: number;
+  /** Per country (candidateCountry), this round: candidates waiting to be read, passed over by headline, read now. */
+  byCountry?: Record<string, { waiting: number; skipped: number; read: number }>;
 }
 
 async function claimArticle(env: Env, c: Candidate): Promise<boolean> {
@@ -682,7 +684,7 @@ async function processCandidate(env: Env, c: Candidate, geocodeBudget: GeocodeBu
     // The headline gate: only headlines about conflict, security, crime, intercommunal violence or killing are read.
     // (Most candidates are passed over before this, unfetched; this catches those whose headline is only known
     // from the page, such as GDELT's.) An article the headline pass already coded passed it then.
-    const gate = gateText({ title: c.title ?? page?.title ?? null, feedText: c.feedText });
+    const gate = gateText({ title: c.title ?? page?.title ?? null, feedText: c.feedText, origin: c.origin });
     if (!firstPass && gate && !titleIsRelevant(gate)) {
       stats.rejected++;
       await finish("rejected", { reason: "headline_not_relevant", note: "The headline is not about conflict, security, crime, intercommunal violence or killing; not read.", title: c.title ?? page?.title ?? null, publishedAt: page?.publishedAt ?? c.publishedAt });
@@ -1562,11 +1564,17 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
         // security, crime, intercommunal violence or killing (lib/titleGate.ts). Untitled ones are fetched and
         // judged by the page's own headline.
         const offTopic = new Set<string>();
+        const byCountry: Record<string, { waiting: number; skipped: number; read: number }> = {};
+        const tally = (c: Candidate, k: "waiting" | "skipped" | "read") => {
+          const code = candidateCountry(c);
+          (byCountry[code] ??= { waiting: 0, skipped: 0, read: 0 })[k]++;
+        };
         const freshOf = (list: Candidate[]) =>
           list.filter((c) => {
             if (decided.has(c.id) || awaitingFullReading.has(c.id)) return false;
             const g = gateText(c);
             if (g && !titleIsRelevant(g)) {
+              if (!offTopic.has(c.id)) tally(c, "skipped");
               offTopic.add(c.id);
               stats.headlineSkipped = offTopic.size;
               return false;
@@ -1607,6 +1615,9 @@ export async function runEscalationPipeline(env: Env): Promise<void> {
 
         const perTick = Math.min(paceLimit, Math.max(1, Math.min(60, Number(env.ESCALATION_ARTICLES_PER_TICK) || DEFAULT_ARTICLES_PER_TICK)));
         const batch = pickBatch(lists, perTick);
+        for (const c of new Map(lists.flat().map((c) => [c.id, c])).values()) tally(c, "waiting");
+        for (const c of batch) tally(c, "read");
+        stats.byCountry = byCountry;
         const geocodeBudget: GeocodeBudget = { remaining: GEOCODER_CALLS_PER_TICK };
 
         for (let i = 0; i < batch.length; i += CODING_CONCURRENCY) {
