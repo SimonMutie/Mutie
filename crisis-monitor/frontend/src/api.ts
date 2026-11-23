@@ -2576,6 +2576,12 @@ export const api = {
   // Pipeline health: which model is coding, what the last tick did, and
   // what was read / rejected (and why) in the last 24 hours.
   getAiSettings: () => req<AiSettingsView>("/api/ai-settings"),
+  /** Runs one escalation reading round now and returns its summary. */
+  collectNow: () =>
+    req<{ ran: boolean; note: string | null; claude: ClaudeUsage; run: { at: string; coded: number; rejected: number; unreadable: number; errors: number; reports: number; headlineSkipped?: number; candidates: number; fresh: number; provider: string; coderModel: string; aiBudgetReached: boolean; lastModelError: string | null } | null }>(
+      "/api/ai-settings/collect-now",
+      { method: "POST" }
+    ),
   setAiSettings: (e: AiSettingsEdit) => req<AiSettingsView>("/api/ai-settings", { method: "PUT", body: JSON.stringify(e) }),
   getEscalationStatus: () => req<EscalationPipelineStatus>("/api/live-layers/conflict-escalation/status"),
   // Approximate circles around flagged incidents that include a territorial
