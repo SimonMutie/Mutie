@@ -60,6 +60,7 @@ export interface RawCodedEvent {
   lat?: number | null;
   lon?: number | null;
   event_date?: string | null;
+  date_in_text?: string | null;
   novelty?: string;
   actors?: string[];
   indicators?: RawIndicator[];
@@ -163,12 +164,12 @@ const CODING_SCHEMA = {
     },
     events: {
       type: "array",
-      maxItems: 3,
+      maxItems: 10,
       description: "One entry per distinct event (different place or different day). Empty when is_event_report is false.",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["country", "country_iso2", "place", "place_in_text", "admin1", "lat", "lon", "event_date", "novelty", "actors", "indicators", "fatalities", "fatalities_quote", "trajectory", "trajectory_reason", "what_happened", "significance", "confidence"],
+        required: ["country", "country_iso2", "place", "place_in_text", "admin1", "lat", "lon", "event_date", "date_in_text", "novelty", "actors", "indicators", "fatalities", "fatalities_quote", "trajectory", "trajectory_reason", "what_happened", "significance", "confidence"],
         properties: {
           country: { type: "string", description: "Country where the event physically took place (English name)." },
           country_iso2: { type: "string", description: "ISO 3166-1 alpha-2 code of that country." },
@@ -178,6 +179,7 @@ const CODING_SCHEMA = {
           lat: { type: ["number", "null"], description: "Latitude of `place` if you know it with confidence, else null." },
           lon: { type: ["number", "null"], description: "Longitude of `place` if you know it with confidence, else null." },
           event_date: { type: ["string", "null"], description: "Date the event happened, YYYY-MM-DD, resolved from the article ('on Tuesday', 'yesterday') against its publication date. Null if the article gives no indication." },
+          date_in_text: { type: ["string", "null"], description: "The words in the article's body that give when the event happened, copied exactly ('on Sunday', 'on 20 November', 'late on Tuesday night', 'yesterday'). Null if the body gives none." },
           novelty: { type: "string", enum: ["new_event", "ongoing_update", "background"], description: "new_event: something that just happened. ongoing_update: a NEW armed event inside a situation already under way (today's shelling in a months-long siege) — not a restatement that the situation continues. background: context, history, a standing situation, or a reaction to an earlier event — nothing new has happened." },
           actors: { type: "array", items: { type: "string" }, description: "Armed actors involved, named as in the article." },
           indicators: {
@@ -211,7 +213,7 @@ ${codebookText()}
 
 RULES
 
-1. Read the whole article before deciding. Headlines exaggerate; the body decides.
+1. Read the whole article, every paragraph, before deciding. Headlines exaggerate; the body decides.
 
 2. An event counts only if it is concrete: something that happened, at a place, at a time, involving an armed actor. Threats, fears, analysis, anniversaries, court cases, statements and aid appeals are not events (see the rejection list).
 
@@ -234,7 +236,9 @@ RULES
 
 6. trajectory is "escalation" only when the article itself shows a change for the worse: a first or renewed attack, a new front or new weapon, the largest of its kind, a broken lull or truce, fighting spreading to a new area. Routine recurrence in a long-running conflict is "continuation". Withdrawals, truces taking hold or handovers are "de-escalation".
 
-7. If one article reports events in different places or on different days, return them as separate events (at most 3 — the most serious). A weekly round-up with no new event of its own is rejected as commentary_or_analysis.
+7. If one article reports events in different places or on different days, return EVERY one of them as a separate event (up to 10), each with its own place, date, actors and quotes from the passage that reports it. A weekly round-up with no new event of its own is rejected as commentary_or_analysis.
+
+7a. Take place, date and actors from the BODY of the article, the paragraphs that report the event, never from the headline alone. Headlines compress and mislead; if the body contradicts the headline, the body wins.
 
 8. what_happened must answer, in one or two sentences, all of: WHO (the named attacker and the named target or victims), WHAT (the event and its toll), WHERE (the place, district and region), WHEN (the date) and HOW (the weapon or method: drone strike, airstrike, shelling, ambush, IED, gunmen on motorbikes, arson…). Leave out only what the article does not say, never invent it. significance must be specific to this article. Never write a generic sentence that could describe any conflict. Write them in English whatever the article's language.
 
@@ -251,7 +255,7 @@ export function buildCoderUserMessage(a: ArticleForCoding, now: Date): string {
     `Today's date: ${now.toISOString().slice(0, 10)}\n` +
     `Article published: ${a.publishedAt ? a.publishedAt.slice(0, 10) : "unknown"}\n` +
     `Publisher: ${a.domain} (the publisher's location is NOT evidence of where the event happened)\n` +
-    `Text available: ${a.textBasis === "full_text" ? "full article body" : a.textBasis === "opening" ? "the article's first seven paragraphs only (the rest was not read)" : "feed summary only — the full page could not be read"}\n` +
+    `Text available: ${a.textBasis === "full_text" ? "full article body" : a.textBasis === "opening" ? "the article's first paragraphs only (the rest was not read)" : "feed summary only — the full page could not be read"}\n` +
     `Headline: ${a.title}\n\n` +
     `ARTICLE TEXT\n"""\n${a.text}\n"""`
   );
@@ -265,7 +269,7 @@ export async function codeArticle(env: Env, article: ArticleForCoding, now = new
     schema: CODING_SCHEMA as unknown as Record<string, unknown>,
     toolName: "record_article_coding",
     toolDescription: "Record the structured coding of this article against the escalation codebook.",
-    maxTokens: 2000,
+    maxTokens: 6000,
   });
   if (!result) return null;
   return { raw: result.data, provider: result.provider, model: result.model };
@@ -444,7 +448,7 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
   // Where the story was filed from (DUBAI (Reuters) - …): never, by itself, where its events happened.
   const filedFrom = datelinePlaces(article.text);
 
-  for (const ev of raw.events.slice(0, 3)) {
+  for (const ev of raw.events.slice(0, 10)) {
     const notes: string[] = [];
 
     // 1. Country — exact resolution only.
@@ -504,7 +508,10 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
     const headline = (article.title ?? "").replace(/\s*\(Telegram:[^)]*\)\s*$/, "");
     const titleCountry = locateText(headline)?.countryCode ?? null;
     const titleNorm = normalizeForMatch(headline);
-    if (titleCountry && titleCountry !== countryCode && !textNamesCountry(titleNorm, countryCode)) {
+    // Only when the body itself does not place the event in the stated country: the paragraphs decide, the headline
+    // is a fallback.
+    const bodyGrounds = textNamesCountry(normText, countryCode) || (!!place && !!lookupKnownPlace(countryCode, place));
+    if (titleCountry && titleCountry !== countryCode && !textNamesCountry(titleNorm, countryCode) && !(bodyGrounds && !textNamesCountry(normText, titleCountry))) {
       const placeInTitle = !!place && titleNorm.includes(normalizeForMatch(place));
       if (!placeInTitle) {
         notes.push(`Country corrected from ${countryName(countryCode)} to ${countryName(titleCountry)}: the headline names ${countryName(titleCountry)}, not ${countryName(countryCode)}.`);
@@ -556,7 +563,15 @@ export function verifyCoding(raw: RawCoding, article: ArticleForCoding, now = ne
       dropReasons.push("retrospective: coded as background");
       continue;
     }
-    const stated = parseDay(ev.event_date);
+    // The date must be confirmed by words in the body ("on Sunday", "on 20 November"); a date the model gives with
+    // no such words is not taken, and the publication date stands in.
+    // A date within two days of publication is the ordinary case for news and stands without them.
+    const dateWords = cleanSentence(ev.date_in_text, 80);
+    const dateConfirmed = !!dateWords && normalizeForMatch(dateWords).length >= 3 && normText.includes(normalizeForMatch(dateWords));
+    const proposed = parseDay(ev.event_date);
+    const nearPublication = !!proposed && !!publishedDay && Math.abs(publishedDay.getTime() - proposed.getTime()) <= 2 * 86_400_000;
+    const stated = proposed && (dateConfirmed || nearPublication) ? proposed : null;
+    if (proposed && !stated) notes.push(`Event date ${ev.event_date} is not confirmed by the article's text — the publication date is used.`);
     const anchor = publishedDay ?? now;
     let eventDay = stated;
     let dateBasis: "stated" | "publication" = "stated";
