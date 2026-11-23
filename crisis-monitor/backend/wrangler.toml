@@ -75,7 +75,15 @@ new_sqlite_classes = ["AfricaWireActor"]
 # The second schedule runs Strategic Analyses alone (two minutes after the main one), so its many page and feed
 # requests have their own per-run request budget instead of sharing the main collectors'.
 [triggers]
-crons = ["*/5 * * * *", "2-59/5 * * * *"]
+# Three schedules, each its own run with its own time and request allowance: the main collectors (every five
+# minutes), the escalation reading pipeline alone (a minute later), and Strategic Analyses (two minutes later).
+# The pipeline used to share the main run, which GDELT's bulk files, aircraft and fire collection could exhaust
+# before it finished, so new incidents appeared only when a reading round was started by hand.
+crons = ["*/5 * * * *", "1-59/5 * * * *", "2-59/5 * * * *"]
+
+# Room for the heaviest runs (GDELT bulk files, a full reading round). Paid Workers plan.
+[limits]
+cpu_ms = 300000
 
 [vars]
 MOCK_MODE = "false"
