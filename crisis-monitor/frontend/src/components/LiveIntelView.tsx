@@ -3549,7 +3549,7 @@ function FlatMap({
           })}
         />
       ))}
-      {pulsesOn && incidentPulses && incidentPulses.length > 0 && <IncidentPulseLayer pulses={incidentPulses} />}
+      {pulsesOn && incidentPulses && incidentPulses.length > 0 && <IncidentPulseLayer pulses={incidentPulses} markers={points.filter((p) => p.escalationLevel)} />}
       {(territoryChanges ?? []).map((t) => (
         <Polygon key={t.id} positions={t.ring} pathOptions={{ color: "#ff9d4f", weight: 1.5, opacity: 0.75, dashArray: "4 4", fillColor: "#ff9d4f", fillOpacity: 0.12 }}>
           <LeafletTooltip sticky>{t.title}</LeafletTooltip>
