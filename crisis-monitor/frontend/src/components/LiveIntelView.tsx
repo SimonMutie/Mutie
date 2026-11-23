@@ -1,4 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
+import { setViewerIsAdmin } from "../viewer";
 import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
@@ -1219,6 +1220,7 @@ function downloadDrawingAsGeoJson(points: LatLng[], mode: DrawMode) {
 }
 
 export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, onNewQuery, onEditQuery, initialTool = null, canAfrIntel = true, isAdmin = false }: LiveIntelViewProps) {
+  setViewerIsAdmin(isAdmin);
   // The map opens on the 3D globe with conflict escalation, the watch zones and the escalation waves (always on) shown;
   // every other layer starts off. The hotspot pulses and waves are on too (see FlatMap).
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
