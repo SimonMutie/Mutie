@@ -86,7 +86,15 @@ describe("verifyCoding", () => {
   it("rejects background and week-old events", () => {
     const ind = [{ id: "air_or_drone_strike", quote: "carried out a drone strike near Mekelle" }];
     expect(verifyCoding(coding(event({ novelty: "background", indicators: ind })), article(TIGRAY), NOW).rejectionReason).toBe("retrospective");
-    expect(verifyCoding(coding(event({ event_date: "2026-09-10", indicators: ind })), article(TIGRAY), NOW).rejectionReason).toBe("retrospective");
+    expect(verifyCoding(coding(event({ event_date: "2026-09-10", date_in_text: "on Wednesday", indicators: ind })), article(TIGRAY), NOW).rejectionReason).toBe("retrospective");
+  });
+
+  it("takes the date only when the body confirms it, or when it is the ordinary near-publication case", () => {
+    const ind = [{ id: "air_or_drone_strike", quote: "carried out a drone strike near Mekelle" }];
+    // A far-off date with no words in the text behind it is not taken: the publication date stands in.
+    const out = verifyCoding(coding(event({ event_date: "2026-09-10", date_in_text: "on 10 September", indicators: ind })), article(TIGRAY), NOW);
+    expect(out.reports[0].eventDate).toBe("2026-10-02");
+    expect(out.reports[0].notes.join(" ")).toMatch(/not confirmed by the article's text/);
   });
 
   it("drops an old event re-published recently, and an undated one with no publication date", () => {
