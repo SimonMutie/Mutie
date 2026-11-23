@@ -1461,6 +1461,17 @@ async function pruneOldRows(env: Env): Promise<void> {
 }
 
 /** One pipeline tick — called from index.ts's scheduled() handler. */
+/** The last tick's summary (articles read, provider, model errors), or null before the first. */
+export async function lastEscalationRun(env: Env): Promise<Record<string, unknown> | null> {
+  await ensureTables(env);
+  const raw = await getState(env, "last_run");
+  try {
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runEscalationPipeline(env: Env): Promise<void> {
   await ensureTables(env);
 
