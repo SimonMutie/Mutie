@@ -182,6 +182,35 @@ export const AFRICA_SOURCES: AfricaSource[] = [
   { url: "https://amharic.voanews.com/", country: "ET" },
   { url: "https://ethiopiainsider.com/", country: "ET" },
   { url: "https://wazemaradio.com/", country: "ET" },
+  // Added 2026-11-23 for fuller Ethiopian coverage, in every language: Amharic (DW, Reporter, Zehabesha, ESAT,
+  // Mereja, Addis Admass), Afaan Oromoo (VOA, OMN), Tigray (Tghat, Aiga), state media (EBC, Walta, Ethiopian
+  // Herald) and English (Addis Fortune, Ethiopia Observer). A source without a findable feed is recorded as such
+  // and skipped.
+  { url: "https://www.dw.com/am/", country: "ET" },
+  { url: "https://www.ethiopianreporter.com/", country: "ET" },
+  { url: "https://zehabesha.com/", country: "ET" },
+  { url: "https://ethsat.com/", country: "ET" },
+  { url: "https://www.mereja.com/", country: "ET" },
+  { url: "https://www.addisadmassnews.com/", country: "ET" },
+  { url: "https://www.voaafaanoromoo.com/", country: "ET" },
+  { url: "https://omnglobal.com/", country: "ET" },
+  { url: "https://www.tghat.com/", country: "ET" },
+  { url: "https://aiganews.com/", country: "ET" },
+  { url: "https://www.ebc.et/", country: "ET" },
+  { url: "https://www.waltainfo.com/", country: "ET" },
+  { url: "https://www.press.et/", country: "ET" },
+  { url: "https://addisfortune.news/", country: "ET" },
+  { url: "https://ethiopiaobserver.com/", country: "ET" },
+  // ── Eritrea ── (no independent press inside the country: state media, and exile and diaspora outlets of every
+  // leaning; Tigrinya from VOA and the BBC feed above)
+  { url: "https://shabait.com/", country: "ER" },
+  { url: "https://www.erena.org/", country: "ER" },
+  { url: "https://awate.com/", country: "ER" },
+  { url: "https://asmarino.com/", country: "ER" },
+  { url: "https://eritreahub.org/", country: "ER" },
+  { url: "https://www.tesfanews.net/", country: "ER" },
+  { url: "https://madote.com/", country: "ER" },
+  { url: "https://tigrigna.voanews.com/", country: "ER" },
   // ── Djibouti ──
   { url: "https://www.djiboutipost.com/", country: "DJ" },
   { url: "https://www.lanation.dj/", country: "DJ" },
