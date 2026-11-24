@@ -323,6 +323,12 @@ function AiReadingCard() {
 
           {u && (
             <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.6 }}>
+              {u.claude.byFeature && u.claude.byFeature.length > 0 && (
+                <div style={{ marginBottom: 4 }}>
+                  Claude today by use:{" "}
+                  {u.claude.byFeature.map((f) => `${f.feature} ${f.calls.toLocaleString()} calls (${Math.round((f.inputTokens + f.outputTokens) / 1000).toLocaleString()}k tokens)`).join(" · ")}
+                </div>
+              )}
               Today (UTC): Claude {u.claude.calls.toLocaleString()} of {u.claude.limit.toLocaleString()} calls, {(u.claude.inputTokens + u.claude.cacheReadTokens + u.claude.cacheWriteTokens).toLocaleString()} tokens in and {u.claude.outputTokens.toLocaleString()} out · Cloudflare {u.cloudflare.used.toLocaleString()} of {u.cloudflare.budget.toLocaleString()} neurons.
             </div>
           )}
