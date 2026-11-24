@@ -19,6 +19,7 @@ import { chip, hairline as line, input, muted, small, tag, text } from "./panelU
 const BLOC: Record<NewsBloc, { short: string; color: string }> = {
   western: { short: "WEST", color: "#4F9CFF" },
   russian: { short: "RU-ALIGNED", color: "#A78BFA" },
+  chinese: { short: "CN STATE", color: "#F59E0B" },
   regional: { short: "REGIONAL", color: "#2DD4BF" },
   independent: { short: "INDEPENDENT", color: "#C8C2B4" },
 };
