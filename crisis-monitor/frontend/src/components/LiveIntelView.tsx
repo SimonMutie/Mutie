@@ -111,6 +111,7 @@ import {
   BrainCircuit,
   Skull,
   Grid3x3,
+  Search as SearchIcon,
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DPath, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
@@ -2163,6 +2164,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     setIncidentViewMode(m);
     setEnabled((prev) => ({ ...prev, "my-incidents": true }));
   }
+  const nearbyProps: NearbyProps = {
+    incidents: myIncidentRows,
+    state: nearby,
+    viewMode: incidentViewMode,
+    onResults: applyNearby,
+    onViewMode: showNearbyAs,
+    onFocus: (lat, lng) => setFocus((prev) => ({ lat, lng, zoom: 11, seq: (prev?.seq ?? 0) + 1 })),
+  };
   const routeFeature: GeoJSON.Feature | null =
     routeResult && routeResult.coordinates.length >= 2 ? { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: routeResult.coordinates } } : null;
   async function saveRouteAsLayer() {
@@ -3289,6 +3298,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onClear={() => setDrawPoints([])}
             onExport={() => downloadDrawingAsGeoJson(drawPoints, drawMode)}
             onSaveLayer={saveDrawingAsLayer}
+            nearby={nearbyProps}
+            onBand={(f, km) => void bufferFeature(f, km, `${drawMode === "area" ? "Drawn area" : "Drawn route"}: ${km} km band`)}
           />
           </DrawTabsContext.Provider>
         )}
@@ -3334,9 +3345,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             routeStyle={routeStyle}
             onRouteStyle={(p) => setRouteStyle((prev) => ({ ...prev, ...p }))}
             onSaveRouteAsLayer={saveRouteAsLayer}
-            nearby={{ incidents: myIncidentRows, state: nearby, viewMode: incidentViewMode, onResults: applyNearby, onViewMode: showNearbyAs }}
+            nearby={nearbyProps}
             routeFeature={routeFeature}
             onRouteBand={(km) => routeFeature && void bufferFeature(routeFeature, km, `${routeNameDraft.trim() || "Route"}: ${km} km band`)}
+            onSavedRouteBand={(r, km) =>
+              void bufferFeature({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: r.geometry.map(([lat, lng]) => [lng, lat]) } }, km, `${r.name}: ${km} km band`)
+            }
           />
           </DrawTabsContext.Provider>
         )}
@@ -3471,7 +3485,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           <DrawTabsContext.Provider value={drawTabs}>
           <StudioPanel
             shapes={savedShapes}
-            nearby={{ incidents: myIncidentRows, state: nearby, viewMode: incidentViewMode, onResults: applyNearby, onViewMode: showNearbyAs }}
+            nearby={nearbyProps}
           />
           </DrawTabsContext.Provider>
         )}
@@ -5330,6 +5344,8 @@ function DrawingToolPanel({
   onClear,
   onExport,
   onSaveLayer,
+  nearby,
+  onBand,
 }: {
   mode: DrawMode;
   points: LatLng[];
@@ -5337,7 +5353,16 @@ function DrawingToolPanel({
   onClear: () => void;
   onExport: () => void;
   onSaveLayer: () => void;
+  nearby: NearbyProps;
+  onBand: (f: GeoJSON.Feature, km: number) => void;
 }) {
+  // The drawn line (Distance) or area, for a search along or around it.
+  const drawn = useMemo<GeoJSON.Feature | null>(() => {
+    const ll = points.map(([lat, lng]) => [lng, lat]);
+    if (mode === "distance" && ll.length >= 2) return { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: ll } };
+    if (mode === "area" && ll.length >= 3) return { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [[...ll, ll[0]]] } };
+    return null;
+  }, [mode, points]);
   const distanceKm = mode === "distance" ? pathDistanceKm(points) : 0;
   const areaKm2 = mode === "area" ? sphericalPolygonAreaKm2(points) : 0;
   const canExport = (mode === "distance" && points.length >= 2) || (mode === "area" && points.length >= 3);
@@ -5400,9 +5425,33 @@ function DrawingToolPanel({
         <ToolButton onClick={onExport}>{canExport ? "Export GeoJSON" : "Export"}</ToolButton>
       </div>
       {canExport && <ToolButton onClick={onSaveLayer}>Save as layer in Map Studio</ToolButton>}
+      {drawn && (
+        <NearbySearch
+          title={mode === "distance" ? "Incidents along this route" : "Incidents in and around this area"}
+          geometry={drawn}
+          label="drawn"
+          incidents={nearby.incidents}
+          state={nearby.state}
+          viewMode={nearby.viewMode}
+          onResults={nearby.onResults}
+          onViewMode={nearby.onViewMode}
+          onCorridor={(km) => onBand(drawn, km)}
+          onFocus={nearby.onFocus}
+        />
+      )}
     </ToolPanelShell>
   );
 }
+
+/** What a radius search needs from the live view: the loaded incidents, the current narrowing, and the map. */
+type NearbyProps = {
+  incidents: IncidentItem[];
+  state: NearbyState | null;
+  viewMode: "markers" | "heatmap";
+  onResults: (rows: IncidentItem[] | null, s: NearbyState | null) => void;
+  onViewMode: (m: "markers" | "heatmap") => void;
+  onFocus: (lat: number, lng: number) => void;
+};
 
 function RoutePlannerPanel({
   mode,
@@ -5427,6 +5476,7 @@ function RoutePlannerPanel({
   nearby,
   routeFeature,
   onRouteBand,
+  onSavedRouteBand,
 }: {
   mode: RouteProfile;
   onModeChange: (m: RouteProfile) => void;
@@ -5447,10 +5497,18 @@ function RoutePlannerPanel({
   routeStyle: RouteStyle;
   onRouteStyle: (p: Partial<RouteStyle>) => void;
   onSaveRouteAsLayer: () => void;
-  nearby: { incidents: IncidentItem[]; state: NearbyState | null; viewMode: "markers" | "heatmap"; onResults: (rows: IncidentItem[] | null, s: NearbyState | null) => void; onViewMode: (m: "markers" | "heatmap") => void };
+  nearby: NearbyProps;
   routeFeature: GeoJSON.Feature | null;
   onRouteBand: (km: number) => void;
+  onSavedRouteBand: (r: SavedRoute, km: number) => void;
 }) {
+  // A saved route picked for a search along it.
+  const [searchId, setSearchId] = useState<string | null>(null);
+  const searched = savedRoutes.find((r) => r.id === searchId) ?? null;
+  const searchedFeature = useMemo<GeoJSON.Feature | null>(
+    () => (searched && searched.geometry.length >= 2 ? { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: searched.geometry.map(([lat, lng]) => [lng, lat]) } } : null),
+    [searched]
+  );
   const profiles: { key: RouteProfile; label: string }[] = [
     { key: "driving", label: "Drive" },
     { key: "walking", label: "Walk" },
@@ -5491,6 +5549,7 @@ function RoutePlannerPanel({
           onResults={nearby.onResults}
           onViewMode={nearby.onViewMode}
           onCorridor={onRouteBand}
+          onFocus={nearby.onFocus}
         />
       )}
       <div style={{ fontSize: 10, color: HUD.textMuted, lineHeight: 1.5 }}>
@@ -5523,11 +5582,29 @@ function RoutePlannerPanel({
               </span>
               <input type="color" value={/^#[0-9a-f]{6}$/i.test(r.color ?? "") ? (r.color as string) : "#4dff9e"} onChange={(e) => onRecolourRoute(r.id, e.target.value)} title="Route colour" style={{ width: 20, height: 18, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
               <span style={{ color: HUD.textMuted, fontSize: 10 }}>{r.distance_km ? `${r.distance_km.toFixed(0)}km` : ""}</span>
+              <button onClick={() => setSearchId(searchId === r.id ? null : r.id)} title="Find incidents along this route" style={{ ...iconOnlyBtnStyle, color: searchId === r.id ? HUD.gold : HUD.textMuted }}>
+                <SearchIcon size={11} />
+              </button>
               <button onClick={() => onDeleteRoute(r.id)} title="Delete" style={iconOnlyBtnStyle}>
                 <CloseGlyph size={11} color={HUD.textMuted} />
               </button>
             </div>
           ))}
+          {searched && searchedFeature && (
+            <NearbySearch
+              key={searched.id}
+              title={`Incidents along ${searched.name}`}
+              geometry={searchedFeature}
+              label={`saved-route:${searched.id}`}
+              incidents={nearby.incidents}
+              state={nearby.state}
+              viewMode={nearby.viewMode}
+              onResults={nearby.onResults}
+              onViewMode={nearby.onViewMode}
+              onCorridor={(km) => onSavedRouteBand(searched, km)}
+              onFocus={nearby.onFocus}
+            />
+          )}
         </div>
       )}
     </ToolPanelShell>
