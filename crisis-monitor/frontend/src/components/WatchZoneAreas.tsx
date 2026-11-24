@@ -9,6 +9,7 @@ import { api, type WatchZone, type WatchZoneOverride } from "../api";
 import { joinShapes } from "../boundaryLibrary";
 import { buildWatchZoneAreas, labelPoint, ZONE_STYLE } from "../watchZoneAreas";
 import { firstDataLayer } from "./globeExtras";
+import { FILL_PATTERNS, ensureGlPatterns, glPatternImage, isFillPattern, leafletFill, patternPreviewSvg, type FillPattern } from "./fillPatterns";
 
 /**
  * Watch zones drawn as areas (watchZoneAreas.ts) on both views: each zone filled and outlined in its colour (by
@@ -27,6 +28,8 @@ export interface ZoneView {
   zones: WatchZone[];
   areas: Record<string, MultiPolygon>;
   colors: Record<string, string>;
+  /** Each zone's fill pattern, where one was chosen. */
+  patterns: Record<string, FillPattern | undefined>;
   edited: Record<string, boolean>;
   /** Each zone's edits, as kept on the server (areas added, original area dropped…). */
   overrides: Record<string, WatchZoneOverride>;
@@ -99,17 +102,19 @@ export function useWatchZoneAreas(on: boolean): ZoneView {
     };
   }, [zones, baseAreas, overrides, built]);
   const colors = useMemo(() => Object.fromEntries(zones.map((z) => [z.id, overrides[z.id]?.color ?? ZONE_STYLE[z.severity].color])), [zones, overrides]);
-  const edited = useMemo(() => Object.fromEntries(Object.entries(overrides).map(([id, o]) => [id, !!(o.geometry || o.color)])), [overrides]);
+  const patterns = useMemo(() => Object.fromEntries(Object.entries(overrides).map(([id, o]) => [id, isFillPattern(o.pattern) ? o.pattern : undefined])), [overrides]);
+  const edited = useMemo(() => Object.fromEntries(Object.entries(overrides).map(([id, o]) => [id, !!(o.geometry || o.color || o.pattern)])), [overrides]);
   const retired = useMemo(() => Object.values(overrides).filter((o) => o.retired), [overrides]);
-  return { zones: on ? zones : [], areas, colors, edited, overrides, baseAreas, retired, reload };
+  return { zones: on ? zones : [], areas, colors, patterns, edited, overrides, baseAreas, retired, reload };
 }
 
 /* ── Actions from a zone's details (both views send them the same way) ───────────────────────────────────────── */
 
 export type ZoneAction = {
   id: string;
-  action: "shape" | "redraw" | "reset" | "color" | "severity" | "rename" | "retire" | "delete" | "restore" | "drop-base" | "restore-base" | "drop-unit" | "add-areas";
+  action: "shape" | "redraw" | "reset" | "color" | "pattern" | "severity" | "rename" | "retire" | "delete" | "restore" | "drop-base" | "restore-base" | "drop-unit" | "add-areas";
   color?: string;
+  pattern?: FillPattern;
   severity?: WatchZone["severity"];
   /** The area to drop (drop-unit). */
   unit?: string;
@@ -117,7 +122,7 @@ export type ZoneAction = {
 /** Asks Live OSINT to act on a zone (it listens for "lens-zone-action"). */
 export const zoneAction = (a: ZoneAction) => window.dispatchEvent(new CustomEvent<ZoneAction>("lens-zone-action", { detail: a }));
 
-const SWATCHES = ["#ff3d3d", "#ff9500", "#ffd23f", "#22c55e", "#14b8a6", "#3b82f6", "#a855f7", "#ec4899", "#94a3b8"];
+const SWATCHES = ["#ff3d3d", "#b91c1c", "#ff9500", "#ffd23f", "#a3e635", "#22c55e", "#14b8a6", "#38bdf8", "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#f5f5f4", "#94a3b8", "#0b1220"];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
 function detailsHtml(z: WatchZone, color: string, canEdit: boolean, edited: boolean, o?: WatchZoneOverride, hasBase = true): string {
@@ -144,6 +149,7 @@ function detailsHtml(z: WatchZone, color: string, canEdit: boolean, edited: bool
   <div>${sevBtn("war")}${sevBtn("high")}${sevBtn("elevated")}</div>
   <button style="${btn}" onclick="${act("shape")}">Reshape boundary</button><button style="${btn}" onclick="${act("redraw")}">Redraw</button>${edited && !z.custom ? `<button style="${btn}" onclick="${act("reset")}">Reset to default</button>` : ""}<button style="${btn}" onclick="${act("rename")}">Rename</button>${z.custom ? `<button style="${btn};color:#ff7a7a" onclick="${act("delete")}">Delete zone</button>` : `<button style="${btn};color:#ff7a7a" onclick="${act("retire")}">Retire zone</button>`}
   <div style="display:flex;gap:4px;align-items:center;margin-top:6px;flex-wrap:wrap">${SWATCHES.map((c) => `<button title="${c}" onclick="${act("color", `,color:'${c}'`)}" style="width:18px;height:18px;border-radius:4px;border:${c === color ? "2px solid #fff" : "1px solid rgba(0,0,0,.4)"};background:${c};cursor:pointer;padding:0"></button>`).join("")}<input type="color" value="${color}" title="Any colour" onchange="window.dispatchEvent(new CustomEvent('lens-zone-action',{detail:{id:'${z.id}',action:'color',color:this.value}}))" style="width:24px;height:20px;padding:0;border:none;background:none;cursor:pointer"></div>
+  <div style="display:flex;gap:4px;align-items:center;margin-top:6px;flex-wrap:wrap"><span style="font-size:11px;opacity:.75;margin-right:2px">Fill</span>${FILL_PATTERNS.map((p) => `<button title="${p.label}" onclick="${act("pattern", `,pattern:'${p.id}'`)}" style="padding:1px;border-radius:4px;border:${(o?.pattern ?? "solid") === p.id ? "2px solid #fff" : "1px solid rgba(127,127,127,.5)"};background:rgba(0,0,0,.35);cursor:pointer;line-height:0">${patternPreviewSvg(p.id, color, 18)}</button>`).join("")}</div>
 </div>`
     : "";
   return `<div style="max-width:300px;font-size:12.5px;line-height:1.45">
@@ -271,9 +277,9 @@ export function FlatWatchZones({ view, canEdit, editing, onEdited }: { view: Zon
           const color = view.colors[z.id] ?? st.color;
           return (
             <GeoJSON
-              key={`${z.id}:${color}:${JSON.stringify(view.areas[z.id].coordinates).length}:${z.headlineCount}`}
+              key={`${z.id}:${color}:${view.patterns[z.id] ?? ""}:${JSON.stringify(view.areas[z.id].coordinates).length}:${z.headlineCount}`}
               data={{ type: "Feature", properties: {}, geometry: view.areas[z.id] } as never}
-              style={{ color, weight: st.weight, dashArray: st.dash, opacity: 0.9, fillColor: color, fillOpacity: st.fill }}
+              style={{ color, weight: st.weight, dashArray: st.dash, opacity: 0.9, ...leafletFill(view.patterns[z.id], color, st.fill) }}
             >
               <Tooltip sticky>{`${z.label} · ${st.label}`}</Tooltip>
               <Popup maxWidth={330}>
@@ -315,20 +321,27 @@ export function GlobeWatchZones({ map, view, canEdit }: { map: MapLibreMap | nul
   const data = useMemo(() => {
     const shown = view.zones.filter((z) => view.areas[z.id]);
     return {
-      areas: { type: "FeatureCollection" as const, features: shown.map((z) => ({ type: "Feature" as const, properties: { id: z.id, severity: z.severity, color: view.colors[z.id] }, geometry: view.areas[z.id] })) },
+      areas: { type: "FeatureCollection" as const, features: shown.map((z) => {
+        const pattern = view.patterns[z.id];
+        const pat = glPatternImage(pattern, view.colors[z.id], ZONE_STYLE[z.severity].fill);
+        // The plain fill stays (at no strength under a pattern or "outline only") so clicks inside still open the zone.
+        return { type: "Feature" as const, properties: { id: z.id, severity: z.severity, color: view.colors[z.id], fo: pat || pattern === "outline" ? 0 : ZONE_STYLE[z.severity].fill, ...(pat ? { pat } : {}) }, geometry: view.areas[z.id] };
+      }) },
       labels: { type: "FeatureCollection" as const, features: shown.map((z) => ({ type: "Feature" as const, properties: { id: z.id, label: z.label, color: view.colors[z.id] }, geometry: { type: "Point" as const, coordinates: labelPoint(z, view.areas[z.id]) } })) },
     };
-  }, [view.zones, view.areas, view.colors]);
+  }, [view.zones, view.areas, view.colors, view.patterns]);
   const popupRef = useRef<GlPopup | null>(null);
 
   useEffect(() => {
     if (!map) return;
+    ensureGlPatterns(map, data.areas);
     if (!map.getSource("lens-zones")) {
       const before = firstDataLayer(map);
       map.addSource("lens-zones", { type: "geojson", data: data.areas as never });
       map.addSource("lens-zone-labels", { type: "geojson", data: data.labels as never });
-      const fill = ["match", ["get", "severity"], "war", ZONE_STYLE.war.fill, "high", ZONE_STYLE.high.fill, ZONE_STYLE.elevated.fill] as unknown as ExpressionSpecification;
+      const fill = ["coalesce", ["get", "fo"], 0.1] as unknown as ExpressionSpecification;
       map.addLayer({ id: "lens-control-zones-fill", type: "fill", source: "lens-zones", paint: { "fill-color": ["get", "color"], "fill-opacity": fill } }, before);
+      map.addLayer({ id: "lens-control-zones-pattern", type: "fill", source: "lens-zones", filter: ["has", "pat"], paint: { "fill-pattern": ["get", "pat"] } }, before);
       for (const sev of ["war", "high", "elevated"] as const) {
         const st = ZONE_STYLE[sev];
         map.addLayer(
