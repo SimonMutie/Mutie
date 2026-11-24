@@ -38,6 +38,7 @@ export type IndicatorId =
   | "attack_on_civilians"
   | "attack_on_security_forces"
   | "ied_or_bombing"
+  | "terrorist_attack"
   | "intercommunal_violence"
   | "mass_displacement"
   | "emergency_measures";
@@ -167,6 +168,13 @@ export const INDICATORS: IndicatorDef[] = [
     label: "Bombing or IED",
     tier: "contextual",
     definition: "A bombing, suicide attack, car bomb, IED or landmine blast.",
+  },
+  {
+    id: "terrorist_attack",
+    label: "Terrorist attack",
+    tier: "contextual",
+    definition:
+      "An attack of any size by, or claimed by, a group on the UN Security Council's ISIL (Da'esh) and Al-Qaida sanctions list or one of their affiliates (al-Shabaab, Boko Haram / JAS, ISWAP, Islamic State Sahel, JNIM, AQIM, the ADF / IS Central Africa, IS Mozambique, IS Somalia, Ansaru): an attack on a village, market, mosque, church, school, camp, road or convoy, an IED or bombing, a killing, beheading or execution, an abduction or kidnapping, an attack on soldiers, police or a base. Code it as well as the other indicators the event meets. One that is significant (a suicide or car bombing, 10 or more killed, an attack on a town, base, hotel, market or place of worship, a mass abduction) is major_terror_attack instead.",
   },
   {
     id: "intercommunal_violence",
