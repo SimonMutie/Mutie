@@ -19,6 +19,7 @@ function setup() {
   const claude = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes("/v1/models")) return new Response("{}", { status: 200 });
     const body = JSON.parse(String(init?.body));
+    if (body.model === "claude-nonexistent-1") return new Response(JSON.stringify({ type: "error", error: { type: "not_found_error", message: "model: claude-nonexistent-1" } }), { status: 404 });
     return new Response(JSON.stringify({ content: [{ type: "tool_use", name: "record", input: { from: "claude", model: body.model } }], usage: { input_tokens: 1200, output_tokens: 300, cache_read_input_tokens: 900 } }));
   });
   vi.stubGlobal("fetch", claude);
@@ -47,6 +48,27 @@ describe("AI reading settings", () => {
     expect(run).not.toHaveBeenCalled();
     expect(await getClaudeUsage(env)).toMatchObject({ byFeature: [{ feature: "coder", calls: 1, inputTokens: 2100, outputTokens: 300 }], calls: 1, inputTokens: 1200, outputTokens: 300, cacheReadTokens: 900 });
     expect(describeProvider(env)).toMatchObject({ provider: "anthropic", coderModel: "claude-haiku-5-5" });
+  });
+
+  it("a call Anthropic answers with an error is not counted against the limit, and its error is kept", async () => {
+    const { env } = setup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "Your credit balance is too low" } }), { status: 400 })));
+    await saveAiSettings(env, { anthropicKey: KEY });
+    expect((await callStructured(env, call))?.provider).toBe("workers-ai");
+    const u = await getClaudeUsage(env);
+    expect(u).toMatchObject({ calls: 0, failedCalls: 1 });
+    expect(u.lastError).toContain("credit balance is too low");
+  });
+
+  it("a refused model moves on to the next one, and a saved Haiku 4.5 is read as Haiku 5.5", async () => {
+    const { env } = setup();
+    await saveAiSettings(env, { anthropicKey: KEY, coderModel: "claude-haiku-4-5-20251001" });
+    resetAiSettingsCache();
+    expect((await loadAiSettings(env)).coderModel).toBe("claude-haiku-5-5");
+    await saveAiSettings(env, { coderModel: "claude-nonexistent-1" });
+    const r = await callStructured<{ model: string }>(env, call);
+    expect(r?.model).toBe("claude-haiku-5-5");
+    expect(await getClaudeUsage(env)).toMatchObject({ calls: 1, failedCalls: 1 });
   });
 
   it("at Claude's daily limit, automatic falls back to Cloudflare and Claude-only stops", async () => {

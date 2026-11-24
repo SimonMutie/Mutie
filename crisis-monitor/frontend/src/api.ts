@@ -1213,6 +1213,9 @@ export interface ClaudeUsage {
   outputTokens: number;
   cacheReadTokens: number;
   cacheWriteTokens: number;
+  failedCalls?: number;
+  lastError?: string | null;
+  lastErrorAt?: string | null;
 }
 /** Settings → AI reading (admins). The key itself is never sent to the browser. */
 export interface AiSettingsView {

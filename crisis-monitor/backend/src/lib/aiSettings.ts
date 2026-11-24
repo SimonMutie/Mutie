@@ -31,6 +31,10 @@ export interface AiSettings {
 }
 
 export const DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5";
+/** The previous Haiku: tried only when the chosen model is refused (unknown model, or no access on this key). */
+export const FALLBACK_CLAUDE_MODEL = "claude-haiku-4-5-20251001";
+/** A saved choice of the previous Haiku is read as Haiku 5.5, the model chosen for article reading. */
+const modelOrDefault = (m: string | null | undefined): string | null => (!m ? null : /^claude-haiku-4-5/.test(m) ? DEFAULT_CLAUDE_MODEL : m);
 /** About 600 full article readings a day plus assessments, digests and summaries: on Haiku 5.5, roughly a dollar a
  *  day at most. (The first default, 4,000, let a day's use reach about five dollars.) */
 export const DEFAULT_CLAUDE_DAILY_CALLS = 800;
@@ -66,6 +70,10 @@ function ensureTables(env: Env): Promise<void> {
   ])
     // Added later: kept in its own step, as it fails harmlessly once the column exists.
     .then(() => env.DB.prepare(`ALTER TABLE ai_settings ADD COLUMN extra_keywords TEXT`).run().catch(() => undefined))
+    // Failed Claude calls (not billed, so not counted against the limit) and the last error, for Settings.
+    .then(() => env.DB.prepare(`ALTER TABLE claude_usage_daily ADD COLUMN failed_calls INTEGER NOT NULL DEFAULT 0`).run().catch(() => undefined))
+    .then(() => env.DB.prepare(`ALTER TABLE claude_usage_daily ADD COLUMN last_error TEXT`).run().catch(() => undefined))
+    .then(() => env.DB.prepare(`ALTER TABLE claude_usage_daily ADD COLUMN last_error_at TEXT`).run().catch(() => undefined))
     .then(() => undefined)
     .catch((err) => {
       ready = null;
@@ -90,8 +98,8 @@ function fromRow(r: Row | null): AiSettings {
   const provider: AiProvider = r.provider === "claude" || r.provider === "cloudflare" ? r.provider : "auto";
   return {
     provider,
-    coderModel: r.coder_model || DEFAULT_CLAUDE_MODEL,
-    analystModel: r.analyst_model || r.coder_model || DEFAULT_CLAUDE_MODEL,
+    coderModel: modelOrDefault(r.coder_model) || DEFAULT_CLAUDE_MODEL,
+    analystModel: modelOrDefault(r.analyst_model) || modelOrDefault(r.coder_model) || DEFAULT_CLAUDE_MODEL,
     claudeDailyCalls: r.claude_daily_calls === null || r.claude_daily_calls === OLD_DEFAULT_CLAUDE_DAILY_CALLS ? DEFAULT_CLAUDE_DAILY_CALLS : r.claude_daily_calls,
     cloudflareDailyNeurons: r.cloudflare_daily_neurons,
     anthropicKey: r.anthropic_key || null,
@@ -172,6 +180,21 @@ export async function reserveClaudeCall(env: Env): Promise<boolean> {
   }
 }
 
+/** A Claude call that got an error back from Anthropic was not billed: it is taken off today's count (so failures
+ *  cannot use up the day's limit or its pacing) and kept as a failure, with the error, for Settings. A call that
+ *  timed out may still have run and been billed, so it stays counted (`refund` false). */
+export async function recordClaudeFailure(env: Env, error: string, refund: boolean): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `UPDATE claude_usage_daily SET calls = CASE WHEN ? AND calls > 0 THEN calls - 1 ELSE calls END, failed_calls = failed_calls + 1, last_error = ?, last_error_at = ? WHERE day = ?`
+    )
+      .bind(refund ? 1 : 0, error.slice(0, 300), new Date().toISOString(), day())
+      .run();
+  } catch (err) {
+    console.error("[ai-settings] could not record a failed Claude call:", err);
+  }
+}
+
 export async function recordClaudeTokens(env: Env, u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined, feature = "other"): Promise<void> {
   if (!u) return;
   try {
@@ -197,6 +220,10 @@ export interface ClaudeUsage {
   /** Today's calls and tokens by what they were for. */
   byFeature: { feature: string; calls: number; inputTokens: number; outputTokens: number }[];
   calls: number;
+  /** Calls today that Anthropic answered with an error (not billed, not in `calls`), and the last such error. */
+  failedCalls: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
   limit: number;
   inputTokens: number;
   outputTokens: number;
@@ -211,14 +238,14 @@ export async function getClaudeUsage(env: Env): Promise<ClaudeUsage> {
     await ensureTables(env);
     const r = await env.DB.prepare(`SELECT * FROM claude_usage_daily WHERE day = ?`)
       .bind(d)
-      .first<{ calls: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number }>();
+      .first<{ calls: number; failed_calls?: number; last_error?: string | null; last_error_at?: string | null; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number }>();
     const f = await env.DB.prepare(`SELECT feature, calls, input_tokens, output_tokens FROM claude_usage_feature WHERE day = ? ORDER BY input_tokens + 5 * output_tokens DESC`)
       .bind(d)
       .all<{ feature: string; calls: number; input_tokens: number; output_tokens: number }>();
     const byFeature = (f.results ?? []).map((x) => ({ feature: x.feature, calls: x.calls, inputTokens: x.input_tokens, outputTokens: x.output_tokens }));
-    return { day: d, byFeature, calls: r?.calls ?? 0, limit, inputTokens: r?.input_tokens ?? 0, outputTokens: r?.output_tokens ?? 0, cacheReadTokens: r?.cache_read_tokens ?? 0, cacheWriteTokens: r?.cache_write_tokens ?? 0 };
+    return { day: d, byFeature, calls: r?.calls ?? 0, failedCalls: r?.failed_calls ?? 0, lastError: r?.last_error ?? null, lastErrorAt: r?.last_error_at ?? null, limit, inputTokens: r?.input_tokens ?? 0, outputTokens: r?.output_tokens ?? 0, cacheReadTokens: r?.cache_read_tokens ?? 0, cacheWriteTokens: r?.cache_write_tokens ?? 0 };
   } catch {
-    return { day: d, byFeature: [], calls: 0, limit, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    return { day: d, byFeature: [], calls: 0, failedCalls: 0, lastError: null, lastErrorAt: null, limit, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   }
 }
 

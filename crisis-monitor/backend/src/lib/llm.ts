@@ -1,6 +1,6 @@
 import type { Env } from "../bindings";
 import { dailyNeuronBudget, estimateNeurons, neuronsFor, reserveNeurons, settleNeurons } from "./aiBudget";
-import { aiSettingsNow, anthropicKey, claudeEnabled, cloudflareEnabled, DEFAULT_CLAUDE_MODEL, loadAiSettings, recordClaudeTokens, reserveClaudeCall } from "./aiSettings";
+import { aiSettingsNow, anthropicKey, claudeEnabled, cloudflareEnabled, DEFAULT_CLAUDE_MODEL, FALLBACK_CLAUDE_MODEL, loadAiSettings, recordClaudeFailure, recordClaudeTokens, reserveClaudeCall } from "./aiSettings";
 
 /**
  * One structured-output model call, with a provider fallback chain. Which providers are used is set by an admin
@@ -56,9 +56,24 @@ function anthropicModelsFor(env: Env, role: "coder" | "analyst"): string[] {
   const s = aiSettingsNow();
   const coder = env.ESCALATION_CODER_MODEL || s.coderModel || DEFAULT_ANTHROPIC_MODEL;
   const analyst = env.ESCALATION_ANALYST_MODEL || s.analystModel || coder;
-  // If a configured analyst model is rejected (wrong ID, no access), fall
-  // back to the coder model before leaving Anthropic altogether.
-  return role === "analyst" ? [...new Set([analyst, coder])] : [coder];
+  // If a configured model is refused (wrong ID, no access on this key), the next is tried — the coder model, then
+  // Haiku 5.5, then the previous Haiku — before leaving Anthropic altogether. Only a refused model moves down the
+  // list (see ModelRefused); any other error goes straight to the fallback provider.
+  return [...new Set([...(role === "analyst" ? [analyst] : []), coder, DEFAULT_ANTHROPIC_MODEL, FALLBACK_CLAUDE_MODEL])];
+}
+
+/** Anthropic refused the model itself (unknown id, or not available to this key): worth trying the next model. */
+class ModelRefused extends Error {}
+
+/** Anthropic's own error message, from its JSON error body when there is one. */
+function anthropicErrorText(status: number, body: string): string {
+  try {
+    const j = JSON.parse(body) as { error?: { type?: string; message?: string } };
+    if (j.error?.message) return `HTTP ${status} ${j.error.type ?? ""}: ${j.error.message}`.replace(/ :/, ":");
+  } catch {
+    /* not JSON */
+  }
+  return `HTTP ${status}: ${body.slice(0, 240)}`;
 }
 
 async function callAnthropic<T>(env: Env, model: string, call: StructuredCall): Promise<T | null> {
@@ -84,7 +99,11 @@ async function callAnthropic<T>(env: Env, model: string, call: StructuredCall): 
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    noteModelError(`anthropic ${model}`, `HTTP ${res.status}: ${body.slice(0, 240)}`);
+    const text = anthropicErrorText(res.status, body);
+    noteModelError(`anthropic ${model}`, text);
+    // An error answer is not billed: it is taken off today's count and kept, with its reason, for Settings.
+    await recordClaudeFailure(env, `${model}: ${text}`, true);
+    if (res.status === 404 || (res.status === 400 && /model/i.test(body))) throw new ModelRefused(text);
     return null;
   }
   const data = (await res.json()) as { content?: Array<{ type?: string; name?: string; input?: unknown }>; stop_reason?: string; usage?: Parameters<typeof recordClaudeTokens>[1] };
@@ -239,8 +258,14 @@ export async function callStructured<T>(env: Env, call: StructuredCall): Promise
       try {
         const data = await callAnthropic<T>(env, model, call);
         if (data) return { data, provider: "anthropic", model };
+        break;
       } catch (err) {
+        if (err instanceof ModelRefused) continue;
         noteModelError(`anthropic ${model}`, err);
+        // A timeout may have run (and been billed), so it stays counted; a connection that failed outright did not.
+        const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        await recordClaudeFailure(env, `${model}: ${err instanceof Error ? err.message : String(err)}`, !timedOut);
+        break;
       }
     }
   }

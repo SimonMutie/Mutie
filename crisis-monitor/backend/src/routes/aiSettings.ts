@@ -19,7 +19,6 @@ const MODELS = [
   { id: "claude-haiku-5-5", name: "Claude Haiku 5.5 (fast; for reading articles)" },
   { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5 (stronger; for assessments)" },
   { id: "claude-opus-5-5", name: "Claude Opus 5.5 (strongest)" },
-  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5 (previous)" },
 ];
 
 function view(env: Env, s: AiSettings) {

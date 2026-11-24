@@ -330,6 +330,12 @@ function AiReadingCard() {
                 </div>
               )}
               Today (UTC): Claude {u.claude.calls.toLocaleString()} of {u.claude.limit.toLocaleString()} calls, {(u.claude.inputTokens + u.claude.cacheReadTokens + u.claude.cacheWriteTokens).toLocaleString()} tokens in and {u.claude.outputTokens.toLocaleString()} out · Cloudflare {u.cloudflare.used.toLocaleString()} of {u.cloudflare.budget.toLocaleString()} neurons.
+              {(u.claude.failedCalls ?? 0) > 0 && (
+                <div style={{ marginTop: 4, color: "var(--elevated)" }}>
+                  Claude refused {u.claude.failedCalls!.toLocaleString()} call{u.claude.failedCalls === 1 ? "" : "s"} today (not billed, not counted above).
+                  {u.claude.lastError && ` Last error${u.claude.lastErrorAt ? ` at ${new Date(u.claude.lastErrorAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}: ${u.claude.lastError}`}
+                </div>
+              )}
             </div>
           )}
         </>
@@ -454,7 +460,7 @@ function AiUsageCard() {
           {row("Last run", lastRunAge === null ? "Never" : lastRunAge <= 1 ? "Just now" : `${lastRunAge} minutes ago`, lastRunAge !== null && lastRunAge <= 15 ? "ok" : "warn")}
           {status.headlineTierEnabled !== false && row("Picked up from headlines, last 24 hours", `${status.headline24h ?? 0} reports (no AI used)`)}
           {row("Read in full, last 24 hours", `${count("coded") + count("rejected")} articles (${count("coded")} with reportable events)`)}
-          {typeof (lastRun as { headlineSkipped?: number } | null | undefined)?.headlineSkipped === "number" && row("Passed over by headline, last run", `${(lastRun as { headlineSkipped: number }).headlineSkipped} (not about conflict, security, crime or violence; not read)`)}
+          {typeof (lastRun as { headlineSkipped?: number } | null | undefined)?.headlineSkipped === "number" && row("Passed over by headline, last run", `${(lastRun as { headlineSkipped: number }).headlineSkipped} more (most off-topic headlines are already dropped when the feeds are collected; not read)`)}
           {row("Could not be opened", String(count("unreadable")))}
           {row("Failed", String(count("error")), count("error") > 0 ? "warn" : undefined)}
           {lastRun?.aiBudgetReached && row("Today", "Daily AI limit reached. Reading resumes after the reset.", "warn")}
