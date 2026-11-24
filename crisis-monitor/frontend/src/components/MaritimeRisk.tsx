@@ -1,17 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import L, { type Map as LeafletMap } from "leaflet";
 import { Popup as GlPopup, type GeoJSONSource, type Map as MapLibreMap, type MapLayerMouseEvent } from "maplibre-gl";
 import { AS_OF, LINE_STYLE, RISK_AREAS, RISK_LINES, RISK_POINTS, SOURCES, THREAT_SCALE, threatColor, threatLabel, type RiskLayer } from "../data/maritimeRisk";
 import { firstDataLayer } from "./globeExtras";
-import { zoneShapes } from "../watchZoneAreas";
-
-/** The areas' water along the real coast (public/zone-shapes.json, "mrisk-<id>"), once loaded. */
-type Shapes = Record<string, number[][][][]>;
-function useRiskShapes(): Shapes {
-  const [s, setS] = useState<Shapes>({});
-  useEffect(() => { void zoneShapes().then((z) => setS(z as Shapes)); }, []);
-  return s;
-}
 
 /**
  * Maritime security layers (data/maritimeRisk.ts): "Red Sea & Gulf of Aden: Houthi threat" and "Piracy & maritime
@@ -57,7 +48,7 @@ const chip = (text: string, color: string) => `<span style="display:inline-block
 function popupHtml(kind: string, id: string): string {
   if (kind === "area") {
     const a = RISK_AREAS.find((x) => x.id === id)!;
-    return `<div style="max-width:300px;font-size:12.5px;line-height:1.45"><div style="font-weight:800;margin-bottom:4px">${esc(a.name)}</div>${chip(`JMIC threat: ${threatLabel(a.level)}`, threatColor(a.level))}<div style="margin-top:6px">${esc(a.reason)}</div>${sourceHtml(a.source, ". JMIC names the sea but publishes no outline; the Lens draws it as that sea's water, along the coast.")}</div>`;
+    return `<div style="max-width:300px;font-size:12.5px;line-height:1.45"><div style="font-weight:800;margin-bottom:4px">${esc(a.name)}</div>${chip(`JMIC threat: ${threatLabel(a.level)}`, threatColor(a.level))}<div style="margin-top:6px">${esc(a.reason)}</div>${sourceHtml(a.source, ". Outline drawn by the Lens to the named waters; JMIC publishes no outlines.")}</div>`;
   }
   if (kind === "line") {
     const l = RISK_LINES.find((x) => x.id === id)!;
@@ -67,17 +58,13 @@ function popupHtml(kind: string, id: string): string {
   return `<div style="max-width:300px;font-size:12.5px;line-height:1.45"><div style="font-weight:800;margin-bottom:4px">${esc(p.name)}</div><div>${esc(p.detail)}</div>${sourceHtml(p.source)}</div>`;
 }
 
-function collection(on: State, shapes: Shapes = {}): GeoJSON.FeatureCollection {
+function collection(on: State): GeoJSON.FeatureCollection {
   const shown = (layers: RiskLayer[]) => layers.some((l) => on[l]);
   const features: GeoJSON.Feature[] = [
     // Lower threat first, so the stronger colour sits on top where areas meet.
     ...RISK_AREAS.filter((a) => shown(a.layer))
       .sort((a, b) => THREAT_SCALE.findIndex((s) => s.level === a.level) - THREAT_SCALE.findIndex((s) => s.level === b.level))
-      .map((a) => ({
-        type: "Feature" as const,
-        properties: { kind: "area", id: a.id, color: threatColor(a.level) },
-        geometry: shapes[`mrisk-${a.id}`] ? { type: "MultiPolygon" as const, coordinates: shapes[`mrisk-${a.id}`] } : { type: "Polygon" as const, coordinates: [a.ring] },
-      })),
+      .map((a) => ({ type: "Feature" as const, properties: { kind: "area", id: a.id, color: threatColor(a.level) }, geometry: { type: "Polygon" as const, coordinates: [a.ring] } })),
     ...RISK_LINES.filter((l) => shown(l.layer)).map((l) => ({
       type: "Feature" as const,
       properties: { kind: "line", id: l.id, color: LINE_STYLE[l.kind].color, dash: LINE_STYLE[l.kind].dash ? 1 : 0, closed: l.closed ? 1 : 0 },
@@ -92,10 +79,9 @@ function collection(on: State, shapes: Shapes = {}): GeoJSON.FeatureCollection {
 
 export function useFlatMaritimeRisk(map: LeafletMap | null) {
   const on = useMaritimeRisk();
-  const shapes = useRiskShapes();
   useEffect(() => {
     if (!map || (!on.redsea && !on.piracy)) return;
-    const layer = L.geoJSON(collection(on, shapes), {
+    const layer = L.geoJSON(collection(on), {
       style: (f) => {
         const p = f?.properties ?? {};
         if (p.kind === "area") return { color: p.color, weight: 1.4, opacity: 0.9, fillColor: p.color, fillOpacity: 0.22 };
@@ -107,7 +93,7 @@ export function useFlatMaritimeRisk(map: LeafletMap | null) {
     // Beneath markers, above the basemap.
     layer.eachLayer((l) => (l as L.Path).bringToBack?.());
     return () => { layer.remove(); };
-  }, [map, on, shapes]);
+  }, [map, on]);
 }
 
 /* ── Globe ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -115,8 +101,7 @@ export function useFlatMaritimeRisk(map: LeafletMap | null) {
 const SRC = "lens-mrisk";
 export function GlobeMaritimeRisk({ map }: { map: MapLibreMap | null }) {
   const on = useMaritimeRisk();
-  const shapes = useRiskShapes();
-  const data = useMemo(() => collection(on, shapes), [on, shapes]);
+  const data = useMemo(() => collection(on), [on]);
   const popup = useRef<GlPopup | null>(null);
   useEffect(() => {
     if (!map) return;
@@ -125,7 +110,7 @@ export function GlobeMaritimeRisk({ map }: { map: MapLibreMap | null }) {
       if (src) { src.setData(data); return; }
       const before = firstDataLayer(map);
       map.addSource(SRC, { type: "geojson", data });
-      map.addLayer({ id: `${SRC}-fill`, type: "fill", source: SRC, filter: ["any", ["==", ["geometry-type"], "Polygon"], ["==", ["geometry-type"], "MultiPolygon"]], paint: { "fill-color": ["get", "color"], "fill-opacity": ["case", ["==", ["get", "kind"], "area"], 0.22, 0.25] } }, before);
+      map.addLayer({ id: `${SRC}-fill`, type: "fill", source: SRC, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["get", "color"], "fill-opacity": ["case", ["==", ["get", "kind"], "area"], 0.22, 0.25] } }, before);
       map.addLayer({ id: `${SRC}-line`, type: "line", source: SRC, filter: ["all", ["!=", ["geometry-type"], "Point"], ["!=", ["get", "dash"], 1]], paint: { "line-color": ["get", "color"], "line-width": ["case", ["==", ["get", "kind"], "area"], 1.4, 1.6], "line-opacity": 0.9 } }, before);
       map.addLayer({ id: `${SRC}-dash`, type: "line", source: SRC, filter: ["==", ["get", "dash"], 1], paint: { "line-color": ["get", "color"], "line-width": 2, "line-dasharray": [3, 2.5] } }, before);
       map.addLayer({ id: `${SRC}-pt`, type: "circle", source: SRC, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 6, "circle-color": ["get", "color"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } });
@@ -206,7 +191,7 @@ export function MaritimeRiskLegend() {
             <a href={s.url} target="_blank" rel="noreferrer" style={{ color: "#9fd8ff" }}>{s.name}</a> ({s.date})
           </span>
         ))}
-        . JMIC publishes no outlines: each area is the named sea’s water, drawn by the Lens. Checked {AS_OF}.
+        . Area outlines are approximate. Checked {AS_OF}.
       </div>
     </div>
   );
