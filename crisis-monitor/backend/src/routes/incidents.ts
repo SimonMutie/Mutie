@@ -250,6 +250,13 @@ incidentsRouter.get("/", async (c) => {
     conditions.push("COALESCE(substr(occurred_at, 1, 10), occurred_date) <= ?");
     params.push(to.slice(0, 10));
   }
+  // A box on the map (for searches along a route or round a place): only incidents placed inside it.
+  const box = ["min_lat", "max_lat", "min_lng", "max_lng"].map((k) => c.req.query(k));
+  if (box.every((v) => v != null && v !== "" && Number.isFinite(Number(v)))) {
+    const [minLat, maxLat, minLng, maxLng] = box.map(Number);
+    conditions.push("latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?");
+    params.push(minLat, maxLat, minLng, maxLng);
+  }
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
   params.push(limit);
