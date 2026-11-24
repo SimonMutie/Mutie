@@ -10,7 +10,8 @@ export const WARNING_COLOR: Record<EscalationLevel, string> = { critical: "#ff3d
 export const WARNING_SIZE: Record<EscalationLevel, number> = { critical: 19, elevated: 15, watch: 12 };
 
 /** The escalation triangle with its exclamation mark, drawn as shapes on a 64-pixel canvas (crisp at any size). */
-export function drawWarningIcon(fillColor: string): HTMLCanvasElement {
+/** A terrorist attack's triangle: black, edged and marked in its level's colour, so it stands apart at a glance. */
+export function drawWarningIcon(fillColor: string, terror = false): HTMLCanvasElement {
   const size = 64;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -21,13 +22,13 @@ export function drawWarningIcon(fillColor: string): HTMLCanvasElement {
   ctx.lineTo(size * 0.96, size * 0.92);
   ctx.lineTo(size * 0.04, size * 0.92);
   ctx.closePath();
-  ctx.fillStyle = fillColor;
+  ctx.fillStyle = terror ? "#0b0b0b" : fillColor;
   ctx.fill();
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(0,0,0,0.65)";
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = terror ? fillColor : "rgba(0,0,0,0.65)";
+  ctx.lineWidth = terror ? 6 : 3;
   ctx.stroke();
-  ctx.fillStyle = "#0b0b0b";
+  ctx.fillStyle = terror ? fillColor : "#0b0b0b";
   // The "!": a little larger and bolder than before, with a rounded stem, so it reads at a glance.
   const stem = size * 0.12;
   ctx.beginPath();
@@ -41,11 +42,12 @@ export function drawWarningIcon(fillColor: string): HTMLCanvasElement {
 
 const urls = new Map<string, string>();
 /** The escalation triangle as an image address (for the flat map's markers). */
-export function warningIconUrl(level: EscalationLevel): string {
-  let u = urls.get(level);
+export function warningIconUrl(level: EscalationLevel, terror = false): string {
+  const k = `${level}${terror ? ":terror" : ""}`;
+  let u = urls.get(k);
   if (!u) {
-    u = drawWarningIcon(WARNING_COLOR[level]).toDataURL("image/png");
-    urls.set(level, u);
+    u = drawWarningIcon(WARNING_COLOR[level], terror).toDataURL("image/png");
+    urls.set(k, u);
   }
   return u;
 }
