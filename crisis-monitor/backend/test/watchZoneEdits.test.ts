@@ -42,7 +42,7 @@ describe("watch zones from boundary areas", () => {
     const d1 = fakeD1();
     d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, client_id TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);
       INSERT INTO users (id, username) VALUES ('a', 'admin');
-      CREATE TABLE watch_zone_overrides (zone_id TEXT PRIMARY KEY, geometry TEXT, color TEXT, updated_by TEXT, updated_at TEXT NOT NULL, label TEXT, severity TEXT, description TEXT, units TEXT, units_geometry TEXT, base_dropped INTEGER, retired INTEGER, custom INTEGER, bounds TEXT);`);
+      CREATE TABLE watch_zone_overrides (zone_id TEXT PRIMARY KEY, geometry TEXT, color TEXT, updated_by TEXT, updated_at TEXT NOT NULL, label TEXT, severity TEXT, description TEXT, units TEXT, units_geometry TEXT, base_dropped INTEGER, retired INTEGER, custom INTEGER, bounds TEXT, pattern TEXT);`);
     const env = { DB: d1.DB, SESSION_SECRET: "s" } as unknown as Env;
     const admin = { Authorization: `Bearer ${await createSessionToken("a", "admin", "s")}`, "Content-Type": "application/json" };
     const call = (path: string, init: RequestInit) => liveLayersRouter.request(path, init, env);
