@@ -226,7 +226,7 @@ export async function draftNotebook(env: Env, query: { id: string; name: string;
   await run(env.DB, "INSERT INTO query_notebook_log (query_id, created_at) VALUES (?,?)", [query.id, nowIso()]);
 
   const user = `MONITORING QUERY: ${query.name}\nQUERY SYNTAX: ${query.boolean_query.slice(0, 300)}\n\n${digestText(digest, notes)}`;
-  const result = await callStructured<ModelDraft>(env, { role: "analyst", system: SYSTEM, user, schema: SCHEMA as unknown as Record<string, unknown>, toolName: "record_summary", toolDescription: "Record the analytical summary.", maxTokens: 1500 }).catch(() => null);
+  const result = await callStructured<ModelDraft>(env, { role: "analyst", feature: "notebook", system: SYSTEM, user, schema: SCHEMA as unknown as Record<string, unknown>, toolName: "record_summary", toolDescription: "Record the analytical summary.", maxTokens: 1500 }).catch(() => null);
   const body = result ? composeNotebook(result.data, digest.stories, digest.periodLabel.replace(/^the /, "")) : null;
   if (!result || !body) return { ok: false, status: 502, error: "The AI did not return a usable draft just now. Most likely today's free AI allowance is used up; it resets at 03:00 Nairobi time (00:00 UTC). Your existing text is unchanged." };
 
