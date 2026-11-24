@@ -194,12 +194,28 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "UltramarTG", name: "Ultramar", lean: "Portuguese-language channel on Mozambique; operator not established", bloc: "regional", africa: true, lang: "pt" },
   { handle: "zitamarchat", name: "Zitamar Chat", lean: "Zitamar News readers' discussion group; posts are readers', not Zitamar's", bloc: "independent", africa: true },
   { handle: "moz360", name: "360 Mozambique", lean: "Mozambican business and economy newsroom, English", bloc: "regional", africa: true, seen: true },
+  // Somalia, added at Simon's request (2026-11-24); Radio Muqdisho, The Somali Digest, SNTV and Garowe Online were
+  // already followed. Puntland's counter-terrorism channel had a public preview page in search results; the other
+  // seven could not be found by search or opened, so the source list (count 0) shows if one does not exist.
+  { handle: "HawlgalkaCiribtirkaArgagixisadPL", name: "Puntland Counter-Terrorism Operations", lean: "Puntland's counter-terrorism command, a party to the fight against IS-Somalia and al-Shabaab", bloc: "regional", africa: true, lang: "so", seen: true },
+  { handle: "SONNALive", name: "SONNA", lean: "Somali National News Agency, federal state media", bloc: "regional", africa: true, lang: "so" },
+  { handle: "radiopuntland1", name: "Radio Puntland", lean: "Puntland state radio", bloc: "regional", africa: true, lang: "so" },
+  { handle: "RadioDaljir", name: "Radio Daljir", lean: "Somali private radio network", bloc: "regional", africa: true, lang: "so" },
+  { handle: "BBCnewssomali", name: "BBC Somali", lean: "BBC World Service, Somali", bloc: "western", africa: true, lang: "so" },
+  { handle: "sbcsomalitv", name: "SBC Somali TV", lean: "Somali broadcaster, Puntland-based", bloc: "regional", africa: true, lang: "so" },
+  { handle: "gaylanmedia0", name: "Gaylan Media", lean: "Somali news; operator not established", bloc: "regional", africa: true, lang: "so" },
+  { handle: "ZakariyeTimacade", name: "Zakariye Timacade", lean: "Somali journalist's or commentator's channel; not established", bloc: "regional", africa: true, lang: "so" },
+  // Found by search on 2026-11-24, each with a public preview page that day.
+  { handle: "plpoliceforce", name: "Puntland Police Force", lean: "Puntland police, a party to the fight against IS-Somalia", bloc: "regional", africa: true, lang: "so", seen: true },
+  { handle: "KaabSomaliTv", name: "Kaab TV", lean: "Somali broadcaster, Somali and English", bloc: "regional", africa: true, lang: "so", seen: true },
+  { handle: "somalilandpost", name: "Somaliland Post", lean: "Hargeisa-based news site, Somali", bloc: "regional", africa: true, lang: "so", seen: true },
+  { handle: "srtvnews2", name: "SRTV Somali", lean: "Somali Regional State (Ethiopia) broadcaster", bloc: "regional", africa: true, lang: "so", seen: true },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick and about a hundred channels, each is read about every twenty-five minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 20;
+/** Africa channels read by the pipeline on one tick. With a five-minute tick and about 110 channels, each is read about every twenty-five minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 22;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
