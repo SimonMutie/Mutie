@@ -374,6 +374,7 @@ async function codeWithAi(env: Env, taxonomy: string, it: Item): Promise<{ field
     `ARTICLE:\n${it.text}`;
   const result = await callStructured<{ fields: { field: string; value: string }[] }>(env, {
     role: "coder",
+      feature: "staging",
     system,
     user,
     schema: CODING_SCHEMA,
