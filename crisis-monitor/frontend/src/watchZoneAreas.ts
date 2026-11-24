@@ -11,9 +11,6 @@ import type { WatchZone } from "./api";
  *    its outer edge follows the real border and its inner edge is straight;
  *  - the Red Sea zone is the water itself: the sea from Suez to the Gulf of Aden, with the land taken out.
  * A zone with no recipe here (one added later on the server) is drawn as its box.
- *
- * The outlines come from public/zone-shapes.json, built from Natural Earth 1:10m by scripts/buildZoneShapes.mjs, so
- * they follow every bend of a border or coast; the 1:50m world here is the fallback if that file cannot be read.
  */
 
 type Coords = Position[][][]; // MultiPolygon coordinates
@@ -23,7 +20,6 @@ const RECIPES: Record<string, { countries?: string[]; somaliland?: boolean; clip
   gaza: { countries: ["275"], clip: true },
   drc: { countries: ["180"], clip: true },
   yemen: { countries: ["887"] },
-  piracy: { sea: [] },
   "red-sea": {
     // A generous outline of the Red Sea, the Gulf of Suez and Aqaba, Bab al-Mandab and the Gulf of Aden; the land is
     // taken out below, so only the water remains.
@@ -66,36 +62,20 @@ function loadShapes() {
   return shapes;
 }
 
-let fine: Promise<Record<string, Coords>> | null = null;
-/** The 1:10m outlines (public/zone-shapes.json), or an empty set if they cannot be read. */
-export function zoneShapes(): Promise<Record<string, Coords>> {
-  fine ??= fetch("/zone-shapes.json")
-    .then((r) => (r.ok ? (r.json() as Promise<{ zones: Record<string, Coords> }>) : Promise.reject(new Error(String(r.status)))))
-    .then((j) => j.zones ?? {}, () => ({}));
-  return fine;
-}
-
 /** Each zone's area, as a MultiPolygon, by zone id. */
 export async function buildWatchZoneAreas(zones: WatchZone[]): Promise<Record<string, MultiPolygon>> {
-  const [shapes10m, pc] = await Promise.all([zoneShapes(), import("polygon-clipping")]);
+  const [{ countries, somaliland, land }, pc] = await Promise.all([loadShapes(), import("polygon-clipping")]);
   const clip = pc.default ?? pc;
   const out: Record<string, MultiPolygon> = {};
-  const needCoarse = zones.some((z) => RECIPES[z.id] && !shapes10m[z.id]);
-  const coarse = needCoarse ? await loadShapes() : null;
   for (const z of zones) {
     const r = RECIPES[z.id];
     let coords: Coords | null = null;
     try {
-      if (r && shapes10m[z.id]) {
-        coords = shapes10m[z.id];
-        if (r.clip && z.bounds) coords = clip.intersection(coords as never, box(z.bounds) as never) as unknown as Coords;
-      } else if (r?.sea && r.sea.length && coarse) {
-        const { land } = coarse;
+      if (r?.sea) {
         // The water: the outline, minus the land near it.
         const near = land.filter((poly) => poly[0].some(([x, y]) => x > 28 && x < 56 && y > 5 && y < 34));
         coords = clip.difference([r.sea] as never, ...(near.map((p) => [p]) as never[])) as unknown as Coords;
-      } else if (r?.countries && coarse) {
-        const { countries, somaliland } = coarse;
+      } else if (r?.countries) {
         const parts = r.countries.map((id) => countries.get(id)).filter((p): p is Coords => !!p);
         if (r.somaliland && somaliland) parts.push(somaliland);
         if (parts.length) {
