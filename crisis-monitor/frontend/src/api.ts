@@ -1293,6 +1293,9 @@ export interface EscalationIndicator {
  *  Every incident carries the criteria it met and the evidence behind them. */
 export interface EscalationIncident {
   id: string;
+  /** A terrorist attack: coded as one, or by a group on the UN's ISIL and Al-Qaida sanctions list. */
+  terrorism?: boolean;
+  terrorGroups?: string[];
   countryCode: string;
   countryName: string;
   /** "Mekelle, Tigray" — null when reporting names no place below the country. */
