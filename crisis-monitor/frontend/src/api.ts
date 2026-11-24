@@ -2373,6 +2373,11 @@ export const api = {
       from?: string;
       to?: string;
       limit?: number;
+      /** Only incidents placed inside this box. */
+      min_lat?: number;
+      max_lat?: number;
+      min_lng?: number;
+      max_lng?: number;
     } = {}
   ) => {
     const qs = new URLSearchParams(
