@@ -683,27 +683,8 @@ async function ensureZoneEdits(db: D1Database) {
   for (const [name, type] of [["label", "TEXT"], ["severity", "TEXT"], ["description", "TEXT"], ["units", "TEXT"], ["units_geometry", "TEXT"], ["base_dropped", "INTEGER"], ["retired", "INTEGER"], ["custom", "INTEGER"], ["bounds", "TEXT"], ["pattern", "TEXT"]] as const) {
     if (!cols.has(name)) await dbRun(db, `ALTER TABLE watch_zone_overrides ADD COLUMN ${name} ${type}`);
   }
-  await repairZonesOnce(db);
   zoneEditsReady = true;
 }
-/**
- * One-time repair (24 Nov 2026, at Simon's request): the Middle East standing zones he took off the map by mistake
- * (Yemen, Gaza, Lebanon, Syria, Iraq) come back with their own areas; the Red Sea zone goes back to its new
- * coast-following outline and name (its old reshaping and areas are cleared, its colour and pattern kept); and his
- * own hand-drawn Red Sea "AAH" and piracy zones are retired, not deleted (they can be brought back from the zone
- * list), now that the standing Red Sea and piracy zones follow the coast.
- */
-async function repairZonesOnce(db: D1Database) {
-  await dbRun(db, `CREATE TABLE IF NOT EXISTS lens_once (key TEXT PRIMARY KEY, done_at TEXT NOT NULL)`);
-  const key = "zones_restore_2026_11_24";
-  if ((await dbAll<{ key: string }>(db, `SELECT key FROM lens_once WHERE key = ?`, [key])).length) return;
-  const me = ["yemen", "gaza", "lebanon", "syria", "iraq"];
-  await dbRun(db, `UPDATE watch_zone_overrides SET retired = 0, base_dropped = 0 WHERE zone_id IN (${me.map(() => "?").join(",")})`, me);
-  await dbRun(db, `UPDATE watch_zone_overrides SET retired = 0, base_dropped = 0, geometry = NULL, units = NULL, units_geometry = NULL, label = NULL, bounds = NULL WHERE zone_id = 'red-sea'`);
-  await dbRun(db, `UPDATE watch_zone_overrides SET retired = 1 WHERE custom = 1 AND (label LIKE '%AAH%' OR label LIKE '%PIRAC%' OR label LIKE '%HOUTHI%')`);
-  await dbRun(db, `INSERT INTO lens_once (key, done_at) VALUES (?, ?)`, [key, dbNow()]);
-}
-
 const zoneRing = zod.array(zod.array(zod.number()).min(2).max(3)).min(4).max(50000);
 const zoneEditSchema = zod.object({
   geometry: zod
