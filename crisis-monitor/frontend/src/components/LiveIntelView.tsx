@@ -1034,7 +1034,7 @@ const LAYER_DEFS: LayerDef[] = [
       return feed.alerts
         .filter((a) => a.coords && !a.source.startsWith("t.me/"))
         .map((a): GlobePoint => {
-          const blocColor: Record<string, string> = { western: "#4fd1ff", russian: "#ff5d5d", regional: "#ffd23f", independent: "#00E676" };
+          const blocColor: Record<string, string> = { western: "#4fd1ff", russian: "#ff5d5d", chinese: "#f59e0b", regional: "#ffd23f", independent: "#00E676" };
           return {
             id: a.id,
             layerKey: "News Reports",
