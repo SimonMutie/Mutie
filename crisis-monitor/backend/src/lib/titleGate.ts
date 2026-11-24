@@ -90,7 +90,7 @@ const STEMS: Record<string, string[]> = {
   somali: [
     "dagaal", "weerar", "dilay", "dileen", "la dilay", "dhimash", "dhaawac", "qarax", "ciidam", "duqeyn", "xasuuq", "colaad", "amni", "nabadgelyo", "argagixis",
     "burcad", "afduub", "barakac", "isku dhac", "shabaab", "maleeshiyaad",
-    "khawaarij", "daacish", "hawlgal", "laayey", "toogash", "rasaas", "miino", "is-qarxin", "isqarxin", "gaadmo", "dhagarqab", "kooxda", "xabsi", "dabaal",
+    "khawaarij", "daacish", "hawlgal", "laayey", "toogash", "rasaas", "miino", "is-qarxin", "isqarxin", "gaadmo", "dhagarqab", "xabsi",
   ],
   oromo: ["rasaas", "ajjeefam", "ajjeesan", "ajjeese", "lolli", "humnoota", "poolisii", "hidhaman", "waraanni", "weerara", "lola$", "waraana", "haleel", "ajjeef", "ajjeech", "loltoota", "buqqa", "nageenya", "miidhaa", "lubbuu", "hidhame", "ukkaamf", "shanee"],
   kinyarwanda_kirundi: ["intambara", "abishwe", "yishwe", "bishwe", "kwica", "umutekano", "abarwanyi", "ibitero", "igitero", "impunzi", "inyeshyamba"],
