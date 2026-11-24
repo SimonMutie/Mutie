@@ -346,6 +346,7 @@ export async function buildQueryNotification(env: Env, query: { id: string; name
     const user = `MONITORING QUERY: ${query.name}\nQUERY SYNTAX: ${clip(query.boolean_query, 300)}\nNEW ITEMS SINCE LAST ALERT: ${total} (${shown.length} distinct headlines shown)${alert ? `\nPLATFORM SIGNAL: ${alert.title}. ${alert.description}` : ""}\n\nITEMS\n${lines.join("\n")}`;
     const result = await callStructured<{ changed?: string; analysis?: string; cited?: unknown[] }>(env, {
       role: "analyst",
+      feature: "alert digests",
       system: QUERY_SYSTEM,
       user,
       schema: QUERY_SCHEMA as unknown as Record<string, unknown>,
