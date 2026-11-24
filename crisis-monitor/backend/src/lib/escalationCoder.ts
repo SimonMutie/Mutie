@@ -264,6 +264,7 @@ export function buildCoderUserMessage(a: ArticleForCoding, now: Date): string {
 export async function codeArticle(env: Env, article: ArticleForCoding, now = new Date()): Promise<{ raw: RawCoding; provider: string; model: string } | null> {
   const result = await callStructured<RawCoding>(env, {
     role: "coder",
+    feature: "articles",
     system: CODER_SYSTEM,
     user: buildCoderUserMessage(article, now),
     schema: CODING_SCHEMA as unknown as Record<string, unknown>,
@@ -729,6 +730,7 @@ export function buildAnalystUserMessage(input: IncidentSynthesisInput): string {
 export async function synthesizeIncident(env: Env, input: IncidentSynthesisInput): Promise<{ synthesis: IncidentSynthesis; provider: string; model: string } | null> {
   const result = await callStructured<IncidentSynthesis>(env, {
     role: "analyst",
+    feature: "incident assessments",
     system: ANALYST_SYSTEM,
     user: buildAnalystUserMessage(input),
     schema: SYNTHESIS_SCHEMA as unknown as Record<string, unknown>,
