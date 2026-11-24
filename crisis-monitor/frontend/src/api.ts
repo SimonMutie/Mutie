@@ -1842,7 +1842,7 @@ export interface WalletIntel {
 }
 
 // --- OSINT Alerts (backend: lib/osintFeed.ts, adapted from MIT-licensed code) ---
-export type NewsBloc = "western" | "russian" | "regional" | "independent";
+export type NewsBloc = "western" | "russian" | "chinese" | "regional" | "independent";
 
 export interface OsintAlertItem {
   id: string;
