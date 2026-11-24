@@ -2698,9 +2698,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         setZoneEdit({ id: a.id, mode: a.action });
       } else if (a.action === "color" && a.color) {
         void api.setWatchZoneOverride(a.id, { color: a.color }).then(watchZones.reload, (err: Error) => setZoneMsg(err.message));
+      } else if (a.action === "pattern" && a.pattern) {
+        void api.setWatchZoneOverride(a.id, { pattern: a.pattern === "solid" ? null : a.pattern }).then(watchZones.reload, (err: Error) => setZoneMsg(err.message));
       } else if (a.action === "reset") {
-        if (!window.confirm("Put this zone's boundary and colour back to the default?")) return;
-        void api.setWatchZoneOverride(a.id, { geometry: null, color: null }).then(watchZones.reload, (err: Error) => setZoneMsg(err.message));
+        if (!window.confirm("Put this zone's boundary, colour and fill back to the default?")) return;
+        void api.setWatchZoneOverride(a.id, { geometry: null, color: null, pattern: null }).then(watchZones.reload, (err: Error) => setZoneMsg(err.message));
       }
     };
     window.addEventListener("lens-zone-action", onAction);
