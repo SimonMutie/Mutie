@@ -107,6 +107,7 @@ import {
   PanelRightClose,
   type LucideIcon,
   BrainCircuit,
+  Skull,
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DPath, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
@@ -388,6 +389,8 @@ interface GlobePoint {
   /** Conflict Escalation only — see Map3D.tsx's own field of the same name.
    *  Undefined on every other layer. */
   escalationLevel?: "watch" | "elevated" | "critical";
+  /** Conflict Escalation only: a terrorist attack, drawn as a black triangle edged in its level's colour. */
+  terrorism?: boolean;
   /** Aircraft only: heading in degrees from north, to turn the plane symbol. */
   heading?: number;
   /** Conflict Escalation only — used to fetch the full evidence/source-link
@@ -638,8 +641,43 @@ const LAYER_DEFS: LayerDef[] = [
           countryCode: f.properties.countryCode,
           evidenceCount: f.properties.evidenceCount,
           incident: f.properties.incident,
+          terrorism: !!f.properties.incident?.terrorism,
         };
       });
+    },
+  },
+  // Terrorist attacks only: the escalation incidents flagged as terrorism (UN-listed groups, or coded as a terrorist
+  // attack), for a map of them alone. They also show among the escalation markers, as black triangles.
+  {
+    key: "terrorist-attacks",
+    label: "Terrorist Attacks",
+    group: "Threats & Intel",
+    color: "#ff3d3d",
+    icon: Skull,
+    fetcher: async () => {
+      const collection = await api.getConflictEscalation();
+      return collection.features
+        .filter((f) => f.properties.incident?.terrorism)
+        .map((f) => {
+          const level = f.properties.escalationLevel ?? "elevated";
+          return {
+            id: `terror:${f.properties.id}`,
+            layerKey: "Terrorist Attacks",
+            lat: f.geometry.coordinates[1],
+            lng: f.geometry.coordinates[0],
+            color: "#ff3d3d",
+            size: level === "critical" ? 0.4 : level === "watch" ? 0.24 : 0.3,
+            title: f.properties.title,
+            subtitle: f.properties.detail,
+            time: f.properties.time,
+            url: f.properties.url,
+            escalationLevel: level,
+            countryCode: f.properties.countryCode,
+            evidenceCount: f.properties.evidenceCount,
+            incident: f.properties.incident,
+            terrorism: true,
+          };
+        });
     },
   },
   // Deliberately separate from GDELT Events above — GDELT is a real-time,
@@ -3587,13 +3625,13 @@ function FlatMap({
       <AircraftMarkers points={points.filter((p) => AIRCRAFT_LAYER_KEYS.has(p.layerKey))} selectedId={selectedAircraftId ?? null} onSelect={(id, title) => onAircraftClick?.(id, title)} />
       {points.filter((p) => !AIRCRAFT_LAYER_KEYS.has(p.layerKey)).map((p) =>
         p.escalationLevel && p.incident ? (
-          <EscalationFlatMarker key={`${p.layerKey}:${p.id}`} lat={p.lat} lng={p.lng} level={p.escalationLevel} incident={p.incident} />
+          <EscalationFlatMarker key={`${p.layerKey}:${p.id}`} lat={p.lat} lng={p.lng} level={p.escalationLevel} incident={p.incident} terror={!!p.terrorism} />
         ) : p.escalationLevel ? (
           // An escalation without its incident record: the same triangle, opening Liveuamap's map of the country.
           <Marker
             key={`${p.layerKey}:${p.id}`}
             position={[p.lat, p.lng]}
-            icon={warningMarkerIcon(p.escalationLevel)}
+            icon={warningMarkerIcon(p.escalationLevel, !!p.terrorism)}
             eventHandlers={{ click: () => openLiveuamap(liveuamapLink(p.countryCode, p.lat, p.lng, undefined)) }}
           >
             <LeafletTooltip direction="top">
@@ -6199,12 +6237,12 @@ function IncidentIntakeModal({
  * map of that country, as it does on the 3D map.
  */
 /** The escalation triangle on the flat map: the same drawing and size as on the 3D globe (mapSymbols.ts). */
-function warningMarkerIcon(level: EscalationLevel) {
+function warningMarkerIcon(level: EscalationLevel, terror = false) {
   const h = WARNING_SIZE[level];
-  return divIcon({ className: "lens-warning-icon", html: `<img src="${warningIconUrl(level)}" width="${h}" height="${h}" alt="" style="display:block">`, iconSize: [h, h], iconAnchor: [h / 2, h], popupAnchor: [0, -h], tooltipAnchor: [0, -h] });
+  return divIcon({ className: "lens-warning-icon", html: `<img src="${warningIconUrl(level, terror)}" width="${h}" height="${h}" alt="" style="display:block">`, iconSize: [h, h], iconAnchor: [h / 2, h], popupAnchor: [0, -h], tooltipAnchor: [0, -h] });
 }
 
-function EscalationFlatMarker({ lat, lng, level, incident }: { lat: number; lng: number; level: EscalationLevel; incident: EscalationIncident }) {
+function EscalationFlatMarker({ lat, lng, level, incident, terror = false }: { lat: number; lng: number; level: EscalationLevel; incident: EscalationIncident; terror?: boolean }) {
   const marker = useRef<LeafletMarker>(null);
   const timer = useRef<number | undefined>(undefined);
   const stay = () => window.clearTimeout(timer.current);
@@ -6217,7 +6255,7 @@ function EscalationFlatMarker({ lat, lng, level, incident }: { lat: number; lng:
     <Marker
       ref={marker}
       position={[lat, lng]}
-      icon={warningMarkerIcon(level)}
+      icon={warningMarkerIcon(level, terror)}
       eventHandlers={{
         mouseover: () => {
           stay();
