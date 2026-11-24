@@ -26,7 +26,7 @@ import { fingerprint, htmlToText, parseChannelPage, splitHeadline, type Telegram
  *     feeds) are read exactly as a browser or feed reader would.
  */
 
-export type Bloc = "western" | "russian" | "regional" | "independent";
+export type Bloc = "western" | "russian" | "chinese" | "regional" | "independent";
 
 interface Feed {
   handle: string;
@@ -36,7 +36,7 @@ interface Feed {
   /** An Africa-focused Telegram channel whose posts also go to the escalation pipeline as single-source claims. */
   africa?: boolean;
   /** Language of the posts, when not English. English posts are keyword-filtered before coding; others are not. */
-  lang?: "fr" | "ar" | "am" | "so" | "om" | "ru";
+  lang?: "fr" | "ar" | "am" | "so" | "om" | "ru" | "sw";
   /** True when a public preview of the channel was seen in search results on the day it was added. */
   seen?: boolean;
 }
@@ -58,6 +58,13 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "AlMayadeenEnglish", name: "Al Mayadeen English", lean: "Lebanese / Resistance Axis", bloc: "regional" },
   { handle: "intelslava", name: "Intel Slava Z", lean: "Russian military OSINT", bloc: "russian" },
   { handle: "PressTV", name: "Press TV", lean: "Iranian state broadcaster", bloc: "regional" },
+  // Global channels added 2026-11-24, each with a public preview page in search results that day. Their posts reach
+  // the escalation pipeline only when they mention somewhere in Africa (escalationIncidents.ts gatherTelegram).
+  { handle: "xinhua_news_agency_en", name: "Xinhua", lean: "Chinese state news agency", bloc: "chinese" },
+  { handle: "ClashReport", name: "Clash Report", lean: "Global conflict aggregator", bloc: "independent" },
+  { handle: "war_noir", name: "War Noir", lean: "Weapons and conflict OSINT, strong on Sudan and DR Congo", bloc: "independent" },
+  { handle: "suriyak_maps", name: "Suriyakmaps", lean: "Front-line mapper, including Sudan", bloc: "independent" },
+  { handle: "MiddleEastEye_TG", name: "Middle East Eye", lean: "London-based Middle East newsroom", bloc: "regional" },
   // Africa-focused channels, added at Simon's request (2026-11-16). The handles came from a list he supplied and
   // could not be opened from the build environment, so none is confirmed to exist: a handle that returns nothing
   // shows a count of 0 in the feed's source list. "lean" says who runs the channel as far as is known; an
@@ -104,12 +111,41 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "africaninitiativeen", name: "African Initiative", lean: "Russian state-linked news agency on Africa", bloc: "russian", africa: true, seen: true },
   { handle: "africaninitiativefr", name: "African Initiative FR", lean: "Russian state-linked news agency on Africa, French", bloc: "russian", africa: true, lang: "fr", seen: true },
   { handle: "rybar_africa", name: "Afrikar (Rybar Africa)", lean: "Russian military blog's Africa channel, Russian", bloc: "russian", africa: true, lang: "ru", seen: true },
+  // South Sudan, added at Simon's request (2026-11-24). Juba 64 Press and the Juba city group had public preview
+  // pages in search results that day; the other five could not be found by search or opened from the build
+  // environment, so the feed's source list (count 0) shows if any of them does not exist or is private.
+  { handle: "theguardiansouthsudan", name: "The Guardian South Sudan", lean: "South Sudan news; operator not established", bloc: "regional", africa: true },
+  { handle: "Jubasouthsudanews", name: "Juba 64 Press", lean: "South Sudan, Arabic; anonymous, opposition-leaning and partisan", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "SouthSudanEParliament", name: "South Sudan E-Parliament", lean: "South Sudan political channel; operator not established", bloc: "regional", africa: true },
+  { handle: "RussiaInSouthSudan", name: "Russia in South Sudan", lean: "Russian-run channel on South Sudan; operator not established", bloc: "russian", africa: true },
+  { handle: "southsudannews", name: "South Sudan News", lean: "South Sudan news; operator not established", bloc: "regional", africa: true },
+  { handle: "Jubasouthsudan", name: "Juba City Group", lean: "Juba community channel, Arabic; anonymous", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "unmissmedia", name: "UNMISS", lean: "UN Mission in South Sudan's media office", bloc: "independent", africa: true },
+  // The region, found by search on 2026-11-24; each had a public preview page in the results that day.
+  { handle: "SAFgov", name: "Sudanese Armed Forces (official)", lean: "The Sudanese army's own channel, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "GeneralDagalo", name: "Mohamed Hamdan Daglo", lean: "The RSF commander's own channel, a party to Sudan's war", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "ultrasudan", name: "Ultra Sudan", lean: "Sudanese news site, Arabic", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "RusEmbSudan", name: "Russian Embassy in Sudan", lean: "Russian embassy, Khartoum", bloc: "russian", africa: true, lang: "ar", seen: true },
+  { handle: "russiainethiopia", name: "Russian Embassy in Ethiopia", lean: "Russian embassy, Addis Ababa", bloc: "russian", africa: true, seen: true },
+  { handle: "RaadiyoMuqdisho", name: "Radio Muqdisho", lean: "Somali state radio", bloc: "regional", africa: true, lang: "so", seen: true },
+  { handle: "citizentvke", name: "Citizen Digital", lean: "Kenyan broadcaster (Royal Media)", bloc: "regional", africa: true, seen: true },
+  { handle: "StandardKenya", name: "The Standard (Kenya)", lean: "Kenyan newspaper", bloc: "regional", africa: true, seen: true },
+  { handle: "dailymonitor", name: "Daily Monitor", lean: "Ugandan newspaper", bloc: "regional", africa: true, seen: true },
+  { handle: "dailyexpressug", name: "Daily Express (Uganda)", lean: "Ugandan online newsroom", bloc: "regional", africa: true, seen: true },
+  { handle: "ugandanow", name: "Uganda Now (Tabz Live News)", lean: "Ugandan news aggregator", bloc: "regional", africa: true, seen: true },
+  { handle: "Bbc_Swahili", name: "BBC Swahili", lean: "BBC World Service, Swahili", bloc: "western", africa: true, lang: "sw", seen: true },
+  { handle: "HabariTz", name: "Swahili News", lean: "Swahili news aggregator, Tanzania and Kenya", bloc: "regional", africa: true, lang: "sw", seen: true },
+  { handle: "dw_amharic", name: "DW Amharic", lean: "Deutsche Welle, Amharic", bloc: "western", africa: true, lang: "am", seen: true },
+  { handle: "fbcenglish", name: "FBC English", lean: "Ethiopian state-affiliated broadcaster", bloc: "regional", africa: true, seen: true },
+  { handle: "infolibre_fil_d_actus", name: "InfoLibre Actualités", lean: "DR Congo news aggregator, French", bloc: "regional", africa: true, lang: "fr", seen: true },
+  { handle: "afriqueintel", name: "Afrique Intel", lean: "Anonymous aggregator, continental security, French", bloc: "independent", africa: true, lang: "fr", seen: true },
+  { handle: "zitamarlive", name: "Zitamar Mozambique Live", lean: "Mozambican independent newsroom, Cabo Delgado", bloc: "independent", africa: true, seen: true },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick and about fifty channels, each is read about every twenty-five minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 10;
+/** Africa channels read by the pipeline on one tick. With a five-minute tick and about sixty channels, each is read about every twenty minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 15;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
