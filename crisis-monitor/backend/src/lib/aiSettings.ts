@@ -31,8 +31,11 @@ export interface AiSettings {
 }
 
 export const DEFAULT_CLAUDE_MODEL = "claude-haiku-5-5";
-/** About the most the escalation pipeline can read in a day, plus room for assessments and summaries. */
-export const DEFAULT_CLAUDE_DAILY_CALLS = 4000;
+/** About 600 full article readings a day plus assessments, digests and summaries: on Haiku 5.5, roughly a dollar a
+ *  day at most. (The first default, 4,000, let a day's use reach about five dollars.) */
+export const DEFAULT_CLAUDE_DAILY_CALLS = 800;
+/** The first default, kept in some saved settings rows; read as the current default. */
+const OLD_DEFAULT_CLAUDE_DAILY_CALLS = 4000;
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
   provider: "auto",
@@ -53,6 +56,9 @@ function ensureTables(env: Env): Promise<void> {
   ready ??= env.DB.batch([
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS ai_settings (id TEXT PRIMARY KEY, provider TEXT NOT NULL DEFAULT 'auto', coder_model TEXT, analyst_model TEXT, claude_daily_calls INTEGER, cloudflare_daily_neurons INTEGER, anthropic_key TEXT, updated_at TEXT)`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS claude_usage_feature (day TEXT NOT NULL, feature TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, feature))`
     ),
     env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS claude_usage_daily (day TEXT PRIMARY KEY, calls INTEGER NOT NULL DEFAULT 0, input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0)`
@@ -86,7 +92,7 @@ function fromRow(r: Row | null): AiSettings {
     provider,
     coderModel: r.coder_model || DEFAULT_CLAUDE_MODEL,
     analystModel: r.analyst_model || r.coder_model || DEFAULT_CLAUDE_MODEL,
-    claudeDailyCalls: r.claude_daily_calls ?? DEFAULT_CLAUDE_DAILY_CALLS,
+    claudeDailyCalls: r.claude_daily_calls === null || r.claude_daily_calls === OLD_DEFAULT_CLAUDE_DAILY_CALLS ? DEFAULT_CLAUDE_DAILY_CALLS : r.claude_daily_calls,
     cloudflareDailyNeurons: r.cloudflare_daily_neurons,
     anthropicKey: r.anthropic_key || null,
     extraKeywords: r.extra_keywords ?? "",
@@ -166,9 +172,16 @@ export async function reserveClaudeCall(env: Env): Promise<boolean> {
   }
 }
 
-export async function recordClaudeTokens(env: Env, u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined): Promise<void> {
+export async function recordClaudeTokens(env: Env, u: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | undefined, feature = "other"): Promise<void> {
   if (!u) return;
   try {
+    const input = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    await env.DB.prepare(
+      `INSERT INTO claude_usage_feature (day, feature, calls, input_tokens, output_tokens) VALUES (?, ?, 1, ?, ?)
+       ON CONFLICT(day, feature) DO UPDATE SET calls = calls + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`
+    )
+      .bind(day(), feature, input, u.output_tokens ?? 0)
+      .run();
     await env.DB.prepare(
       `UPDATE claude_usage_daily SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, cache_read_tokens = cache_read_tokens + ?, cache_write_tokens = cache_write_tokens + ? WHERE day = ?`
     )
@@ -181,6 +194,8 @@ export async function recordClaudeTokens(env: Env, u: { input_tokens?: number; o
 
 export interface ClaudeUsage {
   day: string;
+  /** Today's calls and tokens by what they were for. */
+  byFeature: { feature: string; calls: number; inputTokens: number; outputTokens: number }[];
   calls: number;
   limit: number;
   inputTokens: number;
@@ -197,9 +212,13 @@ export async function getClaudeUsage(env: Env): Promise<ClaudeUsage> {
     const r = await env.DB.prepare(`SELECT * FROM claude_usage_daily WHERE day = ?`)
       .bind(d)
       .first<{ calls: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number }>();
-    return { day: d, calls: r?.calls ?? 0, limit, inputTokens: r?.input_tokens ?? 0, outputTokens: r?.output_tokens ?? 0, cacheReadTokens: r?.cache_read_tokens ?? 0, cacheWriteTokens: r?.cache_write_tokens ?? 0 };
+    const f = await env.DB.prepare(`SELECT feature, calls, input_tokens, output_tokens FROM claude_usage_feature WHERE day = ? ORDER BY input_tokens + 5 * output_tokens DESC`)
+      .bind(d)
+      .all<{ feature: string; calls: number; input_tokens: number; output_tokens: number }>();
+    const byFeature = (f.results ?? []).map((x) => ({ feature: x.feature, calls: x.calls, inputTokens: x.input_tokens, outputTokens: x.output_tokens }));
+    return { day: d, byFeature, calls: r?.calls ?? 0, limit, inputTokens: r?.input_tokens ?? 0, outputTokens: r?.output_tokens ?? 0, cacheReadTokens: r?.cache_read_tokens ?? 0, cacheWriteTokens: r?.cache_write_tokens ?? 0 };
   } catch {
-    return { day: d, calls: 0, limit, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    return { day: d, byFeature: [], calls: 0, limit, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
   }
 }
 
