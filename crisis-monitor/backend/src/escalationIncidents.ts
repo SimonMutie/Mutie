@@ -1,4 +1,5 @@
 import { all, first, run, nowIso } from "./db";
+import { isTerrorism } from "./lib/terrorism";
 import { gateText, titleIsRelevant } from "./lib/titleGate";
 import { anthropicKey, getClaudeUsage, loadAiSettings, type ClaudeUsage } from "./lib/aiSettings";
 import { newId } from "./ids";
@@ -1719,6 +1720,10 @@ export interface IncidentView {
   firstEventDate: string | null;
   lastEventDate: string | null;
   updatedAt: string;
+  /** A terrorist attack (lib/terrorism.ts): coded as one, or by a UN-listed group. */
+  terrorism: boolean;
+  /** The listed groups named among its actors. */
+  terrorGroups: string[];
 }
 
 interface IncidentDetailJson {
@@ -1761,6 +1766,10 @@ function toIncidentView(r: IncidentDbRow): IncidentView {
     firstEventDate: r.first_event_date,
     lastEventDate: r.last_event_date,
     updatedAt: r.updated_at,
+    ...(() => {
+      const t = isTerrorism((d.indicators ?? []).map((i) => i.id), d.actors ?? []);
+      return { terrorism: t.terrorism, terrorGroups: t.groups };
+    })(),
   };
 }
 
