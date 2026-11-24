@@ -36,7 +36,7 @@ interface Feed {
   /** An Africa-focused Telegram channel whose posts also go to the escalation pipeline as single-source claims. */
   africa?: boolean;
   /** Language of the posts, when not English. English posts are keyword-filtered before coding; others are not. */
-  lang?: "fr" | "pt" | "ar" | "am" | "ti" | "so" | "om" | "ru" | "sw";
+  lang?: "fr" | "pt" | "ar" | "am" | "ti" | "so" | "om" | "ru" | "sw" | "rn";
   /** True when a public preview of the channel was seen in search results on the day it was added. */
   seen?: boolean;
 }
@@ -66,6 +66,13 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "suriyak_maps", name: "Suriyakmaps", lean: "Front-line mapper, including Sudan", bloc: "independent" },
   { handle: "MiddleEastEye_TG", name: "Middle East Eye", lean: "London-based Middle East newsroom", bloc: "regional" },
   { handle: "aljazeeraglobal", name: "Al Jazeera English", lean: "Qatar-funded international broadcaster", bloc: "regional" },
+  { handle: "MilitaryNewsEN", name: "Military-News", lean: "Global military and protest news aggregator", bloc: "independent" },
+  { handle: "AMK_Mapping", name: "AMK Mapping", lean: "Front-line mapper, including the Sahel", bloc: "independent" },
+  { handle: "rnintel", name: "Rerum Novarum", lean: "US-based intel and breaking-news aggregator, maps the Sahel and Great Lakes", bloc: "independent" },
+  { handle: "conflictsobserver", name: "Conflicts Observer", lean: "Global conflict aggregator", bloc: "independent" },
+  { handle: "entre_guerras", name: "Entre Guerras", lean: "Spanish-English conflict aggregator", bloc: "independent" },
+  { handle: "RFI_Fr", name: "RFI", lean: "French state international radio, French", bloc: "western" },
+  { handle: "Opex360", name: "Opex360 (Zone Militaire)", lean: "French defence news blog, French", bloc: "western" },
   // Africa-focused channels, added at Simon's request (2026-11-16). The handles came from a list he supplied and
   // could not be opened from the build environment, so none is confirmed to exist: a handle that returns nothing
   // shows a count of 0 in the feed's source list. "lean" says who runs the channel as far as is known; an
@@ -210,12 +217,33 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "KaabSomaliTv", name: "Kaab TV", lean: "Somali broadcaster, Somali and English", bloc: "regional", africa: true, lang: "so", seen: true },
   { handle: "somalilandpost", name: "Somaliland Post", lean: "Hargeisa-based news site, Somali", bloc: "regional", africa: true, lang: "so", seen: true },
   { handle: "srtvnews2", name: "SRTV Somali", lean: "Somali Regional State (Ethiopia) broadcaster", bloc: "regional", africa: true, lang: "so", seen: true },
+  // Central Africa, the Great Lakes, the Sahel and North Africa, added at Simon's request (2026-11-24). Africa Intel,
+  // Afrique Intel, Rybar, AllAfrica and Congonet 24 were already followed. NAN Africa, Military-News and Burundi Bwacu
+  // had public preview pages in search results; the others could not be found or opened.
+  { handle: "nanafrica", name: "Northern Africa News (NAN)", lean: "North Africa news by independent journalists, Arabic", bloc: "regional", africa: true, lang: "ar", seen: true },
+  { handle: "africanewsofficial", name: "Africanews", lean: "Pan-African broadcaster (Euronews group)", bloc: "regional", africa: true },
+  { handle: "m23drcongonordkivu", name: "M23 North Kivu", lean: "Channel on the M23/AFC in North Kivu; may speak for a party to the war", bloc: "regional", africa: true, lang: "fr" },
+  { handle: "AlwihdaInfo", name: "Alwihda Info", lean: "Chadian news site, French", bloc: "regional", africa: true, lang: "fr" },
+  { handle: "newtimesrwanda", name: "The New Times (Rwanda)", lean: "Rwandan newspaper, close to the government", bloc: "regional", africa: true },
+  { handle: "PacifiqueNininahazwe", name: "Burundi Bwacu", lean: "Exiled Burundian activist's channel, Kirundi and French; opposed to the government", bloc: "regional", africa: true, lang: "rn", seen: true },
+  { handle: "ugandanewsfeeds247", name: "Uganda News Feeds 24/7", lean: "Ugandan news aggregator; operator not established", bloc: "regional", africa: true },
+  { handle: "ugandanpolitics", name: "Ugandan Politics", lean: "Ugandan political news; operator not established", bloc: "regional", africa: true },
+  { handle: "infostchad235", name: "Infos Tchad 235", lean: "Chadian news, French; operator not established", bloc: "regional", africa: true, lang: "fr" },
+  { handle: "SahelActu", name: "Sahel Actu", lean: "Sahel news, French; operator not established", bloc: "regional", africa: true, lang: "fr" },
+  { handle: "LibyaAlhadath_Channel", name: "Libya Al Hadath", lean: "Benghazi-based TV aligned with Haftar's LNA, a party to Libya's conflict, Arabic", bloc: "regional", africa: true, lang: "ar" },
+  // Found by search on 2026-11-24, each with a public preview page that day.
+  { handle: "NaimInfo2", name: "Naïm Infos", lean: "Sahel security news by Naïm Touré, French; relays JNIM claims and army abuses alike", bloc: "independent", africa: true, lang: "fr", seen: true },
+  { handle: "boubafane", name: "Bouba Fané News", lean: "Malian news, French", bloc: "regional", africa: true, lang: "fr", seen: true },
+  { handle: "corpsafrica", name: "Afrikanskiy Korpus", lean: "Russian channel speaking for Russia's Africa Corps, a party to the Sahel conflict, Russian", bloc: "russian", africa: true, lang: "ru", seen: true },
+  { handle: "jeuneafriquenews", name: "Jeune Afrique", lean: "Paris-based pan-African magazine, French", bloc: "western", africa: true, lang: "fr", seen: true },
+  { handle: "pravdacfcom", name: "Pravda CF", lean: "Central African site of the Russian 'Pravda' network, French", bloc: "russian", africa: true, lang: "fr", seen: true },
+  { handle: "CameroonTribune", name: "Cameroon Tribune", lean: "Cameroonian state newspaper, French", bloc: "regional", africa: true, lang: "fr", seen: true },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick and about 110 channels, each is read about every twenty-five minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 22;
+/** Africa channels read by the pipeline on one tick. With a five-minute tick and about 130 channels, each is read about every twenty-five minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 26;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
