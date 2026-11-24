@@ -36,7 +36,7 @@ interface Feed {
   /** An Africa-focused Telegram channel whose posts also go to the escalation pipeline as single-source claims. */
   africa?: boolean;
   /** Language of the posts, when not English. English posts are keyword-filtered before coding; others are not. */
-  lang?: "fr" | "ar" | "am" | "so" | "om" | "ru" | "sw";
+  lang?: "fr" | "ar" | "am" | "ti" | "so" | "om" | "ru" | "sw";
   /** True when a public preview of the channel was seen in search results on the day it was added. */
   seen?: boolean;
 }
@@ -163,12 +163,34 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "natnaelmekonnen21", name: "Natnael Mekonnen", lean: "Ethiopian commentator's channel, Amharic", bloc: "regional", africa: true, lang: "am" },
   { handle: "ayuzehabeshanews", name: "Ayu Zehabesha News", lean: "Ethiopian news, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
   { handle: "ethionews433", name: "Ethio News 433", lean: "Ethiopian news, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
+  // Eritrea and Tigrinya, added at Simon's request (2026-11-24). Tigrinya News and Ethio-Eritrea had public preview
+  // pages in search results; eritria_news and eritreanpressamharic could not be found or opened.
+  { handle: "eritria_news", name: "Eritrea News", lean: "Eritrean news; operator not established", bloc: "regional", africa: true, lang: "ti" },
+  { handle: "tigrinyanews", name: "Tigrinya News", lean: "Eritrea and Ethiopia news in Tigrinya; small, operator not established", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "ethio_eritrean_channel", name: "Ethio-Eritrea", lean: "Ethiopia-Eritrea community channel, mostly not news", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "eritreanpressamharic", name: "Eritrean Press (Amharic)", lean: "Eritrean news in Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
+  // Found by search on 2026-11-24, each with a public preview page that day. Channels run by an armed side, or
+  // speaking for one, are labelled as a party to the conflict they report.
+  { handle: "Tigrai_Ttv", name: "Tigrai Television", lean: "Tigray regional broadcaster, Tigrinya and Amharic; run under the TPLF", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "DimtsiWeyaneTigray", name: "Dimtsi Weyane", lean: "TPLF's own broadcaster, a party to the Tigray conflict", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "DIGITAL_WOYANE", name: "Digital Woyane", lean: "Pro-TPLF channel, Tigrinya, Amharic and English", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "TigrayHorizon", name: "Tigray Horizon", lean: "Tigray news and analysis, Tigrinya; operator not established", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "tigrignafana", name: "FMC Tigrigna", lean: "Fana Media Corporation's Tigrinya service, close to the ruling party", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "mesobtigrigna", name: "Mesob Tigrigna", lean: "Tigrinya news aggregator", bloc: "regional", africa: true, lang: "ti", seen: true },
+  { handle: "TheReporterEthiopia", name: "The Reporter (English)", lean: "Ethiopian independent newspaper", bloc: "regional", africa: true, seen: true },
+  { handle: "EliasMeseret", name: "Elias Meseret", lean: "Ethiopian journalist's channel, Amharic and English", bloc: "independent", africa: true, lang: "am", seen: true },
+  { handle: "JawarOfficial", name: "Jawar Mohammed", lean: "Oromo opposition politician's channel", bloc: "regional", africa: true, seen: true },
+  { handle: "merebmedia24", name: "Mereb Media", lean: "Ethiopian news, Amharic; operator not established", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "ashara_media", name: "Ashara Media", lean: "Pro-Fano media, Amharic; relays Fano units' claims", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "shewafa", name: "Amhara Fano Shewa Command", lean: "A Fano command's own channel, a party to the Amhara conflict", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "gfmn21", name: "Global Fano Media", lean: "Pro-Fano media, Amharic; relays Fano units' claims", bloc: "regional", africa: true, lang: "am", seen: true },
+  { handle: "ethio251media", name: "Ethio 251 Media", lean: "Pro-Fano media, Amharic; relays Fano units' claims", bloc: "regional", africa: true, lang: "am", seen: true },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick and about eighty channels, each is read about every twenty-five minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 16;
+/** Africa channels read by the pipeline on one tick. With a five-minute tick and about a hundred channels, each is read about every twenty-five minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 20;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
