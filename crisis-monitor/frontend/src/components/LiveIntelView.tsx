@@ -108,6 +108,7 @@ import {
   type LucideIcon,
   BrainCircuit,
   Skull,
+  Grid3x3,
 } from "lucide-react";
 import Map3D, { Map3DDetailPanel, type Map3DPath, type Map3DTerritoryChange, type Map3DSelectedFeature } from "./Map3D";
 import { liveuamapLink, openLiveuamap } from "../liveuamap";
@@ -177,6 +178,11 @@ import { circleMarker, divIcon } from "leaflet";
 import { dotRadius, DOT, warningIconUrl, WARNING_SIZE, type EscalationLevel } from "./mapSymbols";
 import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
+import { GlobeGisOverlay, useFlatGis, type GisRing } from "./gis/GlobeGis";
+import { GisPanel } from "./gis/GisPanel";
+import type { GisFeature } from "./gis/exporters";
+import type { PrintView } from "./gis/printMap";
+import { legsOf, fmtBearing, fmtKm as fmtGisKm } from "./gis/gisMath";
 // Lazy — IncidentUpload pulls in the xlsx parser (400+ KB), not worth
 // loading for every visit to this view when the intake modal may never
 // open (same lazy-load pattern DashboardWidgetCard already uses for
@@ -1155,7 +1161,7 @@ type MapMode = "3d" | "2d";
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
  *  two active together would fight over the same click. */
-type RightTool = "monitor" | "draw" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "afrintel" | "analyses" | null;
+type RightTool = "monitor" | "draw" | "gis" | "route" | "space" | "news" | "incidents" | "shapes" | "economy" | "markets" | "listen" | "crypto" | "telegram" | "events" | "afrintel" | "analyses" | null;
 
 /** What Live OSINT needs from the app shell to host Live Monitoring: the
  *  user's monitoring queries, and ways to open a query's dashboard or the
@@ -2593,6 +2599,73 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints]
   );
   const watchZones = useWatchZoneAreas(!!enabled["watch-zones"]);
+  // GIS tools (components/gis): the features on the map as an attribute table, buffers round them, export and print.
+  const [gisRings, setGisRings] = useState<GisRing[]>([]);
+  useFlatGis(mapMode === "3d" ? null : flatMap, gisRings);
+  const gisFeatures = useMemo<GisFeature[]>(
+    () =>
+      mapPoints
+        .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng))
+        .map((p) => ({ id: `${p.layerKey}:${p.id}`, layer: p.layerKey, title: p.title, subtitle: p.subtitle, time: p.time, url: p.url, lat: p.lat, lng: p.lng, color: p.color, extra: { actor: p.actor, level: p.escalationLevel } })),
+    [mapPoints]
+  );
+  const gisLegend = useMemo(() => {
+    const m = new Map<string, { label: string; color: string; count: number }>();
+    for (const f of gisFeatures) {
+      const e = m.get(f.layer);
+      if (e) e.count++;
+      else m.set(f.layer, { label: f.layer, color: f.color ?? "#3fd0ff", count: 1 });
+    }
+    return [...m.values()].sort((a, b) => b.count - a.count);
+  }, [gisFeatures]);
+  // The map as it is on screen, for the print sheet: the globe's own canvas, or the flat map's basemap as a static
+  // image of the same place with the features drawn over it.
+  const getPrintView = useCallback((): Promise<PrintView> => {
+    if (mapMode === "3d" && globeMap) {
+      const g = globeMap;
+      return new Promise((resolve) => {
+        g.once("render", () => {
+          let image: string | null = null;
+          try { image = g.getCanvas().toDataURL("image/png"); } catch { image = null; }
+          const el = g.getContainer();
+          resolve({
+            mode: "3d",
+            image,
+            width: el.clientWidth,
+            height: el.clientHeight,
+            project: (ll) => { const p = g.project([ll.lng, ll.lat]); return Number.isFinite(p.x) ? { x: p.x, y: p.y } : null; },
+            unproject: (x, y) => { const ll = g.unproject([x, y]); return Number.isFinite(ll.lat) ? { lat: ll.lat, lng: ll.lng } : null; },
+            bearing: g.getBearing(),
+            pitch: g.getPitch(),
+          });
+        });
+        g.triggerRepaint();
+      });
+    }
+    if (!flatMap) return Promise.reject(new Error("The map is not ready."));
+    const fm = flatMap;
+    const size = fm.getSize();
+    const c = fm.getCenter();
+    const base: PrintView = {
+      mode: "flat",
+      image: null,
+      width: size.x,
+      height: size.y,
+      project: (ll) => { const p = fm.latLngToContainerPoint([ll.lat, ll.lng]); return { x: p.x, y: p.y }; },
+      unproject: (x, y) => { const ll = fm.containerPointToLatLng([x, y]); return { lat: ll.lat, lng: ll.lng }; },
+      bearing: 0,
+      pitch: 0,
+      overlay: gisFeatures,
+    };
+    const key = maptilerKey();
+    if (!key) return Promise.resolve(base);
+    const w = Math.min(2048, Math.round(size.x / 2)), h = Math.min(2048, Math.round(size.y / 2));
+    const url = `https://api.maptiler.com/maps/${basemapStyleId(basemap)}/static/${c.lng.toFixed(5)},${c.lat.toFixed(5)},${Math.max(0, fm.getZoom() - 1).toFixed(2)}/${w}x${h}@2x.png?key=${key}`;
+    return fetch(url)
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
+      .then((b) => new Promise<string>((resolve) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result)); fr.readAsDataURL(b); }))
+      .then((image) => ({ ...base, image }), () => base);
+  }, [mapMode, globeMap, flatMap, basemap, gisFeatures]);
   // Editing a watch zone (admins): reshape or redraw its boundary on the flat map, change its colour, or reset it.
   const [zoneEdit, setZoneEdit] = useState<{ id: string; mode: "shape" | "redraw" } | null>(null);
   const [zoneMsg, setZoneMsg] = useState<string | null>(null);
@@ -2877,6 +2950,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeDatasets map={globeMap} datasets={datasetsShown} />
         <GlobeWatchZones map={globeMap} view={watchZones} canEdit={isAdmin} />
         <GlobeBoundaryLayers map={globeMap} lib={boundaryLib} view={watchZones} canEdit={isAdmin} />
+        {mapMode === "3d" && <GlobeGisOverlay map={globeMap} rings={gisRings} />}
         {libraryOpen && (
           <BoundaryLibraryPanel
             lib={boundaryLib}
@@ -3181,6 +3255,19 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onExport={() => downloadDrawingAsGeoJson(drawPoints, drawMode)}
             onSaveLayer={saveDrawingAsLayer}
           />
+        )}
+        {rightTool === "gis" && (
+          <ToolPanelShell title="GIS">
+            <GisPanel
+              features={gisFeatures}
+              shapes={savedShapes}
+              rings={gisRings}
+              onRings={setGisRings}
+              onFocus={(f) => setFocus((prev) => ({ lat: f.lat, lng: f.lng, zoom: 10, seq: (prev?.seq ?? 0) + 1 }))}
+              getPrintView={getPrintView}
+              legend={gisLegend}
+            />
+          </ToolPanelShell>
         )}
         {rightTool === "route" && (
           <RoutePlannerPanel
@@ -4983,6 +5070,7 @@ function RightToolRail({ active, onSelect, hide = [] }: { active: RightTool; onS
     { key: "economy", icon: Landmark, label: "Economy" },
     { key: "markets", icon: LineChart, label: "Markets" },
     { key: "draw", icon: Ruler, label: "Draw" },
+    { key: "gis", icon: Grid3x3, label: "GIS" },
     { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
     { key: "news", icon: Newspaper, label: "Alerts" },
@@ -5233,6 +5321,29 @@ function DrawingToolPanel({
         </div>
       ) : (
         <div style={{ fontSize: 11, color: HUD.textMuted }}>Pick Distance or Area to start placing points.</div>
+      )}
+      {canExport && (
+        <div style={{ fontSize: 10.5, color: HUD.textSecondary, maxHeight: 180, overflow: "auto", border: `1px solid ${HUD.borderPrimary}`, borderRadius: 6 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: "ui-monospace, monospace" }}>
+            <thead>
+              <tr style={{ color: HUD.textMuted, textAlign: "left" }}>
+                <th style={{ padding: "3px 5px" }}>Leg</th><th style={{ padding: "3px 5px" }}>Length</th><th style={{ padding: "3px 5px" }}>Bearing</th><th style={{ padding: "3px 5px" }}>Back</th><th style={{ padding: "3px 5px" }}>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {legsOf(points.map(([lat, lng]) => ({ lat, lng })), mode === "area").map((l, i) => (
+                <tr key={i} style={{ borderTop: `1px solid ${HUD.borderPrimary}` }}>
+                  <td style={{ padding: "3px 5px" }}>{i + 1}</td>
+                  <td style={{ padding: "3px 5px" }}>{fmtGisKm(l.km)}</td>
+                  <td style={{ padding: "3px 5px", color: HUD.textPrimary }}>{fmtBearing(l.bearing)}</td>
+                  <td style={{ padding: "3px 5px" }}>{l.backBearing.toFixed(1)}°</td>
+                  <td style={{ padding: "3px 5px" }}>{fmtGisKm(l.cumulativeKm)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ padding: "4px 6px", color: HUD.textMuted }}>Bearings are true (from true north), great-circle initial bearings{mode === "area" ? "; the last leg closes the area, and the total is its perimeter" : ""}.</div>
+        </div>
       )}
       <div style={{ display: "flex", gap: 6 }}>
         <ToolButton onClick={onClear}>Clear</ToolButton>
