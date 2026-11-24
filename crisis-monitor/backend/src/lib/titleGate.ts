@@ -92,6 +92,7 @@ const STEMS: Record<string, string[]> = {
     "burcad", "afduub", "barakac", "isku dhac", "shabaab", "maleeshiyaad",
     "khawaarij", "daacish", "hawlgal", "laayey", "toogash", "rasaas", "miino", "is-qarxin", "isqarxin", "gaadmo", "dhagarqab", "xabsi",
   ],
+  kirundi_kinyarwanda: ["bishwe", "yishwe", "barishwe", "barashwe", "yarashwe", "amasasu", "amasase", "igitero", "ibitero", "inkoho", "intwaro", "abarwanyi", "inyeshyamba", "umutekano", "yanyurujwe", "barafashwe", "gupfungwa", "impunzi", "intambara", "imirwano", "ubwicanyi", "ibisasu"],
   oromo: ["rasaas", "ajjeefam", "ajjeesan", "ajjeese", "lolli", "humnoota", "poolisii", "hidhaman", "waraanni", "weerara", "lola$", "waraana", "haleel", "ajjeef", "ajjeech", "loltoota", "buqqa", "nageenya", "miidhaa", "lubbuu", "hidhame", "ukkaamf", "shanee"],
   kinyarwanda_kirundi: ["intambara", "abishwe", "yishwe", "bishwe", "kwica", "umutekano", "abarwanyi", "ibitero", "igitero", "impunzi", "inyeshyamba"],
   lingala: ["bitumba", "etumba", "babomi", "koboma", "basoda", "mobulu", "bayibi", "banyokoli", "kobunda"],
