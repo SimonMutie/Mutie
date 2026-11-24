@@ -2946,6 +2946,8 @@ export interface WatchZoneOverride {
   id: string;
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
   color: string | null;
+  /** Fill pattern (components/fillPatterns.ts); null is the severity's plain fill. */
+  pattern?: string | null;
   label: string | null;
   severity: WatchZone["severity"] | null;
   description: string | null;
@@ -2962,6 +2964,7 @@ export interface WatchZoneOverride {
 export interface WatchZoneEdit {
   geometry?: GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
   color?: string | null;
+  pattern?: string | null;
   label?: string | null;
   severity?: WatchZone["severity"] | null;
   description?: string | null;
