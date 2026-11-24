@@ -9,6 +9,7 @@ import { ICONS, ICON_CATEGORIES, iconDef, iconSvg } from "./icons";
 import { ACCEPT, FORMATS, importGeoFiles, type Imported } from "./importers";
 import { PATTERNS, hasPattern, previewSvg, type PatternKey } from "./patterns";
 import { DEFAULT_STYLE, bufferShape, createShape, duplicateShape, editShape, removeShape, removeShapes, saveNow, sendCommand, setVisible, studio, useStudio, type Tool } from "./store";
+import { DrawTabs } from "../components/DrawTabs";
 
 const TOOLS: { key: Tool; label: string; icon: ReactNode; hint: string }[] = [
   { key: "select", label: "Select", icon: <MousePointer2 size={16} />, hint: "Click a shape to style or reshape it. Drag its corners; click a small dot to add a corner; double-click a corner to remove it." },
@@ -381,7 +382,7 @@ function LayersTab({ shapes, onEdit }: { shapes: SavedShape[]; onEdit: () => voi
           ))}
         </div>
       )}
-      {!list.length && <div style={{ fontSize: 11, color: HUD.textMuted }}>{shapes.length ? "Nothing matches." : "Nothing drawn yet. Pick a tool on the Draw tab, or import a file. Everything you draw is saved automatically."}</div>}
+      {!list.length && <div style={{ fontSize: 11, color: HUD.textMuted }}>{shapes.length ? "Nothing matches." : "Nothing drawn yet. Pick a tool under Shapes, or import a file. Everything you draw is saved automatically."}</div>}
       {list.map((s) => (
         <div
           key={s.id}
@@ -455,11 +456,12 @@ export function StudioPanel({ shapes, nearby }: { shapes: SavedShape[]; nearby: 
   return (
     <div className="studio-panel" style={{ ...glass(), position: "absolute", top: 12, right: 76, zIndex: 500, width: "min(400px, calc(100% - 100px))", maxHeight: "calc(100% - 24px)", overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.text, fontWeight: 700 }}>Studio</div>
+        <div style={{ fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.text, fontWeight: 700 }}>Draw</div>
         <div style={{ fontSize: 10, color: HUD.textMuted }}>{shapes.length} on map</div>
       </div>
+      <DrawTabs />
       <div style={{ display: "flex", gap: 5 }}>
-        {tabBtn("draw", "Draw", <PenLine size={12} />)}
+        {tabBtn("draw", "Tools", <PenLine size={12} />)}
         {tabBtn("layers", `Layers`, <Layers size={12} />)}
         {tabBtn("import", "Import", <Upload size={12} />)}
       </div>

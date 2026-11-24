@@ -12,7 +12,8 @@ import { loadLensFocus, LENS_FOCUS_STYLE, type LensFocus } from "../lensFocus";
 import { MarketsPanel } from "./MarketsPanel";
 import { EconomyPanel } from "./EconomyPanel";
 import { STANDING_HOTSPOTS } from "../standingHotspots";
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DrawTabs, DrawTabsContext, isDrawTool, type DrawTool } from "./DrawTabs";
 import { MapCompass } from "./LeafletMapControls";
 import type { Map as LeafletMap, Marker as LeafletMarker } from "leaflet";
 import { MapContainer, TileLayer, CircleMarker, GeoJSON, Marker, Polygon, Polyline, Popup as LeafletPopup, Tooltip as LeafletTooltip, useMapEvents, useMap } from "react-leaflet";
@@ -60,6 +61,7 @@ import {
   CloudLightning,
   Flame,
   Hexagon,
+  PenTool,
   Flag,
   Landmark,
   HeartPulse,
@@ -1474,6 +1476,24 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [activeTool, setActiveTool] = useState<RightTool>(initialTool);
   // A tool's panel is shown only while the right-hand panel is open.
   const rightTool = rightOpen ? activeTool : null;
+  // The drawing tool last open under the Draw button, reopened when the button is pressed again.
+  const lastDrawTool = useRef<DrawTool>("shapes");
+  useEffect(() => { if (isDrawTool(activeTool)) lastDrawTool.current = activeTool; }, [activeTool]);
+  /** Switches between the drawing tools from the tabs inside the Draw panel, clearing the one left behind. */
+  const selectDrawTool = useCallback((t: DrawTool) => {
+    if (t !== "draw") {
+      setDrawMode(null);
+      setDrawPoints([]);
+    }
+    if (t !== "route") {
+      setRouteOrigin(null);
+      setRouteDestination(null);
+      setRouteResult(null);
+      setRouteError(null);
+    }
+    setActiveTool(t);
+  }, []);
+  const drawTabs = useMemo(() => (isDrawTool(activeTool) ? { active: activeTool, onSelect: selectDrawTool } : null), [activeTool, selectDrawTool]);
   // Anything that opens a tool (an alert, a shortcut) also shows the right-hand panel it lives in.
   useEffect(() => { if (activeTool) setRightOpen(true); }, [activeTool]);
 
@@ -3196,9 +3216,11 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           {rightOpen && (
             <RightToolRail hide={canAfrIntel ? [] : ["afrintel"]}
               active={activeTool}
-              onSelect={(tool) =>
+              onSelect={(picked) =>
                 setActiveTool((prev) => {
-                  const next = prev === tool ? null : tool;
+                  // The one Draw button opens the drawing tool last used (Shapes the first time), or closes it.
+                  const tool = picked === "shapes" ? lastDrawTool.current : picked;
+                  const next = prev === tool || (picked === "shapes" && isDrawTool(prev)) ? null : tool;
                   // Leaving a tool clears its in-progress state, rather than
                   // leaving a half-drawn shape or a stale route sitting on the
                   // map invisibly (its panel gone, but its data/click-handling
@@ -3244,6 +3266,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
         {rightTool === "draw" && (
+          <DrawTabsContext.Provider value={drawTabs}>
           <DrawingToolPanel
             mode={drawMode}
             points={drawPoints}
@@ -3255,8 +3278,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             onExport={() => downloadDrawingAsGeoJson(drawPoints, drawMode)}
             onSaveLayer={saveDrawingAsLayer}
           />
+          </DrawTabsContext.Provider>
         )}
         {rightTool === "gis" && (
+          <DrawTabsContext.Provider value={drawTabs}>
           <ToolPanelShell title="GIS">
             <GisPanel
               features={gisFeatures}
@@ -3268,8 +3293,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
               legend={gisLegend}
             />
           </ToolPanelShell>
+          </DrawTabsContext.Provider>
         )}
         {rightTool === "route" && (
+          <DrawTabsContext.Provider value={drawTabs}>
           <RoutePlannerPanel
             mode={routeMode}
             onModeChange={setRouteMode}
@@ -3299,6 +3326,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             routeFeature={routeFeature}
             onRouteBand={(km) => routeFeature && void bufferFeature(routeFeature, km, `${routeNameDraft.trim() || "Route"}: ${km} km band`)}
           />
+          </DrawTabsContext.Provider>
         )}
         {rightTool === "space" && <LiveSpacePanel pos={issPos} error={issError} />}
         {rightTool === "news" && (
@@ -3428,10 +3456,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
           />
         )}
         {rightTool === "shapes" && (
+          <DrawTabsContext.Provider value={drawTabs}>
           <StudioPanel
             shapes={savedShapes}
             nearby={{ incidents: myIncidentRows, state: nearby, viewMode: incidentViewMode, onResults: applyNearby, onViewMode: showNearbyAs }}
           />
+          </DrawTabsContext.Provider>
         )}
       </div>
 
@@ -5061,17 +5091,14 @@ function GlobalStatusTicker() {
  *  mirroring the left LayerPanel's visual language (same dark glass card,
  *  same border color) but icon-only + a short label, since this rail holds
  *  tools rather than a scrollable list of toggles. */
-function RightToolRail({ active, onSelect, hide = [] }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void; hide?: Exclude<RightTool, null>[] }) {
+function RightToolRail({ active: activeTool, onSelect, hide = [] }: { active: RightTool; onSelect: (tool: Exclude<RightTool, null>) => void; hide?: Exclude<RightTool, null>[] }) {
   const allTools: { key: Exclude<RightTool, null>; icon: LucideIcon; label: string }[] = [
     { key: "monitor", icon: Radar, label: "Monitor" },
     { key: "listen", icon: Megaphone, label: "Listen" },
     { key: "incidents", icon: ClipboardList, label: "Incidents" },
-    { key: "shapes", icon: Hexagon, label: "Studio" },
+    { key: "shapes", icon: PenTool, label: "Draw" },
     { key: "economy", icon: Landmark, label: "Economy" },
     { key: "markets", icon: LineChart, label: "Markets" },
-    { key: "draw", icon: Ruler, label: "Draw" },
-    { key: "gis", icon: Grid3x3, label: "GIS" },
-    { key: "route", icon: RouteGlyph, label: "Route" },
     { key: "space", icon: Rss, label: "Space" },
     { key: "news", icon: Newspaper, label: "Alerts" },
     { key: "telegram", icon: Send, label: "Telegram" },
@@ -5081,6 +5108,8 @@ function RightToolRail({ active, onSelect, hide = [] }: { active: RightTool; onS
     { key: "crypto", icon: Wallet, label: "Crypto" },
   ];
   const tools = allTools.filter((t) => !hide.includes(t.key));
+  // Shapes, Measure, Route and GIS share the one Draw button: it lights while any of them is open.
+  const active: RightTool = isDrawTool(activeTool) ? "shapes" : activeTool;
   const alertsPaused = useAlertsPaused();
   const alertsSwitch = (
     <button
@@ -5140,9 +5169,11 @@ function panelFrame(width: number = PANEL_WIDTH): React.CSSProperties {
 const PANEL_TITLE: React.CSSProperties = { fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase", color: HUD.textPrimary, fontWeight: 700 };
 
 function ToolPanelShell({ title, children, width = PANEL_WIDTH }: { title: string; children: ReactNode; width?: number }) {
+  const inDraw = useContext(DrawTabsContext) !== null;
   return (
     <div style={panelFrame(width)}>
-      <div style={PANEL_TITLE}>{title}</div>
+      <div style={PANEL_TITLE}>{inDraw ? "Draw" : title}</div>
+      <DrawTabs accent={HUD.gold} muted={HUD.textMuted} />
       {children}
     </div>
   );
