@@ -1,9 +1,8 @@
 /**
  * Maritime security around Africa and the Red Sea, from the authorities shipping itself uses:
  *  - JMIC (Joint Maritime Information Center, run by the Combined Maritime Forces and published through UKMTO):
- *    threat levels by sea area, on its five-step scale. JMIC names the areas but publishes no outlines; the Lens
- *    draws each as the water of the named sea, cut along the real coast (scripts/buildZoneShapes.mjs). The rings
- *    below are the fallback if that file cannot be read.
+ *    threat levels by sea area, on its five-step scale. JMIC names the areas but publishes no outlines, so the
+ *    outlines here are drawn by the Lens to the named waters and are approximate.
  *  - The Joint War Committee of the Lloyd's market (JWC): the "Listed Areas" for hull war, piracy, terrorism and
  *    related perils, with their limits exactly as defined in the circular.
  *  - The Internationally Recommended Transit Corridor (IRTC) in the Gulf of Aden, the core of the Maritime Security
