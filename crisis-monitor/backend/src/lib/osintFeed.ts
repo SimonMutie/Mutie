@@ -140,12 +140,35 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "infolibre_fil_d_actus", name: "InfoLibre Actualités", lean: "DR Congo news aggregator, French", bloc: "regional", africa: true, lang: "fr", seen: true },
   { handle: "afriqueintel", name: "Afrique Intel", lean: "Anonymous aggregator, continental security, French", bloc: "independent", africa: true, lang: "fr", seen: true },
   { handle: "zitamarlive", name: "Zitamar Mozambique Live", lean: "Mozambican independent newsroom, Cabo Delgado", bloc: "independent", africa: true, seen: true },
+  // Ethiopia, added at Simon's request (2026-11-24); Addis Standard, Tikvah-Ethiopia and Sputnik Ethiopia were already
+  // followed. His bit.ly link leads to AmharaMassMedia. Channel 29 had a public preview page in search results; the
+  // others could not be opened from the build environment, so the feed's source list (count 0) shows if one does not
+  // exist. Channels close to an armed side in Amhara or Oromia are labelled as such where that is known.
+  { handle: "Channel29News", name: "Channel 29", lean: "Ethiopian news channel", bloc: "regional", africa: true, seen: true },
+  { handle: "fanatelevision", name: "Fana Television", lean: "Fana Broadcasting, close to the ruling party, Amharic", bloc: "regional", africa: true, lang: "am" },
+  { handle: "EthiopianNewsA", name: "Ethiopian News", lean: "Ethiopian news; operator not established", bloc: "regional", africa: true, lang: "am" },
+  { handle: "ethpress", name: "Ethiopian Press Agency", lean: "Ethiopian state press agency", bloc: "regional", africa: true, lang: "am" },
+  { handle: "OBN_VoiceOfthepeople", name: "Oromia Broadcasting Network", lean: "Oromia regional state broadcaster, Afaan Oromoo", bloc: "regional", africa: true, lang: "om" },
+  { handle: "AmharaMassMedia", name: "Amhara Media Corporation", lean: "Amhara regional state broadcaster, Amharic", bloc: "regional", africa: true, lang: "am" },
+  { handle: "gpe_central", name: "GPE Central", lean: "Ethiopian news; operator not established", bloc: "regional", africa: true, lang: "am" },
+  { handle: "VoiceOfAsaminew", name: "Voice of Asaminew", lean: "Amhara-focused, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
+  { handle: "andeamharamedia", name: "Ande Amhara Media", lean: "Amhara diaspora media, Amharic; sympathetic to Fano", bloc: "regional", africa: true, lang: "am" },
+  { handle: "AmharaGuard", name: "Amhara Guard", lean: "Amhara-focused, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
+  { handle: "esat_tv1", name: "ESAT", lean: "Ethiopian diaspora broadcaster, Amharic", bloc: "regional", africa: true, lang: "am" },
+  { handle: "meseretmedia", name: "Meseret Media", lean: "Ethiopian journalist-run newsroom (Elias Meseret)", bloc: "independent", africa: true, lang: "am" },
+  { handle: "abdii_sabaa", name: "Abdii Sabaa", lean: "Oromo-focused, Afaan Oromoo; operator not established", bloc: "regional", africa: true, lang: "om" },
+  { handle: "wasulife", name: "Wasu Mohammed", lean: "Ethiopian journalist's channel, Amharic", bloc: "regional", africa: true, lang: "am" },
+  { handle: "ethio_mereja", name: "Ethio Mereja", lean: "Ethiopian news, Amharic", bloc: "regional", africa: true, lang: "am" },
+  { handle: "brook_news_ethiopia", name: "Brook News Ethiopia", lean: "Ethiopian news, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
+  { handle: "natnaelmekonnen21", name: "Natnael Mekonnen", lean: "Ethiopian commentator's channel, Amharic", bloc: "regional", africa: true, lang: "am" },
+  { handle: "ayuzehabeshanews", name: "Ayu Zehabesha News", lean: "Ethiopian news, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
+  { handle: "ethionews433", name: "Ethio News 433", lean: "Ethiopian news, Amharic; operator not established", bloc: "regional", africa: true, lang: "am" },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick and about sixty channels, each is read about every twenty minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 15;
+/** Africa channels read by the pipeline on one tick. With a five-minute tick and about eighty channels, each is read about every twenty-five minutes. */
+const PIPELINE_CHANNELS_PER_TICK = 16;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
