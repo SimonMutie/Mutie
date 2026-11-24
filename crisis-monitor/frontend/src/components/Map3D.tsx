@@ -78,6 +78,8 @@ export interface Map3DPoint {
    *  point instead of just the plain colored dot every other layer gets,
    *  colored by level. Undefined on every other layer. */
   escalationLevel?: "watch" | "elevated" | "critical";
+  /** Conflict Escalation only: a terrorist attack, drawn as a black triangle edged in its level's colour. */
+  terrorism?: boolean;
   /** Aircraft only: heading in degrees from north; aircraft are drawn as plane symbols turned to it. */
   heading?: number;
   /** Conflict Escalation only — fetches the full evidence/source-link list
@@ -205,8 +207,8 @@ const TERRAIN_TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrariu
  * it a crisp, identical symbol everywhere, the same way a real pin icon
  * would be shipped as an asset rather than relying on a text character.
  */
-function buildWarningIconImageData(fillColor: string): ImageData {
-  return drawWarningIcon(fillColor).getContext("2d")!.getImageData(0, 0, 64, 64);
+function buildWarningIconImageData(fillColor: string, terror = false): ImageData {
+  return drawWarningIcon(fillColor, terror).getContext("2d")!.getImageData(0, 0, 64, 64);
 }
 
 function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
@@ -234,6 +236,7 @@ function toGeoJsonPoints(points: Map3DPoint[]): GeoJSON.FeatureCollection {
         ...(p.actor ? { actor: p.actor } : {}),
         ...(p.details ? { details: p.details } : {}),
         ...(p.escalationLevel ? { escalationLevel: p.escalationLevel } : {}),
+        ...(p.terrorism ? { terrorism: 1 } : {}),
         ...(AIRCRAFT_LAYER_KEYS.has(p.layerKey) ? { aircraft: 1, heading: p.heading ?? 0 } : {}),
         ...(p.countryCode ? { countryCode: p.countryCode } : {}),
         ...(p.evidenceCount != null ? { evidenceCount: p.evidenceCount } : {}),
@@ -499,6 +502,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       map.addImage("warning-icon-critical", buildWarningIconImageData(WARNING_COLOR.critical), { pixelRatio: 2 });
       map.addImage("warning-icon-elevated", buildWarningIconImageData(WARNING_COLOR.elevated), { pixelRatio: 2 });
       map.addImage("warning-icon-watch", buildWarningIconImageData(WARNING_COLOR.watch), { pixelRatio: 2 });
+      for (const lv of ["critical", "elevated", "watch"] as const) map.addImage(`warning-icon-terror-${lv}`, buildWarningIconImageData(WARNING_COLOR[lv], true), { pixelRatio: 2 });
 
       // The points already in hand, not an empty set: data that arrived
       // before the style finished loading would otherwise stay undrawn
@@ -591,7 +595,12 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
         source: "lens-points",
         filter: ["has", "escalationLevel"],
         layout: {
-          "icon-image": ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-watch"],
+          "icon-image": [
+            "case",
+            ["has", "terrorism"],
+            ["match", ["get", "escalationLevel"], "critical", "warning-icon-terror-critical", "elevated", "warning-icon-terror-elevated", "warning-icon-terror-watch"],
+            ["match", ["get", "escalationLevel"], "critical", "warning-icon-critical", "elevated", "warning-icon-elevated", "warning-icon-watch"],
+          ],
           // The 64-px drawing at pixel ratio 2 is 32 px; scaled to WARNING_SIZE (the flat map uses the same sizes).
           "icon-size": ["match", ["get", "escalationLevel"], "critical", WARNING_SIZE.critical / 32, "elevated", WARNING_SIZE.elevated / 32, WARNING_SIZE.watch / 32],
           "icon-anchor": "bottom",
@@ -1274,6 +1283,11 @@ function EscalationIncidentCard({ incident }: { incident: EscalationIncident }) 
   const liveuamap = liveuamapLink(incident.countryCode, incident.lat, incident.lon, incident.geoPrecision);
   return (
     <div className="lens-popup-card lens-popup-card--escalation lens-incident">
+      {incident.terrorism && (
+        <div style={{ display: "inline-block", marginBottom: 4, padding: "2px 7px", borderRadius: 4, background: "#0b0b0b", border: "1px solid #ff3d3d", color: "#ff6b6b", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.08em" }}>
+          TERRORIST ATTACK{incident.terrorGroups && incident.terrorGroups.length ? ` · ${incident.terrorGroups.join(", ")}` : ""}
+        </div>
+      )}
       <div className={`lens-popup-title lens-popup-title--${incident.level}`}>⚠ {incident.headline}</div>
       <div className="lens-popup-layer">{where}</div>
       <div className={`lens-incident-precision lens-incident-precision--${incident.geoPrecision}`}>{PRECISION_NOTE[incident.geoPrecision]}</div>
