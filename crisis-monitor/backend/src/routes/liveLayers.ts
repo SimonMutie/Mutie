@@ -680,7 +680,7 @@ async function ensureZoneEdits(db: D1Database) {
   // Added later: the zone's own name, severity and description; the boundary areas added to it (and their combined
   // shape); whether its original area was dropped; whether it is retired; whether an admin made it; its extent.
   const cols = new Set((await dbAll<{ name: string }>(db, `PRAGMA table_info(watch_zone_overrides)`)).map((r) => r.name));
-  for (const [name, type] of [["label", "TEXT"], ["severity", "TEXT"], ["description", "TEXT"], ["units", "TEXT"], ["units_geometry", "TEXT"], ["base_dropped", "INTEGER"], ["retired", "INTEGER"], ["custom", "INTEGER"], ["bounds", "TEXT"]] as const) {
+  for (const [name, type] of [["label", "TEXT"], ["severity", "TEXT"], ["description", "TEXT"], ["units", "TEXT"], ["units_geometry", "TEXT"], ["base_dropped", "INTEGER"], ["retired", "INTEGER"], ["custom", "INTEGER"], ["bounds", "TEXT"], ["pattern", "TEXT"]] as const) {
     if (!cols.has(name)) await dbRun(db, `ALTER TABLE watch_zone_overrides ADD COLUMN ${name} ${type}`);
   }
   zoneEditsReady = true;
@@ -692,6 +692,8 @@ const zoneEditSchema = zod.object({
     .nullable()
     .optional(),
   color: zod.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+  /** Fill pattern (frontend components/fillPatterns.ts). */
+  pattern: zod.enum(["solid", "outline", "diagonal", "reverse", "horizontal", "vertical", "net", "grid", "dots", "checks"]).nullable().optional(),
   label: zod.string().trim().min(1).max(80).nullable().optional(),
   severity: zod.enum(["war", "high", "elevated"]).nullable().optional(),
   description: zod.string().trim().max(800).nullable().optional(),
@@ -716,6 +718,7 @@ interface ZoneEditDbRow {
   retired: number | null;
   custom: number | null;
   bounds: string | null;
+  pattern: string | null;
   updated_at: string;
 }
 const parseJson = <T,>(v: string | null): T | null => {
@@ -738,6 +741,7 @@ const shapeZoneEdit = (r: ZoneEditDbRow) => ({
   retired: !!r.retired,
   custom: !!r.custom,
   bounds: parseJson(r.bounds),
+  pattern: r.pattern ?? null,
   updatedAt: r.updated_at,
 });
 
@@ -770,15 +774,16 @@ liveLayersRouter.put("/watch-zones/:id/override", requireAdmin, async (c) => {
     retired: d.retired === undefined ? (cur?.retired ?? 0) : d.retired ? 1 : 0,
     custom: cur?.custom ?? 0,
     bounds: pick(d.bounds, cur?.bounds ?? null, (x) => JSON.stringify(x)),
+    pattern: pick(d.pattern, cur?.pattern ?? null),
   };
-  const empty = !next.custom && !next.geometry && !next.color && !next.label && !next.severity && !next.description && !next.units && !next.units_geometry && !next.base_dropped && !next.retired && !next.bounds;
+  const empty = !next.custom && !next.geometry && !next.color && !next.label && !next.severity && !next.description && !next.units && !next.units_geometry && !next.base_dropped && !next.retired && !next.bounds && !next.pattern;
   if (empty) await dbRun(c.env.DB, `DELETE FROM watch_zone_overrides WHERE zone_id = ?`, [id]);
   else
     await dbRun(
       c.env.DB,
-      `INSERT INTO watch_zone_overrides (zone_id, geometry, color, label, severity, description, units, units_geometry, base_dropped, retired, custom, bounds, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(zone_id) DO UPDATE SET geometry = excluded.geometry, color = excluded.color, label = excluded.label, severity = excluded.severity, description = excluded.description, units = excluded.units, units_geometry = excluded.units_geometry, base_dropped = excluded.base_dropped, retired = excluded.retired, bounds = excluded.bounds, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-      [id, next.geometry, next.color, next.label, next.severity, next.description, next.units, next.units_geometry, next.base_dropped, next.retired, next.custom, next.bounds, c.get("userId"), dbNow()]
+      `INSERT INTO watch_zone_overrides (zone_id, geometry, color, label, severity, description, units, units_geometry, base_dropped, retired, custom, bounds, pattern, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(zone_id) DO UPDATE SET geometry = excluded.geometry, color = excluded.color, pattern = excluded.pattern, label = excluded.label, severity = excluded.severity, description = excluded.description, units = excluded.units, units_geometry = excluded.units_geometry, base_dropped = excluded.base_dropped, retired = excluded.retired, bounds = excluded.bounds, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      [id, next.geometry, next.color, next.label, next.severity, next.description, next.units, next.units_geometry, next.base_dropped, next.retired, next.custom, next.bounds, next.pattern, c.get("userId"), dbNow()]
     );
   return c.json({ ok: true, id, geometry: next.geometry ? JSON.parse(next.geometry) : null, color: next.color });
 });
@@ -792,8 +797,8 @@ liveLayersRouter.post("/watch-zones/custom", requireAdmin, async (c) => {
   const id = `custom-${crypto.randomUUID().slice(0, 8)}`;
   await dbRun(
     c.env.DB,
-    `INSERT INTO watch_zone_overrides (zone_id, geometry, color, label, severity, description, units, units_geometry, base_dropped, retired, custom, bounds, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 1, ?, ?, ?)`,
-    [id, d.geometry ? JSON.stringify(d.geometry) : null, d.color ?? null, d.label.toUpperCase(), d.severity ?? "elevated", d.description ?? null, d.units ? JSON.stringify(d.units) : null, d.unitsGeometry ? JSON.stringify(d.unitsGeometry) : null, JSON.stringify(d.bounds), c.get("userId"), dbNow()]
+    `INSERT INTO watch_zone_overrides (zone_id, geometry, color, label, severity, description, units, units_geometry, base_dropped, retired, custom, bounds, pattern, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 1, ?, ?, ?, ?)`,
+    [id, d.geometry ? JSON.stringify(d.geometry) : null, d.color ?? null, d.label.toUpperCase(), d.severity ?? "elevated", d.description ?? null, d.units ? JSON.stringify(d.units) : null, d.unitsGeometry ? JSON.stringify(d.unitsGeometry) : null, JSON.stringify(d.bounds), d.pattern ?? null, c.get("userId"), dbNow()]
   );
   return c.json({ ok: true, id }, 201);
 });
