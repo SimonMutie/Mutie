@@ -8,6 +8,7 @@ import { numericToAlpha3 } from "i18n-iso-countries";
 import { api, type BoundaryCountry, type BoundaryLayer, type BoundaryUnit } from "../api";
 import { boundaryCatalogue, boundaryLayer, downloadGeoJson, extentOf, joinShapes, levelName, unitKey, unitsGeometry, WORLD } from "../boundaryLibrary";
 import { firstDataLayer } from "./globeExtras";
+import { FILL_PATTERNS, ensureGlPatterns, glPatternImage, leafletFill, patternPreviewSvg, type FillPattern } from "./fillPatterns";
 import type { ZoneAction, ZoneView } from "./WatchZoneAreas";
 
 /**
@@ -35,6 +36,10 @@ export interface ShownLayer {
   canonical: string;
   color: string;
   visible: boolean;
+  /** The layer's own name, when renamed (else "<country> · <level>"). */
+  name?: string;
+  /** Fill pattern for the whole layer (components/fillPatterns.ts). */
+  pattern?: FillPattern;
   /** Only the areas inside this one (an area's key), for a drilled-down level. */
   parent?: string;
   /** Outline width, fill strength (0–1) and dashed outline for the whole layer. */
@@ -57,7 +62,11 @@ export interface AreaStyle {
   width?: number;
   opacity?: number;
   dash?: boolean;
+  pattern?: FillPattern;
 }
+
+/** A layer's name as shown: its own, or the country and level. */
+export const layerName = (l: ShownLayer) => l.name?.trim() || `${l.country} · ${l.canonical}`;
 
 /** How an area is drawn: its own style, else its watch zone's colour, else its layer's. */
 export function areaLook(l: ShownLayer, id: string, member: { color: string } | undefined, inTarget: boolean, picking: boolean) {
@@ -69,6 +78,7 @@ export function areaLook(l: ShownLayer, id: string, member: { color: string } | 
     width: own?.width ?? (member ? (inTarget ? 2.4 : 1.6) : (l.weight ?? 1)),
     fillOpacity: own?.opacity ?? (member ? (inTarget ? 0.28 : 0.12) : Math.max(l.fillOpacity ?? 0.03, picking ? 0.06 : 0)),
     dash: own?.dash ?? l.dash ?? false,
+    pattern: own?.pattern ?? l.pattern ?? ("solid" as FillPattern),
   };
 }
 
@@ -493,7 +503,7 @@ export function FlatBoundaryLayers({ lib, view, canEdit }: { lib: BoundaryLib; v
                 const id = String(f?.properties?.id);
                 const m = members.get(unitKey(layer.iso, layer.level, id));
                 const look = areaLook(l, id, m?.[0], !!(lib.pickZone && m?.some((x) => x.id === lib.pickZone)), !!lib.pickZone);
-                return { color: look.line, weight: look.width, opacity: 0.95, fillColor: look.fill, fillOpacity: look.fillOpacity, dashArray: look.dash ? "6 4" : undefined };
+                return { color: look.line, weight: look.width, opacity: 0.95, ...leafletFill(look.pattern, look.fill, Math.max(look.fillOpacity, 0.15)), dashArray: look.dash ? "6 4" : undefined };
               }}
               onEachFeature={(f, lyr) => {
                 const id = String(f.properties?.id);
@@ -547,7 +557,9 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
           const key = unitKey(layer.iso, layer.level, f.properties.id);
           const m = members.get(key);
           const look = areaLook(l, f.properties.id, m?.[0], !!(lib.pickZone && m?.some((x) => x.id === lib.pickZone)), !!lib.pickZone);
-          return { type: "Feature" as const, properties: { key, layer: l.key, name: f.properties.name, color: look.fill, line: look.line, fill: look.fillOpacity, width: look.width, dash: look.dash ? 1 : 0 }, geometry: f.geometry };
+          const pat = glPatternImage(look.pattern, look.fill, Math.max(look.fillOpacity, 0.15));
+          // Under a pattern (or "outline only") the plain fill is kept at no strength, so clicks inside still land.
+          return { type: "Feature" as const, properties: { key, layer: l.key, name: f.properties.name, color: look.fill, line: look.line, fill: pat || look.pattern === "outline" ? 0 : look.fillOpacity, width: look.width, dash: look.dash ? 1 : 0, ...(pat ? { pat } : {}) }, geometry: f.geometry };
         });
       });
     return { type: "FeatureCollection" as const, features };
@@ -557,8 +569,10 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
     if (!map) return;
     if (!map.getSource("lens-bounds")) {
       const before = firstDataLayer(map);
+      ensureGlPatterns(map, data);
       map.addSource("lens-bounds", { type: "geojson", data: data as never });
       map.addLayer({ id: "lens-control-bounds-fill", type: "fill", source: "lens-bounds", paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "fill"] } }, before);
+      map.addLayer({ id: "lens-control-bounds-pattern", type: "fill", source: "lens-bounds", filter: ["has", "pat"], paint: { "fill-pattern": ["get", "pat"] } }, before);
       map.addLayer({ id: "lens-control-bounds-line", type: "line", source: "lens-bounds", filter: ["!=", ["get", "dash"], 1], paint: { "line-color": ["get", "line"], "line-width": ["get", "width"], "line-opacity": 0.9 } }, before);
       map.addLayer({ id: "lens-control-bounds-line-dash", type: "line", source: "lens-bounds", filter: ["==", ["get", "dash"], 1], paint: { "line-color": ["get", "line"], "line-width": ["get", "width"], "line-opacity": 0.9, "line-dasharray": [3, 2] } }, before);
       map.addLayer(
@@ -598,7 +612,10 @@ export function GlobeBoundaryLayers({ map, lib, view, canEdit }: { map: MapLibre
           .addTo(map);
       });
       for (const ev of ["lens-unit-action", "lens-zone-open"]) window.addEventListener(ev, () => popup.current?.remove());
-    } else (map.getSource("lens-bounds") as GeoJSONSource).setData(data as never);
+    } else {
+      ensureGlPatterns(map, data);
+      (map.getSource("lens-bounds") as GeoJSONSource).setData(data as never);
+    }
   }, [map, data]);
   return null;
 }
@@ -630,6 +647,10 @@ function AreaStyler({ lib, l, id, name, member }: { lib: BoundaryLib; l: ShownLa
           <input type="checkbox" checked={look.dash} onChange={(e) => set({ dash: e.target.checked })} /> Dashed
         </label>
       </div>
+      <div style={row}>
+        <span style={{ width: 52 }}>Pattern</span>
+        <PatternPicker value={look.pattern} color={look.fill} onChange={(pattern) => set({ pattern })} />
+      </div>
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
         <button style={small} onClick={() => lib.setEditing({ layerKey: l.key, id, name })} title="Drag the corners of its boundary on the flat map">
           <Pencil size={11} /> Reshape boundary
@@ -651,13 +672,30 @@ function AreaStyler({ lib, l, id, name, member }: { lib: BoundaryLib; l: ShownLa
   );
 }
 
+/** Pattern choices as small previews in the area's colour. */
+function PatternPicker({ value, color, onChange }: { value: FillPattern; color: string; onChange: (p: FillPattern) => void }) {
+  return (
+    <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+      {FILL_PATTERNS.map((p) => (
+        <button
+          key={p.id}
+          title={p.label}
+          onClick={() => onChange(p.id)}
+          style={{ padding: 1, lineHeight: 0, cursor: "pointer", borderRadius: 4, background: "rgba(0,0,0,0.35)", border: value === p.id ? "2px solid #fff" : "1px solid rgba(255,255,255,0.2)" }}
+          dangerouslySetInnerHTML={{ __html: patternPreviewSvg(p.id, color, 16) }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** A layer as drawn, with each area's colours as simplestyle properties (read by most GIS tools). */
 function styledCollection(l: ShownLayer, layer: BoundaryLayer) {
   return {
     type: "FeatureCollection",
     features: shownAreas(l, layer).map((f) => {
       const look = areaLook(l, f.properties.id, undefined, false, false);
-      return { ...f, properties: { ...f.properties, fill: look.fill, "fill-opacity": look.fillOpacity, stroke: look.line, "stroke-width": look.width } };
+      return { ...f, properties: { ...f.properties, fill: look.fill, "fill-opacity": look.fillOpacity, stroke: look.line, "stroke-width": look.width, ...(look.pattern !== "solid" ? { "fill-pattern": look.pattern } : {}) } };
     }),
   };
 }
@@ -668,6 +706,7 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<BoundaryCountry | null>(null);
   const [openLayer, setOpenLayer] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ key: string; text: string } | null>(null);
   const [uq, setUq] = useState("");
   const [openUnit, setOpenUnit] = useState<string | null>(null);
   // "More styling…" from an area's popup: open its layer and its styling here.
@@ -797,11 +836,30 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
                 {l.visible ? <Eye size={14} /> : <EyeOff size={14} />}
               </button>
               <input type="color" value={l.color} onChange={(e) => lib.update(l.key, { color: e.target.value })} title="Colour" style={{ width: 18, height: 16, padding: 0, border: "none", background: "none", cursor: "pointer" }} />
+              {renaming?.key === l.key ? (
+                <input
+                  autoFocus
+                  value={renaming.text}
+                  onChange={(e) => setRenaming({ key: l.key, text: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { lib.update(l.key, { name: renaming.text.trim().slice(0, 80) || undefined }); setRenaming(null); }
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  onBlur={() => { lib.update(l.key, { name: renaming.text.trim().slice(0, 80) || undefined }); setRenaming(null); }}
+                  placeholder={`${l.country} · ${l.canonical}`}
+                  style={{ ...input, flex: 1, padding: "3px 6px", fontSize: 12 }}
+                  title="Enter to keep, Esc to cancel; empty goes back to the default name"
+                />
+              ) : (
               <button onClick={() => setOpenLayer(open ? null : l.key)} style={{ ...icon, flex: 1, textAlign: "left", color: "#e6edf7", fontWeight: 600, opacity: l.visible ? 1 : 0.5, fontSize: 12, display: "block" }} title="List its areas">
-                {l.country} · {l.canonical} {layer && <span style={{ opacity: 0.55, fontWeight: 400 }}>({layer.features.length - (l.hidden?.length ?? 0)}{l.hidden?.length ? ` of ${layer.features.length}` : ""})</span>}
+                {layerName(l)} {layer && <span style={{ opacity: 0.55, fontWeight: 400 }}>({layer.features.length - (l.hidden?.length ?? 0)}{l.hidden?.length ? ` of ${layer.features.length}` : ""})</span>}
+              </button>
+              )}
+              <button onClick={() => setRenaming({ key: l.key, text: l.name ?? "" })} style={icon} title="Rename layer">
+                <Pencil size={12} />
               </button>
               {layer && (
-                <button onClick={() => downloadGeoJson(`${l.country}-${l.canonical}`, styledCollection(l, layer))} style={icon} title="Download as shown (GeoJSON, with colours)">
+                <button onClick={() => downloadGeoJson(layerName(l).replace(/\s*·\s*/g, "-"), styledCollection(l, layer))} style={icon} title="Download as shown (GeoJSON, with colours)">
                   <Download size={13} />
                 </button>
               )}
@@ -818,6 +876,8 @@ export function BoundaryLibraryPanel({ lib, view, canEdit, onClose }: { lib: Bou
                   <input type="range" min={0.5} max={5} step={0.5} value={l.weight ?? 1} onChange={(e) => lib.update(l.key, { weight: Number(e.target.value) })} />
                   <span>Fill</span>
                   <input type="range" min={0} max={0.7} step={0.03} value={l.fillOpacity ?? 0.03} onChange={(e) => lib.update(l.key, { fillOpacity: Number(e.target.value) })} />
+                  <span>Pattern</span>
+                  <PatternPicker value={l.pattern ?? "solid"} color={l.color} onChange={(pattern) => lib.update(l.key, { pattern: pattern === "solid" ? undefined : pattern })} />
                 </div>
                 <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, marginRight: 4 }}>
