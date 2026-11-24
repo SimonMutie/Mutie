@@ -148,6 +148,7 @@ async function synthesise(env: Env, r: DdResult): Promise<DdResult["summary"]> {
   };
   const res = await callStructured<{ text: string; keyPoints: string[]; nextSteps: string[] }>(env, {
     role: "analyst",
+    feature: "due diligence",
     system:
       "You write the summary of a due-diligence screening for an analyst. Use ONLY the facts given. Be plain and neutral. Never state or imply guilt; distinguish allegation, investigation, charge and conviction. A name match is not an identity match. If any source was unavailable, say the screening is incomplete rather than clear. text: 2-4 sentences. keyPoints: up to 6 short bullets. nextSteps: up to 4 concrete verification steps.",
     user: JSON.stringify(facts),
