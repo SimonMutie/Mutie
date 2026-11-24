@@ -313,6 +313,7 @@ function Selected({ shape, nearby }: { shape: SavedShape; nearby: NearbyProps })
         viewMode={nearby.viewMode}
         onResults={nearby.onResults}
         onViewMode={nearby.onViewMode}
+        onFocus={nearby.onFocus}
         onCorridor={isIcon ? (km) => void bufferShape(shape, km) : (km) => void bufferShape(shape, km)}
       />
       {isIcon ? <IconPicker style={style} onChange={(p) => editShape(shape.id, p)} /> : <StyleEditor style={style} isIcon={false} isLine={isLine} onChange={(p) => editShape(shape.id, p)} />}
@@ -427,6 +428,8 @@ export interface NearbyProps {
   viewMode: "markers" | "heatmap";
   onResults: (rows: IncidentItem[] | null, s: NearbyState | null) => void;
   onViewMode: (m: "markers" | "heatmap") => void;
+  /** Centres the map on a result, when the host can. */
+  onFocus?: (lat: number, lng: number) => void;
 }
 
 export function StudioPanel({ shapes, nearby }: { shapes: SavedShape[]; nearby: NearbyProps }) {
