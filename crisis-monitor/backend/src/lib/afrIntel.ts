@@ -354,7 +354,7 @@ export function nextStep(run: AfrIntelRun): { stage: Stage; world?: number; peri
 }
 
 async function ask<T>(env: Env, user: string, schema: Record<string, unknown>, toolName: string, maxTokens: number): Promise<{ data: T; model: string }> {
-  const res = await callStructured<T>(env, { system: SYSTEM, user, schema, toolName, toolDescription: `Return the ${toolName.replace(/_/g, " ")} as structured data.`, maxTokens, role: "analyst" });
+  const res = await callStructured<T>(env, { system: SYSTEM, user, schema, toolName, toolDescription: `Return the ${toolName.replace(/_/g, " ")} as structured data.`, maxTokens, role: "analyst", feature: "AfrIntel" });
   if (!res) throw new Error("The model did not return a usable answer (it may be unavailable or out of today's allowance). Try the step again.");
   return { data: res.data, model: res.model };
 }
