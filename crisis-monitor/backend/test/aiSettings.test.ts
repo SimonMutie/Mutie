@@ -45,7 +45,7 @@ describe("AI reading settings", () => {
     const r = await callStructured<{ from: string; model: string }>(env, call);
     expect(r).toMatchObject({ provider: "anthropic", model: "claude-haiku-5-5", data: { from: "claude" } });
     expect(run).not.toHaveBeenCalled();
-    expect(await getClaudeUsage(env)).toMatchObject({ calls: 1, inputTokens: 1200, outputTokens: 300, cacheReadTokens: 900 });
+    expect(await getClaudeUsage(env)).toMatchObject({ byFeature: [{ feature: "coder", calls: 1, inputTokens: 2100, outputTokens: 300 }], calls: 1, inputTokens: 1200, outputTokens: 300, cacheReadTokens: 900 });
     expect(describeProvider(env)).toMatchObject({ provider: "anthropic", coderModel: "claude-haiku-5-5" });
   });
 
