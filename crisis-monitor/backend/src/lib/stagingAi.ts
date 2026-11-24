@@ -205,6 +205,7 @@ export async function runAiCommand(
       `ARTICLE:\n${text}`;
     const ai = await callStructured<{ relevant: boolean; reason: string; incidents: { fields: { field: string; value: string }[] }[] }>(env, {
       role: "coder",
+      feature: "staging",
       system: SYSTEM,
       user,
       schema: AI_SCHEMA,
