@@ -9,9 +9,9 @@
 export type WaveLevel = "critical" | "elevated" | "watch";
 
 export const WAVE_LOOK: Record<WaveLevel, { color: string; rgb: string; radius: number; period: number }> = {
-  critical: { color: "#ff3b4a", rgb: "255, 59, 74", radius: 40, period: 2600 },
-  elevated: { color: "#ff8a3d", rgb: "255, 138, 61", radius: 31, period: 2900 },
-  watch: { color: "#f5c542", rgb: "245, 197, 66", radius: 23, period: 3200 },
+  critical: { color: "#ff3b4a", rgb: "255, 59, 74", radius: 28, period: 2600 },
+  elevated: { color: "#ff8a3d", rgb: "255, 138, 61", radius: 22, period: 2900 },
+  watch: { color: "#f5c542", rgb: "245, 197, 66", radius: 16, period: 3200 },
 };
 export const WAVE_RINGS = 3;
 
@@ -23,7 +23,7 @@ export function drawWave(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
   const { rgb, radius } = WAVE_LOOK[level];
   const R = radius * scale;
   // Rings start just outside the marker drawn on top (the warning triangle is about 20 px across).
-  const core = Math.max(9 * scale, R * 0.26);
+  const core = Math.max(7 * scale, R * 0.26);
   for (let i = 0; i < WAVE_RINGS; i++) {
     const p = (t + i / WAVE_RINGS) % 1;
     const r = core + (R - core) * easeOut(p);
@@ -38,7 +38,7 @@ export function drawWave(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
     ctx.fill();
     // The ring itself, thinning as it spreads.
     ctx.strokeStyle = `rgba(${rgb}, ${0.95 * fade})`;
-    ctx.lineWidth = (0.7 + 2.6 * (1 - p)) * scale;
+    ctx.lineWidth = (0.6 + 1.9 * (1 - p)) * scale;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
