@@ -36,7 +36,7 @@ interface Feed {
   /** An Africa-focused Telegram channel whose posts also go to the escalation pipeline as single-source claims. */
   africa?: boolean;
   /** Language of the posts, when not English. English posts are keyword-filtered before coding; others are not. */
-  lang?: "fr" | "ar" | "am" | "ti" | "so" | "om" | "ru" | "sw";
+  lang?: "fr" | "pt" | "ar" | "am" | "ti" | "so" | "om" | "ru" | "sw";
   /** True when a public preview of the channel was seen in search results on the day it was added. */
   seen?: boolean;
 }
@@ -65,6 +65,7 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "war_noir", name: "War Noir", lean: "Weapons and conflict OSINT, strong on Sudan and DR Congo", bloc: "independent" },
   { handle: "suriyak_maps", name: "Suriyakmaps", lean: "Front-line mapper, including Sudan", bloc: "independent" },
   { handle: "MiddleEastEye_TG", name: "Middle East Eye", lean: "London-based Middle East newsroom", bloc: "regional" },
+  { handle: "aljazeeraglobal", name: "Al Jazeera English", lean: "Qatar-funded international broadcaster", bloc: "regional" },
   // Africa-focused channels, added at Simon's request (2026-11-16). The handles came from a list he supplied and
   // could not be opened from the build environment, so none is confirmed to exist: a handle that returns nothing
   // shows a count of 0 in the feed's source list. "lean" says who runs the channel as far as is known; an
@@ -185,6 +186,14 @@ const TELEGRAM_CHANNELS: Feed[] = [
   { handle: "shewafa", name: "Amhara Fano Shewa Command", lean: "A Fano command's own channel, a party to the Amhara conflict", bloc: "regional", africa: true, lang: "am", seen: true },
   { handle: "gfmn21", name: "Global Fano Media", lean: "Pro-Fano media, Amharic; relays Fano units' claims", bloc: "regional", africa: true, lang: "am", seen: true },
   { handle: "ethio251media", name: "Ethio 251 Media", lean: "Pro-Fano media, Amharic; relays Fano units' claims", bloc: "regional", africa: true, lang: "am", seen: true },
+  // Mozambique, added at Simon's request (2026-11-24); Zitamar and Rybar were already followed. TV Miramar and 360
+  // Mozambique had public preview pages in search results; EmbRusMoz and UltramarTG could not be found or opened.
+  // zitamarchat is a discussion group, which Telegram may not show publicly; its count in the source list tells.
+  { handle: "tv_miramar_oficial", name: "TV Miramar", lean: "Mozambican private broadcaster, Portuguese", bloc: "regional", africa: true, lang: "pt", seen: true },
+  { handle: "EmbRusMoz", name: "Russian Embassy in Mozambique", lean: "Russian embassy, Maputo", bloc: "russian", africa: true, lang: "pt" },
+  { handle: "UltramarTG", name: "Ultramar", lean: "Portuguese-language channel on Mozambique; operator not established", bloc: "regional", africa: true, lang: "pt" },
+  { handle: "zitamarchat", name: "Zitamar Chat", lean: "Zitamar News readers' discussion group; posts are readers', not Zitamar's", bloc: "independent", africa: true },
+  { handle: "moz360", name: "360 Mozambique", lean: "Mozambican business and economy newsroom, English", bloc: "regional", africa: true, seen: true },
 ];
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
