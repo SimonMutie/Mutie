@@ -120,3 +120,55 @@ export function incidentsNear<T extends { latitude?: number | null; longitude?: 
   }
   return out.sort((a, c) => a.km - c.km);
 }
+
+/** The box to ask the server for: the geometry's extent widened by the radius on every side. */
+export function searchBox(geometry: AnyGeo, radiusKm: number): { min_lat: number; max_lat: number; min_lng: number; max_lng: number } | null {
+  const b = bounds(partsOf(geometry));
+  if (!b) return null;
+  const padLat = radiusKm / KM_PER_DEG + 0.01;
+  const widest = Math.max(Math.abs(b[1] - padLat), Math.abs(b[3] + padLat));
+  const padLng = padLat / Math.max(0.05, Math.cos((Math.min(89, widest) * Math.PI) / 180));
+  return { min_lat: Math.max(-90, b[1] - padLat), max_lat: Math.min(90, b[3] + padLat), min_lng: Math.max(-180, b[0] - padLng), max_lng: Math.min(180, b[2] + padLng) };
+}
+
+function haversineKm(a: Pos, b: Pos): number {
+  const r = Math.PI / 180;
+  const dLat = (b[1] - a[1]) * r, dLng = (b[0] - a[0]) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[1] * r) * Math.cos(b[1] * r) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/** Total length in km of the geometry's lines (0 when it has none). */
+export function lineLengthKm(geometry: AnyGeo): number {
+  let total = 0;
+  for (const l of partsOf(geometry).lines) for (let i = 0; i < l.length - 1; i++) total += haversineKm(l[i], l[i + 1]);
+  return total;
+}
+
+/**
+ * Where a point falls along the geometry's lines, as a distance from the start (the "chainage"), taken at the
+ * closest point of the nearest line; lines after the first count on from the end of the one before. Null when the
+ * geometry has no lines.
+ */
+export function chainageKm(lng: number, lat: number, geometry: AnyGeo): number | null {
+  const lines = partsOf(geometry).lines;
+  if (!lines.length) return null;
+  const k = Math.cos((lat * Math.PI) / 180);
+  const X = (l: number) => (l - lng) * k * KM_PER_DEG;
+  const Y = (l: number) => (l - lat) * KM_PER_DEG;
+  let best = Infinity, at = 0, offset = 0;
+  for (const l of lines) {
+    let run = 0;
+    for (let i = 0; i < l.length - 1; i++) {
+      const ax = X(l[i][0]), ay = Y(l[i][1]), bx = X(l[i + 1][0]), by = Y(l[i + 1][1]);
+      const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+      const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, (-ax * dx - ay * dy) / len2));
+      const d = Math.hypot(ax + t * dx, ay + t * dy);
+      const seg = haversineKm(l[i], l[i + 1]);
+      if (d < best) { best = d; at = offset + run + t * seg; }
+      run += seg;
+    }
+    offset += run;
+  }
+  return at;
+}
