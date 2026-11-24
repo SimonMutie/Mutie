@@ -1205,6 +1205,8 @@ export interface EscalationAuditEntry {
 export type AiProvider = "auto" | "claude" | "cloudflare";
 export interface ClaudeUsage {
   day: string;
+  /** Today's calls and tokens by what they were for. */
+  byFeature?: { feature: string; calls: number; inputTokens: number; outputTokens: number }[];
   calls: number;
   limit: number;
   inputTokens: number;
