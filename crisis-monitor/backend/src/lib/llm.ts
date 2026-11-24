@@ -42,6 +42,8 @@ export interface StructuredCall {
    *  Each can be pointed at a different model with the
    *  ESCALATION_CODER_MODEL / ESCALATION_ANALYST_MODEL vars. */
   role: "coder" | "analyst";
+  /** What the call is for, so Claude's use can be told apart in Settings ("articles", "assessments", …). */
+  feature?: string;
 }
 
 export interface StructuredResult<T> {
@@ -86,7 +88,7 @@ async function callAnthropic<T>(env: Env, model: string, call: StructuredCall): 
     return null;
   }
   const data = (await res.json()) as { content?: Array<{ type?: string; name?: string; input?: unknown }>; stop_reason?: string; usage?: Parameters<typeof recordClaudeTokens>[1] };
-  await recordClaudeTokens(env, data.usage);
+  await recordClaudeTokens(env, data.usage, call.feature ?? call.role);
   const block = data.content?.find((b) => b.type === "tool_use" && b.name === call.toolName);
   if (!block?.input || typeof block.input !== "object") {
     console.error(`[llm] Anthropic ${model} returned no tool_use block (stop_reason=${data.stop_reason})`);
