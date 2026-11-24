@@ -10,7 +10,7 @@ import "./IncidentPulses.css";
  * from a single source that nothing else yet backs.
  */
 const COLOR = { impact: "#ff4d5a", concentration: "#ffb020" } as const;
-const SIZE = { 1: 46, 2: 70, 3: 100 } as const;
+const SIZE = { 1: 32, 2: 48, 3: 70 } as const;
 
 export function useIncidentPulses(): IncidentPulse[] {
   const [pulses, setPulses] = useState<IncidentPulse[]>([]);
