@@ -20,9 +20,9 @@
 }
 .incident-pulse--claim .incident-pulse-core { background: #0b1220; border: 2px dashed var(--pulse-color); }
 @keyframes incident-pulse {
-  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 1; border-width: 3px; }
+  0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0.85; border-width: 2.4px; }
   70% { opacity: 0.35; }
-  100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; border-width: 0.8px; }
+  100% { transform: translate(-50%, -50%) scale(1.45); opacity: 0; border-width: 0.7px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .incident-pulse-ring { animation: none; opacity: 0.55; transform: translate(-50%, -50%) scale(1); }
