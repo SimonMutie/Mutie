@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { FloatingPanel } from "../components/FloatingPanel";
 import { HISTORY_SINCE, setPeriod, toggleStrategic, useIncidentHistory, usePeriod, useStrategic, type Period } from "./store";
 import { CIRCLE_STYLE, kindOf } from "./IncidentCircles";
 
@@ -75,25 +76,14 @@ export function TimelineFilter() {
   const isPreset = (n: number | null) => JSON.stringify(preset(n)) === JSON.stringify(period);
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        left: "50%",
-        transform: "translateX(-50%)",
-        bottom: 14,
-        zIndex: 6,
-        width: "min(640px, calc(100% - var(--lens-pad-left, 10px) - var(--lens-pad-right, 12px) - 150px))",
-        padding: "8px 12px 9px",
-        borderRadius: 10,
-        background: "rgba(8,16,30,0.9)",
-        border: "1px solid rgba(159,200,240,0.18)",
-        color: "#e6edf7",
-        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-        userSelect: "none",
-      }}
+    <FloatingPanel
+      id="timeline"
+      title="Timeline"
+      width="min(640px, calc(100% - var(--lens-pad-left, 10px) - var(--lens-pad-right, 12px) - 150px))"
+      initial={{ left: "50%", transform: "translateX(-50%)", bottom: 14 }}
     >
+    <div style={{ padding: "6px 12px 9px", userSelect: "none" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 10, letterSpacing: "0.1em", fontWeight: 800, color: "#8fa3bf" }}>TIMELINE</span>
         <span style={{ fontSize: 12, fontWeight: 700 }}>{sel ? (sel[0] === sel[1] ? monthLabel(months[sel[0]]) : `${monthLabel(months[sel[0]])} – ${monthLabel(months[sel[1]])}`) : "All time"}</span>
         <span style={{ fontSize: 10.5, color: "#8fa3bf" }}>{history ? `${total.toLocaleString()} incidents` : "Loading…"}</span>
         <span style={{ flex: 1 }} />
@@ -155,5 +145,6 @@ export function TimelineFilter() {
         ))}
       </div>
     </div>
+    </FloatingPanel>
   );
 }
