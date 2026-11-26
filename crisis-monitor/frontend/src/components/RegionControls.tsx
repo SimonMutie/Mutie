@@ -19,7 +19,7 @@ export const REGION_VIEWS: RegionView[] = [
   { key: "somalia", label: "Somalia", bounds: [[-1.7, 40.9], [12.0, 51.5]] },
   { key: "horn", label: "Horn", bounds: [[-2.0, 32.0], [18.0, 51.5]] },
   // Shipping view: ships, shipping lanes and GPS interference over the Red Sea, Bab al-Mandab and Gulf of Aden.
-  { key: "redsea", label: "Red Sea", bounds: [[10.5, 32.0], [30.5, 51.5]], layers: ["ais-vessels", "maritime-lines", "gps-interference", "maritime", "mrisk-redsea", "mrisk-piracy"] },
+  { key: "redsea", label: "Red Sea", bounds: [[10.5, 32.0], [30.5, 51.5]], layers: ["ais-vessels", "maritime-lines", "gps-interference", "maritime"] },
 ];
 
 /** Horn countries as numeric ISO codes, as the world outline data identifies them: Ethiopia, Eritrea, Sudan, South Sudan, Somalia, Djibouti, Kenya. */
