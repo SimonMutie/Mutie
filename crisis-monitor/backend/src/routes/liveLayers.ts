@@ -24,6 +24,7 @@ import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsH
 import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
 import { buildZones, composeZones } from "../lib/watchZones";
+import { createScenario, deleteScenario, LIKELIHOODS, listScenarios, updateScenario } from "../lib/scenarios";
 import { COUNTRY_STATUSES, COUNTRY_TRENDS, ensureCountryStatusTable, getCountryStatus, getIncidentHistory } from "../lib/countryStatus";
 import { readRadar } from "../lib/cloudflareRadar";
 import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCollector";
@@ -536,6 +537,39 @@ liveLayersRouter.put("/country-status/:code", requireAdmin, async (c) => {
   );
   return c.json({ ok: true });
 });
+
+/* ── Scenarios (lib/scenarios.ts): analysts' questions about how a situation could develop, on the map ── */
+
+liveLayersRouter.get("/scenarios", async (c) => c.json({ scenarios: await listScenarios(c.env) }));
+
+const scenarioSchema = zod.object({
+  question: zod.string().trim().min(3).max(300),
+  lat: zod.number().min(-90).max(90),
+  lng: zod.number().min(-180).max(180),
+  place: zod.string().max(120).nullable().optional(),
+  likelihood: zod.enum(LIKELIHOODS).nullable().optional(),
+  horizon: zod.string().max(80).nullable().optional(),
+  assessment: zod.string().max(4000).nullable().optional(),
+  indicators: zod.array(zod.string().max(300)).max(20).optional(),
+  outlook: zod.string().max(2000).nullable().optional(),
+  num: zod.number().int().min(1).max(999).optional(),
+});
+
+liveLayersRouter.post("/scenarios", requireAdmin, async (c) => {
+  const p = scenarioSchema.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: p.error.issues[0]?.message ?? "Invalid scenario" }, 400);
+  return c.json({ scenario: await createScenario(c.env, p.data, c.get("userId"), dbNow()) });
+});
+
+liveLayersRouter.put("/scenarios/:id", requireAdmin, async (c) => {
+  const p = scenarioSchema.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: p.error.issues[0]?.message ?? "Invalid scenario" }, 400);
+  return (await updateScenario(c.env, c.req.param("id") ?? "", p.data, c.get("userId"), dbNow())) ? c.json({ ok: true }) : c.json({ error: "No such scenario" }, 404);
+});
+
+liveLayersRouter.delete("/scenarios/:id", requireAdmin, async (c) =>
+  (await deleteScenario(c.env, c.req.param("id") ?? "")) ? c.json({ ok: true }) : c.json({ error: "No such scenario" }, 404)
+);
 
 /** Back to the Lens's default rating. */
 liveLayersRouter.delete("/country-status/:code", requireAdmin, async (c) => {
