@@ -1193,6 +1193,13 @@ export type CountryTrend = "worsening" | "steady" | "improving";
 export interface CountryStatusRow {
   code: string;
   status: CountryStatus;
+  statusSource: "analyst" | "assessment" | "data";
+  baseline: CountryStatus;
+  statusData: CountryStatus;
+  critical30: number;
+  deaths30: number;
+  n90: number;
+  assessment: { bottomLine: string; confidence: "low" | "moderate" | "high"; outlookLikelihood: string | null; generatedAt: string } | null;
   trend: CountryTrend | null;
   trendAuto: CountryTrend | null;
   recent: number;
@@ -1219,6 +1226,53 @@ export interface Scenario {
   updatedAt: string;
 }
 export type ScenarioInput = Omit<Scenario, "id" | "num" | "updatedAt"> & { num?: number };
+
+/** One country in full (backend lib/countryAssessment.ts). */
+export interface CountryKeyIncident { id: string; date: string; level: string; place: string | null; deaths: number | null; headline: string; summary: string | null; terror: boolean; hybrid: string | null }
+export interface CountryMetrics {
+  code: string;
+  name: string;
+  asOf: string;
+  weekly: number[];
+  weeklyWeighted: number[];
+  n30: number;
+  nPrev30: number;
+  w30: number;
+  wPrev30: number;
+  n90: number;
+  critical30: number;
+  elevated30: number;
+  deaths30: number;
+  deathsPrev30: number;
+  deaths90: number;
+  terror30: number;
+  terror90: number;
+  hybrid30: number;
+  actors90: { name: string; n: number }[];
+  places30: { name: string; n: number }[];
+  lastIncident: string | null;
+  gdelt: { events7d: number; prev7d: number } | null;
+  key: CountryKeyIncident[];
+}
+export interface CountryAssessmentBody {
+  status: CountryStatus;
+  trend: CountryTrend | null;
+  confidence: "low" | "moderate" | "high";
+  bottomLine: string;
+  assessment: string;
+  context: string;
+  drivers: string[];
+  outlook: string;
+  outlookLikelihood: string | null;
+  indicators: string[];
+  evidence: string[];
+  coverageNote: string | null;
+}
+export interface CountryDetail {
+  row: CountryStatusRow | null;
+  assessment: { code: string; generatedAt: string; status: CountryStatus; trend: CountryTrend | null; metrics: CountryMetrics; body: CountryAssessmentBody } | null;
+  metrics: CountryMetrics;
+}
 
 /** One escalation incident in the history. */
 export interface IncidentHistoryPoint {
@@ -2639,6 +2693,9 @@ export const api = {
   createScenario: (s: ScenarioInput) => req<{ scenario: Scenario }>("/api/live-layers/scenarios", { method: "POST", body: JSON.stringify(s) }),
   updateScenario: (id: string, s: ScenarioInput) => req<{ ok: boolean }>(`/api/live-layers/scenarios/${id}`, { method: "PUT", body: JSON.stringify(s) }),
   deleteScenario: (id: string) => req<{ ok: boolean }>(`/api/live-layers/scenarios/${id}`, { method: "DELETE" }),
+  getCountryDetail: (code: string) => req<CountryDetail>(`/api/live-layers/country-status/${code}`),
+  /** Admin: write the country's assessment now. */
+  assessCountry: (code: string) => req<{ ok: boolean }>(`/api/live-layers/country-status/${code}/assess`, { method: "POST" }),
   resetCountryStatus: (code: string) => req<{ ok: boolean }>(`/api/live-layers/country-status/${code}`, { method: "DELETE" }),
   getConflictEscalationEvidence: (countryCode: string) =>
     req<{ countryCode: string; items: EscalationEvidenceItem[]; fetchedAt: string }>(
