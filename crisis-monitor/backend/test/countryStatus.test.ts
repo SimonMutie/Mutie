@@ -14,8 +14,8 @@ function setup() {
   const d1 = fakeD1();
   d1.db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, client_id TEXT, read_only INTEGER DEFAULT 0, disabled INTEGER DEFAULT 0, tokens_valid_after INTEGER DEFAULT 0);
     INSERT INTO users (id, username) VALUES ('a', 'admin'), ('v', 'viewer');
-    CREATE TABLE escalation_incidents (id TEXT PRIMARY KEY, country_code TEXT, country_name TEXT, location_label TEXT, lat REAL, lon REAL, level TEXT, status TEXT, headline TEXT, detail TEXT, first_event_date TEXT, last_event_date TEXT, updated_at TEXT);`);
-  const ins = d1.db.prepare(`INSERT INTO escalation_incidents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    CREATE TABLE escalation_incidents (id TEXT PRIMARY KEY, country_code TEXT, country_name TEXT, location_label TEXT, lat REAL, lon REAL, level TEXT, status TEXT, headline TEXT, summary TEXT, detail TEXT, first_event_date TEXT, last_event_date TEXT, updated_at TEXT);`);
+  const ins = d1.db.prepare(`INSERT INTO escalation_incidents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`);
   const terror = JSON.stringify({ actors: ["Islamic State West Africa Province"], indicators: [{ id: "armed_clash" }] });
   const plain = JSON.stringify({ actors: ["Bandits"], indicators: [{ id: "armed_clash" }] });
   // Nigeria: heavier in the last 30 days (worsening); one of them a terrorist attack.
