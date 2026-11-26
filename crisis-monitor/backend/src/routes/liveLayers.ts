@@ -24,6 +24,7 @@ import { ensureFireHistorySchema, FIRMS_HISTORY_SATELLITES } from "../lib/firmsH
 import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
 import { buildZones, composeZones } from "../lib/watchZones";
+import { COUNTRY_STATUSES, COUNTRY_TRENDS, ensureCountryStatusTable, getCountryStatus, getIncidentHistory } from "../lib/countryStatus";
 import { readRadar } from "../lib/cloudflareRadar";
 import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCollector";
 import { incidentPulses, RECENT_HOURS, BASELINE_DAYS } from "../lib/incidentPulse";
@@ -490,6 +491,57 @@ liveLayersRouter.get("/conflict-escalation", async (c) => {
     },
     30
   );
+});
+
+/** Every located escalation incident since ?since=YYYY-MM-DD (default: 1 Jan 2025), active or not, for the incident
+ *  circles and the timeline. Compact: place, date, level, whether it was a terrorist attack. */
+liveLayersRouter.get("/conflict-escalation/history", async (c) => {
+  const q = c.req.query("since") ?? "";
+  const since = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : "2025-01-01";
+  return cachedJson(c.req.raw, async () => ({ items: await getIncidentHistory(c.env, since), since, fetchedAt: new Date().toISOString() }), 300);
+});
+
+/* ── Country conflict status (lib/countryStatus.ts) ── */
+
+liveLayersRouter.get("/country-status", async (c) =>
+  c.json({
+    countries: await getCountryStatus(c.env),
+    basis:
+      "Status is an Afrilens editorial rating. The trend for countries in active conflict compares the Lens's escalation incidents of the last 30 days with the 30 before, weighted by level, unless an analyst has set it.",
+    fetchedAt: new Date().toISOString(),
+  })
+);
+
+const countryStatusSchema = zod.object({
+  status: zod.enum(COUNTRY_STATUSES as [string, ...string[]]).nullable().optional(),
+  trend: zod.enum(COUNTRY_TRENDS as [string, ...string[]]).nullable().optional(),
+  note: zod.string().max(400).nullable().optional(),
+});
+
+/** An admin rates a country: status, trend (null: from the data) and note. Fields left out keep their value. */
+liveLayersRouter.put("/country-status/:code", requireAdmin, async (c) => {
+  const code = (c.req.param("code") ?? "").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return c.json({ error: "Use a two-letter country code" }, 400);
+  const p = countryStatusSchema.safeParse(await c.req.json().catch(() => null));
+  if (!p.success) return c.json({ error: p.error.issues[0]?.message ?? "Invalid rating" }, 400);
+  await ensureCountryStatusTable(c.env.DB);
+  const cur = (await dbAll<{ status: string | null; trend: string | null; note: string | null }>(c.env.DB, `SELECT status, trend, note FROM country_status_overrides WHERE code = ?`, [code]))[0];
+  const keep = <T,>(v: T | null | undefined, old: string | null) => (v === undefined ? old : v === null ? null : String(v));
+  const d = p.data;
+  await dbRun(
+    c.env.DB,
+    `INSERT INTO country_status_overrides (code, status, trend, note, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(code) DO UPDATE SET status = excluded.status, trend = excluded.trend, note = excluded.note, updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+    [code, keep(d.status, cur?.status ?? null), keep(d.trend, cur?.trend ?? null), keep(d.note, cur?.note ?? null), c.get("userId"), dbNow()]
+  );
+  return c.json({ ok: true });
+});
+
+/** Back to the Lens's default rating. */
+liveLayersRouter.delete("/country-status/:code", requireAdmin, async (c) => {
+  await ensureCountryStatusTable(c.env.DB);
+  await dbRun(c.env.DB, `DELETE FROM country_status_overrides WHERE code = ?`, [(c.req.param("code") ?? "").toUpperCase()]);
+  return c.json({ ok: true });
 });
 
 /** The written criteria: every indicator and exclusion the coder applies,
