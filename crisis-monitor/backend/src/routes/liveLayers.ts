@@ -683,7 +683,22 @@ async function ensureZoneEdits(db: D1Database) {
   for (const [name, type] of [["label", "TEXT"], ["severity", "TEXT"], ["description", "TEXT"], ["units", "TEXT"], ["units_geometry", "TEXT"], ["base_dropped", "INTEGER"], ["retired", "INTEGER"], ["custom", "INTEGER"], ["bounds", "TEXT"], ["pattern", "TEXT"]] as const) {
     if (!cols.has(name)) await dbRun(db, `ALTER TABLE watch_zone_overrides ADD COLUMN ${name} ${type}`);
   }
+  await redSeaResetOnce(db);
   zoneEditsReady = true;
+}
+
+/**
+ * One-time change (26 Nov 2026, at Simon's request): the Red Sea zone goes back to how it was first drawn (its
+ * reshaping, added areas, name, colour and fill cleared), and the hand-drawn Red Sea, AAH/Houthi and piracy zones
+ * come off the map. They are retired, not deleted, so they can be brought back from the zone list.
+ */
+async function redSeaResetOnce(db: D1Database) {
+  await dbRun(db, `CREATE TABLE IF NOT EXISTS lens_once (key TEXT PRIMARY KEY, done_at TEXT NOT NULL)`);
+  const key = "red_sea_reset_piracy_off_2026_11_26";
+  if ((await dbAll<{ key: string }>(db, `SELECT key FROM lens_once WHERE key = ?`, [key])).length) return;
+  await dbRun(db, `DELETE FROM watch_zone_overrides WHERE zone_id = 'red-sea'`);
+  await dbRun(db, `UPDATE watch_zone_overrides SET retired = 1 WHERE custom = 1 AND (UPPER(label) LIKE '%PIRAC%' OR UPPER(label) LIKE '%AAH%' OR UPPER(label) LIKE '%HOUTHI%' OR UPPER(label) LIKE '%RED SEA%')`);
+  await dbRun(db, `INSERT INTO lens_once (key, done_at) VALUES (?, ?)`, [key, dbNow()]);
 }
 const zoneRing = zod.array(zod.array(zod.number()).min(2).max(3)).min(4).max(50000);
 const zoneEditSchema = zod.object({
