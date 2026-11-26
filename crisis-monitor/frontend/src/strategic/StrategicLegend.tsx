@@ -65,7 +65,7 @@ export function StrategicLegend() {
         </>
       )}
       <div style={{ marginTop: 7, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.1)", color: "#8fa3bf", fontSize: 10.5 }}>
-        {on.status && "Status is an Afrilens rating; the trend compares the last 30 days of escalation incidents with the 30 before. "}
+        {on.status && "Status follows the evidence: an analyst's rating if set, otherwise the Lens's latest written assessment, otherwise the numbers. Click a country for its assessment. "}
         {on.circles && "Incidents are the Lens's own escalation incidents, plus hybrid warfare reported in its wire and Telegram feeds."}
       </div>
     </div>
