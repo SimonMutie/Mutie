@@ -242,8 +242,15 @@ const TELEGRAM_CHANNELS: Feed[] = [
 
 /** The single outlet every Telegram post is filed under in the escalation pipeline, so that no number of channels can corroborate one another. */
 export const TELEGRAM_OUTLET = "t.me";
-/** Africa channels read by the pipeline on one tick. With a five-minute tick and about 130 channels, each is read about every twenty-five minutes. */
-const PIPELINE_CHANNELS_PER_TICK = 26;
+/** Africa channels read on one tick. With a five-minute tick and about 130 channels, each is read every fifteen
+ *  minutes (the stored reading's lifetime below), so a busy channel is not left for long. */
+const PIPELINE_CHANNELS_PER_TICK = 44;
+/** One t.me/s page holds a channel's latest ~20 posts. A reading pages back (?before=) until it reaches posts
+ *  already held or 72 hours back, at most this many pages, so a busy channel's posts between readings are not lost. */
+const MAX_PAGES_PER_READ = 4;
+/** Posts kept per Africa channel: the readings are added together, not replaced, over the 72-hour window. */
+const STORED_POSTS_PER_CHANNEL = 150;
+const STORED_TEXT_CHARS = 2500;
 /** How long a stored reading of an Africa channel is used before the channel is read again. */
 const AFRICA_CHANNEL_TTL_MS = 15 * 60_000;
 
@@ -276,9 +283,9 @@ const WIRE_FEEDS: (Feed & { url: string })[] = [
 // simply how many of each source's most-recent items got kept per fetch
 // cycle). Telegram channels post far more than 8 times in a 72h window and
 // wire RSS feeds carry far more than 5 items — this just stops throwing
-// the rest away. t.me/s/<channel> only ever serves ~20 posts per page
-// regardless of this cap, which is the real ceiling on the Telegram side.
-const POSTS_PER_CHANNEL = 20;
+// the rest away. t.me/s/<channel> only serves ~20 posts per page; the Africa
+// channels now page back for more (readChannelSince) and keep up to
+// STORED_POSTS_PER_CHANNEL.
 const ITEMS_PER_WIRE = 25;
 const CHANNEL_TTL_MS = 3 * 60_000;
 const WIRE_TTL_MS = 5 * 60_000;
@@ -369,7 +376,7 @@ export function findCoords(text: string): { coords: [number, number]; anchor: st
 }
 
 export function recentPosts(posts: TelegramPost[], now = Date.now()): TelegramPost[] {
-  return posts.filter((p) => now - Date.parse(p.publishedAt) <= MAX_POST_AGE_MS).slice(-POSTS_PER_CHANNEL);
+  return posts.filter((p) => now - Date.parse(p.publishedAt) <= MAX_POST_AGE_MS).slice(-STORED_POSTS_PER_CHANNEL);
 }
 
 export interface ChannelPost { post: TelegramPost; channel: Pick<Feed, "handle" | "name" | "lean" | "bloc"> }
@@ -487,10 +494,44 @@ export interface OsintFeedPayload {
   fetchedAt: string;
 }
 
-async function fetchChannel(channel: Feed): Promise<TelegramPost[]> {
-  const res = await fetch(`https://t.me/s/${channel.handle}`, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": BROWSER_UA } });
+async function fetchChannel(channel: Feed, before?: number): Promise<TelegramPost[]> {
+  const res = await fetch(`https://t.me/s/${channel.handle}${before ? `?before=${before}` : ""}`, { signal: AbortSignal.timeout(8000), headers: { "User-Agent": BROWSER_UA } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return parseChannelPage(await res.text(), channel.handle);
+}
+
+const postNumber = (p: TelegramPost) => Number(p.id.split("/").pop()) || 0;
+
+/**
+ * A channel's posts since it was last read: the latest page, then older pages (?before=) until a page reaches a
+ * post already held, a post older than 72 hours, or the page limit. A failure after the first page keeps what was
+ * read so far.
+ */
+export async function readChannelSince(channel: Feed, known: Set<string>, now: number, read: (c: Feed, before?: number) => Promise<TelegramPost[]> = fetchChannel, maxPages = MAX_PAGES_PER_READ): Promise<TelegramPost[]> {
+  const got = new Map<string, TelegramPost>();
+  let page = await read(channel);
+  for (let i = 0; ; i++) {
+    for (const p of page) got.set(p.id, p);
+    if (!page.length || i + 1 >= maxPages) break;
+    const oldest = page.reduce((a, b) => (postNumber(b) < postNumber(a) ? b : a));
+    if (page.some((p) => known.has(p.id)) || now - Date.parse(oldest.publishedAt) > MAX_POST_AGE_MS || postNumber(oldest) <= 1) break;
+    try {
+      page = await read(channel, postNumber(oldest));
+    } catch {
+      break;
+    }
+  }
+  return [...got.values()].sort((a, b) => postNumber(a) - postNumber(b));
+}
+
+/** Stored and new posts together: newest reading wins, 72 hours at most, the latest STORED_POSTS_PER_CHANNEL. */
+export function mergePosts(stored: TelegramPost[], fresh: TelegramPost[], now: number): TelegramPost[] {
+  const m = new Map(stored.map((p) => [p.id, p]));
+  for (const p of fresh) m.set(p.id, p);
+  return [...m.values()]
+    .filter((p) => now - Date.parse(p.publishedAt) <= MAX_POST_AGE_MS)
+    .sort((a, b) => postNumber(a) - postNumber(b))
+    .slice(-STORED_POSTS_PER_CHANNEL);
 }
 
 async function fetchWire(feed: Feed & { url: string }): Promise<TelegramPost[]> {
@@ -549,7 +590,7 @@ export function africaChannelsDue(readAt: Map<string, number>, now: number, perC
     .map((c) => c.handle);
 }
 
-type ChannelReader = (channel: Feed) => Promise<TelegramPost[]>;
+type ChannelReader = (channel: Feed, before?: number) => Promise<TelegramPost[]>;
 
 /** Latest stored posts for every Africa channel, after reading the few that are due. */
 export async function africaChannelPosts(db: D1Database, now = Date.now(), read: ChannelReader = fetchChannel, readDue = true): Promise<Map<string, { posts: TelegramPost[]; fetchedAt: string | null; status: string | null }>> {
@@ -566,20 +607,21 @@ export async function africaChannelPosts(db: D1Database, now = Date.now(), read:
   await Promise.all(
     due.map(async (handle) => {
       const channel = TELEGRAM_CHANNELS.find((c) => c.handle === handle)!;
-      let posts: TelegramPost[] = [];
+      const held = out.get(handle)?.posts ?? [];
+      let posts: TelegramPost[] = held;
       let status = "ok";
       try {
-        posts = (await read(channel)).slice(-POSTS_PER_CHANNEL);
-        if (posts.length === 0) status = "no posts found: the channel may not exist, may be private, or may have previews turned off";
+        const fresh = await readChannelSince(channel, new Set(held.map((p) => p.id)), now, read);
+        if (fresh.length === 0 && held.length === 0) status = "no posts found: the channel may not exist, may be private, or may have previews turned off";
+        posts = mergePosts(held, fresh, now);
       } catch (err) {
         status = `could not be read: ${err instanceof Error ? err.message : String(err)}`;
-        posts = out.get(handle)?.posts ?? [];
       }
       const fetchedAt = new Date(now).toISOString();
       out.set(handle, { posts, fetchedAt, status });
       await db
         .prepare(`INSERT INTO telegram_channel_cache (handle, fetched_at, status, posts) VALUES (?,?,?,?) ON CONFLICT(handle) DO UPDATE SET fetched_at = excluded.fetched_at, status = excluded.status, posts = excluded.posts`)
-        .bind(handle, fetchedAt, status, JSON.stringify(posts.map((p) => ({ ...p, text: p.text.slice(0, 4000), media: p.media ? { ...p.media, video: null } : null }))))
+        .bind(handle, fetchedAt, status, JSON.stringify(posts.map((p) => ({ ...p, text: p.text.slice(0, STORED_TEXT_CHARS), media: p.media ? { ...p.media, video: null } : null }))))
         .run()
         .catch((err) => console.error("[telegram] could not store", handle, err));
     })
