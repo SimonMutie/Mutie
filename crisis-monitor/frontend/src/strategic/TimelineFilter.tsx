@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState } from "react";
 import { HISTORY_SINCE, setPeriod, toggleStrategic, useIncidentHistory, usePeriod, useStrategic, type Period } from "./store";
-import { CIRCLE_STYLE } from "./IncidentCircles";
+import { CIRCLE_STYLE, kindOf } from "./IncidentCircles";
 
 /**
- * The timeline: the Lens's escalation incidents per month since January 2025 (terrorist attacks stacked on top),
+ * The timeline: the Lens's escalation incidents per month since January 2025 (hybrid warfare and terrorist attacks
+ * stacked on top),
  * with a range to drag across. The period chosen narrows the incident circles and the dated incident layers on
  * the map (Conflict Escalation, Terrorist Attacks, events, alerts, My Incidents). For the visit only.
  */
@@ -33,14 +34,15 @@ export function TimelineFilter() {
   const period = usePeriod();
   const months = useMemo(() => monthsSince(HISTORY_SINCE), []);
   const counts = useMemo(() => {
-    const m = new Map(months.map((k) => [k, { other: 0, terror: 0 }]));
+    const m = new Map(months.map((k) => [k, { other: 0, terror: 0, hybrid: 0 }]));
     for (const p of history ?? []) {
       const c = m.get(p.date.slice(0, 7));
-      if (c) c[p.terror ? "terror" : "other"]++;
+      if (c) c[kindOf(p)]++;
     }
     return months.map((k) => ({ month: k, ...m.get(k)! }));
   }, [history, months]);
-  const max = Math.max(1, ...counts.map((c) => c.other + c.terror));
+  const sum = (c: { other: number; terror: number; hybrid: number }) => c.other + c.terror + c.hybrid;
+  const max = Math.max(1, ...counts.map(sum));
   const bars = useRef<HTMLDivElement | null>(null);
   const [drag, setDrag] = useState<{ a: number; b: number } | null>(null);
 
@@ -60,7 +62,7 @@ export function TimelineFilter() {
     setPeriod(i === 0 && j === months.length - 1 ? null : { from: `${months[i]}-01`, to: lastDay(months[j]) });
   };
   const preset = (n: number | null): Period => (n == null ? null : { from: `${months[Math.max(0, months.length - n)]}-01`, to: lastDay(months[months.length - 1]) });
-  const total = sel ? counts.slice(sel[0], sel[1] + 1).reduce((s, c) => s + c.other + c.terror, 0) : counts.reduce((s, c) => s + c.other + c.terror, 0);
+  const total = (sel ? counts.slice(sel[0], sel[1] + 1) : counts).reduce((s, c) => s + sum(c), 0);
   const chip = (label: string, p: Period, active: boolean) => (
     <button
       key={label}
@@ -121,11 +123,14 @@ export function TimelineFilter() {
       >
         {counts.map((c, i) => {
           const inSel = !sel || (i >= sel[0] && i <= sel[1]);
-          const h = ((c.other + c.terror) / max) * 44;
+          const n = sum(c);
+          const h = (n / max) * 44;
+          const part = (k: number) => (k / Math.max(1, n)) * h;
           return (
-            <div key={c.month} title={`${monthLabel(c.month)}: ${c.other + c.terror} incidents, ${c.terror} terrorist attacks`} style={{ flex: 1, height: 46, display: "flex", flexDirection: "column", justifyContent: "flex-end", opacity: inSel ? 1 : 0.28 }}>
-              <div style={{ height: (c.terror / Math.max(1, c.other + c.terror)) * h, background: CIRCLE_STYLE.terror.fill }} />
-              <div style={{ height: (c.other / Math.max(1, c.other + c.terror)) * h, background: "#7fa8d6", minHeight: c.other + c.terror ? 0 : 1, borderRadius: "1px 1px 0 0" }} />
+            <div key={c.month} title={`${monthLabel(c.month)}: ${n} incidents, ${c.terror} terrorist attacks, ${c.hybrid} hybrid warfare`} style={{ flex: 1, height: 46, display: "flex", flexDirection: "column", justifyContent: "flex-end", opacity: inSel ? 1 : 0.28 }}>
+              <div style={{ height: part(c.terror), background: CIRCLE_STYLE.terror.fill }} />
+              <div style={{ height: part(c.hybrid), background: CIRCLE_STYLE.hybrid.fill }} />
+              <div style={{ height: part(c.other), background: "#7fa8d6", minHeight: n ? 0 : 1, borderRadius: "1px 1px 0 0" }} />
             </div>
           );
         })}
