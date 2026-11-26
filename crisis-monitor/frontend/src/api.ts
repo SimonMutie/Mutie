@@ -1187,6 +1187,36 @@ export interface LiveLayerFeature {
   };
 }
 
+/** Country conflict status (backend lib/countryStatus.ts). */
+export type CountryStatus = "active" | "risk-high" | "risk-low" | "none";
+export type CountryTrend = "worsening" | "steady" | "improving";
+export interface CountryStatusRow {
+  code: string;
+  status: CountryStatus;
+  trend: CountryTrend | null;
+  trendAuto: CountryTrend | null;
+  recent: number;
+  prior: number;
+  incidents30: number;
+  terror30: number;
+  note: string | null;
+  edited: boolean;
+}
+/** One escalation incident in the history. */
+export interface IncidentHistoryPoint {
+  id: string;
+  cc: string;
+  country: string;
+  place: string | null;
+  lat: number;
+  lon: number;
+  date: string;
+  level: "watch" | "elevated" | "critical";
+  terror: boolean;
+  deaths: number | null;
+  headline: string;
+}
+
 /** One article the escalation pipeline read, and what it decided. */
 export interface EscalationAuditEntry {
   url: string;
@@ -2576,6 +2606,13 @@ export const api = {
   // reporting, each carrying its criteria, indicators (with quotes) and
   // sources in `properties.incident` (see backend's escalationIncidents.ts).
   getConflictEscalation: () => req<LiveLayerCollection>("/api/live-layers/conflict-escalation"),
+  /** Every located escalation incident since a date, active or not (incident circles, timeline). */
+  getIncidentHistory: (since = "2025-01-01") => req<{ items: IncidentHistoryPoint[]; since: string; fetchedAt: string }>(`/api/live-layers/conflict-escalation/history?since=${since}`),
+  getCountryStatus: () => req<{ countries: CountryStatusRow[]; basis: string; fetchedAt: string }>("/api/live-layers/country-status"),
+  /** Admin: a country's status, trend (null: from the data) and note; fields left out keep their value. */
+  putCountryStatus: (code: string, r: { status?: CountryStatus | null; trend?: CountryTrend | null; note?: string | null }) =>
+    req<{ ok: boolean }>(`/api/live-layers/country-status/${code}`, { method: "PUT", body: JSON.stringify(r) }),
+  resetCountryStatus: (code: string) => req<{ ok: boolean }>(`/api/live-layers/country-status/${code}`, { method: "DELETE" }),
   getConflictEscalationEvidence: (countryCode: string) =>
     req<{ countryCode: string; items: EscalationEvidenceItem[]; fetchedAt: string }>(
       `/api/live-layers/conflict-escalation/${encodeURIComponent(countryCode)}/evidence`
