@@ -9,6 +9,7 @@ import { api, type CountryStatus, type CountryStatusRow, type CountryTrend } fro
 import { joinShapes } from "../boundaryLibrary";
 import { UNDER } from "../components/globeExtras";
 import { reloadCountryStatus, useCountryStatus, useStrategic } from "./store";
+import { fillCountryDetail } from "./countryDetail";
 
 /**
  * Country conflict status: each country in Africa and the Middle East shaded by its rating (active armed conflict,
@@ -118,9 +119,20 @@ function popupHtml(r: CountryStatusRow, name: string, canEdit: boolean): string 
   const trend = t
     ? `<div style="margin-top:6px;font-weight:700;color:${t.color}">${t.arrow} ${t.label}${r.trend !== r.trendAuto && r.trendAuto ? ` <span style="font-weight:400;opacity:.75">(set by an analyst; the data says ${TREND_STYLE[r.trendAuto].label.toLowerCase()})</span>` : ""}</div>`
     : "";
-  const counts = `<div style="margin-top:6px">${r.incidents30} escalation incident${r.incidents30 === 1 ? "" : "s"} in the last 30 days${r.terror30 ? `, ${r.terror30} of them ${r.terror30 === 1 ? "a terrorist attack" : "terrorist attacks"}` : ""}. Weighted by level: ${r.recent} in the last 30 days, ${r.prior} in the 30 before.</div>`;
-  const note = r.note ? `<div style="margin-top:6px">${esc(r.note)}</div>` : "";
-  const basis = `<div style="margin-top:7px;padding-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:11px;opacity:.8">Afrilens rating${r.edited ? ", changed by an analyst" : ""}. Trend from the Lens's escalation incidents unless an analyst has set it.</div>`;
+  const source =
+    r.statusSource === "analyst"
+      ? "Status set by an Afrilens analyst."
+      : r.statusSource === "assessment"
+        ? "Status from the Lens's latest assessment of the evidence."
+        : `Status from the numbers${r.statusData !== r.baseline ? `, raised from the baseline rating (${STATUS_LABEL[r.baseline].toLowerCase()})` : ""}; a written assessment follows.`;
+  const bottom = r.assessment?.bottomLine
+    ? `<div style="margin-top:8px;padding:8px 10px;border-left:3px solid #d4af37;background:rgba(212,175,55,.08);border-radius:0 6px 6px 0;font-size:13px;line-height:1.45;font-weight:600">${esc(r.assessment.bottomLine)}</div>`
+    : r.note
+      ? `<div style="margin-top:6px">${esc(r.note)}</div>`
+      : "";
+  const counts = "";
+  const note = bottom;
+  const basis = `<div style="margin-top:6px;font-size:11px;color:#b9c7d8">${source}</div><div class="lens-cs-detail" data-code="${r.code}" style="font-size:12px"><div style="margin-top:9px;font-size:11px;color:#8fa3bf">Loading the assessment…</div></div>`;
   let edit = "";
   if (canEdit) {
     const sel = "background:rgba(127,127,127,.15);border:1px solid rgba(127,127,127,.4);border-radius:6px;padding:3px 5px;font-size:11.5px;color:inherit";
@@ -128,14 +140,14 @@ function popupHtml(r: CountryStatusRow, name: string, canEdit: boolean): string 
     const opts = (vals: [string, string][], cur: string) => vals.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
     const send = (reset: boolean) =>
       `var b=this.closest('.lens-cs');window.dispatchEvent(new CustomEvent('lens-country-status',{detail:${reset ? `{code:'${r.code}',reset:true}` : `{code:'${r.code}',status:b.querySelector('[name=s]').value,trend:b.querySelector('[name=t]').value||null,note:b.querySelector('[name=n]').value||null}`}}))`;
-    edit = `<div class="lens-cs" style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(127,127,127,.3);display:flex;flex-direction:column;gap:5px">
+    edit = `<details style="margin-top:9px;padding-top:7px;border-top:1px solid rgba(127,127,127,.3)"><summary style="cursor:pointer;font-size:11px;color:#b9c7d8">Set the rating yourself</summary><div class="lens-cs" style="margin-top:6px;display:flex;flex-direction:column;gap:5px">
       <select name="s" style="${sel}">${opts((Object.keys(STATUS_LABEL) as CountryStatus[]).map((k) => [k, STATUS_LABEL[k]]), r.status)}</select>
       <select name="t" style="${sel}">${opts([["", "Trend from the data"], ["worsening", "Worsening"], ["steady", "Steady"], ["improving", "Improving"]], r.trend !== r.trendAuto ? (r.trend ?? "") : "")}</select>
       <input name="n" value="${esc(r.note ?? "")}" placeholder="Note" maxlength="400" style="${sel}" />
-      <div style="display:flex;gap:6px"><button style="${btn}" onclick="${esc(send(false))}">Save</button>${r.edited ? `<button style="${btn}" onclick="${esc(send(true))}">Back to the default</button>` : ""}</div>
-    </div>`;
+      <div style="display:flex;gap:6px"><button style="${btn}" onclick="${esc(send(false))}">Save</button>${r.edited ? `<button style="${btn}" onclick="${esc(send(true))}">Hand back to the Lens</button>` : ""}</div>
+    </div></details>`;
   }
-  return `<div style="max-width:300px;font-size:12.5px;line-height:1.45"><div style="font-weight:800;font-size:13.5px;margin-bottom:5px">${esc(name)}</div>${chip}${trend}${counts}${note}${basis}${edit}</div>`;
+  return `<div style="width:380px;max-width:100%;max-height:min(46vh, 520px);overflow:auto;padding-right:4px;font-size:12.5px;line-height:1.5"><div style="font-weight:800;font-size:15px;margin-bottom:5px">${esc(name)}</div>${chip}${trend}${counts}${note}${basis}${edit}</div>`;
 }
 
 /** Saves an admin's change from a popup, then reloads the ratings. */
@@ -144,7 +156,16 @@ function useRatingEdits(onDone: () => void) {
   done.current = onDone;
   useEffect(() => {
     const h = (e: Event) => {
-      const d = (e as CustomEvent<{ code: string; reset?: boolean; status?: CountryStatus; trend?: CountryTrend | null; note?: string | null }>).detail;
+      const d = (e as CustomEvent<{ code: string; reset?: boolean; assess?: boolean; status?: CountryStatus; trend?: CountryTrend | null; note?: string | null }>).detail;
+      if (d.assess) {
+        // Rewrite the assessment now, then refresh the open popup in place.
+        void api
+          .assessCountry(d.code)
+          .then(() => reloadCountryStatus())
+          .then(() => fillCountryDetail(document, d.code, true))
+          .catch((err: unknown) => window.alert(`Could not write the assessment: ${err instanceof Error ? err.message : String(err)}`));
+        return;
+      }
       const call = d.reset ? api.resetCountryStatus(d.code) : api.putCountryStatus(d.code, { status: d.status, trend: d.trend ?? null, note: d.note ?? null });
       void call
         .then(() => reloadCountryStatus())
@@ -218,7 +239,8 @@ export function useFlatCountryStatus(map: LeafletMap | null, canEdit: boolean) {
         lyr.on("click", (e: L.LeafletMouseEvent) => {
           const r = byCode.get(String(f.properties?.code));
           if (!r) return;
-          popupRef.current = L.popup({ maxWidth: 320 }).setLatLng(e.latlng).setContent(popupHtml(r, shapes.get(r.code)?.name ?? r.code, canEdit)).openOn(map);
+          popupRef.current = L.popup({ maxWidth: 410 }).setLatLng(e.latlng).setContent(popupHtml(r, shapes.get(r.code)?.name ?? r.code, canEdit)).openOn(map);
+          void fillCountryDetail(popupRef.current.getElement(), r.code, canEdit);
         }),
     }).addTo(map);
     const marks = L.layerGroup(
@@ -292,7 +314,8 @@ export function GlobeCountryStatus({ map, canEdit }: { map: MapLibreMap | null; 
         const r = rs?.find((x) => x.code === code);
         if (!r) return;
         popup.current?.remove();
-        popup.current = new GlPopup({ maxWidth: "320px" }).setLngLat(e.lngLat).setHTML(popupHtml(r, sh?.get(code)?.name ?? code, ce)).addTo(map);
+        popup.current = new GlPopup({ maxWidth: "410px" }).setLngLat(e.lngLat).setHTML(popupHtml(r, sh?.get(code)?.name ?? code, ce)).addTo(map);
+        void fillCountryDetail(popup.current.getElement(), code, ce);
       });
     };
     if (map.isStyleLoaded()) apply();
