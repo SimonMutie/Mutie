@@ -684,6 +684,7 @@ async function ensureZoneEdits(db: D1Database) {
     if (!cols.has(name)) await dbRun(db, `ALTER TABLE watch_zone_overrides ADD COLUMN ${name} ${type}`);
   }
   await redSeaResetOnce(db);
+  await piracyOffOnce(db);
   zoneEditsReady = true;
 }
 
@@ -698,6 +699,18 @@ async function redSeaResetOnce(db: D1Database) {
   if ((await dbAll<{ key: string }>(db, `SELECT key FROM lens_once WHERE key = ?`, [key])).length) return;
   await dbRun(db, `DELETE FROM watch_zone_overrides WHERE zone_id = 'red-sea'`);
   await dbRun(db, `UPDATE watch_zone_overrides SET retired = 1 WHERE custom = 1 AND (UPPER(label) LIKE '%PIRAC%' OR UPPER(label) LIKE '%AAH%' OR UPPER(label) LIKE '%HOUTHI%' OR UPPER(label) LIKE '%RED SEA%')`);
+  await dbRun(db, `INSERT INTO lens_once (key, done_at) VALUES (?, ?)`, [key, dbNow()]);
+}
+
+/**
+ * Follow-up (26 Nov 2026): a built-in zone renamed for piracy and stretched over the Indian Ocean goes back to its
+ * own area and name (its edits cleared); a drawn one comes off the map (retired, so it can be brought back).
+ */
+async function piracyOffOnce(db: D1Database) {
+  const key = "piracy_zone_off_2026_11_26b";
+  if ((await dbAll<{ key: string }>(db, `SELECT key FROM lens_once WHERE key = ?`, [key])).length) return;
+  await dbRun(db, `DELETE FROM watch_zone_overrides WHERE COALESCE(custom, 0) = 0 AND UPPER(label) LIKE '%PIRAC%'`);
+  await dbRun(db, `UPDATE watch_zone_overrides SET retired = 1 WHERE custom = 1 AND UPPER(label) LIKE '%PIRAC%'`);
   await dbRun(db, `INSERT INTO lens_once (key, done_at) VALUES (?, ?)`, [key, dbNow()]);
 }
 const zoneRing = zod.array(zod.array(zod.number()).min(2).max(3)).min(4).max(50000);
