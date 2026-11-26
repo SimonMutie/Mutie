@@ -1,3 +1,4 @@
+import { FloatingPanel } from "./FloatingPanel";
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import L, { type Map as LeafletMap } from "leaflet";
 import { Popup as GlPopup, type GeoJSONSource, type Map as MapLibreMap, type MapLayerMouseEvent } from "maplibre-gl";
@@ -143,24 +144,8 @@ export function MaritimeRiskLegend() {
   const used = new Set(RISK_AREAS.filter((a) => a.layer.some((l) => on[l])).map((a) => a.level));
   const lines = new Set(RISK_LINES.filter((l) => l.layer.some((x) => on[x])).map((l) => l.kind));
   return (
-    <div
-      style={{
-        position: "absolute",
-        right: "calc(var(--lens-pad-right, 12px) + 12px)",
-        bottom: 46,
-        zIndex: 6,
-        width: 290,
-        padding: "10px 12px",
-        borderRadius: 10,
-        background: "rgba(8,14,24,0.92)",
-        border: "1px solid rgba(255,255,255,0.12)",
-        color: "#e6edf7",
-        fontSize: 11,
-        lineHeight: 1.45,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-      }}
-    >
-      <div style={{ fontSize: 10, letterSpacing: "0.1em", fontWeight: 800, color: "#8fa3bf", marginBottom: 6 }}>MARITIME SECURITY</div>
+    <FloatingPanel id="maritime-legend" title="Maritime security" width={290} initial={{ right: "calc(var(--lens-pad-right, 12px) + 12px)", bottom: 46 }}>
+    <div style={{ padding: "8px 12px 10px", fontSize: 11, lineHeight: 1.45 }}>
       <div style={{ fontWeight: 700, marginBottom: 4 }}>JMIC threat level</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
         {THREAT_SCALE.map((s) => (
@@ -194,5 +179,6 @@ export function MaritimeRiskLegend() {
         . Area outlines are approximate. Checked {AS_OF}.
       </div>
     </div>
+    </FloatingPanel>
   );
 }
