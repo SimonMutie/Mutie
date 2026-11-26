@@ -1,14 +1,16 @@
 import type { Env } from "../bindings";
 import { isTerrorism } from "./terrorism";
 import { getHybridEvents, hybridKind, type HybridKind } from "./hybridWarfare";
+import { dataStatus, getAssessments, type CountryAssessment } from "./countryAssessment";
 
 /**
  * Country conflict status: the Afrilens editorial rating of each country in Africa and the Middle East, with a
  * trend for countries in active conflict taken from the Lens's own escalation incidents.
  *
  *  - status: "active" (armed conflict under way), "risk-high" / "risk-low" (at risk of armed conflict breaking out
- *    or reigniting), or "none". The defaults below are the Lens's starting rating; an admin can change any country,
- *    and the change is kept in country_status_overrides.
+ *    or reigniting), or "none". It moves with the situation: an analyst's own rating (country_status_overrides)
+ *    wins; otherwise the latest written country assessment's judgement (lib/countryAssessment.ts, if under ten
+ *    days old); otherwise what the numbers say against the editorial baseline below (dataStatus).
  *  - trend (active countries): "worsening", "steady" or "improving", from the incidents of the last 30 days against
  *    the 30 before (weighted by level: watch 1, elevated 2, critical 3). An admin can set it by hand instead.
  */
@@ -70,6 +72,17 @@ export const DEFAULT_COUNTRY_STATUS: Record<string, { status: CountryStatus; not
 export interface CountryStatusRow {
   code: string;
   status: CountryStatus;
+  /** Who set the status: an analyst, the written assessment, or the numbers. */
+  statusSource: "analyst" | "assessment" | "data";
+  /** The editorial starting rating, and what the numbers alone say. */
+  baseline: CountryStatus;
+  statusData: CountryStatus;
+  /** Critical incidents and reported deaths in the last 30 days; incidents in 90. */
+  critical30: number;
+  deaths30: number;
+  n90: number;
+  /** The latest written assessment's headline points, when there is one. */
+  assessment: { bottomLine: string; confidence: CountryAssessment["confidence"]; outlookLikelihood: CountryAssessment["outlookLikelihood"]; generatedAt: string } | null;
   /** Set for active countries: the admin's trend if set, otherwise the one from the data. */
   trend: CountryTrend | null;
   /** The trend from the data, whatever the admin set. */
@@ -114,6 +127,10 @@ const WEIGHT = `CASE level WHEN 'critical' THEN 3 WHEN 'elevated' THEN 2 ELSE 1 
 const WHEN = `COALESCE(last_event_date, first_event_date, substr(updated_at, 1, 10))`;
 
 /** Every country with a rating other than "none", an admin's change, or incidents in the last 60 days. */
+type Counts = { code: string; recent: number; prior: number; n30: number; crit30: number; deaths30: number; n90: number };
+/** A written assessment's judgement stands this long before the numbers take over again. */
+const ASSESSMENT_STANDS_MS = 10 * 86_400_000;
+
 export async function getCountryStatus(env: Env, now = new Date()): Promise<CountryStatusRow[]> {
   await ensureCountryStatusTable(env.DB);
   const day = (n: number) => new Date(now.getTime() - n * 86_400_000).toISOString().slice(0, 10);
@@ -122,35 +139,53 @@ export async function getCountryStatus(env: Env, now = new Date()): Promise<Coun
     `SELECT country_code AS code,
             SUM(CASE WHEN ${WHEN} > ? THEN ${WEIGHT} ELSE 0 END) AS recent,
             SUM(CASE WHEN ${WHEN} <= ? THEN ${WEIGHT} ELSE 0 END) AS prior,
-            SUM(CASE WHEN ${WHEN} > ? THEN 1 ELSE 0 END) AS n30
+            SUM(CASE WHEN ${WHEN} > ? THEN 1 ELSE 0 END) AS n30,
+            SUM(CASE WHEN ${WHEN} > ? AND level = 'critical' THEN 1 ELSE 0 END) AS crit30,
+            SUM(CASE WHEN ${WHEN} > ? THEN COALESCE(json_extract(detail, '$.fatalitiesMax'), 0) ELSE 0 END) AS deaths30,
+            COUNT(*) AS n90
        FROM escalation_incidents
       WHERE status != 'dismissed' AND headline IS NOT NULL AND ${WHEN} > ?
       GROUP BY country_code`
   )
-    .bind(d30, d30, d30, d60)
-    .all<{ code: string; recent: number; prior: number; n30: number }>()
+    .bind(d30, d30, d30, d30, d30, day(90))
+    .all<Counts>()
     .then((r) => r.results ?? [])
-    .catch(() => [] as { code: string; recent: number; prior: number; n30: number }[]);
+    .catch(() => [] as Counts[]);
+  const assessed = await getAssessments(env).catch(() => new Map());
   const terror = await terrorCounts(env, d30);
   const overrides = await env.DB.prepare(`SELECT code, status, trend, note FROM country_status_overrides`)
     .all<OverrideRow>()
     .then((r) => r.results ?? []);
   const byCount = new Map(counts.map((c) => [c.code.toUpperCase(), c]));
   const byOverride = new Map(overrides.map((o) => [o.code.toUpperCase(), o]));
-  const codes = new Set([...Object.keys(DEFAULT_COUNTRY_STATUS), ...byCount.keys(), ...byOverride.keys()]);
+  const codes = new Set([...Object.keys(DEFAULT_COUNTRY_STATUS), ...byCount.keys(), ...byOverride.keys(), ...assessed.keys()]);
   const rows: CountryStatusRow[] = [];
   for (const code of codes) {
     const d = DEFAULT_COUNTRY_STATUS[code];
     const o = byOverride.get(code);
     const c = byCount.get(code);
-    const status = (o?.status && COUNTRY_STATUSES.includes(o.status as CountryStatus) ? o.status : d?.status ?? "none") as CountryStatus;
+    const baseline = d?.status ?? "none";
     const recent = Number(c?.recent ?? 0), prior = Number(c?.prior ?? 0);
+    const critical30 = Number(c?.crit30 ?? 0), deaths30 = Number(c?.deaths30 ?? 0), n90 = Number(c?.n90 ?? 0);
+    const statusData = dataStatus({ w30: recent, deaths30, critical30, n90 }, baseline);
+    const a = assessed.get(code);
+    const aFresh = a && now.getTime() - Date.parse(a.generatedAt) < ASSESSMENT_STANDS_MS ? a : null;
+    const manualStatus = o?.status && COUNTRY_STATUSES.includes(o.status as CountryStatus) ? (o.status as CountryStatus) : null;
+    const status: CountryStatus = manualStatus ?? aFresh?.status ?? statusData;
+    const statusSource = manualStatus ? "analyst" : aFresh ? "assessment" : "data";
     const trendAuto = status === "active" ? trendFrom(recent, prior) : null;
     const manual = o?.trend && COUNTRY_TRENDS.includes(o.trend as CountryTrend) ? (o.trend as CountryTrend) : null;
     rows.push({
       code,
       status,
-      trend: status === "active" ? (manual ?? trendAuto) : null,
+      statusSource,
+      baseline,
+      statusData,
+      critical30,
+      deaths30,
+      n90,
+      assessment: a ? { bottomLine: a.body.bottomLine, confidence: a.body.confidence, outlookLikelihood: a.body.outlookLikelihood, generatedAt: a.generatedAt } : null,
+      trend: status === "active" ? (manual ?? (aFresh?.status === "active" ? aFresh.trend : null) ?? trendAuto) : null,
       trendAuto,
       recent,
       prior,
