@@ -191,6 +191,7 @@ import { GisPanel } from "./gis/GisPanel";
 import { GlobeCountryStatus, useFlatCountryStatus } from "../strategic/CountryStatusLayer";
 import { GlobeIncidentCircles, useFlatIncidentCircles } from "../strategic/IncidentCircles";
 import { StrategicLegend } from "../strategic/StrategicLegend";
+import { PanelDock } from "./FloatingPanel";
 import { GlobeChokepoints, useFlatChokepoints } from "../strategic/Chokepoints";
 import { GlobeScenarios, newScenario, ScenarioEditor, useFlatScenarios } from "../strategic/Scenarios";
 import { TimelineFilter } from "../strategic/TimelineFilter";
@@ -3028,6 +3029,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <MaritimeRiskLegend />
         <StrategicLegend />
         <TimelineFilter />
+        <PanelDock />
         {libraryOpen && (
           <BoundaryLibraryPanel
             lib={boundaryLib}
