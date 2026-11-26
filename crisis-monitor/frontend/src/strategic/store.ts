@@ -2,12 +2,13 @@ import { useEffect, useSyncExternalStore } from "react";
 import { api, type CountryStatusRow, type IncidentHistoryPoint } from "../api";
 
 /**
- * The strategic picture on the Live map: country conflict status, incident circles and the timeline filter.
+ * The strategic picture on the Live map: country conflict status, incident circles, the timeline filter, maritime
+ * chokepoints and analysts' scenarios.
  * Shared state for the layer list, both maps, the legend and the timeline: which parts are on (remembered in the
  * browser), the period the timeline is narrowed to (for the visit only), and the data, fetched once and refreshed.
  */
 
-export type StrategicPart = "status" | "circles" | "timeline";
+export type StrategicPart = "status" | "circles" | "timeline" | "chokepoints" | "scenarios";
 type On = Record<StrategicPart, boolean>;
 const KEY = "lens-strategic";
 
@@ -28,9 +29,9 @@ const on = store<On>(
   (() => {
     try {
       const v = JSON.parse(localStorage.getItem(KEY) ?? "null") as Partial<On> | null;
-      return { status: !!v?.status, circles: !!v?.circles, timeline: !!v?.timeline };
+      return { status: !!v?.status, circles: !!v?.circles, timeline: !!v?.timeline, chokepoints: !!v?.chokepoints, scenarios: !!v?.scenarios };
     } catch {
-      return { status: false, circles: false, timeline: false };
+      return { status: false, circles: false, timeline: false, chokepoints: false, scenarios: false };
     }
   })()
 );
