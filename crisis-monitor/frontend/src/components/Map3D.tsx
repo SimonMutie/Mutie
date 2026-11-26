@@ -19,6 +19,7 @@ import EscalationHoverCard from "./EscalationHoverCard";
 import { waveImage } from "./waveArt";
 import { maptilerKey, setMaptilerSession, maptilerStyle, maptilerTerrain } from "../mapProvider";
 import { liveBasemap, type BasemapId } from "../liveBasemaps";
+import { DEFAULT_SKY, ensureStrategicBase, STRATEGIC_PREFIX, STRATEGIC_SKY } from "../strategic/strategicBase";
 import { DOT, drawWarningIcon, WARNING_COLOR, WARNING_SIZE } from "./mapSymbols";
 
 // MapLibre GL loads its own worker script from a URL it builds internally at
@@ -100,6 +101,8 @@ export interface Map3DPath {
   color?: string;
   /** Line thickness in px (default 2). */
   width?: number;
+  /** Drawn with a soft glow beneath it (subsea cables). */
+  glow?: boolean;
 }
 
 /** Approximate territory-change circle — see the backend's
@@ -262,7 +265,7 @@ function toGeoJsonPaths(paths: Map3DPath[]): GeoJSON.FeatureCollection {
     features: paths.map((p) => ({
       type: "Feature",
       geometry: { type: "LineString", coordinates: p.points.map(([lat, lng]) => [lng, lat]) },
-      properties: { label: p.label, color: p.color ?? "#3fd0ff", width: p.width ?? 2 },
+      properties: { label: p.label, color: p.color ?? "#3fd0ff", width: p.width ?? 2, glow: p.glow ? 1 : 0 },
     })),
   };
 }
@@ -380,10 +383,17 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
     if (!map || !readyRef.current) return;
     const id = basemapRef.current ?? "dark";
     const vector = id === "dark";
+    // Strategic (strategic/strategicBase.ts): the Lens's own navy globe, drawn from its borders, with a bright atmosphere.
+    const strategic = id === "strategic";
+    if (strategic && !map.getLayer(`${STRATEGIC_PREFIX}ocean`)) {
+      void ensureStrategicBase(map).then(() => applyBasemapRef.current());
+    }
+    map.setSky(strategic ? STRATEGIC_SKY : DEFAULT_SKY);
     for (const lid of styleLayerIdsRef.current) if (map.getLayer(lid)) map.setLayoutProperty(lid, "visibility", vector ? "visible" : "none");
     const layers = map.getStyle().layers ?? [];
-    for (const l of layers) if (l.id.startsWith("lens-basemap-")) map.setLayoutProperty(l.id, "visibility", l.id === `lens-basemap-${id}` ? "visible" : "none");
-    if (vector) return;
+    for (const l of layers)
+      if (l.id.startsWith("lens-basemap-")) map.setLayoutProperty(l.id, "visibility", l.id === `lens-basemap-${id}` || (strategic && l.id.startsWith(STRATEGIC_PREFIX)) ? "visible" : "none");
+    if (vector || strategic) return;
     const lid = `lens-basemap-${id}`;
     if (!map.getLayer(lid)) {
       const b = liveBasemap(id);
@@ -497,7 +507,7 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       // the void beyond it is just the page's own black background — the
       // sphere itself can visually disappear into that black backdrop.
       // These are the same blue tones the old three-globe atmosphere used.
-      map.setSky({ "sky-color": "#000308", "horizon-color": "#1a2a4d", "horizon-fog-blend": 0.6, "atmosphere-blend": 0.4 });
+      map.setSky(DEFAULT_SKY);
 
       map.addImage("warning-icon-critical", buildWarningIconImageData(WARNING_COLOR.critical), { pixelRatio: 2 });
       map.addImage("warning-icon-elevated", buildWarningIconImageData(WARNING_COLOR.elevated), { pixelRatio: 2 });
@@ -680,6 +690,13 @@ export default function Map3D({ points, fitKey, paths, territoryChanges, activeC
       });
 
       map.addSource("lens-paths", { type: "geojson", data: toGeoJsonPaths([]) });
+      map.addLayer({
+        id: "lens-paths-glow",
+        type: "line",
+        source: "lens-paths",
+        filter: ["==", ["get", "glow"], 1],
+        paint: { "line-color": ["get", "color"], "line-width": 5, "line-blur": 4, "line-opacity": 0.35 },
+      });
       map.addLayer({
         id: "lens-paths-line",
         type: "line",
