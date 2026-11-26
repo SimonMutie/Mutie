@@ -1,4 +1,6 @@
 import { collectStrategicAnalyses } from "./lib/strategicAnalysis";
+import { runCountryAssessments } from "./lib/countryAssessment";
+import { getCountryStatus } from "./lib/countryStatus";
 import { collectHybridEvents } from "./lib/hybridWarfare";
 import { aiSettingsRouter } from "./routes/aiSettings";
 import { loadAiSettings } from "./lib/aiSettings";
@@ -293,6 +295,14 @@ export default {
     if (new Date(controller.scheduledTime).getUTCHours() === 3 && new Date(controller.scheduledTime).getUTCMinutes() < 5) {
       ctx.waitUntil(pruneVehiclePositions(env.DB));
     }
+
+    // Country assessments: the most overdue country's, rewritten from the latest numbers (lib/countryAssessment.ts).
+    ctx.waitUntil(
+      getCountryStatus(env)
+        .then((rows) => runCountryAssessments(env, rows.map((r) => ({ code: r.code, status: r.status, baseline: r.baseline, note: r.note, w30: r.recent, critical30: r.critical30, deaths30: r.deaths30, n90: r.n90 }))))
+        .then((done) => done.length && console.log(`[countries] assessed ${done.join(", ")}`))
+        .catch((err) => console.error("[countries] assessment failed", err))
+    );
 
     // Hybrid-warfare reports from the feeds, saved every 30 minutes (lib/hybridWarfare.ts).
     ctx.waitUntil(collectHybridEvents(env).then((n) => n && console.log(`[hybrid] saved ${n} reports`)).catch((err) => console.error("[hybrid] collection failed", err)));
