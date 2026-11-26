@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { FloatingPanel } from "../components/FloatingPanel";
 import { STATUS_STYLE, TREND_STYLE } from "./CountryStatusLayer";
 import { CIRCLE_STYLE, KINDS } from "./IncidentCircles";
 import { inPeriod, useCountryStatus, useIncidentHistory, usePeriod, useStrategic } from "./store";
@@ -22,24 +23,8 @@ export function StrategicLegend() {
   const head = (t: string) => <div style={{ fontSize: 9.5, letterSpacing: "0.1em", fontWeight: 800, color: "#8fa3bf", margin: "8px 0 4px" }}>{t}</div>;
   const when = period ? "in the period shown" : "since January 2025";
   return (
-    <div
-      style={{
-        position: "absolute",
-        left: "calc(var(--lens-pad-left, 10px) + 60px)",
-        bottom: on.circles || on.timeline ? 112 : 30,
-        zIndex: 6,
-        width: 262,
-        padding: "10px 12px",
-        borderRadius: 10,
-        background: "rgba(8,16,30,0.9)",
-        border: "1px solid rgba(159,200,240,0.18)",
-        color: "#e6edf7",
-        fontSize: 11,
-        lineHeight: 1.45,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-        transition: "left 0.2s",
-      }}
-    >
+    <FloatingPanel id="strategic-legend" title="Strategic picture" width={262} initial={{ left: "calc(var(--lens-pad-left, 10px) + 60px)", bottom: on.circles || on.timeline ? 112 : 30 }}>
+    <div style={{ padding: "8px 12px 10px", fontSize: 11, lineHeight: 1.45 }}>
       <div style={{ fontSize: 11.5, lineHeight: 1.5 }}>
         {on.status && rows && (
           <>
@@ -84,5 +69,6 @@ export function StrategicLegend() {
         {on.circles && "Incidents are the Lens's own escalation incidents, plus hybrid warfare reported in its wire and Telegram feeds."}
       </div>
     </div>
+    </FloatingPanel>
   );
 }
