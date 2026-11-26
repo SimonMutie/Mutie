@@ -1,5 +1,6 @@
 import type { Env } from "../bindings";
 import { isTerrorism } from "./terrorism";
+import { getHybridEvents, hybridKind, type HybridKind } from "./hybridWarfare";
 
 /**
  * Country conflict status: the Afrilens editorial rating of each country in Africa and the Middle East, with a
@@ -201,14 +202,19 @@ export interface IncidentHistoryPoint {
   date: string;
   level: "watch" | "elevated" | "critical";
   terror: boolean;
+  /** Hybrid warfare (lib/hybridWarfare.ts), and its kind. */
+  hybrid?: HybridKind | null;
   deaths: number | null;
   headline: string;
+  /** For reports from the feeds: the article. */
+  link?: string | null;
+  source?: string | null;
 }
 
 /** Every located escalation incident since `since` (not only the ones still active), newest first. */
 export async function getIncidentHistory(env: Env, since: string, limit = 30000): Promise<IncidentHistoryPoint[]> {
   const rows = await env.DB.prepare(
-    `SELECT id, country_code AS cc, country_name AS country, location_label AS place, lat, lon, ${WHEN} AS date, level, headline,
+    `SELECT id, country_code AS cc, country_name AS country, location_label AS place, lat, lon, ${WHEN} AS date, level, headline, summary,
             json_extract(detail, '$.actors') AS actors, json_extract(detail, '$.fatalitiesMax') AS deaths,
             (SELECT json_group_array(json_extract(value, '$.id')) FROM json_each(detail, '$.indicators')) AS ind
        FROM escalation_incidents
@@ -216,10 +222,10 @@ export async function getIncidentHistory(env: Env, since: string, limit = 30000)
       ORDER BY ${WHEN} DESC LIMIT ?`
   )
     .bind(since, limit)
-    .all<{ id: string; cc: string; country: string; place: string | null; lat: number; lon: number; date: string; level: IncidentHistoryPoint["level"]; headline: string; actors: string | null; deaths: number | null; ind: string | null }>()
+    .all<{ id: string; cc: string; country: string; place: string | null; lat: number; lon: number; date: string; level: IncidentHistoryPoint["level"]; headline: string; summary: string | null; actors: string | null; deaths: number | null; ind: string | null }>()
     .then((r) => r.results ?? [])
     .catch(() => []);
-  return rows.map((r) => ({
+  const incidents: IncidentHistoryPoint[] = rows.map((r) => ({
     id: r.id,
     cc: r.cc,
     country: r.country,
@@ -229,7 +235,27 @@ export async function getIncidentHistory(env: Env, since: string, limit = 30000)
     date: r.date,
     level: r.level,
     terror: isTerrorism(parseList(r.ind), parseList(r.actors)).terrorism,
+    hybrid: hybridKind(`${r.headline}. ${r.summary ?? ""}`),
     deaths: r.deaths == null ? null : Number(r.deaths),
     headline: r.headline,
   }));
+  // Located hybrid-warfare reports saved from the feeds.
+  const hybrid = await getHybridEvents(env, since).catch(() => []);
+  const fromFeeds: IncidentHistoryPoint[] = hybrid.map((h) => ({
+    id: `hybrid:${h.id}`,
+    cc: "",
+    country: "",
+    place: h.place,
+    lat: h.lat,
+    lon: h.lon,
+    date: h.date,
+    level: "watch",
+    terror: false,
+    hybrid: h.kind,
+    deaths: null,
+    headline: h.title,
+    link: h.link,
+    source: h.source,
+  }));
+  return [...incidents, ...fromFeeds].sort((a, b) => b.date.localeCompare(a.date));
 }
