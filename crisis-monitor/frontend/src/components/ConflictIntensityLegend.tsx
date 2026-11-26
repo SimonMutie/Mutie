@@ -1,3 +1,4 @@
+import { FloatingPanel } from "./FloatingPanel";
 import { ACTIVE_INTENSITY_STYLE, INTENSITY_STYLE } from "./conflictIntensity";
 
 /** Key for the active-conflict layer and the escalation rings. */
@@ -9,25 +10,8 @@ export default function ConflictIntensityLegend({ activeCount, activeConfigured 
     />
   );
   return (
-    <div
-      role="group"
-      aria-label="Conflict intensity key"
-      style={{
-        position: "absolute",
-        left: 12,
-        bottom: 36,
-        zIndex: 500,
-        maxWidth: 260,
-        padding: "9px 11px",
-        borderRadius: 8,
-        background: "rgba(8, 14, 24, 0.82)",
-        border: "1px solid rgba(255,255,255,0.12)",
-        color: "#e6edf7",
-        fontSize: 11.5,
-        lineHeight: 1.4,
-        pointerEvents: "none",
-      }}
-    >
+    <FloatingPanel id="conflict-key" title="Conflict intensity" zIndex={500} width={260} initial={{ left: 12, bottom: 36 }}>
+    <div role="group" aria-label="Conflict intensity key" style={{ padding: "8px 11px 9px", fontSize: 11.5, lineHeight: 1.4 }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>
         Active conflict (UCDP, 90 days) · {activeConfigured === false ? "not configured" : `${activeCount} countr${activeCount === 1 ? "y" : "ies"}`}
       </div>
@@ -42,5 +26,6 @@ export default function ConflictIntensityLegend({ activeCount, activeConfigured 
       {activeConfigured === false && <div style={{ opacity: 0.7, marginBottom: 4 }}>Unavailable: UCDP is not configured on the server.</div>}
       <div style={{ opacity: 0.7, marginTop: 4 }}>Rings: escalations getting worse. Tooltips give the detail.</div>
     </div>
+    </FloatingPanel>
   );
 }
