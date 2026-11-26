@@ -183,7 +183,6 @@ import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
 import { GlobeGisOverlay, useFlatGis, type GisRing } from "./gis/GlobeGis";
 import { GisPanel } from "./gis/GisPanel";
-import { GlobeMaritimeRisk, MaritimeRiskLegend, RISK_LAYER_LABEL, toggleMaritimeRisk, useFlatMaritimeRisk, useMaritimeRisk } from "./MaritimeRisk";
 import type { GisFeature } from "./gis/exporters";
 import type { PrintView } from "./gis/printMap";
 import { legsOf, fmtBearing, fmtKm as fmtGisKm } from "./gis/gisMath";
@@ -2632,9 +2631,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // GIS tools (components/gis): the features on the map as an attribute table, buffers round them, export and print.
   const [gisRings, setGisRings] = useState<GisRing[]>([]);
   useFlatGis(mapMode === "3d" ? null : flatMap, gisRings);
-  // Maritime security: JMIC threat areas, war-risk limits and transit lanes (MaritimeRisk.tsx).
-  useFlatMaritimeRisk(mapMode === "3d" ? null : flatMap);
-  const maritimeRiskOn = useMaritimeRisk();
   const gisFeatures = useMemo<GisFeature[]>(
     () =>
       mapPoints
@@ -2949,11 +2945,7 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
             followAircraft={followAircraft}
             onAircraftClick={(hex, label) => setSelectedAircraft({ hex, label })}
             selectedAircraftId={selectedAircraft?.hex ?? null}
-            onLayersOn={(keys) => {
-              // The maritime security layers keep their own switch (MaritimeRisk.tsx).
-              for (const k of ["redsea", "piracy"] as const) if (keys.includes(`mrisk-${k}`) && !maritimeRiskOn[k]) toggleMaritimeRisk(k);
-              setEnabled((prev) => ({ ...prev, ...Object.fromEntries(keys.filter((k) => !k.startsWith("mrisk-")).map((k) => [k, true])) }));
-            }}
+            onLayersOn={(keys) => setEnabled((prev) => ({ ...prev, ...Object.fromEntries(keys.map((k) => [k, true])) }))}
             onMapClick={activeTool === "draw" || activeTool === "route" ? handleMapClick : undefined}
             studioActive={activeTool === "shapes"}
             editPoints={editPoints}
@@ -2990,8 +2982,6 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeWatchZones map={globeMap} view={watchZones} canEdit={isAdmin} />
         <GlobeBoundaryLayers map={globeMap} lib={boundaryLib} view={watchZones} canEdit={isAdmin} />
         {mapMode === "3d" && <GlobeGisOverlay map={globeMap} rings={gisRings} />}
-        <GlobeMaritimeRisk map={globeMap} />
-        <MaritimeRiskLegend />
         {libraryOpen && (
           <BoundaryLibraryPanel
             lib={boundaryLib}
@@ -4848,7 +4838,6 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
   const bases = liveBasemaps();
   const base = bases.find((b) => b.id === basemap) ?? bases.find((b) => b.id === "dark") ?? bases[0];
   const Icon = mode === "3d" ? Globe : BASEMAP_ICON[base.id];
-  const maritimeRisk = useMaritimeRisk();
   const row = (on: boolean, icon: LucideIcon, label: string, hint: string, onClick: () => void, key: string) => {
     const I = icon;
     return (
@@ -4933,12 +4922,6 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
               </div>
             </div>
           )}
-          <div style={{ marginTop: 10 }}>
-            {heading("Maritime security")}
-            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              {(["redsea", "piracy"] as const).map((k) => row(maritimeRisk[k], k === "redsea" ? Ship : Anchor, RISK_LAYER_LABEL[k].label, RISK_LAYER_LABEL[k].hint, () => toggleMaritimeRisk(k), `mrisk-${k}`))}
-            </div>
-          </div>
           {mtKey && overlays && onOverlays && (
             <div style={{ marginTop: 10 }}>
               {heading("Overlays · 3D globe")}
