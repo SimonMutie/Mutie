@@ -25,6 +25,7 @@ import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
 import { buildZones, composeZones } from "../lib/watchZones";
 import { createScenario, deleteScenario, LIKELIHOODS, listScenarios, updateScenario } from "../lib/scenarios";
+import { countryMetrics, dataStatus, getAssessments, saveAssessment, writeAssessment } from "../lib/countryAssessment";
 import { COUNTRY_STATUSES, COUNTRY_TRENDS, ensureCountryStatusTable, getCountryStatus, getIncidentHistory } from "../lib/countryStatus";
 import { readRadar } from "../lib/cloudflareRadar";
 import { aircraftTrack, collectAircraft, readSnapshot } from "../lib/aircraftCollector";
@@ -512,6 +513,28 @@ liveLayersRouter.get("/country-status", async (c) =>
     fetchedAt: new Date().toISOString(),
   })
 );
+
+/** One country in full: its status row, the latest written assessment, and its numbers as of now. */
+liveLayersRouter.get("/country-status/:code", async (c) => {
+  const code = (c.req.param("code") ?? "").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return c.json({ error: "Use a two-letter country code" }, 400);
+  const [rows, assessed, metrics] = await Promise.all([getCountryStatus(c.env), getAssessments(c.env), countryMetrics(c.env, code)]);
+  return c.json({ row: rows.find((r) => r.code === code) ?? null, assessment: assessed.get(code) ?? null, metrics });
+});
+
+/** Admin: write a country's assessment now, from the numbers as they stand. */
+liveLayersRouter.post("/country-status/:code/assess", requireAdmin, async (c) => {
+  const code = (c.req.param("code") ?? "").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return c.json({ error: "Use a two-letter country code" }, 400);
+  const row = (await getCountryStatus(c.env)).find((r) => r.code === code);
+  const baseline = row?.baseline ?? "none";
+  const now = new Date();
+  const m = await countryMetrics(c.env, code, now);
+  const a = await writeAssessment(c.env, m, { status: baseline, note: row?.note ?? null }, dataStatus(m, baseline));
+  if (!a) return c.json({ error: "The assessment could not be written just now (the AI model did not answer, or today's limit is reached)." }, 503);
+  await saveAssessment(c.env, code, m, a, now);
+  return c.json({ ok: true });
+});
 
 const countryStatusSchema = zod.object({
   status: zod.enum(COUNTRY_STATUSES as [string, ...string[]]).nullable().optional(),
