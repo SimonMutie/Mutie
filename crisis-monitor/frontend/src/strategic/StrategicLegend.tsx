@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { STATUS_STYLE, TREND_STYLE } from "./CountryStatusLayer";
-import { CIRCLE_STYLE } from "./IncidentCircles";
+import { CIRCLE_STYLE, KINDS } from "./IncidentCircles";
 import { inPeriod, useCountryStatus, useIncidentHistory, usePeriod, useStrategic } from "./store";
 
 /**
@@ -16,7 +16,7 @@ export function StrategicLegend() {
     const active = (rows ?? []).filter((r) => r.status === "active");
     const atRisk = (rows ?? []).filter((r) => r.status === "risk-high" || r.status === "risk-low");
     const inc = (history ?? []).filter((p) => inPeriod(period, p.date));
-    return { active: active.length, worsening: active.filter((r) => r.trend === "worsening").length, atRisk: atRisk.length, incidents: inc.length, terror: inc.filter((p) => p.terror).length };
+    return { active: active.length, worsening: active.filter((r) => r.trend === "worsening").length, atRisk: atRisk.length, incidents: inc.length, terror: inc.filter((p) => p.terror).length, hybrid: inc.filter((p) => !p.terror && p.hybrid).length };
   }, [rows, history, period]);
   if (!on.status && !on.circles) return null;
   const head = (t: string) => <div style={{ fontSize: 9.5, letterSpacing: "0.1em", fontWeight: 800, color: "#8fa3bf", margin: "8px 0 4px" }}>{t}</div>;
@@ -48,7 +48,7 @@ export function StrategicLegend() {
         )}
         {on.circles && history && (
           <>
-            <b>{tally.incidents.toLocaleString()}</b> escalation incidents {when}, <b>{tally.terror.toLocaleString()}</b> of them terrorist attacks.
+            <b>{tally.incidents.toLocaleString()}</b> incidents {when}: <b>{tally.terror.toLocaleString()}</b> terrorist attacks and <b>{tally.hybrid.toLocaleString()}</b> hybrid warfare.
           </>
         )}
         {((on.status && !rows) || (on.circles && !history)) && <span style={{ color: "#8fa3bf" }}> Loading…</span>}
@@ -70,7 +70,7 @@ export function StrategicLegend() {
       {on.circles && (
         <>
           {head(`INCIDENTS ${period ? "IN THE PERIOD" : "SINCE JAN 2025"}`)}
-          {(["other", "terror"] as const).map((k) => (
+          {KINDS.map((k) => (
             <div key={k} style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 2 }}>
               <span style={{ width: 12, height: 12, borderRadius: "50%", background: CIRCLE_STYLE[k].fill, opacity: CIRCLE_STYLE[k].opacity + 0.15, border: `1.5px solid ${CIRCLE_STYLE[k].stroke}` }} />
               <span>{CIRCLE_STYLE[k].label}</span>
@@ -81,7 +81,7 @@ export function StrategicLegend() {
       )}
       <div style={{ marginTop: 7, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.1)", color: "#8fa3bf", fontSize: 10.5 }}>
         {on.status && "Status is an Afrilens rating; the trend compares the last 30 days of escalation incidents with the 30 before. "}
-        {on.circles && "Incidents are the Lens's own escalation incidents."}
+        {on.circles && "Incidents are the Lens's own escalation incidents, plus hybrid warfare reported in its wire and Telegram feeds."}
       </div>
     </div>
   );
