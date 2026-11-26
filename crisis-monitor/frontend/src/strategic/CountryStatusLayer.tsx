@@ -125,7 +125,7 @@ function popupHtml(r: CountryStatusRow, name: string, canEdit: boolean): string 
   if (canEdit) {
     const sel = "background:rgba(127,127,127,.15);border:1px solid rgba(127,127,127,.4);border-radius:6px;padding:3px 5px;font-size:11.5px;color:inherit";
     const btn = "background:rgba(127,127,127,.18);border:1px solid rgba(127,127,127,.4);border-radius:6px;padding:3px 9px;font-size:11.5px;cursor:pointer;color:inherit";
-    const opts = (vals: [string, string][], cur: string) => vals.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""} style="color:#0b1220">${esc(l)}</option>`).join("");
+    const opts = (vals: [string, string][], cur: string) => vals.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
     const send = (reset: boolean) =>
       `var b=this.closest('.lens-cs');window.dispatchEvent(new CustomEvent('lens-country-status',{detail:${reset ? `{code:'${r.code}',reset:true}` : `{code:'${r.code}',status:b.querySelector('[name=s]').value,trend:b.querySelector('[name=t]').value||null,note:b.querySelector('[name=n]').value||null}`}}))`;
     edit = `<div class="lens-cs" style="margin-top:8px;padding-top:7px;border-top:1px solid rgba(127,127,127,.3);display:flex;flex-direction:column;gap:5px">
