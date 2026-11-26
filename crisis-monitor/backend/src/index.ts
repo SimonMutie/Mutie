@@ -1,4 +1,5 @@
 import { collectStrategicAnalyses } from "./lib/strategicAnalysis";
+import { collectHybridEvents } from "./lib/hybridWarfare";
 import { aiSettingsRouter } from "./routes/aiSettings";
 import { loadAiSettings } from "./lib/aiSettings";
 
@@ -292,6 +293,9 @@ export default {
     if (new Date(controller.scheduledTime).getUTCHours() === 3 && new Date(controller.scheduledTime).getUTCMinutes() < 5) {
       ctx.waitUntil(pruneVehiclePositions(env.DB));
     }
+
+    // Hybrid-warfare reports from the feeds, saved every 30 minutes (lib/hybridWarfare.ts).
+    ctx.waitUntil(collectHybridEvents(env).then((n) => n && console.log(`[hybrid] saved ${n} reports`)).catch((err) => console.error("[hybrid] collection failed", err)));
 
     // Aircraft over Africa and the Middle East, their tracks, and GPS interference (see lib/aircraftCollector.ts).
     ctx.waitUntil(collectAircraft(env).catch((err) => console.error("[aircraft] collection failed", err)));
