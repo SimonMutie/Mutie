@@ -1202,6 +1202,24 @@ export interface CountryStatusRow {
   note: string | null;
   edited: boolean;
 }
+/** An analyst's scenario on the map (backend lib/scenarios.ts). */
+export type ScenarioLikelihood = "remote" | "highly-unlikely" | "unlikely" | "realistic-possibility" | "likely" | "highly-likely" | "almost-certain";
+export interface Scenario {
+  id: string;
+  num: number;
+  question: string;
+  lat: number;
+  lng: number;
+  place: string | null;
+  likelihood: ScenarioLikelihood | null;
+  horizon: string | null;
+  assessment: string | null;
+  indicators: string[];
+  outlook: string | null;
+  updatedAt: string;
+}
+export type ScenarioInput = Omit<Scenario, "id" | "num" | "updatedAt"> & { num?: number };
+
 /** One escalation incident in the history. */
 export interface IncidentHistoryPoint {
   id: string;
@@ -1213,8 +1231,13 @@ export interface IncidentHistoryPoint {
   date: string;
   level: "watch" | "elevated" | "critical";
   terror: boolean;
+  /** Hybrid warfare, and its kind. */
+  hybrid?: "sabotage" | "jamming" | "cyber" | "influence" | "drones" | "cables" | null;
   deaths: number | null;
   headline: string;
+  /** For reports saved from the feeds: the article and its source. */
+  link?: string | null;
+  source?: string | null;
 }
 
 /** One article the escalation pipeline read, and what it decided. */
@@ -2612,6 +2635,10 @@ export const api = {
   /** Admin: a country's status, trend (null: from the data) and note; fields left out keep their value. */
   putCountryStatus: (code: string, r: { status?: CountryStatus | null; trend?: CountryTrend | null; note?: string | null }) =>
     req<{ ok: boolean }>(`/api/live-layers/country-status/${code}`, { method: "PUT", body: JSON.stringify(r) }),
+  getScenarios: () => req<{ scenarios: Scenario[] }>("/api/live-layers/scenarios"),
+  createScenario: (s: ScenarioInput) => req<{ scenario: Scenario }>("/api/live-layers/scenarios", { method: "POST", body: JSON.stringify(s) }),
+  updateScenario: (id: string, s: ScenarioInput) => req<{ ok: boolean }>(`/api/live-layers/scenarios/${id}`, { method: "PUT", body: JSON.stringify(s) }),
+  deleteScenario: (id: string) => req<{ ok: boolean }>(`/api/live-layers/scenarios/${id}`, { method: "DELETE" }),
   resetCountryStatus: (code: string) => req<{ ok: boolean }>(`/api/live-layers/country-status/${code}`, { method: "DELETE" }),
   getConflictEscalationEvidence: (countryCode: string) =>
     req<{ countryCode: string; items: EscalationEvidenceItem[]; fetchedAt: string }>(
