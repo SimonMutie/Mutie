@@ -53,6 +53,8 @@ import {
   WifiOff,
   Crosshair,
   Anchor,
+  CircleDot,
+  CalendarRange,
   Bell,
   Bug,
   Building2,
@@ -183,6 +185,11 @@ import type { FeatureCollection } from "geojson";
 import { BASEMAPS } from "./mapConstants";
 import { GlobeGisOverlay, useFlatGis, type GisRing } from "./gis/GlobeGis";
 import { GisPanel } from "./gis/GisPanel";
+import { GlobeCountryStatus, useFlatCountryStatus } from "../strategic/CountryStatusLayer";
+import { GlobeIncidentCircles, useFlatIncidentCircles } from "../strategic/IncidentCircles";
+import { StrategicLegend } from "../strategic/StrategicLegend";
+import { TimelineFilter } from "../strategic/TimelineFilter";
+import { inPeriod, toggleStrategic, usePeriod, useStrategic } from "../strategic/store";
 import { GlobeMaritimeRisk, MaritimeRiskLegend, RISK_LAYER_LABEL, toggleMaritimeRisk, useFlatMaritimeRisk, useMaritimeRisk } from "./MaritimeRisk";
 import type { GisFeature } from "./gis/exporters";
 import type { PrintView } from "./gis/printMap";
@@ -1161,6 +1168,21 @@ type LayerState = { data: GlobePoint[] | null; loading: boolean; error: string |
 /** The view: the 3D globe or the flat map. The basemap (liveBasemaps.ts) is chosen separately and works with either. */
 type MapMode = "3d" | "2d";
 
+/** Dated incident and event layers that the timeline's period narrows (by each point's time). */
+const TIMED_LAYERS = new Set([
+  "Conflict Escalation",
+  "Terrorist Attacks",
+  "Fighting & Attacks (GDELT)",
+  "Threats & Tensions (GDELT)",
+  "Conflict Events (UCDP)",
+  "Live Alert Pins",
+  "Humanitarian Events",
+  "Political Events",
+  "News Reports",
+  "Telegram Posts",
+  "My Incidents",
+]);
+
 /** Which right-side tool panel is open, if any — at most one at a time, both
  *  because that's simpler state to reason about and because Drawing Tools
  *  and Route both interpret a map/globe click as their own next action, so
@@ -1921,9 +1943,10 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   }, [enabled]);
   // An active search narrows the rich layer exactly like it narrows the
   // generic GlobePoint one above (see `points` memo).
+  const incidentPeriod = usePeriod();
   const incidentRowsForFlatMap = useMemo(
-    () => (incidentSearchResults ?? myIncidentRows).filter((r) => r.latitude != null && r.longitude != null),
-    [incidentSearchResults, myIncidentRows]
+    () => (incidentSearchResults ?? myIncidentRows).filter((r) => r.latitude != null && r.longitude != null && inPeriod(incidentPeriod, r.occurred_date ?? r.occurred_at)),
+    [incidentSearchResults, myIncidentRows, incidentPeriod]
   );
 
   // Display options for the rich incident layer — mirrors IncidentsMap.tsx/
@@ -2608,9 +2631,14 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
     return out;
   }, [afrIntelMarks, afrIntelRun]);
   // Watch zones are drawn as areas (WatchZoneAreas.tsx), not as dots: their points stay for the lists only.
+  // The timeline's period (strategic/TimelineFilter.tsx) narrows the dated incident and event layers.
+  const period = usePeriod();
   const mapPoints = useMemo(
-    () => [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...afrIntelPoints].filter((p) => p.layerKey !== "Watch Zones"),
-    [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints]
+    () =>
+      [...points, ...toolPoints, ...listeningLayerPoints, ...monitorLayerPoints, ...afrIntelPoints].filter(
+        (p) => p.layerKey !== "Watch Zones" && (!period || !TIMED_LAYERS.has(p.layerKey) || inPeriod(period, p.time))
+      ),
+    [points, toolPoints, listeningLayerPoints, monitorLayerPoints, afrIntelPoints, period]
   );
   const watchZones = useWatchZoneAreas(!!enabled["watch-zones"]);
   // GIS tools (components/gis): the features on the map as an attribute table, buffers round them, export and print.
@@ -2618,6 +2646,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   useFlatGis(mapMode === "3d" ? null : flatMap, gisRings);
   // Maritime security: JMIC threat areas, war-risk limits and transit lanes (MaritimeRisk.tsx).
   useFlatMaritimeRisk(mapMode === "3d" ? null : flatMap);
+  // The strategic picture (strategic/): country conflict status, incident circles and the timeline.
+  useFlatCountryStatus(mapMode === "3d" ? null : flatMap, isAdmin);
+  useFlatIncidentCircles(mapMode === "3d" ? null : flatMap);
   const maritimeRiskOn = useMaritimeRisk();
   const gisFeatures = useMemo<GisFeature[]>(
     () =>
@@ -2974,8 +3005,12 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         <GlobeWatchZones map={globeMap} view={watchZones} canEdit={isAdmin} />
         <GlobeBoundaryLayers map={globeMap} lib={boundaryLib} view={watchZones} canEdit={isAdmin} />
         {mapMode === "3d" && <GlobeGisOverlay map={globeMap} rings={gisRings} />}
+        <GlobeCountryStatus map={globeMap} canEdit={isAdmin} />
+        <GlobeIncidentCircles map={globeMap} />
         <GlobeMaritimeRisk map={globeMap} />
         <MaritimeRiskLegend />
+        <StrategicLegend />
+        <TimelineFilter />
         {libraryOpen && (
           <BoundaryLibraryPanel
             lib={boundaryLib}
@@ -4833,6 +4868,7 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
   const base = bases.find((b) => b.id === basemap) ?? bases.find((b) => b.id === "dark") ?? bases[0];
   const Icon = mode === "3d" ? Globe : BASEMAP_ICON[base.id];
   const maritimeRisk = useMaritimeRisk();
+  const strategic = useStrategic();
   const row = (on: boolean, icon: LucideIcon, label: string, hint: string, onClick: () => void, key: string) => {
     const I = icon;
     return (
@@ -4917,6 +4953,14 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
               </div>
             </div>
           )}
+          <div style={{ marginTop: 10 }}>
+            {heading("Strategic picture")}
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              {row(strategic.status, Flag, "Country conflict status", "Active conflict by trend, or at risk; click a country", () => toggleStrategic("status"), "strat-status")}
+              {row(strategic.circles, CircleDot, "Incident circles", "Escalation incidents since 2025, terrorism in grey", () => toggleStrategic("circles"), "strat-circles")}
+              {row(strategic.timeline || strategic.circles, CalendarRange, "Timeline filter", "Narrow the incident layers to a period", () => toggleStrategic("timeline", !(strategic.timeline || strategic.circles)), "strat-timeline")}
+            </div>
+          </div>
           <div style={{ marginTop: 10 }}>
             {heading("Maritime security")}
             <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
