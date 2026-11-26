@@ -6,7 +6,7 @@ import { maptilerExtras, maptilerKey, maptilerSession, MAPTILER_ATTRIBUTION } fr
  * the free providers otherwise, where they have an equivalent (Outdoor, Topographic, Data and Toner need MapTiler).
  */
 
-export type BasemapId = "lens" | "dark" | "streets" | "satellite-labels" | "satellite" | "outdoor" | "topo" | "ocean" | "landscape" | "muted" | "data-dark" | "data-light" | "toner";
+export type BasemapId = "lens" | "strategic" | "dark" | "streets" | "satellite-labels" | "satellite" | "outdoor" | "topo" | "ocean" | "landscape" | "muted" | "data-dark" | "data-light" | "toner";
 
 interface Def {
   id: BasemapId;
@@ -26,6 +26,9 @@ const DEFS: Def[] = [
   // The Lens's own basemap: the admin's custom MapTiler style when one is set in Settings, otherwise a quiet dark
   // map; either way with the Africa and Middle East focus (the rest of the world dimmed, see lensFocus.ts).
   { id: "lens", label: "Lens", hint: "The Lens's own map: Africa and the Middle East in focus", mt: { style: "backdrop-dark", ext: "png" } },
+  // Strategic: on the globe, the Lens's own navy map drawn from its borders, with a bright atmosphere (strategic/
+  // strategicBase.ts); on the flat map, a quiet dark map without labels.
+  { id: "strategic", label: "Strategic", hint: "Navy globe with country borders only, data first", mt: { style: "dataviz-dark", ext: "png" }, free: { url: "https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", attribution: CARTO_ATTR, retina: true } },
   { id: "dark", label: "Dark", hint: "Night-time streets, the Lens's default", mt: { style: "streets-v2-dark", ext: "png" }, free: { url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", attribution: CARTO_ATTR, retina: true } },
   { id: "streets", label: "Streets", hint: "Roads, towns and place names", mt: { style: "streets-v2", ext: "png" }, free: { url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", attribution: OSM_ATTR } },
   { id: "satellite-labels", label: "Satellite + labels", hint: "Imagery with roads and place names", mt: { style: "hybrid", ext: "jpg" }, free: { url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attribution: ESRI_ATTR } },
