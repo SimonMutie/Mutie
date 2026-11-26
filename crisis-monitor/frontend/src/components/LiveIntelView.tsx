@@ -1,5 +1,5 @@
 import { exportAllowed, stampCanvas } from "../exportGuard";
-import { setViewerIsAdmin } from "../viewer";
+import { setViewerIsAdmin, viewerIsAdmin } from "../viewer";
 import MapBrand, { brandMapImage } from "./MapBrand";
 import { roadRouteWithFallback } from "../maptilerServices";
 import { FlatVehicles, GlobeVehicles, isStale, useVehicles, vehicleSummary } from "./vehicles";
@@ -55,6 +55,9 @@ import {
   Anchor,
   CircleDot,
   CalendarRange,
+  Triangle,
+  MessageCircleQuestion,
+  Plus as PlusIcon,
   Bell,
   Bug,
   Building2,
@@ -188,6 +191,8 @@ import { GisPanel } from "./gis/GisPanel";
 import { GlobeCountryStatus, useFlatCountryStatus } from "../strategic/CountryStatusLayer";
 import { GlobeIncidentCircles, useFlatIncidentCircles } from "../strategic/IncidentCircles";
 import { StrategicLegend } from "../strategic/StrategicLegend";
+import { GlobeChokepoints, useFlatChokepoints } from "../strategic/Chokepoints";
+import { GlobeScenarios, newScenario, ScenarioEditor, useFlatScenarios } from "../strategic/Scenarios";
 import { TimelineFilter } from "../strategic/TimelineFilter";
 import { inPeriod, toggleStrategic, usePeriod, useStrategic } from "../strategic/store";
 import { GlobeMaritimeRisk, MaritimeRiskLegend, RISK_LAYER_LABEL, toggleMaritimeRisk, useFlatMaritimeRisk, useMaritimeRisk } from "./MaritimeRisk";
@@ -1387,12 +1392,13 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // comment for exactly why OSM, not TeleGeography's submarinecablemap.com
   // data) — reference data like the shipping lanes above, one fetch on
   // mount, 24h server-side cache either way.
-  const [submarineCables, setSubmarineCables] = useState<{ points: [number, number][]; label: string; color: string }[]>([]);
+  const [submarineCables, setSubmarineCables] = useState<{ points: [number, number][]; label: string; color: string; width?: number; glow?: boolean }[]>([]);
   useEffect(() => {
     let cancelled = false;
     api
       .getSubmarineCables()
-      .then((d) => !cancelled && setSubmarineCables(d.cables))
+      // Thin glowing cyan lines, the same on both maps.
+      .then((d) => !cancelled && setSubmarineCables(d.cables.map((c) => ({ ...c, color: "#3fd8ff", width: 0.9, glow: true }))))
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -2649,6 +2655,8 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   // The strategic picture (strategic/): country conflict status, incident circles and the timeline.
   useFlatCountryStatus(mapMode === "3d" ? null : flatMap, isAdmin);
   useFlatIncidentCircles(mapMode === "3d" ? null : flatMap);
+  useFlatChokepoints(mapMode === "3d" ? null : flatMap);
+  useFlatScenarios(mapMode === "3d" ? null : flatMap, isAdmin);
   const maritimeRiskOn = useMaritimeRisk();
   const gisFeatures = useMemo<GisFeature[]>(
     () =>
@@ -3007,6 +3015,15 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
         {mapMode === "3d" && <GlobeGisOverlay map={globeMap} rings={gisRings} />}
         <GlobeCountryStatus map={globeMap} canEdit={isAdmin} />
         <GlobeIncidentCircles map={globeMap} />
+        <GlobeChokepoints map={globeMap} />
+        <GlobeScenarios map={globeMap} canEdit={isAdmin} />
+        <ScenarioEditor
+          canEdit={isAdmin}
+          center={() => {
+            const c = mapMode === "3d" ? globeMap?.getCenter() : flatMap?.getCenter();
+            return c ? [c.lat, c.lng] : null;
+          }}
+        />
         <GlobeMaritimeRisk map={globeMap} />
         <MaritimeRiskLegend />
         <StrategicLegend />
@@ -3756,6 +3773,9 @@ function FlatMap({
         <Polygon key={t.id} positions={t.ring} pathOptions={{ color: "#ff9d4f", weight: 1.5, opacity: 0.75, dashArray: "4 4", fillColor: "#ff9d4f", fillOpacity: 0.12 }}>
           <LeafletTooltip sticky>{t.title}</LeafletTooltip>
         </Polygon>
+      ))}
+      {(sharedPaths ?? []).filter((p) => p.glow).map((p, i) => (
+        <Polyline key={`glow-${p.label}-${i}`} positions={p.points} interactive={false} pathOptions={{ color: p.color ?? "#3fd0ff", weight: 6, opacity: 0.16 }} />
       ))}
       {(sharedPaths ?? []).map((p, i) => (
         <Polyline key={`${p.label}-${i}`} positions={p.points} pathOptions={{ color: p.color ?? "#3fd0ff", weight: p.width ?? 2, opacity: 0.9 }}>
@@ -4829,6 +4849,7 @@ const VIEWS: { key: MapMode; label: string; hint: string; icon: LucideIcon }[] =
 ];
 const BASEMAP_ICON: Record<BasemapId, LucideIcon> = {
   lens: Eye,
+  strategic: Globe,
   ocean: Waves,
   landscape: Trees,
   muted: Square,
@@ -4959,6 +4980,14 @@ function MapTypeRailButton({ mode, onChange, basemap, onBasemap, onSaveImage, we
               {row(strategic.status, Flag, "Country conflict status", "Active conflict by trend, or at risk; click a country", () => toggleStrategic("status"), "strat-status")}
               {row(strategic.circles, CircleDot, "Incident circles", "Escalation incidents since 2025, terrorism in grey", () => toggleStrategic("circles"), "strat-circles")}
               {row(strategic.timeline || strategic.circles, CalendarRange, "Timeline filter", "Narrow the incident layers to a period", () => toggleStrategic("timeline", !(strategic.timeline || strategic.circles)), "strat-timeline")}
+              {row(strategic.chokepoints, Triangle, "Maritime chokepoints", "Straits and canals, with incidents nearby", () => toggleStrategic("chokepoints"), "strat-chokepoints")}
+              {row(strategic.scenarios, MessageCircleQuestion, "Scenarios", "Analysts' questions on how situations could develop", () => toggleStrategic("scenarios"), "strat-scenarios")}
+              {viewerIsAdmin() &&
+                row(false, PlusIcon, "Add a scenario", "Starts at the centre of the map", () => {
+                  toggleStrategic("scenarios", true);
+                  newScenario();
+                  setOpen(false);
+                }, "strat-add-scenario")}
             </div>
           </div>
           <div style={{ marginTop: 10 }}>
