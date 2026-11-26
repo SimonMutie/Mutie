@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { FloatingPanel } from "../FloatingPanel";
 import { Marker, ScaleControl, type GeoJSONSource, type Map as MapLibreMap } from "maplibre-gl";
 import L, { type Map as LeafletMap } from "leaflet";
 import { parsePoint, toDecimal, toDms, toMgrs } from "../coords";
@@ -11,15 +12,7 @@ const RING_KM = [5, 15, 60];
 const SRC = "lens-gis-rings";
 
 const box: CSSProperties = {
-  position: "absolute",
-  left: "calc(var(--lens-pad-left, 12px) + 4px)",
-  bottom: 78,
-  zIndex: 6,
-  padding: "6px 8px",
-  borderRadius: 8,
-  background: "rgba(8, 14, 24, 0.88)",
-  border: "1px solid rgba(255,255,255,0.12)",
-  color: "#e6edf7",
+  padding: "5px 8px 7px",
   fontSize: 11,
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   lineHeight: 1.45,
@@ -51,7 +44,6 @@ export function GlobeGisOverlay({ map, rings }: { map: MapLibreMap | null; rings
   const [goto, setGoto] = useState("");
   const [gotoErr, setGotoErr] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
   const marker = useRef<Marker | null>(null);
 
   // Cursor readout and right-click pin. A right-drag rotates the globe, so only a click that did not move pins.
@@ -139,19 +131,10 @@ export function GlobeGisOverlay({ map, rings }: { map: MapLibreMap | null; rings
   };
 
   if (!map) return null;
-  if (collapsed) {
-    return (
-      <button style={{ ...box, ...btn, padding: "4px 8px" }} onClick={() => setCollapsed(false)} title="Show coordinates">
-        ⌖ Coordinates
-      </button>
-    );
-  }
+  // Moved and folded like the map's other floating panels (FloatingPanel).
   return (
+    <FloatingPanel id="gis-coords" title="WGS 84 · cursor" width={300} initial={{ left: "calc(var(--lens-pad-left, 12px) + 4px)", bottom: 78 }}>
     <div style={box} onContextMenu={(e) => e.preventDefault()}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 2 }}>
-        <span style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "#8fa3bf" }}>WGS 84 · CURSOR</span>
-        <button style={{ ...btn, padding: "0 5px" }} onClick={() => setCollapsed(true)} title="Hide">–</button>
-      </div>
       {cursor ? (
         <>
           <div>{toDecimal(cursor.lat, cursor.lng)}</div>
@@ -194,6 +177,7 @@ export function GlobeGisOverlay({ map, rings }: { map: MapLibreMap | null; rings
         </div>
       )}
     </div>
+    </FloatingPanel>
   );
 }
 
