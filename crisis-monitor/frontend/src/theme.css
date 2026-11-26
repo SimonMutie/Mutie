@@ -201,3 +201,74 @@ details[open] > summary::before {
 
 /* No browser focus box around map shapes when they are clicked. */
 .leaflet-container path.leaflet-interactive:focus { outline: none; }
+
+/* ── Map popups (3D globe and flat map) ──────────────────────────────────────────────────────────────────────────
+   Every popup on the map gets one solid, dark, high-contrast card, whatever basemap or layer is beneath it.
+   The escalation hover cards (.lens-hover-popup / .lens-hover-leaflet) keep their own, more specific, style. */
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content,
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content-wrapper {
+  background: #0d1828;
+  color: #eef3f9;
+  border: 1px solid rgba(159, 200, 240, 0.28);
+  border-radius: 9px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content {
+  padding: 11px 13px;
+}
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content {
+  margin: 11px 13px;
+  color: #eef3f9;
+}
+:root .maplibregl-popup-anchor-bottom:not(.lens-hover-popup) .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-bottom-left:not(.lens-hover-popup) .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-bottom-right:not(.lens-hover-popup) .maplibregl-popup-tip {
+  border-top-color: #0d1828;
+}
+:root .maplibregl-popup-anchor-top:not(.lens-hover-popup) .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-top-left:not(.lens-hover-popup) .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-top-right:not(.lens-hover-popup) .maplibregl-popup-tip {
+  border-bottom-color: #0d1828;
+}
+:root .maplibregl-popup-anchor-left:not(.lens-hover-popup) .maplibregl-popup-tip {
+  border-right-color: #0d1828;
+}
+:root .maplibregl-popup-anchor-right:not(.lens-hover-popup) .maplibregl-popup-tip {
+  border-left-color: #0d1828;
+}
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-tip {
+  background: #0d1828;
+  border: 1px solid rgba(159, 200, 240, 0.28);
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-close-button,
+:root .leaflet-popup:not(.lens-hover-leaflet) a.leaflet-popup-close-button {
+  color: #b9c7d8;
+  font-size: 17px;
+  padding: 0 6px;
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-close-button:hover,
+:root .leaflet-popup:not(.lens-hover-leaflet) a.leaflet-popup-close-button:hover {
+  color: #ffffff;
+  background: transparent;
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content a,
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content a {
+  color: #f3d77a;
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content select,
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content input,
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content select,
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content input {
+  color: #eef3f9;
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content option,
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content option {
+  background: #0d1828;
+  color: #eef3f9;
+}
+:root .maplibregl-popup:not(.lens-hover-popup) .maplibregl-popup-content button,
+:root .leaflet-popup:not(.lens-hover-leaflet) .leaflet-popup-content button {
+  color: #eef3f9;
+}
