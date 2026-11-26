@@ -2688,6 +2688,14 @@ interface AfricaWireSnapshot {
  * Africa Wire side is already just a Durable Object storage read, so this
  * stays fast even with the extra sources folded in.
  */
+/** What the browser is sent of the feed: the newest OSINT_ALERTS_SENT items, long texts cut, with the full count.
+ *  (The incident pipeline and the hybrid-warfare collector read the whole feed, not this.) */
+const OSINT_ALERTS_SENT = 2500;
+function forBrowser(alerts: OsintAlertItem[]) {
+  const newest = [...alerts].sort((a, b) => Date.parse(b.published) - Date.parse(a.published)).slice(0, OSINT_ALERTS_SENT);
+  return { alerts: newest.map((a) => (a.description.length > 1500 ? { ...a, description: `${a.description.slice(0, 1500)}…` } : a)), total: alerts.length };
+}
+
 liveLayersRouter.get("/osint-alerts", async (c) => {
   return cachedJson(
     c.req.raw,
@@ -2700,7 +2708,7 @@ liveLayersRouter.get("/osint-alerts", async (c) => {
           .catch(() => null),
       ]);
 
-      if (!africaSnapshot) return { ...wireFeed, africaWireHealth: null };
+      if (!africaSnapshot) return { ...forBrowser(wireFeed.alerts), sources: wireFeed.sources, fetchedAt: wireFeed.fetchedAt, africaWireHealth: null };
 
       const africaAlerts: OsintAlertItem[] = africaSnapshot.alerts.map((a) => ({
         id: a.id,
@@ -2737,7 +2745,7 @@ liveLayersRouter.get("/osint-alerts", async (c) => {
         },
       ];
 
-      return { alerts, total: alerts.length, sources, fetchedAt: wireFeed.fetchedAt, africaWireHealth: africaSnapshot.sourceHealth };
+      return { ...forBrowser(alerts), sources, fetchedAt: wireFeed.fetchedAt, africaWireHealth: africaSnapshot.sourceHealth };
     },
     60
   );
