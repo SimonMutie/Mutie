@@ -12,7 +12,7 @@ import { loadLensFocus, LENS_FOCUS_STYLE } from "../lensFocus";
  */
 
 /** Layers that sit under the Lens's data: basemaps, relief, these overlays and weather. */
-const UNDER = ["lens-basemap-", "lens-relief-", "lens-overlay-", "lens-focus-", "lens-data-", "lens-weather-", "lens-control-"];
+export const UNDER = ["lens-basemap-", "lens-relief-", "lens-overlay-", "lens-focus-", "lens-data-", "lens-weather-", "lens-control-"];
 /** The first Lens data layer (markers, lines, heat): new under-layers go just beneath it. */
 export function firstDataLayer(map: MapLibreMap): string | undefined {
   return (map.getStyle().layers ?? []).find((l) => l.id.startsWith("lens-") && !UNDER.some((p) => l.id.startsWith(p)))?.id;
