@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { FloatingPanel } from "./FloatingPanel";
 import L from "leaflet";
 import "leaflet-draw";
 import "leaflet-draw/dist/leaflet.draw.css";
@@ -320,7 +321,8 @@ export function ControlLegend({ layers, areas, hidden, onToggle, style }: { laye
   const used = STATUS_KEYS.filter((k) => areas.some((a) => a.status === k && !hidden.includes(a.layerId)));
   const latest = areas.map((a) => a.asOf).filter(Boolean).sort().pop();
   return (
-    <div style={{ position: "absolute", right: 12, bottom: 44, zIndex: 450, width: 230, background: "rgba(6,10,18,0.88)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, color: "#e6edf7", fontSize: 11.5, ...style }}>
+    <FloatingPanel id="control-legend" title="Territorial control" width={230} zIndex={450} initial={{ right: 12, bottom: 44, ...style }}>
+    <div style={{ fontSize: 11.5 }}>
       <button onClick={() => setOpen((v) => !v)} style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center", background: "none", border: "none", color: "inherit", padding: "8px 10px", cursor: "pointer", fontFamily: "inherit" }}>
         <span style={{ fontSize: 10.5, letterSpacing: "0.14em", fontWeight: 800 }}>TERRITORIAL CONTROL</span>
         <span style={{ opacity: 0.7 }}>{open ? "–" : "+"}</span>
@@ -354,6 +356,7 @@ export function ControlLegend({ layers, areas, hidden, onToggle, style }: { laye
         </div>
       )}
     </div>
+    </FloatingPanel>
   );
 }
 
