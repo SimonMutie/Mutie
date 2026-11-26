@@ -1325,25 +1325,9 @@ export default function LiveIntelView({ queries, onQueriesChanged, onOpenQuery, 
   const [flatMounted, setFlatMounted] = useState(mapMode !== "3d");
   const [flatMap, setFlatMap] = useState<LeafletMap | null>(null);
   const viewModeRef = useRef(mapMode);
-  // The basemap, the same for both views; a shared imagery link opens on satellite. Remembered.
-  const [basemap, setBasemapState] = useState<BasemapId>(() => {
-    if (readViewParams().at) return "satellite-labels";
-    try {
-      const saved = localStorage.getItem("lens.basemap") as BasemapId | null;
-      return saved && BASEMAP_IDS.includes(saved) ? saved : "dark";
-    } catch {
-      return "dark";
-    }
-  });
-  const setBasemap = (b: BasemapId) => {
-    setBasemapState(b);
-    try {
-      localStorage.setItem("lens.basemap", b);
-    } catch {
-      /* storage unavailable */
-    }
-  };
-  // The left layer panel and the right tool rail are hidden until asked for, so the map is clean; the choice is remembered.
+  // The basemap, the same for both views. The map always opens in 3D on Dark; a shared imagery link (one that
+  // points at a place to look at) opens on satellite. A basemap picked during a visit lasts for that visit only.
+  const [basemap, setBasemap] = useState<BasemapId>(() => (readViewParams().at ? "satellite-labels" : "dark"));
   const [leftOpen, setLeftOpen] = useState<boolean>(() => { try { return localStorage.getItem("lens.liveIntel.left") === "1"; } catch { return false; } });
   const [rightOpen, setRightOpen] = useState<boolean>(() => { if (initialTool) return true; try { return localStorage.getItem("lens.liveIntel.right") === "1"; } catch { return false; } });
   const togglePanel = (side: "left" | "right") => {
