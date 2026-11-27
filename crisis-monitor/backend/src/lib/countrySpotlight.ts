@@ -416,8 +416,12 @@ export async function produceSpotlight(env: Env, code: string, ctx: { status: Co
 
 /** How long an edition stands, by status. */
 const REFRESH_HOURS: Record<CountryStatus, number> = { active: 72, "risk-high": 120, "risk-low": 240, none: 504 };
-/** Editions written per day, at most, so the analyst budget keeps room for incident and country assessments. */
+/** Rewrites per day, at most, so the analyst budget keeps room for incident and country assessments. */
 export const SPOTLIGHTS_PER_DAY = 14;
+/** First editions (countries with no spotlight yet) per day, and per five-minute tick: counted apart, so every
+ *  country the Lens follows gets its first spotlight within a few hours rather than days. */
+export const FIRST_EDITIONS_PER_DAY = 50;
+const FIRST_EDITIONS_PER_TICK = 2;
 
 export function spotlightDue(prev: StoredSpotlight | undefined, status: CountryStatus, tracking: ScenarioTracking[] | null, at: number): boolean {
   if (!prev) return true;
@@ -439,18 +443,21 @@ export async function runCountrySpotlights(env: Env, candidates: { code: string;
     s.tracking = tracking;
     await env.DB.prepare(`UPDATE country_spotlights SET tracking = ? WHERE code = ?`).bind(JSON.stringify(tracking), s.code).run();
   }
-  const dayKey = `country_spotlights:${now.toISOString().slice(0, 10)}`;
-  const done = Number((await env.DB.prepare(`SELECT value FROM lens_state WHERE key = ?`).bind(dayKey).first<{ value: string }>())?.value ?? 0);
-  if (done >= SPOTLIGHTS_PER_DAY) return [];
+  const day = now.toISOString().slice(0, 10);
+  const count = async (key: string) => Number((await env.DB.prepare(`SELECT value FROM lens_state WHERE key = ?`).bind(key).first<{ value: string }>())?.value ?? 0);
+  const bump = (key: string) => env.DB.prepare(`INSERT INTO lens_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`).bind(key, "1").run();
+  const firstKey = `country_spotlights_first:${day}`;
+  const refreshKey = `country_spotlights:${day}`;
   const rank: Record<CountryStatus, number> = { active: 3, "risk-high": 2, "risk-low": 1, none: 0 };
   const due = candidates
     .filter((c) => c.status !== "none" || c.n90 > 0)
     .filter((c) => spotlightDue(existing.get(c.code), c.status, existing.get(c.code)?.tracking ?? null, now.getTime()))
-    .sort((a, b) => Number(existing.has(a.code)) - Number(existing.has(b.code)) || rank[b.status] - rank[a.status] || b.n90 - a.n90)
-    .slice(0, 1);
+    .sort((a, b) => Number(existing.has(a.code)) - Number(existing.has(b.code)) || rank[b.status] - rank[a.status] || b.n90 - a.n90);
+  const firsts = due.filter((c) => !existing.has(c.code)).slice(0, Math.max(0, Math.min(FIRST_EDITIONS_PER_TICK, FIRST_EDITIONS_PER_DAY - (await count(firstKey)))));
+  const refresh = firsts.length ? [] : due.filter((c) => existing.has(c.code)).slice(0, (await count(refreshKey)) < SPOTLIGHTS_PER_DAY ? 1 : 0);
   const written: string[] = [];
-  for (const c of due) {
-    await env.DB.prepare(`INSERT INTO lens_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`).bind(dayKey, "1").run();
+  for (const c of [...firsts, ...refresh]) {
+    await bump(existing.has(c.code) ? refreshKey : firstKey);
     if (await produceSpotlight(env, c.code, c, now)) written.push(c.code);
   }
   return written;
