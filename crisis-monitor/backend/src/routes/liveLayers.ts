@@ -25,6 +25,7 @@ import { readConnectivity } from "../lib/ioda";
 import { gpsInterference } from "../lib/gpsInterference";
 import { buildZones, composeZones } from "../lib/watchZones";
 import { createScenario, deleteScenario, LIKELIHOODS, listScenarios, updateScenario } from "../lib/scenarios";
+import { listSpotlights, produceSpotlight, spotlightPage } from "../lib/countrySpotlight";
 import { countryMetrics, dataStatus, getAssessments, saveAssessment, writeAssessment } from "../lib/countryAssessment";
 import { COUNTRY_STATUSES, COUNTRY_TRENDS, ensureCountryStatusTable, getCountryStatus, getIncidentHistory } from "../lib/countryStatus";
 import { readRadar } from "../lib/cloudflareRadar";
@@ -520,6 +521,31 @@ liveLayersRouter.get("/country-status/:code", async (c) => {
   if (!/^[A-Z]{2}$/.test(code)) return c.json({ error: "Use a two-letter country code" }, 400);
   const [rows, assessed, metrics] = await Promise.all([getCountryStatus(c.env), getAssessments(c.env), countryMetrics(c.env, code)]);
   return c.json({ row: rows.find((r) => r.code === code) ?? null, assessment: assessed.get(code) ?? null, metrics });
+});
+
+/* ── Country spotlights (lib/countrySpotlight.ts): the self-updating country product under Regional Spotlight ── */
+
+/** Which countries have a spotlight, with each edition's headline. */
+liveLayersRouter.get("/country-spotlights", async (c) => {
+  const all = await listSpotlights(c.env);
+  return c.json({ spotlights: [...all.values()].map((s) => ({ code: s.code, headline: s.body.headline, status: s.status, generatedAt: s.generatedAt })) });
+});
+
+/** One country's spotlight: the edition, live signpost tracking, the edition history and the record since 2025. */
+liveLayersRouter.get("/country-spotlight/:code", async (c) => {
+  const code = (c.req.param("code") ?? "").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return c.json({ error: "Use a two-letter country code" }, 400);
+  const [page, rows] = await Promise.all([spotlightPage(c.env, code), getCountryStatus(c.env)]);
+  return c.json({ ...page, row: rows.find((r) => r.code === code) ?? null });
+});
+
+/** Admin: write a new edition now. */
+liveLayersRouter.post("/country-spotlight/:code/regenerate", requireAdmin, async (c) => {
+  const code = (c.req.param("code") ?? "").toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return c.json({ error: "Use a two-letter country code" }, 400);
+  const row = (await getCountryStatus(c.env)).find((r) => r.code === code);
+  const ok = await produceSpotlight(c.env, code, { status: row?.status ?? "none", trend: row?.trend ?? null, baseline: row?.baseline ?? "none", note: row?.note ?? null });
+  return ok ? c.json({ ok: true }) : c.json({ error: "The spotlight could not be written just now (the AI model did not answer, or today's limit is reached)." }, 503);
 });
 
 /** Admin: write a country's assessment now, from the numbers as they stand. */
