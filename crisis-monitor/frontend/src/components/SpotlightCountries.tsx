@@ -1,5 +1,6 @@
-import { useMemo } from "react";
-import type { SpotlightEntry } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type SpotlightEntry } from "../api";
+import { CountrySpotlight } from "./CountrySpotlight";
 import { AFRICA } from "./viz/geo";
 import "./Spotlight.css";
 
@@ -21,8 +22,26 @@ const GROUPS: { name: string; codes: string[] }[] = [
 /** Countries outside Africa that have a directory entry (Middle East so far). */
 const OTHER_COUNTRIES: Record<string, { label: string; name: string }> = {
   YE: { label: "Yemen", name: "Yemen" },
+  SA: { label: "Saudi Arabia", name: "Saudi Arabia" },
+  OM: { label: "Oman", name: "Oman" },
+  AE: { label: "United Arab Emirates", name: "United Arab Emirates" },
+  QA: { label: "Qatar", name: "Qatar" },
+  BH: { label: "Bahrain", name: "Bahrain" },
+  KW: { label: "Kuwait", name: "Kuwait" },
+  IL: { label: "Israel", name: "Israel" },
+  PS: { label: "Palestine", name: "Palestine" },
+  LB: { label: "Lebanon", name: "Lebanon" },
+  SY: { label: "Syria", name: "Syria" },
+  JO: { label: "Jordan", name: "Jordan" },
+  IQ: { label: "Iraq", name: "Iraq" },
+  IR: { label: "Iran", name: "Iran" },
+  TR: { label: "Türkiye", name: "Turkey" },
 };
-export const MIDDLE_EAST_GROUPS: { name: string; codes: string[] }[] = [{ name: "Arabian Peninsula and the Red Sea", codes: ["YE"] }];
+export const MIDDLE_EAST_GROUPS: { name: string; codes: string[] }[] = [
+  { name: "The Levant", codes: ["IL", "PS", "LB", "SY", "JO"] },
+  { name: "Iraq, Iran and Türkiye", codes: ["IQ", "IR", "TR"] },
+  { name: "Arabian Peninsula and the Red Sea", codes: ["YE", "SA", "OM", "AE", "QA", "BH", "KW"] },
+];
 
 /** Countries that have a product of their own beyond the publications list. */
 export const COUNTRY_PRODUCTS: Record<string, { title: string; blurb: string; tag: string }[]> = {
@@ -48,13 +67,18 @@ export function entriesFor(entries: SpotlightEntry[] | null, iso2: string): Spot
 
 export function CountryDirectory({ entries, onOpen, groups: given }: { entries: SpotlightEntry[] | null; onOpen: (iso2: string) => void; groups?: { name: string; codes: string[] }[] }) {
   const counts = useMemo(() => new Map([...AFRICA.map((a) => a.iso2), ...Object.keys(OTHER_COUNTRIES)].map((c) => [c, entriesFor(entries, c).length])), [entries]);
+  // Countries with a live, self-updating spotlight.
+  const [live, setLive] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    void api.getCountrySpotlights().then((r) => setLive(new Set(r.spotlights.map((x) => x.code)))).catch(() => undefined);
+  }, []);
   const known = new Set(GROUPS.flatMap((g) => g.codes));
   const other = AFRICA.filter((a) => !known.has(a.iso2)).map((a) => a.iso2);
   const groups = given ?? (other.length ? [...GROUPS, { name: "Other", codes: other }] : GROUPS);
   return (
     <section className="spotlight-countries" aria-label="Countries">
       <h2>Countries</h2>
-      <p className="spotlight-countries__lead">Pick a country for its publications and country products.</p>
+      <p className="spotlight-countries__lead">Pick a country for its live spotlight, with scenarios and projections that update themselves, and for its publications and country products.</p>
       {groups.map((g) => (
         <div key={g.name} className="spotlight-countries__group">
           <h3>{g.name}</h3>
@@ -68,6 +92,7 @@ export function CountryDirectory({ entries, onOpen, groups: given }: { entries: 
                     <span className="spotlight-countries__flag" aria-hidden="true">{flag(code)}</span>
                     <span className="spotlight-countries__name">{label(code)}</span>
                     {products && <span className="spotlight-countries__badge">{products[0].tag}</span>}
+                    {live.has(code) && <span className="spotlight-countries__badge spotlight-countries__badge--live" title="Live country spotlight">Live</span>}
                     {n > 0 && <span className="spotlight-countries__n">{n}</span>}
                   </button>
                 </li>
@@ -104,6 +129,8 @@ export function CountryPage(props: {
             <h1><span aria-hidden="true">{flag(iso2)}</span> {name}</h1>
           </div>
         </div>
+
+        <CountrySpotlight iso2={iso2} isAdmin={props.isAdmin} />
 
         {products.length > 0 && (
           <div className="spotlight-products">
