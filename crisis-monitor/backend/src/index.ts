@@ -1,5 +1,6 @@
 import { collectStrategicAnalyses } from "./lib/strategicAnalysis";
 import { runCountryAssessments } from "./lib/countryAssessment";
+import { runCountrySpotlights } from "./lib/countrySpotlight";
 import { getCountryStatus } from "./lib/countryStatus";
 import { collectHybridEvents } from "./lib/hybridWarfare";
 import { aiSettingsRouter } from "./routes/aiSettings";
@@ -302,6 +303,13 @@ export default {
         .then((rows) => runCountryAssessments(env, rows.map((r) => ({ code: r.code, status: r.status, baseline: r.baseline, note: r.note, w30: r.recent, critical30: r.critical30, deaths30: r.deaths30, n90: r.n90 }))))
         .then((done) => done.length && console.log(`[countries] assessed ${done.join(", ")}`))
         .catch((err) => console.error("[countries] assessment failed", err))
+    );
+    // Country spotlights: signposts re-checked for every edition, and the most overdue edition rewritten (lib/countrySpotlight.ts).
+    ctx.waitUntil(
+      getCountryStatus(env)
+        .then((rows) => runCountrySpotlights(env, rows.map((r) => ({ code: r.code, status: r.status, trend: r.trend, baseline: r.baseline, note: r.note, n90: r.n90 }))))
+        .then((done) => done.length && console.log(`[spotlights] wrote ${done.join(", ")}`))
+        .catch((err) => console.error("[spotlights] failed", err))
     );
 
     // Hybrid-warfare reports from the feeds, saved every 30 minutes (lib/hybridWarfare.ts).
