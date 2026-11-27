@@ -1031,3 +1031,5 @@ textarea.spotlight-input {
 .spotlight-product span:not(.spotlight-countries__badge) { font-size: 13.5px; line-height: 1.5; color: var(--text-muted); }
 .spotlight-product em { font-style: normal; font-weight: 600; font-size: 13px; color: var(--signal); }
 .spotlight-subhead { margin: 32px 0 6px; font-family: var(--font-display); font-size: 20px; }
+
+.spotlight-countries__badge--live { background: #fde4e1; color: #9b231b; }
