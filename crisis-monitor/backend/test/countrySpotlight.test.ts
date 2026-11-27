@@ -68,7 +68,7 @@ describe("country spotlights", () => {
   it("writes the due edition, keeps its likelihoods in the history, and serves the page", async () => {
     const { env } = setup();
     const done = await runCountrySpotlights(env, [{ code: "NG", status: "active", trend: "worsening", baseline: "active", note: null, n90: 3 }, { code: "TZ", status: "none", trend: null, baseline: "none", note: null, n90: 0 }], NOW);
-    expect(done).toEqual(["NG"]);
+    expect(done).toEqual(["NG"]); // TZ: no rating and no incidents, so nothing to write about
     expect([...(await listSpotlights(env)).keys()]).toEqual(["NG"]);
     const h = await spotlightHistory(env, "NG");
     expect(h).toHaveLength(1);
@@ -78,5 +78,13 @@ describe("country spotlights", () => {
     expect(page.months.length).toBeGreaterThan(0);
     // Not due again straight away.
     expect(await runCountrySpotlights(env, [{ code: "NG", status: "active", trend: null, baseline: "active", note: null, n90: 3 }], NOW)).toEqual([]);
+  });
+
+  it("writes up to two first editions per tick, hottest first", async () => {
+    const { env } = setup();
+    const c = (code: string, status: "active" | "risk-high" | "risk-low", n90: number) => ({ code, status, trend: null, baseline: status, note: null, n90 });
+    const done = await runCountrySpotlights(env, [c("KE", "risk-low", 4), c("NG", "active", 3), c("SD", "active", 40)], NOW);
+    expect(done).toEqual(["SD", "NG"]);
+    expect(await runCountrySpotlights(env, [c("KE", "risk-low", 4), c("NG", "active", 3), c("SD", "active", 40)], NOW)).toEqual(["KE"]);
   });
 });
