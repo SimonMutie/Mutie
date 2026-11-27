@@ -1274,6 +1274,51 @@ export interface CountryDetail {
   metrics: CountryMetrics;
 }
 
+/** Country spotlight (backend lib/countrySpotlight.ts). */
+export interface SpotlightSignpost { text: string; terms: string[]; direction: "toward" | "away" }
+export interface SpotlightScenario {
+  id: "A" | "B" | "C" | "D";
+  name: string;
+  u1: "low" | "high";
+  u2: "low" | "high";
+  likelihood: number;
+  narrative: string;
+  pathway: string;
+  implications: { investors: string; humanitarian: string; security: string };
+  signposts: SpotlightSignpost[];
+}
+export interface CountrySpotlightBody {
+  headline: string;
+  bottomLine: string;
+  keyJudgements: { judgement: string; likelihood: string; confidence: "low" | "moderate" | "high"; basis: string }[];
+  situation: string;
+  trajectory: string;
+  history: string;
+  drivers: { name: string; direction: "escalatory" | "stabilising" | "mixed"; note: string }[];
+  predetermined: string[];
+  uncertainties: { name: string; low: string; high: string }[];
+  scenarios: SpotlightScenario[];
+  wildcard: { name: string; description: string; triggers: string[]; indicators: string[] };
+  assumptions: { assumption: string; invalidatedBy: string }[];
+  indicatorMatrix: { area: string; level: "negligible" | "low" | "moderate" | "substantial" | "serious"; trend: "rising" | "steady" | "easing"; note: string }[];
+  triggers: { when: string | null; event: string }[];
+  changes: string | null;
+  confidence: "low" | "moderate" | "high";
+  confidenceBasis: string;
+  sourcesNote: string;
+}
+export interface CountrySpotlightPage {
+  spotlight: { code: string; generatedAt: string; status: CountryStatus; body: CountrySpotlightBody } | null;
+  signposts: { hits: { scenario: string; index: number; seen: { id: string; date: string; headline: string }[] }[]; tracking: { scenario: string; seenToward: number; seenAway: number; totalToward: number; totalAway: number }[] } | null;
+  history: { generatedAt: string; status: string; headline: string | null; likelihoods: { id: string; name: string; likelihood: number }[] }[];
+  months: { month: string; incidents: number; critical: number; deaths: number }[];
+  metrics: CountryMetrics;
+  scale: { term: string; min: number; max: number }[];
+  refreshHours: Record<CountryStatus, number>;
+  sinceDays: number | null;
+  row: CountryStatusRow | null;
+}
+
 /** One escalation incident in the history. */
 export interface IncidentHistoryPoint {
   id: string;
@@ -2693,6 +2738,10 @@ export const api = {
   createScenario: (s: ScenarioInput) => req<{ scenario: Scenario }>("/api/live-layers/scenarios", { method: "POST", body: JSON.stringify(s) }),
   updateScenario: (id: string, s: ScenarioInput) => req<{ ok: boolean }>(`/api/live-layers/scenarios/${id}`, { method: "PUT", body: JSON.stringify(s) }),
   deleteScenario: (id: string) => req<{ ok: boolean }>(`/api/live-layers/scenarios/${id}`, { method: "DELETE" }),
+  getCountrySpotlight: (code: string) => req<CountrySpotlightPage>(`/api/live-layers/country-spotlight/${code}`),
+  getCountrySpotlights: () => req<{ spotlights: { code: string; headline: string; status: CountryStatus; generatedAt: string }[] }>("/api/live-layers/country-spotlights"),
+  /** Admin: write a new spotlight edition now. */
+  regenerateSpotlight: (code: string) => req<{ ok: boolean }>(`/api/live-layers/country-spotlight/${code}/regenerate`, { method: "POST" }),
   getCountryDetail: (code: string) => req<CountryDetail>(`/api/live-layers/country-status/${code}`),
   /** Admin: write the country's assessment now. */
   assessCountry: (code: string) => req<{ ok: boolean }>(`/api/live-layers/country-status/${code}/assess`, { method: "POST" }),
